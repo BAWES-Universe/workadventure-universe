@@ -283,6 +283,11 @@ const mapEditor: BaseTranslation = {
                 validate: "Validate",
             },
         },
+        maxUsersInAreaPropertyData: {
+            label: "Maximum users",
+            description: "Set the maximum number of users in the area.",
+            placeholder: "15",
+        },
         noProperties: "No properties defined",
     },
     areaEditor: {
