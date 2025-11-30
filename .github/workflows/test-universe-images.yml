@@ -1,0 +1,179 @@
+name: Test Universe Images
+
+on:
+  workflow_run:
+    workflows: ["Build Universe Images for Coolify"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      docker_tag:
+        description: 'Docker tag to test (defaults to latest)'
+        required: false
+        default: 'latest'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}
+
+jobs:
+  test-universe-images:
+    name: "Test Universe Production Images"
+    # Only run tests if build workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            nbShards: 2
+          - shard: 2
+            nbShards: 2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22
+
+      - name: Install test dependencies
+        run: npm ci
+        working-directory: tests
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+        working-directory: tests
+
+      - name: Setup .env file
+        run: |
+          # Create minimal .env file if template doesn't exist
+          if [ ! -f .env.prod.template ]; then
+            touch .env
+          else
+            cp .env.prod.template .env
+          fi
+        working-directory: contrib/docker
+
+      - name: Create slug
+        uses: rlespinasse/github-slug-action@v4.2.3
+
+      - name: Install Room Api client dependencies
+        run: npm ci
+        working-directory: libs/room-api-clients/room-api-client-js
+
+      - name: Build Room Api client proto files
+        run: npm run ts-proto
+        working-directory: libs/room-api-clients/room-api-client-js
+
+      - name: Determine Docker tag
+        id: docker-tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.docker_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.docker_tag }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "workflow_run" ]; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fill .env file
+        run: |
+          sed -i "s/SECRET_KEY=/SECRET_KEY=someSecret/g" .env
+          sed -i "s/VERSION=master/VERSION=${DOCKER_TAG}/g" .env
+          sed -i "s/DOMAIN=workadventure.localhost/DOMAIN=play.workadventure.localhost/g" .env
+          sed -i "s/MAP_STORAGE_AUTHENTICATION_USER=/MAP_STORAGE_AUTHENTICATION_USER=john.doe/g" .env
+          sed -i "s/MAP_STORAGE_AUTHENTICATION_PASSWORD=/MAP_STORAGE_AUTHENTICATION_PASSWORD=password/g" .env
+          sed -i "s/ADMIN_API_TOKEN=/ADMIN_API_TOKEN=123/g" .env
+          sed -i "s/ROOM_API_SECRET_KEY=/ROOM_API_SECRET_KEY=MYAWESOMEKEY/g" .env
+          sed -i "s/FEATURE_FLAG_BROADCAST_AREAS=/FEATURE_FLAG_BROADCAST_AREAS=true/g" .env
+          sed -i "s/KLAXOON_ENABLED=false/KLAXOON_ENABLED=true/g" .env
+          sed -i "s/OPENID_PROMPT=/OPENID_PROMPT=login/g" .env
+          sed -i "s/MAX_USERS_FOR_WEBRTC=4/MAX_USERS_FOR_WEBRTC=3/g" .env
+          sed -i "s/LIVEKIT_HOST=/LIVEKIT_HOST=https:\/\/livekit.workadventure.localhost/g" .env
+          sed -i "s/LIVEKIT_API_KEY=/LIVEKIT_API_KEY=devkey/g" .env
+          sed -i "s/LIVEKIT_API_SECRET=/LIVEKIT_API_SECRET=12345678901234567890123456789012/g" .env
+          sed -i "s/MAX_PER_GROUP=4/MAX_PER_GROUP=100/g" .env
+          echo "WOKA_SPEED=3" >> .env
+          echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> .env
+        env:
+          DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+        working-directory: contrib/docker
+
+      - name: Start WorkAdventure with Universe images
+        run: |
+          docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml up -d
+        env:
+          DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        working-directory: contrib/docker
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for services to start..."
+          sleep 15
+          docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml ps
+        working-directory: contrib/docker
+
+      - name: Upload test-map
+        run: |
+          sed -i "s/http:/https:/g" tests/assets/maps/empty.wam
+          sleep 5
+          npm run upload-test-map-single-domain
+        working-directory: map-storage
+
+      - name: Run Playwright tests
+        run: npm run test-single-domain-install -- --shard ${{ matrix.shard }}/${{ matrix.nbShards }}
+        working-directory: tests
+        env:
+          DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+          NO_FLAKY: false
+
+      - name: Display docker compose logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs
+        env:
+          DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        working-directory: contrib/docker
+
+      - name: Display containers state on failure
+        if: failure()
+        run: |
+          docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml ps
+        env:
+          DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        working-directory: contrib/docker
+
+      - name: Side-load docker compose logs in playwright report
+        if: failure()
+        run: |
+          docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs > ../../tests/playwright-report/docker-compose.log
+        env:
+          DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        working-directory: contrib/docker
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-universe-${{ matrix.shard }}-${{ matrix.nbShards }}
+          path: tests/playwright-report/
+          retention-days: 30
+

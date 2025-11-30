@@ -1,0 +1,16 @@
+# Universe-specific docker-compose override
+# This file overrides image names to use universe images from GHCR
+# Used in conjunction with docker-compose.prod.yaml
+# GITHUB_REPOSITORY_OWNER and VERSION must be set as environment variables
+
+version: "3.6"
+services:
+  play:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/play-universe:${VERSION}
+  back:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/back-universe:${VERSION}
+  uploader:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/uploader-universe:${VERSION}
+  map-storage:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/map-storage-universe:${VERSION}
+
