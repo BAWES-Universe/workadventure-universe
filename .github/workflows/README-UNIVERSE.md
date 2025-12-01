@@ -2,7 +2,7 @@
 
 This document describes two approaches for building and deploying WorkAdventure Universe Docker images:
 
-1. **Local Build Scripts** (Recommended) - Build, verify, and push images locally to Docker Hub
+1. **Local Build Scripts** (Recommended) - Build, verify, and push images locally to Docker.
 2. **GitHub Actions Workflows** - Automated builds and tests using GitHub Container Registry (GHCR)
 
 ## Quick Start: Local Build Scripts
