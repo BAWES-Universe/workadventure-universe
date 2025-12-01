@@ -78,7 +78,13 @@ jobs:
           if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.docker_tag }}" ]; then
             echo "tag=${{ github.event.inputs.docker_tag }}" >> $GITHUB_OUTPUT
           elif [ "${{ github.event_name }}" == "workflow_run" ]; then
-            echo "tag=latest" >> $GITHUB_OUTPUT
+            # Use the branch name from the triggering workflow (universe branch)
+            BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
+            if [ -z "$BRANCH_NAME" ]; then
+              # Fallback to 'universe' if branch name not available
+              BRANCH_NAME="universe"
+            fi
+            echo "tag=${BRANCH_NAME}" >> $GITHUB_OUTPUT
           else
             echo "tag=latest" >> $GITHUB_OUTPUT
           fi
