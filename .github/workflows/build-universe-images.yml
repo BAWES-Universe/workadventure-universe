@@ -80,44 +80,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Make package public
-        run: |
-          PACKAGE_NAME="play-universe"
-          ORG="${{ github.repository_owner }}"
-          
-          # Wait for package to be registered, with retries
-          echo "Waiting for package to be registered..."
-          for i in {1..6}; do
-            sleep 5
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}")
-            
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Package found after $((i*5)) seconds"
-              break
-            fi
-            echo "Attempt $i: Package not found yet (HTTP $HTTP_CODE), waiting..."
-          done
-          
-          # Make package public
-          echo "Making ${ORG}/${PACKAGE_NAME} public..."
-          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}')
-          
-          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
-            echo "✓ Successfully made package public"
-          else
-            echo "✗ Failed with HTTP $HTTP_CODE"
-            cat /tmp/response.json
-            exit 1
-          fi
-
   build-back:
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'back' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
@@ -157,40 +119,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Make package public
-        run: |
-          PACKAGE_NAME="back-universe"
-          ORG="${{ github.repository_owner }}"
-          
-          # Wait for package to be registered, with retries
-          for i in {1..6}; do
-            sleep 5
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}")
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Package found after $((i*5)) seconds"
-              break
-            fi
-          done
-          
-          # Make package public
-          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}')
-          
-          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
-            echo "✓ Successfully made package public"
-          else
-            echo "✗ Failed with HTTP $HTTP_CODE"
-            cat /tmp/response.json
-            exit 1
-          fi
 
   build-map-storage:
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'map-storage' || github.event_name == 'push' }}
@@ -232,40 +160,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Make package public
-        run: |
-          PACKAGE_NAME="map-storage-universe"
-          ORG="${{ github.repository_owner }}"
-          
-          # Wait for package to be registered, with retries
-          for i in {1..6}; do
-            sleep 5
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}")
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Package found after $((i*5)) seconds"
-              break
-            fi
-          done
-          
-          # Make package public
-          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}')
-          
-          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
-            echo "✓ Successfully made package public"
-          else
-            echo "✗ Failed with HTTP $HTTP_CODE"
-            cat /tmp/response.json
-            exit 1
-          fi
-
   build-uploader:
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'uploader' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
@@ -305,39 +199,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Make package public
-        run: |
-          PACKAGE_NAME="uploader-universe"
-          ORG="${{ github.repository_owner }}"
-          
-          # Wait for package to be registered, with retries
-          for i in {1..6}; do
-            sleep 5
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}")
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Package found after $((i*5)) seconds"
-              break
-            fi
-          done
-          
-          # Make package public
-          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}')
-          
-          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
-            echo "✓ Successfully made package public"
-          else
-            echo "✗ Failed with HTTP $HTTP_CODE"
-            cat /tmp/response.json
-            exit 1
-          fi
 
 # Workflow trigger - Mon Dec  1 12:22:13 +03 2025
