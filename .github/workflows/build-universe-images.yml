@@ -88,23 +88,39 @@ jobs:
           PACKAGE_NAME="play-universe"
           ORG="${{ github.repository_owner }}"
           
-          echo "Attempting to make package public: ${ORG}/${PACKAGE_NAME}"
-          echo "API endpoint: https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}"
+          echo "Making package public: ${ORG}/${PACKAGE_NAME}"
           
-          # Try making package public with verbose output
-          curl -v -X PATCH \
+          # Make package public and capture response
+          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}' 2>&1 | head -50
+            -d '{"visibility":"public"}')
           
-          # Check if it worked by querying package visibility
-          echo ""
-          echo "Checking package visibility..."
-          curl -s -H "Accept: application/vnd.github+json" \
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "✓ Successfully made package public (HTTP 204)"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ Successfully made package public (HTTP 200)"
+            cat /tmp/response.json
+          else
+            echo "✗ Failed with HTTP $HTTP_CODE"
+            cat /tmp/response.json
+            exit 1
+          fi
+          
+          # Verify visibility
+          echo "Verifying package visibility..."
+          sleep 2
+          VISIBILITY=$(curl -s -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" | grep -o '"visibility":"[^"]*"' || echo "Could not verify visibility"
+            "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" | grep -o '"visibility":"[^"]*"' | cut -d'"' -f4)
+          
+          if [ "$VISIBILITY" = "public" ]; then
+            echo "✓ Package is now public"
+          else
+            echo "⚠ Package visibility: ${VISIBILITY:-unknown}"
+          fi
 
   build-back:
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'back' || github.event_name == 'push' }}
@@ -152,12 +168,18 @@ jobs:
           PACKAGE_NAME="back-universe"
           ORG="${{ github.repository_owner }}"
           echo "Making ${ORG}/${PACKAGE_NAME} public..."
-          curl -v -X PATCH \
+          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}' 2>&1 | head -50
+            -d '{"visibility":"public"}')
+          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ Successfully made package public"
+          else
+            echo "✗ Failed with HTTP $HTTP_CODE"
+            cat /tmp/response.json
+          fi
 
   build-map-storage:
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'map-storage' || github.event_name == 'push' }}
@@ -205,12 +227,18 @@ jobs:
           PACKAGE_NAME="map-storage-universe"
           ORG="${{ github.repository_owner }}"
           echo "Making ${ORG}/${PACKAGE_NAME} public..."
-          curl -v -X PATCH \
+          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}' 2>&1 | head -50
+            -d '{"visibility":"public"}')
+          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ Successfully made package public"
+          else
+            echo "✗ Failed with HTTP $HTTP_CODE"
+            cat /tmp/response.json
+          fi
 
   build-uploader:
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'uploader' || github.event_name == 'push' }}
@@ -258,11 +286,17 @@ jobs:
           PACKAGE_NAME="uploader-universe"
           ORG="${{ github.repository_owner }}"
           echo "Making ${ORG}/${PACKAGE_NAME} public..."
-          curl -v -X PATCH \
+          HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" -X PATCH \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE_NAME}" \
-            -d '{"visibility":"public"}' 2>&1 | head -50
+            -d '{"visibility":"public"}')
+          if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ Successfully made package public"
+          else
+            echo "✗ Failed with HTTP $HTTP_CODE"
+            cat /tmp/response.json
+          fi
 
 # Workflow trigger - Mon Dec  1 12:22:13 +03 2025
