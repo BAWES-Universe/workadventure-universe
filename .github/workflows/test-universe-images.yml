@@ -62,7 +62,7 @@ jobs:
         working-directory: contrib/docker
 
       - name: Create slug
-        uses: rlespinasse/github-slug-action@v4.2.3
+        uses: rlespinasse/github-slug-action@4.2.3
 
       - name: Install Room Api client dependencies
         run: npm ci
