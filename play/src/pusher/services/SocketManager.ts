@@ -46,6 +46,7 @@ import {
 import * as Sentry from "@sentry/node";
 import axios, { AxiosResponse, isAxiosError } from "axios";
 import { WebSocket } from "uWebSockets.js";
+import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { PusherRoom } from "../models/PusherRoom";
 import type { SocketData, BackConnection } from "../models/Websocket/SocketData";
 
@@ -414,14 +415,14 @@ export class SocketManager implements ZoneEventListener {
             try {
                 await space.forwarder.registerUser(client, filterType);
                 if (options.signal.aborted) {
-                    // The user has aborted the request, we should not add him to the space
-                    throw new Error("Join space aborted by the user");
+                    // The user has aborted the request, we should not add them to the space
+                    await space.forwarder.unregisterUser(client);
+                    throw options.signal.reason ?? new AbortError("Join space aborted");
                 }
             } catch (e) {
                 // Deleting the promise BEFORE unregistering the user (in case unregistering fails)
                 socketData.joinSpacesPromise.delete(spaceName);
-                await space.forwarder.unregisterUser(client);
-                throw new Error("An error occurred while joining a space", { cause: e });
+                throw e;
             }
         })();
 
@@ -433,6 +434,13 @@ export class SocketManager implements ZoneEventListener {
         // We could still receive an abort message afterwards (because the client could send the abort while we
         // are sending the answer). In this case, we will just leave the space in the abort handler.
         options.signal.addEventListener("abort", () => {
+            if (space == undefined) {
+                console.error("Space is undefined while unregistering user from space after abort");
+                Sentry.captureException(
+                    new Error("Space is undefined while unregistering user from space after abort")
+                );
+                return;
+            }
             space.forwarder.unregisterUser(client).catch((error) => {
                 console.error("Error while unregistering user from space after abort", error);
                 Sentry.captureException(error);
@@ -1211,11 +1219,6 @@ export class SocketManager implements ZoneEventListener {
 
             await space.forwarder.unregisterUser(client);
             socketData.joinSpacesPromise.delete(space.name);
-            const success = socketData.spaces.delete(space.name);
-            if (!success) {
-                console.error("Could not find space", spaceName, "to leave");
-                Sentry.captureException(new Error("Could not find space " + spaceName + " to leave"));
-            }
         } else {
             console.error("Could not find space", spaceName, "to leave");
             Sentry.captureException(new Error("Could not find space " + spaceName + " to leave"));
