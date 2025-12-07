@@ -283,6 +283,7 @@ services:
     tmpfs: /tmp
     ports:
       - "9233:9229"
+      - "3000:3000"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.map-storage.rule=Host(`map-storage.workadventure.localhost`)"
