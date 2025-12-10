@@ -233,13 +233,13 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             console.log("[Matrix] MatrixChatConnection.init: Matrix client started successfully");
             this.isGuest.set(this.client.isGuest());
             this.rebuildSpaceHierarchy();
-        } catch (error) {
+        } catch (error: unknown) {
             this.connectionStatus.set("OFFLINE");
             console.error("[Matrix] MatrixChatConnection.init: Initialization failed:", error);
             console.error("[Matrix] Error details:", {
-                message: error?.message,
-                stack: error?.stack,
-                name: error?.name,
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                name: error instanceof Error ? error.name : undefined,
             });
             Sentry.captureException(error);
         }
@@ -306,6 +306,10 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             }
         });
 
+        if (!this.client) {
+            throw new Error("Matrix client not initialized");
+        }
+
         this.client.on(ClientEvent.Room, this.handleRoom);
         this.client.on(ClientEvent.DeleteRoom, this.handleDeleteRoom);
         this.client.on(RoomEvent.MyMembership, this.handleMyMembership);
@@ -318,26 +322,56 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         await this.client.store.startup();
         console.log("[Matrix] Store started");
 
-        // Try to initialize crypto, but don't block if it fails or hangs
-        console.log("[Matrix] Initializing Rust crypto (with 3s timeout, non-blocking)...");
+        // Don't wait for crypto - start the client immediately
+        // Crypto will initialize in the background after client starts
+        console.log("[Matrix] Starting Matrix client sync...");
+        await this.client.startClient({
+            threadSupport: false,
+            //Detached to prevent using listener on localIdReplaced for each event
+            pendingEventOrdering: PendingEventOrdering.Detached,
+        });
+        console.log("[Matrix] Client startClient() called, sync should start now");
+
+        // Try to initialize crypto AFTER client has started
+        console.log("[Matrix] Initializing Rust crypto (with 5s timeout, non-blocking)...");
         // Initialize crypto in background - don't await it
+        const client = this.client;
+        if (!client) {
+            console.warn("[Matrix] Client not available for crypto initialization");
+            return;
+        }
         void (async () => {
             try {
+                // Give more time for the client to be fully ready
                 await Promise.race([
-                    this.client.initRustCrypto(),
+                    client.initRustCrypto(),
                     new Promise<never>((_, reject) => {
                         setTimeout(() => {
-                            reject(new Error("initRustCrypto timeout after 3s"));
-                        }, 3000);
+                            reject(new Error("initRustCrypto timeout after 5s"));
+                        }, 5000);
                     }),
                 ]);
                 console.log("[Matrix] Rust crypto initialized successfully");
-            } catch (error) {
+            } catch (error: unknown) {
+                // Check if this is a 404 on room_keys/version - this is normal when no backup exists
+                const isRoomKeys404 =
+                    error instanceof MatrixError &&
+                    (error.errcode === "M_NOT_FOUND" ||
+                        error.errcode === "M_MISSING_TOKEN" ||
+                        (error instanceof Error && error.message.includes("room_keys")));
+
+                if (isRoomKeys404) {
+                    // Silently ignore - 404 on room_keys/version is expected when no backup is configured
+                    console.debug("[Matrix] initRustCrypto: No key backup found (this is normal)");
+                    return;
+                }
+
+                // For other errors, log and retry
                 console.warn("[Matrix] initRustCrypto failed or timed out, trying to clear stores and retry:", error);
                 try {
                     // Try clearing stores and retrying once (with shorter timeout)
                     await Promise.race([
-                        this.client.clearStores(),
+                        client.clearStores(),
                         new Promise<never>((_, reject) => {
                             setTimeout(() => {
                                 reject(new Error("clearStores timeout after 2s"));
@@ -346,32 +380,34 @@ export class MatrixChatConnection implements ChatConnectionInterface {
                     ]);
                     console.log("[Matrix] Stores cleared, retrying crypto init...");
                     await Promise.race([
-                        this.client.initRustCrypto(),
+                        client.initRustCrypto(),
                         new Promise<never>((_, reject) => {
                             setTimeout(() => {
-                                reject(new Error("initRustCrypto retry timeout after 3s"));
-                            }, 3000);
+                                reject(new Error("initRustCrypto retry timeout after 5s"));
+                            }, 5000);
                         }),
                     ]);
                     console.log("[Matrix] Rust crypto initialized on retry");
                 } catch (retryError) {
-                    console.warn("[Matrix] initRustCrypto retry also failed, continuing without crypto:", retryError);
+                    // Check if retry also got a 404
+                    const isRetryRoomKeys404 =
+                        retryError instanceof MatrixError &&
+                        (retryError.errcode === "M_NOT_FOUND" ||
+                            retryError.errcode === "M_MISSING_TOKEN" ||
+                            (retryError instanceof Error && retryError.message.includes("room_keys")));
+
+                    if (isRetryRoomKeys404) {
+                        console.debug("[Matrix] initRustCrypto retry: No key backup found (this is normal)");
+                    } else {
+                        console.warn(
+                            "[Matrix] initRustCrypto retry also failed, continuing without crypto:",
+                            retryError
+                        );
+                    }
                     // Don't throw - just continue without crypto
                 }
             }
         })();
-
-        // Don't wait for crypto - start the client immediately
-        // Crypto will initialize in the background
-        console.log("[Matrix] Starting client sync (crypto init in background)...");
-
-        console.log("[Matrix] Starting Matrix client sync...");
-        await this.client.startClient({
-            threadSupport: false,
-            //Detached to prevent using listener on localIdReplaced for each event
-            pendingEventOrdering: PendingEventOrdering.Detached,
-        });
-        console.log("[Matrix] Client startClient() called, sync should start now");
 
         try {
             console.log("[Matrix] Waiting for initial sync...");
