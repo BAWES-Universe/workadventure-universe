@@ -7,6 +7,9 @@
     export let first: boolean | undefined = undefined;
     export let last: boolean | undefined = undefined;
     export let classList: string | undefined = undefined;
+
+    // Ensure Orbit always has proper left margin and rounded corners
+    $: finalClassList = classList ? classList : "!rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
 </script>
 
 {#if $adminDashboardActivatedStore}
@@ -18,7 +21,7 @@
         on:click={openAdminModalFromMenu}
         {first}
         {last}
-        {classList}
+        classList={finalClassList}
     >
         <WorldIcon />
     </ActionBarButton>

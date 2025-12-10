@@ -373,7 +373,7 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
             inviteItem.props = { ...inviteItem.props, last: hasItemsAfterNotLogin };
             menuItems.push(inviteItem);
         }
-        
+
         // Then login button (already has fallsInBurgerMenuStore: true)
         if (!$userIsConnected && ENABLE_OPENID) {
             // Create a copy to set props properly
@@ -381,26 +381,16 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
             // Login should have last=true if build or orbit comes after it (to get margin and rounded right edge)
             // This ensures Login gets proper styling when it's not the last item
             // Login should be part of the same visual group as Share (same bgColor)
-            loginItem.props = { 
-                ...loginItem.props, 
+            loginItem.props = {
+                ...loginItem.props,
                 last: $adminDashboardActivated || true, // Build always comes after
-                bgColor: "rgba(255, 255, 255, 0.1)" // Same as Share to keep them visually grouped
+                bgColor: "rgba(255, 255, 255, 0.1)", // Same as Share to keep them visually grouped
             };
             menuItems.push(loginItem);
         }
 
         // Build menu (will move to burger menu on mobile if space is limited)
-        // Create a copy to add margin class if Orbit follows (for proper spacing)
-        const mapsItem = { ...mapsMenuItem };
-        if ($adminDashboardActivated) {
-            // Add margin class to create space between Build and Orbit
-            const existingClassList = mapsItem.props.classList || "";
-            mapsItem.props = { 
-                ...mapsItem.props, 
-                classList: existingClassList ? `${existingClassList} me-1 @md/actions:me-2 @xl/actions:me-4` : "me-1 @md/actions:me-2 @xl/actions:me-4"
-            };
-        }
-        menuItems.push(mapsItem);
+        menuItems.push(mapsMenuItem);
 
         // Add Orbit button LAST (highest priority - stays visible on mobile)
         // Since items are right-aligned, the last item in array stays visible when space is limited
@@ -408,11 +398,15 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
             // Create a copy to avoid mutating the original
             const orbitItem = { ...orbitMenuItem };
             // Orbit is the last item, so it should have last prop for proper styling (rounded right edge)
-            // Also ensure Orbit has proper left margin/padding by NOT setting first prop
-            orbitItem.props = { 
-                ...orbitItem.props, 
+            // Add rounded left corners, left padding, and left margin via classList
+            // Using !important utilities to override ActionBarButton defaults
+            const existingClassList = orbitItem.props.classList || "";
+            orbitItem.props = {
+                ...orbitItem.props,
                 last: true,
-                first: false // Explicitly set to false so Orbit doesn't get first-of-type styling
+                classList: existingClassList
+                    ? `${existingClassList} !rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4`
+                    : "!rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4",
             };
             menuItems.push(orbitItem);
         } else {
