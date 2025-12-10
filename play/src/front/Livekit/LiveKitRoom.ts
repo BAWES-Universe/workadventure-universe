@@ -12,7 +12,7 @@ import {
 } from "livekit-client";
 import { get, Readable, Unsubscriber } from "svelte/store";
 import * as Sentry from "@sentry/svelte";
-import { LocalStreamStoreValue, speakerSelectedStore, stableLocalStreamStore } from "../Stores/MediaStore";
+import { localStreamStore, LocalStreamStoreValue, speakerSelectedStore } from "../Stores/MediaStore";
 import { screenSharingLocalStreamStore as screenSharingLocalStream } from "../Stores/ScreenSharingStore";
 import { SpaceInterface } from "../Space/SpaceInterface";
 import { StreamableSubjects } from "../Space/SpacePeerManager/SpacePeerManager";
@@ -57,7 +57,7 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             increment: incrementLivekitRoomCount,
             decrement: decrementLivekitRoomCount,
         },
-        private _localStreamStore: Readable<LocalStreamStoreValue> = stableLocalStreamStore
+        private _localStreamStore: Readable<LocalStreamStoreValue> = localStreamStore
     ) {
         this._livekitRoomCounter.increment();
     }
@@ -71,7 +71,6 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             publishDefaults: {
                 videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h90],
                 videoCodec: "vp8",
-                stopMicTrackOnMute: true,
             },
             videoCaptureDefaults: {
                 resolution: VideoPresets.h720,
@@ -545,20 +544,6 @@ export class LiveKitRoom implements LiveKitRoomInterface {
             this.room?.off(RoomEvent.ParticipantDisconnected, this.handleParticipantDisconnected.bind(this));
             this.room?.off(RoomEvent.ActiveSpeakersChanged, this.handleActiveSpeakersChanged.bind(this));
 
-            this.localParticipant?.setMicrophoneEnabled(false).catch((err) => {
-                console.error("An error occurred while disabling microphone", err);
-                Sentry.captureException(err);
-            });
-            // Clean up custom video tracks
-            this.unpublishCameraTrack().catch((err) => {
-                console.error("An error occurred while unpublishing camera track during destroy", err);
-                Sentry.captureException(err);
-            });
-            // Clean up screen share tracks (video and audio)
-            this.unpublishAllScreenShareTrack().catch((err) => {
-                console.error("An error occurred while unpublishing screen share tracks during destroy", err);
-                Sentry.captureException(err);
-            });
             this.leaveRoom();
         } finally {
             this._livekitRoomCounter.decrement();

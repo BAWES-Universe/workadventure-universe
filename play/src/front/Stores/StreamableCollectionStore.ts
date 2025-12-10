@@ -16,13 +16,13 @@ import { myCameraStore } from "./MyMediaStore";
 import {
     cameraEnergySavingStore,
     isListenerStore,
-    stableLocalStreamStore,
     localVoiceIndicatorStore,
     localVolumeStore,
     mediaStreamConstraintsStore,
     requestedCameraState,
     requestedMicrophoneState,
     silentStore,
+    localStreamStore,
 } from "./MediaStore";
 import { currentPlayerWokaStore } from "./CurrentPlayerWokaStore";
 import { screenShareStreamElementsStore, videoStreamElementsStore } from "./PeerStore";
@@ -83,7 +83,7 @@ export const SCREEN_SHARE_STARTING_PRIORITY = 1000; // Priority for screen shari
 export const VIDEO_STARTING_PRIORITY = 2000; // Priority for other video streams
 export const LAST_VIDEO_BOX_PRIORITY = 20000; // Priority for the last video boxes
 
-const localstreamStoreValue = derived(stableLocalStreamStore, (myLocalStream) => {
+const localstreamStoreValue = derived(localStreamStore, (myLocalStream) => {
     if (myLocalStream.type === "success") {
         return myLocalStream.stream;
     }

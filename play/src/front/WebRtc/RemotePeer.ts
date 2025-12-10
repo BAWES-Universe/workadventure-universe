@@ -1,4 +1,5 @@
 import { Buffer } from "buffer";
+import Debug from "debug";
 import { derived, get, Readable, readable, Unsubscriber, Writable, writable } from "svelte/store";
 import Peer from "simple-peer/simplepeer.min.js";
 import { ForwardableStore } from "@workadventure/store-utils";
@@ -22,6 +23,8 @@ export type PeerStatus = "connecting" | "connected" | "error" | "closed";
 
 // Firefox needs more time for ICE negotiation
 const CONNECTION_TIMEOUT = isFirefox() ? 10000 : 5000; // 10s for Firefox, 5s for others
+
+const debug = Debug("webrtc:RemotePeer");
 
 /**
  * A peer connection used to transmit video / audio signals between 2 peers.
@@ -353,45 +356,37 @@ export class RemotePeer extends Peer implements Streamable {
                         newVideoTrack = streamValue.stream.getVideoTracks()[0];
 
                         if (newVideoTrack && this.localVideoTrack && newVideoTrack.id !== this.localVideoTrack.id) {
+                            debug("Replacing video track in P2P connection");
                             this.replaceTrack(this.localVideoTrack, newVideoTrack, this.localStream);
                         } else if (newVideoTrack && !this.localVideoTrack) {
+                            debug("Adding video track in P2P connection");
                             this.addTrack(newVideoTrack, this.localStream);
-                        } else if (
-                            newVideoTrack &&
-                            this.localVideoTrack &&
-                            newVideoTrack.id === this.localVideoTrack.id &&
-                            !this.localVideoTrack.enabled
-                        ) {
-                            this.localVideoTrack.enabled = true;
-                            newVideoTrack = this.localVideoTrack;
                         } else if (this.localVideoTrack && !newVideoTrack) {
-                            this.localVideoTrack.enabled = false;
-                            newVideoTrack = this.localVideoTrack;
+                            debug("Removing video track in P2P connection");
+                            this.removeTrack(this.localVideoTrack, this.localStream);
                         }
 
                         newAudioTrack = streamValue.stream.getAudioTracks()[0];
 
                         if (newAudioTrack && this.localAudioTrack && newAudioTrack.id !== this.localAudioTrack.id) {
+                            debug("Replacing audio track in P2P connection");
                             this.replaceTrack(this.localAudioTrack, newAudioTrack, this.localStream);
                         } else if (newAudioTrack && !this.localAudioTrack) {
+                            debug("Adding audio track in P2P connection");
                             this.addTrack(newAudioTrack, this.localStream);
-                        } else if (
-                            newAudioTrack &&
-                            this.localAudioTrack &&
-                            newAudioTrack.id === this.localAudioTrack.id &&
-                            !this.localAudioTrack.enabled
-                        ) {
-                            // Only re-enable the track if the new track is also enabled
-                            // If the new track is disabled, it means the user explicitly muted, so we should preserve that state
-                            if (newAudioTrack.enabled) {
-                                this.localAudioTrack.enabled = true;
-                            }
-                            newAudioTrack = this.localAudioTrack;
                         } else if (this.localAudioTrack && !newAudioTrack) {
-                            this.localAudioTrack.enabled = false;
-                            newAudioTrack = this.localAudioTrack;
+                            debug("Removing audio track in P2P connection");
+                            this.removeTrack(this.localAudioTrack, this.localStream);
+                        }
+
+                        if (!newAudioTrack && !newVideoTrack) {
+                            debug("No tracks left, removing stream in P2P connection");
+                            // No tracks left, remove the stream
+                            this.removeStream(this.localStream);
+                            this.localStream = undefined;
                         }
                     } else {
+                        debug("Adding stream in P2P connection");
                         this.addStream(streamValue.stream);
                         this.localStream = streamValue.stream;
                         newAudioTrack = streamValue.stream.getAudioTracks()[0];
@@ -399,24 +394,6 @@ export class RemotePeer extends Peer implements Streamable {
                     }
                     this.localAudioTrack = newAudioTrack;
                     this.localVideoTrack = newVideoTrack;
-                } else {
-                    if (this.localStream) {
-                        if (this.localAudioTrack) {
-                            this.localAudioTrack.enabled = false;
-                        }
-                        if (this.localVideoTrack) {
-                            this.localVideoTrack.enabled = false;
-                        }
-                    }
-                }
-            } else {
-                if (this.localStream) {
-                    if (this.localAudioTrack) {
-                        this.localAudioTrack.enabled = false;
-                    }
-                    if (this.localVideoTrack) {
-                        this.localVideoTrack.enabled = false;
-                    }
                 }
             }
         });
@@ -484,6 +461,7 @@ export class RemotePeer extends Peer implements Streamable {
      * Sends received stream to screen.
      */
     private stream(stream: MediaStream) {
+        debug("Receiving stream from peer", this._spaceUserId);
         this._streamStore.set(stream);
         try {
             this.remoteStream = stream;
