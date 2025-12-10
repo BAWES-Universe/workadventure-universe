@@ -7,6 +7,7 @@
     export let first: boolean | undefined = undefined;
     export let last: boolean | undefined = undefined;
     export let classList: string | undefined = undefined;
+    export let bgColor: string | undefined = undefined;
 
     function goToLogin() {
         analyticsClient.login();
@@ -22,6 +23,7 @@
     {first}
     {last}
     {classList}
+    {bgColor}
 >
     <IconUserCircle />
 </ActionBarButton>

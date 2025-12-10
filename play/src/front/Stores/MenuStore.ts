@@ -366,21 +366,41 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
         if ($inviteUserActivated) {
             // Create a copy to avoid mutating the original
             const inviteItem = { ...inviteMenuItem };
-            // Set last prop if there will be items after it (for proper spacing and rounded corners)
-            // This ensures Share gets margin (me-1 @md/actions:me-2 @xl/actions:me-4) and rounded right edge
-            // Share should have last=true if login, build, or orbit comes after it
-            const hasItemsAfter = (!$userIsConnected && ENABLE_OPENID) || $adminDashboardActivated || true; // Build menu always comes after
-            inviteItem.props = { ...inviteItem.props, last: hasItemsAfter };
+            // Set last prop only if Login is NOT the next item (to keep Share and Login visually grouped)
+            // Share should have last=true if build or orbit comes after it, but NOT if login comes after
+            // This keeps Share and Login in the same visual block
+            const hasItemsAfterNotLogin = !(!$userIsConnected && ENABLE_OPENID) && ($adminDashboardActivated || true); // Build always comes, orbit might come
+            inviteItem.props = { ...inviteItem.props, last: hasItemsAfterNotLogin };
             menuItems.push(inviteItem);
         }
         
         // Then login button (already has fallsInBurgerMenuStore: true)
         if (!$userIsConnected && ENABLE_OPENID) {
-            menuItems.push(loginMenuItem);
+            // Create a copy to set props properly
+            const loginItem = { ...loginMenuItem };
+            // Login should have last=true if build or orbit comes after it (to get margin and rounded right edge)
+            // This ensures Login gets proper styling when it's not the last item
+            // Login should be part of the same visual group as Share (same bgColor)
+            loginItem.props = { 
+                ...loginItem.props, 
+                last: $adminDashboardActivated || true, // Build always comes after
+                bgColor: "rgba(255, 255, 255, 0.1)" // Same as Share to keep them visually grouped
+            };
+            menuItems.push(loginItem);
         }
 
         // Build menu (will move to burger menu on mobile if space is limited)
-        menuItems.push(mapsMenuItem);
+        // Create a copy to add margin class if Orbit follows (for proper spacing)
+        const mapsItem = { ...mapsMenuItem };
+        if ($adminDashboardActivated) {
+            // Add margin class to create space between Build and Orbit
+            const existingClassList = mapsItem.props.classList || "";
+            mapsItem.props = { 
+                ...mapsItem.props, 
+                classList: existingClassList ? `${existingClassList} me-1 @md/actions:me-2 @xl/actions:me-4` : "me-1 @md/actions:me-2 @xl/actions:me-4"
+            };
+        }
+        menuItems.push(mapsItem);
 
         // Add Orbit button LAST (highest priority - stays visible on mobile)
         // Since items are right-aligned, the last item in array stays visible when space is limited
@@ -388,7 +408,12 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
             // Create a copy to avoid mutating the original
             const orbitItem = { ...orbitMenuItem };
             // Orbit is the last item, so it should have last prop for proper styling (rounded right edge)
-            orbitItem.props = { ...orbitItem.props, last: true };
+            // Also ensure Orbit has proper left margin/padding by NOT setting first prop
+            orbitItem.props = { 
+                ...orbitItem.props, 
+                last: true,
+                first: false // Explicitly set to false so Orbit doesn't get first-of-type styling
+            };
             menuItems.push(orbitItem);
         } else {
             // If orbit is not active, set last prop on the actual last item (build menu)
