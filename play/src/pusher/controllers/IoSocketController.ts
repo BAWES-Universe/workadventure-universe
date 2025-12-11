@@ -1151,18 +1151,6 @@ export class IoSocketController {
                                 break;
                             }
 
-                            case "requestFullSyncMessage": {
-                                message.message.requestFullSyncMessage.spaceName = `${socket.getUserData().world}.${
-                                    message.message.requestFullSyncMessage.spaceName
-                                }`;
-
-                                await socketManager.handleRequestFullSync(
-                                    socket,
-                                    message.message.requestFullSyncMessage
-                                );
-
-                                break;
-                            }
                             case "publicEvent": {
                                 message.message.publicEvent.spaceName = `${socket.getUserData().world}.${
                                     message.message.publicEvent.spaceName
@@ -1194,17 +1182,19 @@ export class IoSocketController {
                         console.error("An error occurred while processing a message: ", e);
 
                         try {
-                            socket.send(
-                                ServerToClientMessage.encode({
-                                    message: {
-                                        $case: "errorMessage",
-                                        errorMessage: {
-                                            message: "An error occurred in pusher: " + asError(e).message,
+                            if (!socket.getUserData().disconnecting) {
+                                socket.send(
+                                    ServerToClientMessage.encode({
+                                        message: {
+                                            $case: "errorMessage",
+                                            errorMessage: {
+                                                message: "An error occurred in pusher: " + asError(e).message,
+                                            },
                                         },
-                                    },
-                                }).finish(),
-                                true
-                            );
+                                    }).finish(),
+                                    true
+                                );
+                            }
                         } catch (error) {
                             Sentry.captureException(error);
                             console.error(error);

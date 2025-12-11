@@ -15,6 +15,7 @@
     import ChevronUpIcon from "../Icons/ChevronUpIcon.svelte";
     import { hideActionBarStoreBecauseOfChatBar } from "../../Chat/ChatSidebarWidthStore";
     import { screenSharingAvailableStore } from "../../Stores/ScreenSharingStore";
+    import { isInRemoteConversation } from "../../Stores/StreamableCollectionStore";
     import MediaSettingsList from "./MediaSettingsList.svelte";
     import CameraMenuItem from "./MenuIcons/CameraMenuItem.svelte";
     import MicrophoneMenuItem from "./MenuIcons/MicrophoneMenuItem.svelte";
@@ -27,6 +28,7 @@
     import ContextualMenuItems from "./MenuIcons/ContextualMenuItems.svelte";
     import CloseChatMenuItem from "./MenuIcons/CloseChatMenuItem.svelte";
     import SilentBlock from "./SilentBlock.svelte";
+    import PictureInPictureMenuItem from "./MenuIcons/PictureInPictureMenuItem.svelte";
 
     let rightDiv: HTMLDivElement;
     let mediaSettingsDisplayed = false;
@@ -93,6 +95,7 @@
                                 {mediaSettingsDisplayed ? 'opacity-100' : 'group-hover/hardware:opacity-100'}"
                             >
                                 <!-- svelte-ignore a11y-click-events-have-key-events -->
+                                <!-- svelte-ignore a11y-no-static-element-interactions -->
                                 <div
                                     class="absolute bottom-1 start-0 end-0 m-auto hover:bg-white/10 h-5 w-5 flex items-center justify-center rounded-sm mobile:rotate-180"
                                     on:click|stopPropagation|preventDefault={() =>
@@ -121,6 +124,9 @@
                         <!-- NAV : SCREENSHARING START -->
                         {#if $screenSharingAvailableStore}
                             <ScreenSharingMenuItem />
+                            {#if $isInRemoteConversation}
+                                <PictureInPictureMenuItem />
+                            {/if}
                         {/if}
                         <!-- NAV : SCREENSHARING END -->
                     </div>
