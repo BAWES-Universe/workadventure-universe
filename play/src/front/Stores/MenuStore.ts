@@ -14,6 +14,7 @@ import {
 import MapSubMenu from "../Components/ActionBar/MenuIcons/MapSubMenu.svelte";
 import LoginMenuItem from "../Components/ActionBar/MenuIcons/LoginMenuItem.svelte";
 import InviteMenuItem from "../Components/ActionBar/MenuIcons/InviteMenuItem.svelte";
+import OrbitMenuItem from "../Components/ActionBar/MenuIcons/OrbitMenuItem.svelte";
 import CustomActionBarButton from "../Components/ActionBar/MenuIcons/CustomActionBarButton.svelte";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { userIsAdminStore } from "./GameStore";
@@ -334,22 +335,86 @@ const inviteMenuItem: RightMenuItem<InviteMenuItem> = {
     },
 };
 
+// Store to track if Orbit (admin dashboard) should be shown
+export const adminDashboardActivatedStore = writable(false);
+
+const orbitMenuItem: RightMenuItem<OrbitMenuItem> = {
+    id: "orbit",
+    fallsInBurgerMenuStore: writable(false), // Highest priority - stays visible on mobile
+    component: OrbitMenuItem,
+    props: {},
+};
+
 export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentTyped>[]> = derived(
-    [additionalRightButtonsMenu, userIsConnected, inviteUserActivated],
-    ([$additionalButtonsMenu, $userIsConnected, $inviteUserActivated]) => {
-        const menuItems: RightMenuItem<SvelteComponentTyped>[] = [...$additionalButtonsMenu.values()];
+    [additionalRightButtonsMenu, userIsConnected, inviteUserActivated, adminDashboardActivatedStore],
+    ([$additionalButtonsMenu, $userIsConnected, $inviteUserActivated, $adminDashboardActivated]) => {
+        const menuItems: RightMenuItem<SvelteComponentTyped>[] = [];
+
+        // Add additional buttons from "top" location first
+        const additionalButtons = [...$additionalButtonsMenu.values()];
+        if (additionalButtons.length > 0) {
+            // Set last prop on last additional button if there will be items after
+            const lastAdditional = additionalButtons[additionalButtons.length - 1];
+            lastAdditional.props = {
+                ...lastAdditional.props,
+                last: $inviteUserActivated || (!$userIsConnected && ENABLE_OPENID) || $adminDashboardActivated,
+            };
+        }
+        menuItems.push(...additionalButtons);
+
+        // Then add share button (will move to burger menu on mobile if space is limited)
         if ($inviteUserActivated) {
-            menuItems.push(inviteMenuItem);
+            // Create a copy to avoid mutating the original
+            const inviteItem = { ...inviteMenuItem };
+            // Set last prop only if Login is NOT the next item (to keep Share and Login visually grouped)
+            // Share should have last=true if build or orbit comes after it, but NOT if login comes after
+            // This keeps Share and Login in the same visual block
+            const hasItemsAfterNotLogin = !(!$userIsConnected && ENABLE_OPENID) && ($adminDashboardActivated || true); // Build always comes, orbit might come
+            inviteItem.props = { ...inviteItem.props, last: hasItemsAfterNotLogin };
+            menuItems.push(inviteItem);
         }
+
+        // Then login button (already has fallsInBurgerMenuStore: true)
         if (!$userIsConnected && ENABLE_OPENID) {
-            menuItems.push(loginMenuItem);
+            // Create a copy to set props properly
+            const loginItem = { ...loginMenuItem };
+            // Login should have last=true if build or orbit comes after it (to get margin and rounded right edge)
+            // This ensures Login gets proper styling when it's not the last item
+            // Login should be part of the same visual group as Share (same bgColor)
+            loginItem.props = {
+                ...loginItem.props,
+                last: $adminDashboardActivated || true, // Build always comes after
+                bgColor: "rgba(255, 255, 255, 0.1)", // Same as Share to keep them visually grouped
+            };
+            menuItems.push(loginItem);
         }
 
-        if (menuItems.length > 0) {
-            menuItems[menuItems.length - 1].props.last = true;
-        }
-
+        // Build menu (will move to burger menu on mobile if space is limited)
         menuItems.push(mapsMenuItem);
+
+        // Add Orbit button LAST (highest priority - stays visible on mobile)
+        // Since items are right-aligned, the last item in array stays visible when space is limited
+        if ($adminDashboardActivated) {
+            // Create a copy to avoid mutating the original
+            const orbitItem = { ...orbitMenuItem };
+            // Orbit is the last item, so it should have last prop for proper styling (rounded right edge)
+            // Add rounded left corners, left padding, and left margin via classList
+            // Using !important utilities to override ActionBarButton defaults
+            const existingClassList = orbitItem.props.classList || "";
+            orbitItem.props = {
+                ...orbitItem.props,
+                last: true,
+                classList: existingClassList
+                    ? `${existingClassList} !rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4`
+                    : "!rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4",
+            };
+            menuItems.push(orbitItem);
+        } else {
+            // If orbit is not active, set last prop on the actual last item (build menu)
+            if (menuItems.length > 0) {
+                menuItems[menuItems.length - 1].props.last = true;
+            }
+        }
 
         return menuItems;
     }
