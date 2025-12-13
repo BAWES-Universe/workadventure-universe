@@ -54,7 +54,7 @@ function openAdminModal(options: ExtensionModuleOptions) {
         src: adminDashboardUrl,
         allow: "fullscreen",
         allowApi: true,
-        position: "center",
+        position: "right",
         allowFullScreen: true,
     };
 
