@@ -54,12 +54,15 @@
     const resizeObserver = new ResizeObserver(() => {
         isMobile = isMediaBreakpointUp("md");
     });
+
+    // On mobile, only force fullscreen for center position, respect right/left positions
+    $: shouldForceMobileFullScreen = isMobile && $modalIframeStore?.position === "center";
 </script>
 
 <svelte:window on:keydown={onKeyDown} />
 
 <div
-    class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all {isMobile
+    class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all {shouldForceMobileFullScreen
         ? 'mobile'
         : $modalIframeStore?.position} {isFullScreened ? 'fullscreened' : ''}"
     bind:this={mainModal}
@@ -68,7 +71,7 @@
         <div
             class={`flex justify-center items-center content-center bg-contrast/80 backdrop-blur p-2 space-x-0 @lg/main-layout:space-x-2 rounded-lg absolute z-50 hover:opacity-100 opacity-25 transition-opacity duration-300
                 ${
-                    isFullScreened || isMobile
+                    isFullScreened || shouldForceMobileFullScreen
                         ? "top-4 right-4"
                         : `${
                               $modalIframeStore?.position == "center" || $modalIframeStore?.position == "left"
@@ -152,6 +155,10 @@
         &.right:not(.fullscreened),
         &.left:not(.fullscreened) {
             width: 33%;
+            @media (max-width: 991px) {
+                width: 80%;
+                max-width: 400px;
+            }
         }
         &.right {
             right: 0;
