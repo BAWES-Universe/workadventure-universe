@@ -41,6 +41,9 @@ class App {
         this.websocketApp = uWebsockets.App();
         this.app = express();
 
+        // Trust proxy to correctly detect HTTPS behind reverse proxy
+        this.app.set("trust proxy", true);
+
         this.app.use(express.json());
         this.app.use(express.urlencoded());
         // It seems the cookieParser type is not yet compatible with express 5
