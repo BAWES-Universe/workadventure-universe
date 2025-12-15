@@ -136,6 +136,7 @@ export class AuthenticateController extends BaseHttpController {
             res.cookie("playUri", query.playUri, {
                 httpOnly: true, // dont let browser javascript access cookie ever
                 secure: req.secure, // only use cookie over https
+                sameSite: req.secure ? "none" : "lax", // 'none' required for cross-site redirects, but only works with secure
             });
 
             res.redirect(loginUri);
@@ -671,6 +672,7 @@ export class AuthenticateController extends BaseHttpController {
             res.cookie("playUri", query.playUri, {
                 httpOnly: true, // dont let browser javascript access cookie ever
                 secure: req.secure, // only use cookie over https
+                sameSite: req.secure ? "none" : "lax", // 'none' required for cross-site redirects, but only works with secure
             });
             res.redirect(query.redirect);
         });

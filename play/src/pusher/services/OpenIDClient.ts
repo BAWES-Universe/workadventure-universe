@@ -83,6 +83,7 @@ class OpenIDClient {
             res.cookie("code_verifier", this.encrypt(code_verifier), {
                 httpOnly: true, // dont let browser javascript access cookie ever
                 secure: req.secure, // only use cookie over https
+                sameSite: req.secure ? "none" : "lax", // 'none' required for cross-site redirects, but only works with secure
             });
 
             // We also store the state in cookies. The state should not be needed, except for older OpenID client servers that
@@ -91,6 +92,7 @@ class OpenIDClient {
             res.cookie("oidc_state", state, {
                 httpOnly: true, // dont let browser javascript access cookie ever
                 secure: req.secure, // only use cookie over https
+                sameSite: req.secure ? "none" : "lax", // 'none' required for cross-site redirects, but only works with secure
             });
 
             const code_challenge = generators.codeChallenge(code_verifier);
