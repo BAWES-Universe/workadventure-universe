@@ -1,11 +1,11 @@
 <script lang="ts">
-    import CameraExclamationIcon from "../Icons/CameraExclamationIcon.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import type { Streamable } from "../../Stores/StreamableCollectionStore";
     import MegaphoneIcon from "../Icons/MegaphoneIcon.svelte";
     import WebRtcVideo from "./VideoTags/WebRtcVideo.svelte";
     import LivekitVideo from "./VideoTags/LivekitVideo.svelte";
     import ScriptingVideo from "./VideoTags/ScriptingVideo.svelte";
+    import { IconCameraExclamation } from "@wa-icons";
 
     /**
      * This component is in charge of displaying a <video> element in the center of the
@@ -204,7 +204,7 @@
             class="absolute w-full h-full aspect-video mx-auto flex justify-center items-center bg-danger text-white rounded-lg"
         >
             <div class="text-center">
-                <CameraExclamationIcon />
+                <IconCameraExclamation font-size="20" class="text-white" />
                 <div class="text-lg text-white bold">{$LL.video.no_video_stream_received()}</div>
                 <div class="italic text-xs opacity-50">
                     {$LL.menu.sub.help()}
