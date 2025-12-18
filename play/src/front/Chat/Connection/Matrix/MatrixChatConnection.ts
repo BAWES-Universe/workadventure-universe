@@ -218,34 +218,14 @@ export class MatrixChatConnection implements ChatConnectionInterface {
 
     async init(): Promise<void> {
         try {
-            console.log("[Matrix] MatrixChatConnection.init: Starting initialization...");
-            console.log("[Matrix] MatrixChatConnection.init: Waiting for client promise...");
-
-            // Add timeout to client promise to prevent infinite hanging
-            this.client = await Promise.race([
-                this.clientPromise,
-                new Promise<MatrixClient>((_, reject) => {
-                    setTimeout(() => {
-                        reject(new Error("Client promise timeout after 15s"));
-                    }, 15000);
-                }),
-            ]);
-
-            console.log("[Matrix] MatrixChatConnection.init: Client created, userId:", this.client.getUserId());
+            this.client = await this.clientPromise;
             this.matrixSecurity.updateMatrixClientStore(this.client);
-            console.log("[Matrix] MatrixChatConnection.init: Starting Matrix client...");
             await this.startMatrixClient();
-            console.log("[Matrix] MatrixChatConnection.init: Matrix client started successfully");
             this.isGuest.set(this.client.isGuest());
             this.rebuildSpaceHierarchy();
         } catch (error: unknown) {
             this.connectionStatus.set("OFFLINE");
-            console.error("[Matrix] MatrixChatConnection.init: Initialization failed:", error);
-            console.error("[Matrix] Error details:", {
-                message: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined,
-                name: error instanceof Error ? error.name : undefined,
-            });
+            console.error(error);
             Sentry.captureException(error);
         }
     }
@@ -272,38 +252,28 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     }
 
     async startMatrixClient() {
-        if (!this.client) {
-            console.warn("[Matrix] startMatrixClient: No client available");
-            return;
-        }
-        console.log("[Matrix] Setting up sync event handlers...");
+        if (!this.client) return;
         this.client.on(ClientEvent.Sync, (state, prevState, res) => {
             if (!this.client) return;
-            console.log("[Matrix] Sync state changed:", state, "previous:", prevState);
             switch (state) {
                 case SyncState.Prepared:
-                    console.log("[Matrix] Sync state: Prepared - setting ONLINE");
                     this.connectionStatus.set("ONLINE");
                     this.isClientReady = true;
                     break;
                 case SyncState.Error:
-                    console.error("[Matrix] Sync state: Error");
                     this.connectionStatus.set("ON_ERROR");
                     if (res?.error) {
-                        console.error("[Matrix] Matrix sync error (previous state: ", prevState, "): ", res?.error);
+                        console.error("Matrix sync error (previous state: ", prevState, "): ", res?.error);
                         Sentry.captureException(res?.error);
                     }
                     break;
                 case SyncState.Reconnecting:
-                    console.log("[Matrix] Sync state: Reconnecting - setting CONNECTING");
                     this.connectionStatus.set("CONNECTING");
                     break;
                 case SyncState.Stopped:
-                    console.log("[Matrix] Sync state: Stopped - setting OFFLINE");
                     this.connectionStatus.set("OFFLINE");
                     break;
                 case SyncState.Syncing:
-                    console.log("[Matrix] Sync state: Syncing");
                     if (get(this.connectionStatus) !== "ONLINE" && this.isClientReady) {
                         this.connectionStatus.set("ONLINE");
                     }
@@ -323,103 +293,25 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         this.client.on(ClientEvent.AccountData, this.handleAccountDataEvent);
         this.client.on(UserEvent.Presence, this.handleUserPresence);
         this.client.on(CryptoEvent.VerificationRequestReceived, this.handleVerificationRequestReceived);
-        console.log("[Matrix] Starting store...");
         await this.client.store.startup();
-        console.log("[Matrix] Store started");
 
-        // Don't wait for crypto - start the client immediately
-        // Crypto will initialize in the background after client starts
-        console.log("[Matrix] Starting Matrix client sync...");
+        try {
+            await this.client.initRustCrypto();
+        } catch {
+            await this.client.clearStores();
+            await this.client.initRustCrypto();
+        }
+
         await this.client.startClient({
             threadSupport: false,
             //Detached to prevent using listener on localIdReplaced for each event
             pendingEventOrdering: PendingEventOrdering.Detached,
         });
-        console.log("[Matrix] Client startClient() called, sync should start now");
-
-        // Try to initialize crypto AFTER client has started
-        console.log("[Matrix] Initializing Rust crypto (with 5s timeout, non-blocking)...");
-        // Initialize crypto in background - don't await it
-        const client = this.client;
-        if (!client) {
-            console.warn("[Matrix] Client not available for crypto initialization");
-            return;
-        }
-        void (async () => {
-            try {
-                // Give more time for the client to be fully ready
-                await Promise.race([
-                    client.initRustCrypto(),
-                    new Promise<never>((_, reject) => {
-                        setTimeout(() => {
-                            reject(new Error("initRustCrypto timeout after 5s"));
-                        }, 5000);
-                    }),
-                ]);
-                console.log("[Matrix] Rust crypto initialized successfully");
-            } catch (error: unknown) {
-                // Check if this is a 404 on room_keys/version - this is normal when no backup exists
-                const isRoomKeys404 =
-                    error instanceof MatrixError &&
-                    (error.errcode === "M_NOT_FOUND" ||
-                        error.errcode === "M_MISSING_TOKEN" ||
-                        (error instanceof Error && error.message.includes("room_keys")));
-
-                if (isRoomKeys404) {
-                    // Silently ignore - 404 on room_keys/version is expected when no backup is configured
-                    console.debug("[Matrix] initRustCrypto: No key backup found (this is normal)");
-                    return;
-                }
-
-                // For other errors, log and retry
-                console.warn("[Matrix] initRustCrypto failed or timed out, trying to clear stores and retry:", error);
-                try {
-                    // Try clearing stores and retrying once (with shorter timeout)
-                    await Promise.race([
-                        client.clearStores(),
-                        new Promise<never>((_, reject) => {
-                            setTimeout(() => {
-                                reject(new Error("clearStores timeout after 2s"));
-                            }, 2000);
-                        }),
-                    ]);
-                    console.log("[Matrix] Stores cleared, retrying crypto init...");
-                    await Promise.race([
-                        client.initRustCrypto(),
-                        new Promise<never>((_, reject) => {
-                            setTimeout(() => {
-                                reject(new Error("initRustCrypto retry timeout after 5s"));
-                            }, 5000);
-                        }),
-                    ]);
-                    console.log("[Matrix] Rust crypto initialized on retry");
-                } catch (retryError) {
-                    // Check if retry also got a 404
-                    const isRetryRoomKeys404 =
-                        retryError instanceof MatrixError &&
-                        (retryError.errcode === "M_NOT_FOUND" ||
-                            retryError.errcode === "M_MISSING_TOKEN" ||
-                            (retryError instanceof Error && retryError.message.includes("room_keys")));
-
-                    if (isRetryRoomKeys404) {
-                        console.debug("[Matrix] initRustCrypto retry: No key backup found (this is normal)");
-                    } else {
-                        console.warn(
-                            "[Matrix] initRustCrypto retry also failed, continuing without crypto:",
-                            retryError
-                        );
-                    }
-                    // Don't throw - just continue without crypto
-                }
-            }
-        })();
 
         try {
-            console.log("[Matrix] Waiting for initial sync...");
             await this.waitInitialSync();
-            console.log("[Matrix] Initial sync completed");
         } catch (error) {
-            console.error("[Matrix] Failed to wait initial sync:", error);
+            console.error("Failed to wait initial sync:", error);
         }
     }
 

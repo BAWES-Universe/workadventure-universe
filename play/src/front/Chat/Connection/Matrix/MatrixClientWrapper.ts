@@ -67,11 +67,9 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
     ) {}
 
     public async initMatrixClient(): Promise<MatrixClient> {
-        console.log("[Matrix] MatrixClientWrapper.initMatrixClient: Starting...");
         const userId = this.localUserStore.getLocalUser()?.uuid;
 
         if (!userId) {
-            console.error("[Matrix] UserUUID is undefined");
             throw new Error("UserUUID is undefined, this is not supposed to happen.");
         }
 
@@ -91,14 +89,6 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         matrixUserId = matrixUserIdFromLocalStorage;
         matrixDeviceId = deviceId;
 
-        console.log("[Matrix] Retrieved from localStorage:", {
-            hasAccessToken: !!accessToken,
-            hasRefreshToken: !!refreshToken,
-            matrixUserId,
-            matrixDeviceId,
-            hasLoginToken: !!matrixLoginToken,
-        });
-
         const oldMatrixUserId: string | null = matrixUserIdFromLocalStorage;
 
         if (matrixLoginToken !== null) {
@@ -115,26 +105,19 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         }
 
         if (!accessToken) {
-            console.error("[Matrix] Unable to connect to matrix, access token is null");
+            console.error("Unable to connect to matrix, access token is null");
             throw new Error("Unable to connect to matrix, access token is null");
         }
 
         if (!matrixUserId) {
-            console.error("[Matrix] Unable to connect to matrix, matrixUserId is null");
+            console.error("Unable to connect to matrix, matrixUserId is null");
             throw new Error("Unable to connect to matrix, matrixUserId is null");
         }
 
         if (!matrixDeviceId) {
-            console.error("[Matrix] Unable to connect to matrix, matrixDeviceId is null");
+            console.error("Unable to connect to matrix, matrixDeviceId is null");
             throw new Error("Unable to connect to matrix, matrixDeviceId is null");
         }
-
-        console.log("[Matrix] All required data present, creating Matrix client with:", {
-            baseUrl: this.baseUrl,
-            userId: matrixUserId,
-            deviceId: matrixDeviceId,
-            hasAccessToken: !!accessToken,
-        });
 
         const { matrixStore, matrixCryptoStore } = this.matrixWebClientStore(matrixUserId);
 
@@ -166,23 +149,12 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         }
 
         // Now, let's instantiate the Matrix client.
-        console.log("[Matrix] Creating Matrix client instance...");
         this.client = this._createClient(matrixCreateClientOpts);
 
         if (oldMatrixUserId !== matrixUserId) {
-            console.log("[Matrix] Matrix user ID changed, clearing stores (non-blocking)...");
-            // Clear stores in background - don't block client creation
-            this.client
-                .clearStores()
-                .then(() => {
-                    console.log("[Matrix] Stores cleared successfully");
-                })
-                .catch((error) => {
-                    console.warn("[Matrix] clearStores failed, continuing anyway:", error);
-                });
+            await this.client.clearStores();
         }
 
-        console.log("[Matrix] Matrix client created successfully, userId:", this.client.getUserId());
         return this.client;
     }
 
