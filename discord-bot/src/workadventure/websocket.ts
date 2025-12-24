@@ -81,28 +81,46 @@ export class WorkAdventureWebSocket {
             let wsUrl: string;
             const url = new URL(this.pusherUrl);
             
+            console.log(`PUSHER_URL: ${this.pusherUrl}, hostname: ${url.hostname}`);
+            
             // Only use internal Docker service name for localhost/dev environments
             // In production, use the actual PUSHER_URL hostname with WebSocket protocol
+            // In Docker containers, hostnames like "play.workadventure.localhost" don't resolve
+            // We need to use the Docker service name "play" directly
             const isLocalhost = url.hostname === "localhost" || 
                                url.hostname === "127.0.0.1" ||
                                url.hostname.endsWith(".localhost") ||
                                url.hostname === "play";
             
             if (isLocalhost) {
-                // Use internal Docker service name with WebSocket port (for docker-compose dev)
+                // For docker-compose dev, connect directly to play service WebSocket port
+                // The WebSocket server runs on port 3001
+                // ADMIN_SOCKETS_TOKEN must be set in play service for this route to be registered
                 wsUrl = `ws://play:3001/ws/admin/rooms`;
+                console.log(`Using internal Docker service (localhost detected) - connecting directly to play:3001`);
             } else {
                 // For production, convert HTTP/HTTPS to WS/WSS and use same hostname/port
                 // Traefik will route /ws/ paths to the WebSocket server on port 3001
                 const protocol = url.protocol === "https:" ? "wss:" : "ws:";
                 const port = url.port ? `:${url.port}` : "";
                 wsUrl = `${protocol}//${url.hostname}${port}/ws/admin/rooms`;
+                console.log(`Using production WebSocket URL (hostname: ${url.hostname})`);
             }
             
             console.log(`Connecting to WebSocket: ${wsUrl}`);
             const jwtToken = this.generateJWT(this.authorizedRoomIds);
 
-            this.ws = new WebSocket(wsUrl);
+            // For dev environment, set Host header for Traefik routing
+            const wsOptions: any = {};
+            if (isLocalhost) {
+                // Traefik needs the Host header to route correctly
+                // Use any hostname that matches the Traefik rule (HostRegexp matches anything)
+                wsOptions.headers = {
+                    'Host': 'play.workadventure.localhost'
+                };
+            }
+
+            this.ws = new WebSocket(wsUrl, wsOptions);
 
             this.ws.on("open", () => {
                 console.log("Connected to WorkAdventure Admin WebSocket");

@@ -14,7 +14,7 @@ class DiscordBotService {
     private statsTimer: NodeJS.Timeout | null = null;
 
     constructor() {
-        const pusherUrl = process.env.PUSHER_URL || "http://play.workadventure.localhost";
+        let pusherUrl = process.env.PUSHER_URL || "http://play.workadventure.localhost";
         const adminSocketsToken = process.env.ADMIN_SOCKETS_TOKEN || "";
         const adminApiToken = process.env.ADMIN_API_TOKEN || "";
         const discordBotToken = process.env.DISCORD_BOT_TOKEN || "";
@@ -38,6 +38,25 @@ class DiscordBotService {
         }
         if (!statsChannelId) {
             throw new Error("DISCORD_STATS_CHANNEL_ID environment variable is required");
+        }
+
+        // Convert PUSHER_URL to use Docker service name for dev environments
+        // In Docker containers, hostnames like "play.workadventure.localhost" don't resolve
+        // We need to use the Docker service name "play" directly
+        try {
+            const url = new URL(pusherUrl);
+            const isLocalhost = url.hostname === "localhost" || 
+                               url.hostname === "127.0.0.1" ||
+                               url.hostname.endsWith(".localhost") ||
+                               url.hostname === "play";
+            
+            if (isLocalhost && url.hostname !== "play") {
+                // Replace hostname with Docker service name and use port 3000 for HTTP
+                pusherUrl = `${url.protocol}//play:3000`;
+                console.log(`Converted PUSHER_URL to use Docker service name: ${pusherUrl}`);
+            }
+        } catch (e) {
+            console.warn(`Failed to parse PUSHER_URL: ${pusherUrl}`, e);
         }
 
         // Initialize components
