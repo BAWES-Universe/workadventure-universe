@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     environment:
       PUSHER_URL: ${PUSHER_URL:-http://play.workadventure.localhost}
+      ADMIN_API_URL: ${ADMIN_API_URL:-}
       ADMIN_SOCKETS_TOKEN: ${ADMIN_SOCKETS_TOKEN}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
