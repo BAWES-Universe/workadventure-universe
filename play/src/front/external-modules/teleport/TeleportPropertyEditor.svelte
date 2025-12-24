@@ -12,7 +12,7 @@
         close: undefined;
     }>();
 
-    // Extract teleport data from property and create bindable variables
+    // Extract teleport data from property
     type TeleportData = {
         universe?: string;
         world?: string;
@@ -20,14 +20,29 @@
         startArea?: string;
     };
 
-    const initialData = (property.data as TeleportData) || {};
-    let universe = initialData.universe || "";
-    let world = initialData.world || "";
-    let room = initialData.room || "";
-    let startArea = initialData.startArea || "";
+    // Initialize property.data if it doesn't exist
+    if (!property.data) {
+        property.data = {};
+    }
+
+    // Get teleport data with defaults - similar to how ExitPropertyEditor accesses property.url
+    function getData(): TeleportData {
+        return (property.data as TeleportData) || {};
+    }
+
+    // Create bindable variables - initialize from property.data
+    // Similar to ExitPropertyEditor which binds directly to property.url
+    // We can't bind directly to property.data.universe (nested), so we use local variables
+    // The component is keyed by property.id, so it will be recreated when property changes
+    const data = getData();
+    let universe = data.universe || "";
+    let world = data.world || "";
+    let room = data.room || "";
+    let startArea = data.startArea || "";
 
     function onValueChange() {
-        // Update property data
+        // Update property.data - create new object to ensure reactivity
+        // Similar to how ExitPropertyEditor updates property.url directly
         property.data = {
             universe: universe.trim(),
             world: world.trim(),
@@ -37,19 +52,19 @@
         dispatch("change");
     }
 
-    // Computed URL preview
+    // Computed URL preview - use local variables for reactivity
     $: previewUrl = (() => {
         if (!universe.trim() || !world.trim() || !room.trim()) {
             return "";
         }
         let url = `@/${universe.trim()}/${world.trim()}/${room.trim()}`;
-        if (startArea.trim() !== "") {
+        if (startArea.trim()) {
             url += `#${startArea.trim()}`;
         }
         return url;
     })();
 
-    // Validation
+    // Validation - use local variables for reactivity
     $: isValid = !!(universe.trim() && world.trim() && room.trim());
 </script>
 
@@ -71,8 +86,8 @@
                 placeholder="e.g., bawes-univ"
                 bind:value={universe}
                 required={true}
-                on:input={onValueChange}
-                on:blur={onValueChange}
+                onBlur={onValueChange}
+                onChange={onValueChange}
             />
             <Input
                 id="teleport-world"
@@ -81,8 +96,8 @@
                 placeholder="e.g., bawes-world"
                 bind:value={world}
                 required={true}
-                on:input={onValueChange}
-                on:blur={onValueChange}
+                onBlur={onValueChange}
+                onChange={onValueChange}
             />
             <Input
                 id="teleport-room"
@@ -91,8 +106,8 @@
                 placeholder="e.g., headquarters"
                 bind:value={room}
                 required={true}
-                on:input={onValueChange}
-                on:blur={onValueChange}
+                onBlur={onValueChange}
+                onChange={onValueChange}
             />
             <Input
                 id="teleport-start-area"
@@ -100,8 +115,8 @@
                 type="text"
                 placeholder="e.g., startSpawnArea"
                 bind:value={startArea}
-                on:input={onValueChange}
-                on:blur={onValueChange}
+                onBlur={onValueChange}
+                onChange={onValueChange}
             />
             {#if previewUrl}
                 <div class="mt-4 p-2 bg-gray-100 dark:bg-gray-800 rounded text-sm">

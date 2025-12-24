@@ -48,8 +48,10 @@ const teleportExtensionModule: ExtensionModule = {
                     return;
                 }
 
-                // Build URL in format: @/universe/world/room#startArea
-                let roomUrl = `@/${teleportData.universe}/${teleportData.world}/${teleportData.room}`;
+                // Build full URL in format: http://host/@/universe/world/room#startArea
+                // Exit areas use full URLs, not relative @/ paths
+                const currentUrl = new URL(window.location.toString());
+                let roomUrl = `${currentUrl.protocol}//${currentUrl.host}/@/${teleportData.universe}/${teleportData.world}/${teleportData.room}`;
                 if (teleportData.startArea && teleportData.startArea.trim() !== "") {
                     roomUrl += `#${teleportData.startArea}`;
                 }
