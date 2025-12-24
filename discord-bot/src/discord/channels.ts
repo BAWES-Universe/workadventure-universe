@@ -89,18 +89,18 @@ export function createSummaryStatsEmbed(roomStats: RoomStats): DiscordEmbed {
                 inline: true,
             },
         ],
-        timestamp: new Date().toISOString(),
-        footer: {
-            text: "Universe Admin • Real-time Activity Monitor",
-        },
     };
 }
 
 /**
- * Create individual room embed messages
+ * Create individual room embed messages with metadata
  * Returns an array of embeds, one per room with clickable links
  */
-export function createRoomEmbeds(roomStats: RoomStats, baseUrl?: string): DiscordEmbed[] {
+export function createRoomEmbeds(
+    roomStats: RoomStats, 
+    baseUrl?: string,
+    roomMetadataMap?: Map<string, { universeName: string; worldName: string; roomName: string }>
+): DiscordEmbed[] {
     // Filter out rooms with 0 users and sort by user count (descending)
     const activeRooms = Object.entries(roomStats)
         .filter(([, count]) => count > 0)
@@ -111,66 +111,70 @@ export function createRoomEmbeds(roomStats: RoomStats, baseUrl?: string): Discor
             title: "🌙 All Quiet",
             description: "No active rooms at the moment. Be the first to explore!",
             color: 0x99aab5,
-            timestamp: new Date().toISOString(),
         }];
     }
 
     const embeds: DiscordEmbed[] = [];
 
     // Group rooms by universe/world for better organization
-    const roomGroups = new Map<string, Array<{ roomUrl: string; roomName: string; count: number }>>();
+    const roomGroups = new Map<string, Array<{ 
+        roomUrl: string; 
+        roomPath: string;
+        metadata: { universeName: string; worldName: string; roomName: string } | null;
+        count: number;
+    }>>();
 
     for (const [roomUrl, count] of activeRooms) {
         const roomPath = parseRoomUrl(roomUrl);
-        const parts = roomPath.split("/");
-        if (parts.length >= 2) {
-            const groupKey = `${parts[0]}/${parts[1]}`;
-            if (!roomGroups.has(groupKey)) {
-                roomGroups.set(groupKey, []);
-            }
-            roomGroups.get(groupKey)!.push({ 
-                roomUrl, 
-                roomName: parts[2] || roomPath, 
-                count 
-            });
-        } else {
-            // Fallback for rooms that don't match expected format
-            if (!roomGroups.has("Other")) {
-                roomGroups.set("Other", []);
-            }
-            roomGroups.get("Other")!.push({ roomUrl, roomName: roomPath, count });
+        const metadata = roomMetadataMap?.get(roomPath) || null;
+        
+        // Use metadata if available, otherwise parse from path
+        const universeName = metadata?.universeName || roomPath.split("/")[0] || "Unknown";
+        const worldName = metadata?.worldName || (roomPath.split("/")[1] || "Unknown");
+        
+        const groupKey = `${universeName}/${worldName}`;
+        
+        if (!roomGroups.has(groupKey)) {
+            roomGroups.set(groupKey, []);
         }
+        roomGroups.get(groupKey)!.push({ 
+            roomUrl, 
+            roomPath,
+            metadata,
+            count 
+        });
     }
 
-    // Create one embed per room with clickable link
+    // Create one embed per room with improved design
     for (const [group, rooms] of roomGroups.entries()) {
         // Sort rooms within group by user count
         rooms.sort((a, b) => b.count - a.count);
 
-        for (const { roomUrl, roomName, count } of rooms) {
+        for (const { roomUrl, metadata, count } of rooms) {
             const clickableUrl = getRoomClickableUrl(roomUrl, baseUrl);
             const emoji = count >= 10 ? "🔥" : count >= 5 ? "⭐" : "💫";
             
+            // Use metadata names if available
+            const displayRoomName = metadata?.roomName || parseRoomUrl(roomUrl).split("/").pop() || "Unknown Room";
+            const displayWorldName = metadata?.worldName || group.split("/")[1] || "Unknown World";
+            const displayUniverseName = metadata?.universeName || group.split("/")[0] || "Unknown Universe";
+            
             embeds.push({
-                title: `${emoji} ${roomName}`,
+                title: `${emoji} ${displayRoomName}`,
                 description: `**${count}** ${count === 1 ? "person" : "people"} exploring`,
                 color: count >= 10 ? 0xff6b6b : count >= 5 ? 0x4ecdc4 : 0x95e1d3,
                 fields: [
                     {
-                        name: "📍 Location",
-                        value: `\`${group}\``,
-                        inline: true,
+                        name: "🌍 Location",
+                        value: `**${displayWorldName}** • ${displayUniverseName}`,
+                        inline: false,
                     },
                     {
                         name: "🔗 Join Room",
                         value: `[Click to Join →](${clickableUrl})`,
-                        inline: true,
+                        inline: false,
                     },
                 ],
-                timestamp: new Date().toISOString(),
-                footer: {
-                    text: `Universe/${group}`,
-                },
             });
         }
     }
@@ -253,7 +257,6 @@ export function createJoinEmbed(
         title: "✨ User Joined",
         description: `**${userName}** entered the Universe`,
         color: 0x4ecdc4, // Teal
-        timestamp: new Date().toISOString(),
         fields: [
             {
                 name: "👤 User",
@@ -320,7 +323,6 @@ export function createLeaveEmbed(
         title: "👋 User Left",
         description: `**${userName}** left the Universe`,
         color: 0x99aab5, // Gray
-        timestamp: new Date().toISOString(),
         fields: [
             {
                 name: "👤 User",

@@ -151,11 +151,28 @@ class DiscordBotService {
             console.log("Updating stats channel...");
             const roomStats = await this.roomDiscovery.getRoomStats();
             
+            // Fetch metadata for all active rooms
+            const roomMetadataMap = new Map<string, { universeName: string; worldName: string; roomName: string }>();
+            const activeRooms = Object.entries(roomStats).filter(([, count]) => count > 0);
+            
+            // Fetch metadata for all rooms in parallel
+            const metadataPromises = activeRooms.map(async ([roomUrl]) => {
+                const roomPath = parseRoomUrl(roomUrl);
+                const metadata = await this.roomDiscovery.getRoomMetadata(roomPath);
+                if (metadata) {
+                    roomMetadataMap.set(roomPath, metadata);
+                }
+                return metadata;
+            });
+            
+            // Wait for all metadata fetches
+            await Promise.all(metadataPromises);
+            
             // Create summary embed
             const summaryEmbed = createSummaryStatsEmbed(roomStats);
             
-            // Create individual room embeds (filtered to only rooms with users)
-            const roomEmbeds = createRoomEmbeds(roomStats, this.pusherUrl);
+            // Create individual room embeds with metadata
+            const roomEmbeds = createRoomEmbeds(roomStats, this.pusherUrl, roomMetadataMap);
             
             // Send all messages (clears channel first, then sends summary + room messages)
             await this.discordBot.sendStatsReport(
