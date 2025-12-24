@@ -1,0 +1,18 @@
+services:
+  discord-bot:
+    build:
+      context: .
+      dockerfile: discord-bot/Dockerfile
+    environment:
+      PUSHER_URL: ${PUSHER_URL:-http://play.workadventure.localhost}
+      ADMIN_SOCKETS_TOKEN: ${ADMIN_SOCKETS_TOKEN}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_EVENT_CHANNEL_ID: ${DISCORD_EVENT_CHANNEL_ID}
+      DISCORD_STATS_CHANNEL_ID: ${DISCORD_STATS_CHANNEL_ID}
+      ROOM_DISCOVERY_INTERVAL: ${ROOM_DISCOVERY_INTERVAL:-30000}
+      STATS_UPDATE_INTERVAL: ${STATS_UPDATE_INTERVAL:-600000}
+    depends_on:
+      - play
+    restart: unless-stopped
+

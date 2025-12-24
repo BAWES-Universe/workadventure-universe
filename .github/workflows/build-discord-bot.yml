@@ -1,0 +1,26 @@
+name: Build Discord Bot Service
+
+on:
+  push:
+    branches: [universe]
+    paths:
+      - 'discord-bot/**'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'discord-bot/**'
+
+jobs:
+  build-discord-bot:
+    uses: ./.github/workflows/build-single-image.yml
+    secrets: inherit
+    with:
+      platform: amd64
+      os: ubuntu-24.04
+      image-name: ghcr.io/workadventure/discord-bot-dev-build
+      dockerfile: discord-bot/Dockerfile
+      context: ./discord-bot
+      short_name: discord-bot
+      push-to-registry: ${{ github.repository_owner == 'workadventure' }}
+      final_build: ${{ github.event_name == 'push' || github.event_name == 'release' }}
+
