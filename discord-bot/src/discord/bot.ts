@@ -144,17 +144,17 @@ export class DiscordBot {
     }
 
     /**
-     * Send a stats report to the stats channel (clears channel first)
+     * Send a stats report to the stats channel (clears channel first, then sends multiple messages)
      */
-    async sendStatsReport(payload: DiscordMessagePayload): Promise<boolean> {
+    async sendStatsReport(summaryEmbed: DiscordMessagePayload, roomEmbeds: DiscordMessagePayload[]): Promise<boolean> {
         try {
             // Clear all messages first
             await this.clearChannel(this.statsChannelId);
 
-            // Send new report
+            // Send summary message first
             await axios.post(
                 `${this.baseUrl}/channels/${this.statsChannelId}/messages`,
-                payload,
+                summaryEmbed,
                 {
                     headers: {
                         Authorization: `Bot ${this.botToken}`,
@@ -162,6 +162,23 @@ export class DiscordBot {
                     },
                 }
             );
+
+            // Send room messages with delays to avoid rate limits
+            for (const roomEmbed of roomEmbeds) {
+                await axios.post(
+                    `${this.baseUrl}/channels/${this.statsChannelId}/messages`,
+                    roomEmbed,
+                    {
+                        headers: {
+                            Authorization: `Bot ${this.botToken}`,
+                            "Content-Type": "application/json",
+                        },
+                    }
+                );
+                // Small delay between messages (Discord allows 5 requests per second)
+                await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+
             return true;
         } catch (error) {
             if (axios.isAxiosError(error)) {

@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import { DiscordBot } from "./discord/bot";
-import { createJoinEmbed, createLeaveEmbed, createStatsEmbed } from "./discord/channels";
+import { createJoinMessage, createLeaveMessage, createSummaryStatsEmbed, createRoomEmbeds, parseRoomUrl } from "./discord/channels";
 import { RoomDiscovery } from "./workadventure/roomDiscovery";
 import { WorkAdventureWebSocket } from "./workadventure/websocket";
 
@@ -12,9 +12,11 @@ class DiscordBotService {
     private websocket: WorkAdventureWebSocket;
     private statsUpdateInterval: number;
     private statsTimer: NodeJS.Timeout | null = null;
+    private pusherUrl: string;
 
     constructor() {
         let pusherUrl = process.env.PUSHER_URL || "http://play.workadventure.localhost";
+        this.pusherUrl = pusherUrl;
         const adminSocketsToken = process.env.ADMIN_SOCKETS_TOKEN || "";
         const adminApiToken = process.env.ADMIN_API_TOKEN || "";
         const discordBotToken = process.env.DISCORD_BOT_TOKEN || "";
@@ -60,20 +62,25 @@ class DiscordBotService {
         }
 
         // Initialize components
+        const adminApiUrl = process.env.ADMIN_API_URL;
         this.discordBot = new DiscordBot(discordBotToken, eventChannelId, statsChannelId);
-        this.roomDiscovery = new RoomDiscovery(pusherUrl, adminApiToken, roomDiscoveryInterval);
+        this.roomDiscovery = new RoomDiscovery(pusherUrl, adminApiToken, roomDiscoveryInterval, adminApiUrl);
 
         // Initialize WebSocket with event handlers
         this.websocket = new WorkAdventureWebSocket(pusherUrl, adminSocketsToken, {
-            onUserJoin: (data) => {
+            onUserJoin: async (data) => {
                 console.log(`User joined: ${data.name} (${data.uuid}) in room ${data.roomId}`);
-                const embed = createJoinEmbed(data.name, data.roomId, data.uuid);
-                this.discordBot.sendEventMessage({ embeds: [embed] });
+                const roomPath = parseRoomUrl(data.roomId);
+                const roomMetadata = await this.roomDiscovery.getRoomMetadata(roomPath);
+                const message = createJoinMessage(data.name, data.roomId, data.uuid, this.pusherUrl, roomMetadata);
+                this.discordBot.sendEventMessage(message);
             },
-            onUserLeave: (data) => {
+            onUserLeave: async (data) => {
                 console.log(`User left: ${data.name} (${data.uuid}) from room ${data.roomId}`);
-                const embed = createLeaveEmbed(data.name, data.roomId, data.uuid);
-                this.discordBot.sendEventMessage({ embeds: [embed] });
+                const roomPath = parseRoomUrl(data.roomId);
+                const roomMetadata = await this.roomDiscovery.getRoomMetadata(roomPath);
+                const message = createLeaveMessage(data.name, data.roomId, data.uuid, roomMetadata);
+                this.discordBot.sendEventMessage(message);
             },
             onError: (error) => {
                 console.error("WebSocket error:", error);
@@ -143,9 +150,20 @@ class DiscordBotService {
         try {
             console.log("Updating stats channel...");
             const roomStats = await this.roomDiscovery.getRoomStats();
-            const embed = createStatsEmbed(roomStats);
-            await this.discordBot.sendStatsReport({ embeds: [embed] });
-            console.log("Stats channel updated successfully");
+            
+            // Create summary embed
+            const summaryEmbed = createSummaryStatsEmbed(roomStats);
+            
+            // Create individual room embeds (filtered to only rooms with users)
+            const roomEmbeds = createRoomEmbeds(roomStats, this.pusherUrl);
+            
+            // Send all messages (clears channel first, then sends summary + room messages)
+            await this.discordBot.sendStatsReport(
+                { embeds: [summaryEmbed] },
+                roomEmbeds.map(embed => ({ embeds: [embed] }))
+            );
+            
+            console.log(`Stats channel updated successfully with ${roomEmbeds.length} room${roomEmbeds.length === 1 ? '' : 's'}`);
         } catch (error) {
             console.error("Failed to update stats channel:", error);
         }
