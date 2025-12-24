@@ -1,7 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher } from "svelte";
     import type { ExtensionModuleAreaPropertyData } from "@workadventure/map-editor";
-    import { IconMap } from "../../Components/Icons";
+    import { IconRoute } from "../../Components/Icons";
     import PropertyEditorBase from "../../Components/MapEditor/PropertyEditor/PropertyEditorBase.svelte";
     import Input from "../../Components/Input/Input.svelte";
 
@@ -74,7 +74,7 @@
     }}
 >
     <span slot="header" class="flex justify-center items-center">
-        <IconMap font-size="18" class="mr-2" />
+        <IconRoute font-size="18" class="mr-2" />
         Teleport
     </span>
     <span slot="content">

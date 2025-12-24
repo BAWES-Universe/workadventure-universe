@@ -1,6 +1,6 @@
 <script lang="ts">
     import { createEventDispatcher } from "svelte";
-    import { IconMap } from "../../Components/Icons";
+    import { IconRoute } from "../../Components/Icons";
     import AddPropertyButton from "../../Components/MapEditor/PropertyEditor/AddPropertyButton.svelte";
 
     const dispatch = createEventDispatcher<{
@@ -11,7 +11,7 @@
 <AddPropertyButton
     headerText="Teleport"
     descriptionText="Teleport people to another universe/world/room"
-    img={IconMap}
+    img={IconRoute}
     style="z-index: 200;"
     testId="teleport"
     on:click={(event) => {
