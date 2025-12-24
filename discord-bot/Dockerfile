@@ -3,9 +3,9 @@ FROM node:20.18-bullseye-slim AS builder
 
 WORKDIR /usr/src/app
 
-# Copy package files and install all dependencies (including dev)
-COPY package.json package-lock.json* ./
-RUN npm ci
+    # Copy package files and install all dependencies (including dev)
+    COPY package.json package-lock.json ./
+    RUN npm ci
 
 # Copy source and build
 COPY src ./src
@@ -17,9 +17,9 @@ FROM node:20.18-bullseye-slim
 
 WORKDIR /usr/src/app
 
-# Copy package files and install only production dependencies
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+    # Copy package files and install only production dependencies
+    COPY package.json package-lock.json ./
+    RUN npm ci --omit=dev
 
 # Copy compiled output from builder
 COPY --from=builder /usr/src/app/dist ./dist

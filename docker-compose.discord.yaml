@@ -1,8 +1,8 @@
 services:
   discord-bot:
     build:
-      context: .
-      dockerfile: discord-bot/Dockerfile
+      context: ./discord-bot
+      dockerfile: Dockerfile
     environment:
       PUSHER_URL: ${PUSHER_URL:-http://play.workadventure.localhost}
       ADMIN_SOCKETS_TOKEN: ${ADMIN_SOCKETS_TOKEN}
