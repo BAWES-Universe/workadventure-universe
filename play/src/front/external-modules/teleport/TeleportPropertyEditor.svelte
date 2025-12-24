@@ -14,9 +14,7 @@
 
     // Extract teleport data from property
     type TeleportData = {
-        universe?: string;
-        world?: string;
-        room?: string;
+        url?: string;
         startArea?: string;
     };
 
@@ -25,47 +23,49 @@
         property.data = {};
     }
 
-    // Get teleport data with defaults - similar to how ExitPropertyEditor accesses property.url
+    // Get teleport data with defaults
     function getData(): TeleportData {
         return (property.data as TeleportData) || {};
     }
 
     // Create bindable variables - initialize from property.data
-    // Similar to ExitPropertyEditor which binds directly to property.url
-    // We can't bind directly to property.data.universe (nested), so we use local variables
-    // The component is keyed by property.id, so it will be recreated when property changes
     const data = getData();
-    let universe = data.universe || "";
-    let world = data.world || "";
-    let room = data.room || "";
+    let url = data.url || "";
     let startArea = data.startArea || "";
 
     function onValueChange() {
         // Update property.data - create new object to ensure reactivity
-        // Similar to how ExitPropertyEditor updates property.url directly
         property.data = {
-            universe: universe.trim(),
-            world: world.trim(),
-            room: room.trim(),
+            url: url.trim(),
             startArea: startArea.trim(),
         };
         dispatch("change");
     }
 
-    // Computed URL preview - use local variables for reactivity
-    $: previewUrl = (() => {
-        if (!universe.trim() || !world.trim() || !room.trim()) {
-            return "";
+    // Extract universe, world, room from URL
+    function extractPathFromUrl(urlString: string): { universe: string; world: string; room: string } | null {
+        try {
+            const url = new URL(urlString);
+            // Match pattern: /@/universe/world/room
+            const match = url.pathname.match(/^\/@\/([^/]+)\/([^/]+)\/([^/]+)$/);
+            if (match) {
+                return {
+                    universe: match[1],
+                    world: match[2],
+                    room: match[3],
+                };
+            }
+        } catch {
+            // Invalid URL format
         }
-        let url = `@/${universe.trim()}/${world.trim()}/${room.trim()}`;
-        if (startArea.trim()) {
-            url += `#${startArea.trim()}`;
-        }
-        return url;
-    })();
+        return null;
+    }
 
-    // Validation - use local variables for reactivity
-    $: isValid = !!(universe.trim() && world.trim() && room.trim());
+    // Computed extracted path components
+    $: extractedPath = url.trim() ? extractPathFromUrl(url.trim()) : null;
+
+    // Validation - check if URL is provided
+    $: isValid = !!url.trim();
 </script>
 
 <PropertyEditorBase
@@ -80,35 +80,36 @@
     <span slot="content">
         <div class="space-y-4">
             <Input
-                id="teleport-universe"
-                label="Universe"
-                type="text"
-                placeholder="e.g., bawes-univ"
-                bind:value={universe}
+                id="teleport-url"
+                label="Teleport URL"
+                type="url"
+                placeholder="https://universe.bawes.net/@/universe/world/room"
+                bind:value={url}
                 required={true}
                 onBlur={onValueChange}
                 onChange={onValueChange}
             />
-            <Input
-                id="teleport-world"
-                label="World"
-                type="text"
-                placeholder="e.g., bawes-world"
-                bind:value={world}
-                required={true}
-                onBlur={onValueChange}
-                onChange={onValueChange}
-            />
-            <Input
-                id="teleport-room"
-                label="Room"
-                type="text"
-                placeholder="e.g., headquarters"
-                bind:value={room}
-                required={true}
-                onBlur={onValueChange}
-                onChange={onValueChange}
-            />
+            {#if extractedPath}
+                <div
+                    class="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-sm border border-blue-200 dark:border-blue-800"
+                >
+                    <div class="text-gray-700 dark:text-gray-300 mb-2 font-semibold">People will be teleported to:</div>
+                    <div class="space-y-1 text-sm">
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-600 dark:text-gray-400 w-20">Universe:</span>
+                            <span class="font-mono text-blue-600 dark:text-blue-400">{extractedPath.universe}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-600 dark:text-gray-400 w-20">World:</span>
+                            <span class="font-mono text-blue-600 dark:text-blue-400">{extractedPath.world}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-gray-600 dark:text-gray-400 w-20">Room:</span>
+                            <span class="font-mono text-blue-600 dark:text-blue-400">{extractedPath.room}</span>
+                        </div>
+                    </div>
+                </div>
+            {/if}
             <Input
                 id="teleport-start-area"
                 label="Start Area (optional)"
@@ -118,16 +119,8 @@
                 onBlur={onValueChange}
                 onChange={onValueChange}
             />
-            {#if previewUrl}
-                <div class="mt-4 p-2 bg-gray-100 dark:bg-gray-800 rounded text-sm">
-                    <div class="text-gray-600 dark:text-gray-400 mb-1">Preview URL:</div>
-                    <div class="font-mono text-blue-600 dark:text-blue-400">{previewUrl}</div>
-                </div>
-            {/if}
             {#if !isValid}
-                <div class="mt-2 text-sm text-amber-600 dark:text-amber-400">
-                    Universe, World, and Room are required fields.
-                </div>
+                <div class="mt-2 text-sm text-amber-600 dark:text-amber-400">Teleport URL is required.</div>
             {/if}
         </div>
     </span>

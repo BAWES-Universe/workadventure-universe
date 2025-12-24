@@ -37,23 +37,21 @@ const teleportExtensionModule: ExtensionModule = {
 
                 const extensionProperty = property as { subtype: string; data: unknown };
                 const teleportData = extensionProperty.data as {
-                    universe?: string;
-                    world?: string;
-                    room?: string;
+                    url?: string;
                     startArea?: string;
                 };
 
-                if (!teleportData?.universe || !teleportData?.world || !teleportData?.room) {
-                    console.warn("Teleport property missing required fields (universe, world, room)");
+                if (!teleportData?.url || !teleportData.url.trim()) {
+                    console.warn("Teleport property missing required URL field");
                     return;
                 }
 
-                // Build full URL in format: http://host/@/universe/world/room#startArea
-                // Exit areas use full URLs, not relative @/ paths
-                const currentUrl = new URL(window.location.toString());
-                let roomUrl = `${currentUrl.protocol}//${currentUrl.host}/@/${teleportData.universe}/${teleportData.world}/${teleportData.room}`;
+                // Build full URL with start area if provided
+                let roomUrl = teleportData.url.trim();
                 if (teleportData.startArea && teleportData.startArea.trim() !== "") {
-                    roomUrl += `#${teleportData.startArea}`;
+                    // Remove existing hash if present, then add start area
+                    const urlWithoutHash = roomUrl.split("#")[0];
+                    roomUrl = `${urlWithoutHash}#${teleportData.startArea.trim()}`;
                 }
 
                 // Navigate to the room using the same mechanism as exit areas
