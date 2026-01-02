@@ -605,9 +605,24 @@ export class GameScene extends DirtyScene {
         }
 
         const wamUrl = new URL(this.wamUrlFile);
-        // Entity collection is stored at map-storage root, not relative to WAM file
-        // Construct URL relative to map-storage origin
-        const entityCollectionPath = `${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`;
+        // Extract universe/world from WAM path - REQUIRED
+        const pathParts = wamUrl.pathname.split("/").filter((p) => p);
+
+        if (pathParts.length < 3) {
+            throw new Error(`Invalid WAM path format: expected at least 3 path segments, got: ${wamUrl.pathname}`);
+        }
+
+        // If first part looks like a domain, skip it
+        const startIndex = pathParts[0].includes(".") ? 1 : 0;
+
+        if (pathParts.length < startIndex + 3) {
+            throw new Error(`Invalid WAM path format: expected universe/world/room structure, got: ${wamUrl.pathname}`);
+        }
+
+        const universeWorldPath = `${pathParts[startIndex]}/${pathParts[startIndex + 1]}/`;
+
+        // Construct URL with universe/world scope
+        const entityCollectionPath = `${universeWorldPath}${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`;
         return new URL(entityCollectionPath, `${wamUrl.protocol}//${wamUrl.host}`).toString();
     }
 

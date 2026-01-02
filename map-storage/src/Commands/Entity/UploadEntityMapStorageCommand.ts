@@ -5,9 +5,9 @@ import { CustomEntityCollectionService } from "../../Services/CustomEntityCollec
 export class UploadEntityMapStorageCommand extends UploadEntityCommand {
     private customEntityCollectionService: CustomEntityCollectionService;
 
-    constructor(uploadEntityMessage: UploadEntityMessage, hostName: string) {
+    constructor(uploadEntityMessage: UploadEntityMessage, hostName: string, universeWorldPath: string) {
         super(uploadEntityMessage, hostName);
-        this.customEntityCollectionService = new CustomEntityCollectionService(hostName);
+        this.customEntityCollectionService = new CustomEntityCollectionService(hostName, universeWorldPath);
     }
     async execute(): Promise<void> {
         await super.execute();

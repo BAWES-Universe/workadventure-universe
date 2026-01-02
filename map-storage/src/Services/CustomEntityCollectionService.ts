@@ -18,16 +18,20 @@ import { mapPathUsingDomainWithPrefix } from "./PathMapper";
 
 export class CustomEntityCollectionService {
     private readonly hostname: string;
-
+    private readonly universeWorldPath: string; // Required, not optional
     private lock: Promise<void>;
 
-    constructor(hostname: string) {
+    constructor(hostname: string, universeWorldPath: string) {
         this.hostname = hostname;
+        this.universeWorldPath = universeWorldPath;
         this.lock = Promise.resolve();
     }
 
     private getEntityCollectionFileVirtualPath() {
-        return mapPathUsingDomainWithPrefix(`${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`, this.hostname);
+        const basePath = `${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`;
+        // Always scope entities per universe/world
+        const scopedPath = `${this.universeWorldPath}/${basePath}`;
+        return mapPathUsingDomainWithPrefix(scopedPath, this.hostname);
     }
 
     private getEntityToUploadVirtualPath(fileName: string) {
@@ -36,7 +40,10 @@ export class CustomEntityCollectionService {
         if (fileExtension.match(entityUploadSupportedFormatForMapStorage) === null) {
             throw new Error("File extension is not a supported image");
         }
-        return mapPathUsingDomainWithPrefix(`${ENTITIES_FOLDER_PATH}/${filenameWithoutPotentialPath}`, this.hostname);
+        const basePath = `${ENTITIES_FOLDER_PATH}/${filenameWithoutPotentialPath}`;
+        // Always scope entities per universe/world
+        const scopedPath = `${this.universeWorldPath}/${basePath}`;
+        return mapPathUsingDomainWithPrefix(scopedPath, this.hostname);
     }
 
     public async uploadEntity(uploadEntityMessage: UploadEntityMessage) {

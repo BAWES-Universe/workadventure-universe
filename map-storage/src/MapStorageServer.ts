@@ -58,6 +58,31 @@ const COMMANDS_ACCESSIBLE_WITHOUT_CAN_EDIT = new Set<string>([
     "uploadFileMessage",
 ]);
 
+/**
+ * Extracts universe/world path from WAM pathname.
+ * Path format: /domain/universe/world/room/map.wam or /universe/world/room/map.wam
+ * @throws Error if path format is invalid
+ */
+function extractUniverseWorldPath(pathname: string): string {
+    // Path format: /domain/universe/world/room/map.wam or /universe/world/room/map.wam
+    const pathParts = pathname.split("/").filter((p) => p);
+
+    if (pathParts.length < 3) {
+        throw new Error(
+            `Invalid WAM path format: expected at least 3 path segments (universe/world/room/map.wam), got: ${pathname}`
+        );
+    }
+
+    // If first part looks like a domain (contains dots), skip it
+    const startIndex = pathParts[0].includes(".") ? 1 : 0;
+
+    if (pathParts.length < startIndex + 3) {
+        throw new Error(`Invalid WAM path format: expected universe/world/room structure, got: ${pathname}`);
+    }
+
+    return `${pathParts[startIndex]}/${pathParts[startIndex + 1]}`;
+}
+
 const mapStorageServer: MapStorageServer = {
     ping(call: ServerUnaryCall<PingMessage, Empty>, callback: sendUnaryData<PingMessage>): void {
         callback(null, call.request);
@@ -116,6 +141,21 @@ const mapStorageServer: MapStorageServer = {
             // The mapKey is the complete URL to the map. Let's map it to our virtual path.
             const mapUrl = new URL(call.request.mapKey);
             const mapKey = mapPathUsingDomainWithPrefix(mapUrl.pathname, mapUrl.hostname);
+
+            // Extract universe/world from pathname - REQUIRED (throws if invalid)
+            let universeWorldPath: string;
+            try {
+                universeWorldPath = extractUniverseWorldPath(mapUrl.pathname);
+            } catch (error) {
+                callback(
+                    {
+                        name: "MapStorageError",
+                        message: error instanceof Error ? error.message : "Invalid WAM path format",
+                    },
+                    null
+                );
+                return;
+            }
 
             await editionLocks.waitForLock(mapKey, async () => {
                 const editMapCommandMessage = call.request.editMapCommandMessage;
@@ -322,21 +362,30 @@ const mapStorageServer: MapStorageServer = {
                     case "uploadEntityMessage": {
                         const uploadEntityMessage = editMapMessage.uploadEntityMessage;
                         await entitiesManager.executeCommand(
-                            new UploadEntityMapStorageCommand(uploadEntityMessage, mapUrl.hostname)
+                            new UploadEntityMapStorageCommand(uploadEntityMessage, mapUrl.hostname, universeWorldPath)
                         );
                         break;
                     }
                     case "modifyCustomEntityMessage": {
                         const modifyCustomEntityMessage = editMapMessage.modifyCustomEntityMessage;
                         await entitiesManager.executeCommand(
-                            new ModifyCustomEntityMapStorageCommand(modifyCustomEntityMessage, mapUrl.hostname)
+                            new ModifyCustomEntityMapStorageCommand(
+                                modifyCustomEntityMessage,
+                                mapUrl.hostname,
+                                universeWorldPath
+                            )
                         );
                         break;
                     }
                     case "deleteCustomEntityMessage": {
                         const deleteCustomEntityMessage = editMapMessage.deleteCustomEntityMessage;
                         await entitiesManager.executeCommand(
-                            new DeleteCustomEntityMapStorageCommand(deleteCustomEntityMessage, gameMap, mapUrl.hostname)
+                            new DeleteCustomEntityMapStorageCommand(
+                                deleteCustomEntityMessage,
+                                gameMap,
+                                mapUrl.hostname,
+                                universeWorldPath
+                            )
                         );
                         break;
                     }
