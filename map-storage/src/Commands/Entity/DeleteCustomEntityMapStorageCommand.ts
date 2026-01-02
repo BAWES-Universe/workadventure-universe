@@ -6,9 +6,14 @@ import { CustomEntityCollectionService } from "../../Services/CustomEntityCollec
 export class DeleteCustomEntityMapStorageCommand extends DeleteCustomEntityCommand {
     private customEntityCollectionService: CustomEntityCollectionService;
 
-    constructor(deleteCustomEntityMessage: DeleteCustomEntityMessage, gameMap: GameMap, hostName: string) {
+    constructor(
+        deleteCustomEntityMessage: DeleteCustomEntityMessage,
+        gameMap: GameMap,
+        hostName: string,
+        universeWorldPath: string
+    ) {
         super(deleteCustomEntityMessage, gameMap, hostName);
-        this.customEntityCollectionService = new CustomEntityCollectionService(hostName);
+        this.customEntityCollectionService = new CustomEntityCollectionService(hostName, universeWorldPath);
     }
     async execute(): Promise<void> {
         await super.execute();

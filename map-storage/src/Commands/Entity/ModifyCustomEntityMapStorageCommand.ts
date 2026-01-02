@@ -5,9 +5,9 @@ import { CustomEntityCollectionService } from "../../Services/CustomEntityCollec
 export class ModifyCustomEntityMapStorageCommand extends ModifyCustomEntityCommand {
     private customEntityCollectionService: CustomEntityCollectionService;
 
-    constructor(modifyCustomEntityMessage: ModifyCustomEntityMessage, hostName: string) {
+    constructor(modifyCustomEntityMessage: ModifyCustomEntityMessage, hostName: string, universeWorldPath: string) {
         super(modifyCustomEntityMessage, hostName);
-        this.customEntityCollectionService = new CustomEntityCollectionService(hostName);
+        this.customEntityCollectionService = new CustomEntityCollectionService(hostName, universeWorldPath);
     }
     async execute(): Promise<void> {
         await super.execute();
