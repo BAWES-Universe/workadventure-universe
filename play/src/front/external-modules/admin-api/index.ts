@@ -11,7 +11,10 @@ let unsubscribeModal: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
 
 // Helper to extract OIDC access token from JWT
-function getAccessTokenFromJwt(jwtToken: string): string | null {
+function getAccessTokenFromJwt(jwtToken: string | null): string | null {
+    if (!jwtToken) {
+        return null;
+    }
     try {
         const base64Url = jwtToken.split(".")[1];
         const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
