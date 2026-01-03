@@ -600,6 +600,11 @@ export class GameScene extends DirtyScene {
     }
 
     public getCustomEntityCollectionUrl() {
+        const mapStorageUrl = this.room.mapStorageUrl;
+        if (!mapStorageUrl) {
+            throw new Error("Map storage URL is not available");
+        }
+
         if (!this.wamUrlFile) {
             throw new Error("WAM URL is not available");
         }
@@ -622,8 +627,9 @@ export class GameScene extends DirtyScene {
         const universeWorldPath = `${pathParts[startIndex]}/${pathParts[startIndex + 1]}/`;
 
         // Construct URL with universe/world scope
+        // Use room.mapStorageUrl which correctly handles path prefixes for reverse proxy setups
         const entityCollectionPath = `${universeWorldPath}${ENTITIES_FOLDER_PATH}/${ENTITY_COLLECTION_FILE}`;
-        return new URL(entityCollectionPath, `${wamUrl.protocol}//${wamUrl.host}`).toString();
+        return new URL(entityCollectionPath, mapStorageUrl.toString()).toString();
     }
 
     //hook initialisation
