@@ -6,6 +6,7 @@ import type {
 } from "../../ExternalModule/ExtensionModule";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { Room } from "../../Connection/Room";
+import { inJitsiStore } from "../../Stores/MediaStore";
 import TeleportPropertyEditor from "./TeleportPropertyEditor.svelte";
 import AddTeleportPropertyButton from "./AddTeleportPropertyButton.svelte";
 
@@ -60,6 +61,12 @@ const teleportExtensionModule: ExtensionModule = {
                     scene
                         .onMapExit(Room.getRoomPathFromExitUrl(roomUrl, window.location.toString()))
                         .catch((e) => console.error("Error navigating to teleport destination:", e));
+
+                    // Clear inJitsiStore after a short delay to prevent status lock
+                    // The generic handler sets it to true, but teleport is navigation, not a meeting
+                    setTimeout(() => {
+                        inJitsiStore.set(false);
+                    }, 100);
                 }
             },
 
