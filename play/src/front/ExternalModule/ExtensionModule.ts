@@ -22,7 +22,7 @@ export interface ExternalSvelteComponentServiceInterface {
 
 export interface ExtensionModuleOptions {
     workadventureStatusStore: Readable<AvailabilityStatus>;
-    userAccessToken: string;
+    userAccessToken: string | null;
     roomId: string;
     externalModuleMessage: Observable<ExternalModuleMessage>;
     externalSvelteComponent: ExternalSvelteComponentServiceInterface;

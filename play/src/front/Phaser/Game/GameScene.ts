@@ -2214,9 +2214,8 @@ export class GameScene extends DirtyScene {
                     }
 
                     const authToken = localUserStore.getAuthToken();
-                    if (!authToken) {
-                        throw new Error("Auth token is undefined");
-                    }
+                    // Allow extension modules to initialize even without authToken
+                    // Some modules (like teleport) don't require authentication
 
                     defaultExtensionModule.init(this._room.metadata, {
                         workadventureStatusStore: availabilityStatusStore,
