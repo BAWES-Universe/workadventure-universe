@@ -1,0 +1,324 @@
+/**
+ * AdminApiService - Integration with WorkAdventure Admin API for bot tracking
+ * 
+ * This service tracks bot configuration and usage across rooms, worlds, and universes.
+ */
+
+import axios, { type AxiosResponse } from 'axios';
+import * as Sentry from '@sentry/node';
+
+export interface BotConfiguration {
+    botId: string;
+    name: string;
+    roomUrl: string;
+    worldUrl: string;
+    universeUrl?: string;
+    userId?: string; // User who created the bot
+    behaviorType: 'idle' | 'patrol' | 'social';
+    behaviorConfig: Record<string, any>;
+    aiProvider?: 'lmstudio' | 'ultravox' | 'gpt-voice';
+    aiConfig?: Record<string, any>;
+    assignedSpace?: {
+        center: { x: number; y: number };
+        radius: number;
+    };
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+export interface BotUsageMetrics {
+    botId: string;
+    roomUrl: string;
+    worldUrl: string;
+    universeUrl?: string;
+    userId?: string;
+    totalConversations: number;
+    totalMessages: number;
+    totalActiveTime: number; // milliseconds
+    lastActiveAt: Date;
+    conversationsByDate: Array<{
+        date: string;
+        count: number;
+    }>;
+}
+
+export interface BotUsageQuery {
+    roomUrl?: string;
+    worldUrl?: string;
+    universeUrl?: string;
+    userId?: string;
+    botId?: string;
+    startDate?: Date;
+    endDate?: Date;
+}
+
+export class AdminApiService {
+    private adminApiUrl: string;
+    private adminApiToken: string;
+
+    constructor(adminApiUrl?: string, adminApiToken?: string) {
+        this.adminApiUrl = adminApiUrl || process.env.ADMIN_API_URL || '';
+        this.adminApiToken = adminApiToken || process.env.ADMIN_API_TOKEN || '';
+    }
+
+    /**
+     * Check if admin API is configured
+     */
+    isConfigured(): boolean {
+        return !!this.adminApiUrl && !!this.adminApiToken;
+    }
+
+    /**
+     * Save bot configuration to admin API
+     */
+    async saveBotConfiguration(config: BotConfiguration): Promise<void> {
+        if (!this.isConfigured()) {
+            console.warn('[AdminApiService] Admin API not configured, skipping bot configuration save');
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/configuration`,
+                {
+                    ...config,
+                    createdAt: config.createdAt.toISOString(),
+                    updatedAt: config.updatedAt.toISOString(),
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+        } catch (error) {
+            console.error('[AdminApiService] Error saving bot configuration:', error);
+            Sentry.captureException(error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get bot configuration from admin API
+     */
+    async getBotConfiguration(botId: string): Promise<BotConfiguration | null> {
+        if (!this.isConfigured()) {
+            return null;
+        }
+
+        try {
+            const response: AxiosResponse<BotConfiguration> = await axios.get(
+                `${this.adminApiUrl}/api/bots/configuration/${botId}`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                    },
+                }
+            );
+
+            return {
+                ...response.data,
+                createdAt: new Date(response.data.createdAt),
+                updatedAt: new Date(response.data.updatedAt),
+            };
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                return null;
+            }
+            console.error('[AdminApiService] Error getting bot configuration:', error);
+            Sentry.captureException(error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get all bot configurations for a room/world/universe
+     */
+    async getBotConfigurations(query: {
+        roomUrl?: string;
+        worldUrl?: string;
+        universeUrl?: string;
+        userId?: string;
+    }): Promise<BotConfiguration[]> {
+        if (!this.isConfigured()) {
+            return [];
+        }
+
+        try {
+            const response: AxiosResponse<BotConfiguration[]> = await axios.get(
+                `${this.adminApiUrl}/api/bots/configuration`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                    },
+                    params: query,
+                }
+            );
+
+            return response.data.map((config) => ({
+                ...config,
+                createdAt: new Date(config.createdAt),
+                updatedAt: new Date(config.updatedAt),
+            }));
+        } catch (error) {
+            console.error('[AdminApiService] Error getting bot configurations:', error);
+            Sentry.captureException(error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete bot configuration
+     */
+    async deleteBotConfiguration(botId: string): Promise<void> {
+        if (!this.isConfigured()) {
+            return;
+        }
+
+        try {
+            await axios.delete(`${this.adminApiUrl}/api/bots/configuration/${botId}`, {
+                headers: {
+                    Authorization: `Bearer ${this.adminApiToken}`,
+                },
+            });
+        } catch (error) {
+            console.error('[AdminApiService] Error deleting bot configuration:', error);
+            Sentry.captureException(error);
+            throw error;
+        }
+    }
+
+    /**
+     * Track bot usage metrics
+     */
+    async trackBotUsage(metrics: Partial<BotUsageMetrics>): Promise<void> {
+        if (!this.isConfigured()) {
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/usage`,
+                {
+                    ...metrics,
+                    lastActiveAt: metrics.lastActiveAt?.toISOString(),
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+        } catch (error) {
+            console.error('[AdminApiService] Error tracking bot usage:', error);
+            Sentry.captureException(error);
+            // Don't throw - usage tracking shouldn't break bot functionality
+        }
+    }
+
+    /**
+     * Get bot usage metrics
+     */
+    async getBotUsage(query: BotUsageQuery): Promise<BotUsageMetrics[]> {
+        if (!this.isConfigured()) {
+            return [];
+        }
+
+        try {
+            const params: Record<string, string> = {};
+            if (query.roomUrl) params.roomUrl = query.roomUrl;
+            if (query.worldUrl) params.worldUrl = query.worldUrl;
+            if (query.universeUrl) params.universeUrl = query.universeUrl;
+            if (query.userId) params.userId = query.userId;
+            if (query.botId) params.botId = query.botId;
+            if (query.startDate) params.startDate = query.startDate.toISOString();
+            if (query.endDate) params.endDate = query.endDate.toISOString();
+
+            const response: AxiosResponse<BotUsageMetrics[]> = await axios.get(
+                `${this.adminApiUrl}/api/bots/usage`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                    },
+                    params,
+                }
+            );
+
+            return response.data.map((metrics) => ({
+                ...metrics,
+                lastActiveAt: new Date(metrics.lastActiveAt),
+            }));
+        } catch (error) {
+            console.error('[AdminApiService] Error getting bot usage:', error);
+            Sentry.captureException(error);
+            throw error;
+        }
+    }
+
+    /**
+     * Track bot conversation event
+     */
+    async trackConversation(botId: string, playerId: number, roomUrl: string, duration: number): Promise<void> {
+        if (!this.isConfigured()) {
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/conversations`,
+                {
+                    botId,
+                    playerId,
+                    roomUrl,
+                    duration,
+                    timestamp: new Date().toISOString(),
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+        } catch (error) {
+            console.error('[AdminApiService] Error tracking conversation:', error);
+            // Don't throw - tracking shouldn't break functionality
+        }
+    }
+
+    /**
+     * Track bot message sent
+     */
+    async trackMessage(botId: string, roomUrl: string, messageLength: number): Promise<void> {
+        if (!this.isConfigured()) {
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/messages`,
+                {
+                    botId,
+                    roomUrl,
+                    messageLength,
+                    timestamp: new Date().toISOString(),
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+        } catch (error) {
+            console.error('[AdminApiService] Error tracking message:', error);
+            // Don't throw
+        }
+    }
+}
+
+// Singleton instance
+export const adminApiService = new AdminApiService();
+

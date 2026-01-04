@@ -1,0 +1,24 @@
+{
+  "name": "@workadventure/bots",
+  "version": "0.1.0",
+  "description": "WorkAdventure Bot System",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@workadventure/messages": "workspace:*",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.10",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  },
+  "peerDependencies": {
+    "@workadventure/map-editor": "workspace:*"
+  }
+}
+
