@@ -4,6 +4,7 @@ import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
 import { mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
+import { gameManager } from "../../Phaser/Game/GameManager";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
 let botEditorOpen = false;
@@ -25,6 +26,19 @@ function openBotEditor() {
     botEditorOpen = true;
     mapEditorVisibilityStore.set(true);
 
+    // Clear the active tool in MapEditorModeManager first to ensure clean state
+    // This prevents issues when switching back to the previous tool
+    try {
+        const scene = gameManager.getCurrentGameScene();
+        if (scene) {
+            const mapEditorModeManager = scene.getMapEditorModeManager();
+            // Clear the active tool so switching to any tool (including the previous one) works
+            mapEditorModeManager.equipTool(undefined);
+        }
+    } catch (e) {
+        console.warn("Could not clear map editor tool:", e);
+    }
+
     // Set the selected tool to our custom BotEditor tool name
     // We use a type assertion since BotEditor isn't in the enum, but the store accepts it at runtime
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -36,19 +50,32 @@ function openBotEditor() {
 
 // Function to close the bot editor
 function closeBotEditor() {
+    if (!botEditorOpen) return;
+
     botEditorOpen = false;
     removeBotEditorComponent();
 
-    // If BotEditor was selected, switch to EntityEditor or close
-    if (get(mapEditorSelectedToolStore) === BOT_EDITOR_TOOL_NAME) {
+    // Only switch to EntityEditor if BotEditor is still selected (user didn't select another tool)
+    const currentTool = get(mapEditorSelectedToolStore);
+    if (currentTool === BOT_EDITOR_TOOL_NAME) {
         mapEditorSelectedToolStore.set(EditorToolName.EntityEditor);
     }
 }
 
 // Function to inject BotEditor component into the sidebar content area
 function injectBotEditorComponent() {
+    // Check if already injected - check both instance and DOM
     if (botEditorComponentInstance) {
         return; // Already injected
+    }
+
+    // Check if container already exists in DOM (prevent duplication)
+    const existingContainer = document.querySelector("#bot-editor-container");
+    if (existingContainer) {
+        // Container exists but instance is null - clean it up first
+        if (existingContainer.parentElement) {
+            existingContainer.parentElement.removeChild(existingContainer);
+        }
     }
 
     // Check if BotEditor tool is selected
@@ -84,6 +111,10 @@ function injectBotEditorComponent() {
     const botEditorContainer = document.createElement("div");
     botEditorContainer.id = "bot-editor-container";
     botEditorContainer.className = "bot-editor-wrapper";
+    // Ensure it doesn't block pointer events to other elements
+    botEditorContainer.style.pointerEvents = "auto";
+    botEditorContainer.style.position = "relative";
+    botEditorContainer.style.zIndex = "1";
 
     // Insert after header buttons
     const headerButtons = sidebar.querySelector(".flex.flex-row.justify-end");
@@ -110,22 +141,49 @@ function injectBotEditorComponent() {
 
 // Function to remove BotEditor component from sidebar
 function removeBotEditorComponent() {
+    // Destroy component first
     if (botEditorComponentInstance) {
-        botEditorComponentInstance.destroy();
+        try {
+            botEditorComponentInstance.destroy();
+        } catch (e) {
+            console.warn("Error destroying bot editor component:", e);
+        }
         botEditorComponentInstance = null;
     }
 
-    const container = document.querySelector("#bot-editor-container");
-    if (container && container.parentElement) {
-        container.parentElement.removeChild(container);
+    // Find and remove ALL containers from DOM (in case of duplicates)
+    const containers = document.querySelectorAll("#bot-editor-container");
+    containers.forEach((container) => {
+        if (container instanceof HTMLElement && container.parentElement) {
+            try {
+                container.parentElement.removeChild(container);
+            } catch (e) {
+                console.warn("Error removing bot editor container:", e);
+            }
+        }
+    });
+
+    // Also check in sidebarContentElement if we have a reference
+    if (sidebarContentElement) {
+        const sidebarContainers = sidebarContentElement.querySelectorAll("#bot-editor-container");
+        sidebarContainers.forEach((container) => {
+            if (container instanceof HTMLElement && container.parentElement) {
+                try {
+                    container.parentElement.removeChild(container);
+                } catch (e) {
+                    console.warn("Error removing bot editor container from sidebar:", e);
+                }
+            }
+        });
     }
 
-    // Show conditional content again
+    // Show conditional content again - ensure all content is visible
     if (sidebarContentElement) {
         const conditionalContent = sidebarContentElement.querySelectorAll(":scope > *");
         conditionalContent.forEach((el) => {
             if (el instanceof HTMLElement && el.id !== "bot-editor-container") {
-                el.style.display = "";
+                // Remove any inline styles we may have set
+                el.style.removeProperty("display");
             }
         });
     }
@@ -177,8 +235,10 @@ function injectBotEditorTool(sidebar: HTMLElement, options: ExtensionModuleOptio
         return;
     }
 
-    // Check if button already exists
-    if (toolsContainer.querySelector("#bot-editor-tool-btn")) {
+    // Check if button already exists - if it does, just update the reference and return
+    const existingButton = toolsContainer.querySelector("#bot-editor-tool-btn");
+    if (existingButton) {
+        toolButtonElement = existingButton as HTMLElement;
         return;
     }
 
@@ -299,6 +359,43 @@ function injectBotEditorTool(sidebar: HTMLElement, options: ExtensionModuleOptio
     };
     button.addEventListener("click", buttonClickHandler);
 
+    // Subscribe to mapEditorSelectedToolStore to update button appearance
+    const updateButtonState = () => {
+        const selectedTool = get(mapEditorSelectedToolStore);
+        if (selectedTool === BOT_EDITOR_TOOL_NAME) {
+            button.classList.remove("hover:bg-white/10");
+            button.classList.add("bg-secondary");
+            button.classList.add("active");
+        } else {
+            button.classList.remove("bg-secondary");
+            button.classList.remove("active");
+            button.classList.add("hover:bg-white/10");
+        }
+    };
+
+    // Initial state
+    updateButtonState();
+
+    // Subscribe to store changes
+    unsubscribeSelectedTool = mapEditorSelectedToolStore.subscribe((selectedTool) => {
+        updateButtonState();
+
+        // If BotEditor is selected, open it
+        if (selectedTool === BOT_EDITOR_TOOL_NAME && !botEditorOpen) {
+            openBotEditor();
+            return; // Don't process closing logic if we're opening
+        }
+
+        // If another tool is selected and bot editor is open, close it
+        // Do this after checking for BotEditor to avoid race conditions
+        if (selectedTool !== BOT_EDITOR_TOOL_NAME && botEditorOpen) {
+            // Close the bot editor UI immediately
+            botEditorOpen = false;
+            removeBotEditorComponent();
+            // Don't modify the store - the new tool has already set it
+        }
+    });
+
     // Insert into tools container - place between EntityEditor and WAMSettingsEditor (configure my room)
     const configureMyRoomButton = toolsContainer.querySelector("button#WAMSettingsEditor");
     if (configureMyRoomButton && configureMyRoomButton.parentElement) {
@@ -313,6 +410,12 @@ function injectBotEditorTool(sidebar: HTMLElement, options: ExtensionModuleOptio
 
 // Function to remove bot editor tool button
 function removeBotEditorTool() {
+    // Unsubscribe from store
+    if (unsubscribeSelectedTool) {
+        unsubscribeSelectedTool();
+        unsubscribeSelectedTool = null;
+    }
+
     if (toolButtonElement) {
         // Remove event listener if it exists
         const button = toolButtonElement.querySelector("button");
@@ -358,6 +461,14 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             const retryInterval = 300;
 
             const tryInject = () => {
+                // Check if button already exists in DOM
+                const existingButton = document.querySelector("#bot-editor-tool-btn");
+                if (existingButton) {
+                    // Button exists, just update reference
+                    toolButtonElement = existingButton as HTMLElement;
+                    return true;
+                }
+
                 if (!tryInjectBotTool()) {
                     retries++;
                     if (retries < maxRetries) {
@@ -365,7 +476,10 @@ function setupBotEditor(options: ExtensionModuleOptions) {
                     } else {
                         console.warn("Bot editor: Could not find sidebar container after", maxRetries, "retries");
                     }
+                } else {
+                    return true;
                 }
+                return false;
             };
 
             // Start trying immediately and also after delays
@@ -373,7 +487,8 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             setTimeout(tryInject, 500);
             setTimeout(tryInject, 1000);
         } else {
-            // Map editor is inactive, remove tool button
+            // Map editor is inactive, close bot editor and remove tool button
+            closeBotEditor();
             removeBotEditorTool();
         }
     });
@@ -383,7 +498,11 @@ function setupBotEditor(options: ExtensionModuleOptions) {
         // When visibility changes, try to inject if map editor is activated
         if (get(mapEditorActivated) && localUserStore.isLogged()) {
             setTimeout(() => {
-                if (!toolButtonElement) {
+                // Check if button exists in DOM
+                const existingButton = document.querySelector("#bot-editor-tool-btn");
+                if (existingButton) {
+                    toolButtonElement = existingButton as HTMLElement;
+                } else if (!toolButtonElement) {
                     tryInjectBotTool();
                 }
             }, 300);
