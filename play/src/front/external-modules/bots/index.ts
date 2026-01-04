@@ -235,10 +235,55 @@ function injectBotEditorTool(sidebar: HTMLElement, options: ExtensionModuleOptio
         return;
     }
 
-    // Check if button already exists - if it does, just update the reference and return
+    // Check if button already exists in DOM - if it does, ensure subscription is set up
+    // Also check if toolButtonElement reference is stale (element removed from DOM)
     const existingButton = toolsContainer.querySelector("#bot-editor-tool-btn");
-    if (existingButton) {
+    if (existingButton && existingButton.isConnected) {
         toolButtonElement = existingButton as HTMLElement;
+        const button = existingButton.querySelector("button");
+
+        // Re-attach click handler if needed
+        if (button) {
+            if (buttonClickHandler) {
+                button.removeEventListener("click", buttonClickHandler);
+            }
+            buttonClickHandler = (e: Event) => {
+                e.preventDefault();
+                openBotEditor();
+            };
+            button.addEventListener("click", buttonClickHandler);
+        }
+
+        // Re-setup subscription if it doesn't exist
+        if (!unsubscribeSelectedTool && button) {
+            const updateButtonState = () => {
+                const selectedTool = get(mapEditorSelectedToolStore);
+                if (selectedTool === BOT_EDITOR_TOOL_NAME) {
+                    button.classList.remove("hover:bg-white/10");
+                    button.classList.add("bg-secondary");
+                    button.classList.add("active");
+                } else {
+                    button.classList.remove("bg-secondary");
+                    button.classList.remove("active");
+                    button.classList.add("hover:bg-white/10");
+                }
+            };
+
+            updateButtonState();
+            unsubscribeSelectedTool = mapEditorSelectedToolStore.subscribe((selectedTool) => {
+                updateButtonState();
+
+                if (selectedTool === BOT_EDITOR_TOOL_NAME && !botEditorOpen) {
+                    openBotEditor();
+                    return;
+                }
+
+                if (selectedTool !== BOT_EDITOR_TOOL_NAME && botEditorOpen) {
+                    botEditorOpen = false;
+                    removeBotEditorComponent();
+                }
+            });
+        }
         return;
     }
 
@@ -461,14 +506,7 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             const retryInterval = 300;
 
             const tryInject = () => {
-                // Check if button already exists in DOM
-                const existingButton = document.querySelector("#bot-editor-tool-btn");
-                if (existingButton) {
-                    // Button exists, just update reference
-                    toolButtonElement = existingButton as HTMLElement;
-                    return true;
-                }
-
+                // Always try to inject - injectBotEditorTool will handle if button already exists
                 if (!tryInjectBotTool()) {
                     retries++;
                     if (retries < maxRetries) {
@@ -476,10 +514,7 @@ function setupBotEditor(options: ExtensionModuleOptions) {
                     } else {
                         console.warn("Bot editor: Could not find sidebar container after", maxRetries, "retries");
                     }
-                } else {
-                    return true;
                 }
-                return false;
             };
 
             // Start trying immediately and also after delays
@@ -496,15 +531,10 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     // Also subscribe to map editor visibility changes (sidebar might appear/disappear)
     unsubscribeMapEditorVisibility = mapEditorVisibilityStore.subscribe((visible) => {
         // When visibility changes, try to inject if map editor is activated
-        if (get(mapEditorActivated) && localUserStore.isLogged()) {
+        if (get(mapEditorActivated) && localUserStore.isLogged() && visible) {
             setTimeout(() => {
-                // Check if button exists in DOM
-                const existingButton = document.querySelector("#bot-editor-tool-btn");
-                if (existingButton) {
-                    toolButtonElement = existingButton as HTMLElement;
-                } else if (!toolButtonElement) {
-                    tryInjectBotTool();
-                }
+                // Always try to inject - injectBotEditorTool will handle existing button
+                tryInjectBotTool();
             }, 300);
         }
     });
