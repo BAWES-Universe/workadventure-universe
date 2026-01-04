@@ -1,0 +1,254 @@
+import Phaser from "phaser";
+import type { BotData } from "../types";
+
+const TILE_SIZE = 32;
+const BOT_DEPTH = 1000;
+
+// Behavior colors
+const COLORS = {
+    idle: { fill: 0x3b82f6, stroke: 0x1d4ed8 }, // Blue
+    patrol: { fill: 0x22c55e, stroke: 0x15803d }, // Green
+    social: { fill: 0xa855f7, stroke: 0x7c3aed }, // Purple
+    default: { fill: 0x6b7280, stroke: 0x4b5563 }, // Gray
+};
+
+export enum BotPreviewEvent {
+    Selected = "BotPreview:Selected",
+    PositionChanged = "BotPreview:PositionChanged",
+    RadiusChanged = "BotPreview:RadiusChanged",
+    DragStart = "BotPreview:DragStart",
+    DragEnd = "BotPreview:DragEnd",
+}
+
+/**
+ * Simple bot preview - a colored 32x32 square with radius circle
+ */
+export class BotPreview extends Phaser.GameObjects.Container {
+    private botData: BotData;
+    private square: Phaser.GameObjects.Rectangle;
+    private radiusCircle: Phaser.GameObjects.Arc;
+    private nameText: Phaser.GameObjects.Text;
+    private resizeHandle: Phaser.GameObjects.Arc;
+
+    private isSelected = false;
+    private isHovered = false;
+    private isDragging = false;
+    private isResizing = false;
+
+    constructor(scene: Phaser.Scene, botData: BotData) {
+        const x = botData.behaviorConfig?.assignedSpace?.center?.x || 0;
+        const y = botData.behaviorConfig?.assignedSpace?.center?.y || 0;
+
+        super(scene, x, y);
+        this.botData = botData;
+
+        const colors = this.getColors();
+        const radius = botData.behaviorConfig?.assignedSpace?.radius || 0;
+
+        // Radius circle (behind square)
+        this.radiusCircle = scene.add.arc(0, 0, radius, 0, 360, false);
+        this.radiusCircle.setFillStyle(colors.fill, 0.2);
+        this.radiusCircle.setStrokeStyle(2, colors.stroke, 0.6);
+        this.radiusCircle.setVisible(radius > 0);
+        this.add(this.radiusCircle);
+
+        // Main square (32x32 tile)
+        this.square = scene.add.rectangle(0, 0, TILE_SIZE, TILE_SIZE, colors.fill);
+        this.square.setStrokeStyle(3, colors.stroke);
+        this.add(this.square);
+
+        // Name label
+        this.nameText = scene.add.text(0, -TILE_SIZE / 2 - 8, botData.name || "Bot", {
+            fontSize: "11px",
+            color: "#ffffff",
+            backgroundColor: "#000000cc",
+            padding: { x: 4, y: 2 },
+        });
+        this.nameText.setOrigin(0.5, 1);
+        this.add(this.nameText);
+
+        // Resize handle (on radius edge, only visible when selected)
+        this.resizeHandle = scene.add.arc(radius, 0, 8, 0, 360, false, 0xffffff);
+        this.resizeHandle.setStrokeStyle(2, colors.stroke);
+        this.resizeHandle.setVisible(false);
+        this.resizeHandle.setInteractive({ cursor: "ew-resize", draggable: true });
+        this.add(this.resizeHandle);
+
+        // Setup handle drag
+        this.resizeHandle.on(Phaser.Input.Events.DRAG_START, () => {
+            this.isResizing = true;
+        });
+
+        this.resizeHandle.on(Phaser.Input.Events.DRAG, (_p: Phaser.Input.Pointer, dragX: number) => {
+            const newRadius = Math.max(16, Math.abs(dragX));
+            this.setRadius(newRadius);
+            this.emit(BotPreviewEvent.RadiusChanged, this.botData.id, newRadius);
+        });
+
+        this.resizeHandle.on(Phaser.Input.Events.DRAG_END, () => {
+            this.isResizing = false;
+        });
+
+        // Container setup
+        this.setDepth(BOT_DEPTH);
+        this.setSize(TILE_SIZE, TILE_SIZE);
+        this.setInteractive({ cursor: "pointer", draggable: true });
+
+        // Container events
+        this.on(Phaser.Input.Events.POINTER_OVER, () => {
+            if (!this.isSelected) this.setHovered(true);
+        });
+
+        this.on(Phaser.Input.Events.POINTER_OUT, () => {
+            if (!this.isDragging) this.setHovered(false);
+        });
+
+        this.on(Phaser.Input.Events.POINTER_DOWN, () => {
+            if (!this.isResizing) {
+                this.emit(BotPreviewEvent.Selected, this);
+            }
+        });
+
+        this.on(Phaser.Input.Events.DRAG_START, () => {
+            if (!this.isResizing) {
+                this.isDragging = true;
+                this.setAlpha(0.7);
+                this.emit(BotPreviewEvent.DragStart, this);
+            }
+        });
+
+        this.on(Phaser.Input.Events.DRAG, (_p: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+            if (!this.isResizing) {
+                this.setPosition(dragX, dragY);
+            }
+        });
+
+        this.on(Phaser.Input.Events.DRAG_END, () => {
+            if (!this.isResizing) {
+                this.isDragging = false;
+                this.setAlpha(1);
+
+                // Update data
+                if (this.botData.behaviorConfig?.assignedSpace?.center) {
+                    this.botData.behaviorConfig.assignedSpace.center = { x: this.x, y: this.y };
+                }
+
+                this.emit(BotPreviewEvent.PositionChanged, this.botData.id, this.x, this.y);
+                this.emit(BotPreviewEvent.DragEnd, this);
+            }
+        });
+
+        scene.add.existing(this);
+    }
+
+    private getColors() {
+        const type = this.botData.behaviorConfig?.behaviorType || this.botData.behaviorType || "idle";
+        return COLORS[type as keyof typeof COLORS] || COLORS.default;
+    }
+
+    public setSelected(selected: boolean): void {
+        this.isSelected = selected;
+        const colors = this.getColors();
+        const radius = this.botData.behaviorConfig?.assignedSpace?.radius || 0;
+
+        if (selected) {
+            this.square.setStrokeStyle(4, 0xffffff);
+            this.radiusCircle.setFillStyle(colors.fill, 0.3);
+            this.radiusCircle.setStrokeStyle(3, colors.stroke, 0.8);
+            this.resizeHandle.setVisible(radius > 0);
+        } else {
+            this.square.setStrokeStyle(3, colors.stroke);
+            this.radiusCircle.setFillStyle(colors.fill, 0.2);
+            this.radiusCircle.setStrokeStyle(2, colors.stroke, 0.6);
+            this.resizeHandle.setVisible(false);
+        }
+    }
+
+    public getSelected(): boolean {
+        return this.isSelected;
+    }
+
+    public setHovered(hovered: boolean): void {
+        this.isHovered = hovered;
+        const colors = this.getColors();
+
+        if (hovered && !this.isSelected) {
+            this.square.setStrokeStyle(3, 0xffffff, 0.8);
+            this.radiusCircle.setVisible(true);
+        } else if (!this.isSelected) {
+            this.square.setStrokeStyle(3, colors.stroke);
+            const radius = this.botData.behaviorConfig?.assignedSpace?.radius || 0;
+            this.radiusCircle.setVisible(radius > 0);
+        }
+    }
+
+    public setRadius(radius: number): void {
+        if (this.botData.behaviorConfig?.assignedSpace) {
+            this.botData.behaviorConfig.assignedSpace.radius = radius;
+        }
+
+        this.radiusCircle.setRadius(radius);
+        this.radiusCircle.setVisible(radius > 0);
+        this.resizeHandle.setPosition(radius, 0);
+        this.resizeHandle.setVisible(this.isSelected && radius > 0);
+    }
+
+    public getBotData(): BotData {
+        return this.botData;
+    }
+
+    public getBotId(): string {
+        return this.botData.id;
+    }
+
+    public updateBotData(newData: Partial<BotData>): void {
+        this.botData = { ...this.botData, ...newData };
+
+        // Update position
+        const center = newData.behaviorConfig?.assignedSpace?.center;
+        if (center) {
+            this.setPosition(center.x, center.y);
+        }
+
+        // Update radius
+        const radius = newData.behaviorConfig?.assignedSpace?.radius;
+        if (radius !== undefined) {
+            this.setRadius(radius);
+        }
+
+        // Update colors
+        const colors = this.getColors();
+        this.square.setFillStyle(colors.fill);
+        if (!this.isSelected) {
+            this.square.setStrokeStyle(3, colors.stroke);
+        }
+        this.radiusCircle.setFillStyle(colors.fill, this.isSelected ? 0.3 : 0.2);
+        this.radiusCircle.setStrokeStyle(this.isSelected ? 3 : 2, colors.stroke, this.isSelected ? 0.8 : 0.6);
+        this.resizeHandle.setStrokeStyle(2, colors.stroke);
+
+        // Update name
+        if (newData.name !== undefined) {
+            this.nameText.setText(newData.name);
+        }
+    }
+
+    public update(_time: number, _delta: number): void {
+        // No-op for now
+    }
+
+    public handlePointerUp(): void {
+        this.isResizing = false;
+    }
+
+    public getRadiusOverlay(): Phaser.GameObjects.Arc {
+        return this.radiusCircle;
+    }
+
+    public destroy(fromScene?: boolean): void {
+        this.square.destroy();
+        this.radiusCircle.destroy();
+        this.nameText.destroy();
+        this.resizeHandle.destroy();
+        super.destroy(fromScene);
+    }
+}

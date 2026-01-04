@@ -15,6 +15,7 @@
     export let onBack: () => void;
     export let onSave: () => void;
     export let onDelete: () => void;
+    export let onLocate: (() => void) | undefined = undefined;
 
     let currentBot: BotData;
     let isSaving = false;
@@ -34,9 +35,9 @@
     $: {
         if (bot) {
             // Only update if it's a different bot or we don't have currentBot yet
-            if (bot.botId !== lastBotId || !currentBot) {
+            if (bot.id !== lastBotId || !currentBot) {
                 currentBot = { ...bot };
-                lastBotId = bot.botId ?? null;
+                lastBotId = bot.id ?? null;
                 // Ensure assignedSpace exists
                 if (!currentBot.behaviorConfig) {
                     currentBot.behaviorConfig = {
@@ -54,6 +55,7 @@
             }
         } else if (!bot && lastBotId !== null) {
             currentBot = {
+                id: "",
                 name: "",
                 description: "",
                 behaviorType: "idle",
@@ -70,6 +72,7 @@
             lastBotId = null;
         } else if (!currentBot) {
             currentBot = {
+                id: "",
                 name: "",
                 description: "",
                 behaviorType: "idle",
@@ -207,6 +210,28 @@
         <div class="flex-1">
             <h2 class="text-base text-white">Bot details</h2>
         </div>
+        {#if onLocate}
+            <button
+                class="p-2 hover:bg-white/10 rounded transition-colors text-white/60 hover:text-white"
+                on:click={onLocate}
+                title="Locate on map"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                    />
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                </svg>
+            </button>
+        {/if}
         <button
             class="px-4 py-2 text-red-400 hover:bg-red-500/20 rounded transition-colors"
             on:click={handleDelete}
@@ -358,7 +383,16 @@
                 </div>
                 {#if editingBehavior}
                     <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                        <BotBehaviorEditor bind:bot={currentBot} />
+                        <BotBehaviorEditor
+                            bind:bot={currentBot}
+                            on:locate={() => {
+                                if (onLocate) onLocate();
+                            }}
+                            on:editWaypoints={() => {
+                                // Stay in edit mode but trigger map waypoint editing
+                                if (onLocate) onLocate();
+                            }}
+                        />
                         <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
                             <button
                                 class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
@@ -367,18 +401,7 @@
                                     handleSave();
                                 }}
                             >
-                                Save
-                            </button>
-                            <button
-                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                on:click={() => {
-                                    editingBehavior = false;
-                                    if (bot) {
-                                        currentBot = { ...bot };
-                                    }
-                                }}
-                            >
-                                Cancel
+                                Done
                             </button>
                         </div>
                     </div>
@@ -396,10 +419,10 @@
                                 {/if}
                             </p>
                         {/if}
-                        {#if currentBot.behaviorType === "patrol" && currentBot.behaviorConfig?.waypoints}
+                        {#if currentBot.behaviorType === "patrol" && currentBot.behaviorConfig?.patrolWaypoints && Array.isArray(currentBot.behaviorConfig.patrolWaypoints)}
                             <p class="text-xs text-white/50">
-                                {currentBot.behaviorConfig.waypoints.length} waypoint{currentBot.behaviorConfig
-                                    .waypoints.length !== 1
+                                {currentBot.behaviorConfig.patrolWaypoints.length} waypoint{currentBot.behaviorConfig
+                                    .patrolWaypoints.length !== 1
                                     ? "s"
                                     : ""}
                             </p>

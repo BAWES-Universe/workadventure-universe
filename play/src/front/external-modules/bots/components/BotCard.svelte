@@ -10,9 +10,31 @@
     export let bot: BotData;
     export let onSelect: () => void;
     export let onToggle: (bot: BotData, enabled: boolean) => void;
+    export let onHover: ((botId: string | undefined) => void) | undefined = undefined;
+    export let onLocate: (() => void) | undefined = undefined;
+    export let showLocateButton: boolean = false;
 
     let wokaData: WokaData | null = null;
     let assetsDirection: number = 0;
+
+    function handleMouseEnter() {
+        if (onHover) {
+            onHover(bot.id);
+        }
+    }
+
+    function handleMouseLeave() {
+        if (onHover) {
+            onHover(undefined);
+        }
+    }
+
+    function handleLocateClick(e: Event) {
+        e.stopPropagation();
+        if (onLocate) {
+            onLocate();
+        }
+    }
 
     function getTextureUrl(relativeUrl: string): string {
         if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) {
@@ -86,6 +108,8 @@
         ? ''
         : 'opacity-60'}"
     on:click={onSelect}
+    on:mouseenter={handleMouseEnter}
+    on:mouseleave={handleMouseLeave}
     role="button"
     tabindex="0"
     on:keydown={(e) => {
@@ -162,8 +186,33 @@
             </div>
         </div>
 
-        <!-- Right: Toggle Switch -->
+        <!-- Right: Controls -->
         <div class="flex items-center gap-2" on:click|stopPropagation>
+            <!-- Locate button -->
+            {#if showLocateButton}
+                <button
+                    class="p-2 rounded hover:bg-white/10 transition-colors text-white/60 hover:text-white"
+                    title="Locate on map"
+                    on:click={handleLocateClick}
+                >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                        />
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                        />
+                    </svg>
+                </button>
+            {/if}
+
+            <!-- Toggle Switch -->
             <label class="relative inline-flex items-center cursor-pointer">
                 <input
                     type="checkbox"

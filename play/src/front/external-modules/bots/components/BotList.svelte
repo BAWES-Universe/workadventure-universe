@@ -1,11 +1,13 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import type { BotData } from "../types";
+    import { hoveredBotIdStore } from "../stores/BotEditorStore";
     import BotCard from "./BotCard.svelte";
 
     export let bots: BotData[] = [];
     export let onSelectBot: (bot: BotData | null) => void;
     export let onCreateBot: () => void;
+    export let onLocateBot: ((botId: string) => void) | undefined = undefined;
 
     let loading = true;
     let error: string | null = null;
@@ -43,6 +45,16 @@
         }
     }
 
+    function handleHoverBot(botId: string | undefined) {
+        hoveredBotIdStore.set(botId);
+    }
+
+    function handleLocate(bot: BotData) {
+        if (onLocateBot) {
+            onLocateBot(bot.id);
+        }
+    }
+
     onMount(() => {
         // Only load if bots array is empty
         // If bots are already provided via prop, skip loading
@@ -51,6 +63,11 @@
         } else {
             loading = false;
         }
+    });
+
+    onDestroy(() => {
+        // Clear hover state when component is destroyed
+        hoveredBotIdStore.set(undefined);
     });
 </script>
 
@@ -106,8 +123,15 @@
             </div>
         {:else}
             <div class="grid grid-cols-1 gap-3">
-                {#each bots as bot (bot.botId)}
-                    <BotCard {bot} onSelect={() => onSelectBot(bot)} onToggle={handleToggleBot} />
+                {#each bots as bot (bot.id)}
+                    <BotCard
+                        {bot}
+                        onSelect={() => onSelectBot(bot)}
+                        onToggle={handleToggleBot}
+                        onHover={handleHoverBot}
+                        onLocate={() => handleLocate(bot)}
+                        showLocateButton={!!onLocateBot}
+                    />
                 {/each}
             </div>
         {/if}

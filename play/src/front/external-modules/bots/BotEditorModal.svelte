@@ -3,26 +3,7 @@
     import BotPropertiesEditor from "./components/BotPropertiesEditor.svelte";
     import BotBehaviorEditor from "./components/BotBehaviorEditor.svelte";
     import BotAIConfigEditor from "./components/BotAIConfigEditor.svelte";
-
-    interface BotData {
-        name?: string;
-        description?: string;
-        x?: number;
-        y?: number;
-        characterTexture?: string;
-        behaviorType?: "idle" | "patrol" | "social";
-        assignedSpace?: {
-            center?: { x: number; y: number };
-            radius?: number;
-        };
-        aiProvider?: "lmstudio" | "ultravox" | "gpt-voice";
-        chatInstructions?: string;
-        movementInstructions?: string;
-        apiEndpoint?: string;
-        modelName?: string;
-        apiKey?: string;
-        [key: string]: unknown;
-    }
+    import type { BotData } from "./types";
 
     export let isOpen: boolean = false;
     export let onClose: () => void;
