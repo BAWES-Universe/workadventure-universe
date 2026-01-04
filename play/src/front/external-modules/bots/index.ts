@@ -21,7 +21,13 @@ let buttonClickHandler: ((e: Event) => void) | null = null;
 
 // Function to open the bot editor in sidebar
 function openBotEditor() {
-    if (botEditorOpen) return;
+    // If bot editor is already open and sidebar is visible, don't reopen
+    if (botEditorOpen && get(mapEditorVisibilityStore)) {
+        return;
+    }
+
+    // If sidebar is collapsed, we need to reopen it
+    const wasCollapsed = !get(mapEditorVisibilityStore);
 
     botEditorOpen = true;
     mapEditorVisibilityStore.set(true);
@@ -45,7 +51,16 @@ function openBotEditor() {
     mapEditorSelectedToolStore.set(BOT_EDITOR_TOOL_NAME as any);
 
     // Try to inject the component into the sidebar
-    injectBotEditorComponent();
+    // If it was collapsed, the component might have been removed, so we need to re-inject
+    // Always try to inject - injectBotEditorComponent will check if it's already there
+    if (wasCollapsed) {
+        // Use a small delay to ensure the sidebar is visible before injecting
+        setTimeout(() => {
+            injectBotEditorComponent();
+        }, 150);
+    } else {
+        injectBotEditorComponent();
+    }
 }
 
 // Function to close the bot editor
@@ -64,18 +79,23 @@ function closeBotEditor() {
 
 // Function to inject BotEditor component into the sidebar content area
 function injectBotEditorComponent() {
-    // Check if already injected - check both instance and DOM
-    if (botEditorComponentInstance) {
-        return; // Already injected
+    // Check if container already exists in DOM and component is actually mounted
+    const existingContainer = document.querySelector("#bot-editor-container");
+    if (existingContainer && botEditorComponentInstance) {
+        // Both container and instance exist - already injected
+        return;
     }
 
-    // Check if container already exists in DOM (prevent duplication)
-    const existingContainer = document.querySelector("#bot-editor-container");
-    if (existingContainer) {
-        // Container exists but instance is null - clean it up first
+    // If container exists but instance is null, clean it up first (orphaned container)
+    if (existingContainer && !botEditorComponentInstance) {
         if (existingContainer.parentElement) {
             existingContainer.parentElement.removeChild(existingContainer);
         }
+    }
+
+    // If instance exists but container doesn't, clear the instance (component was destroyed)
+    if (botEditorComponentInstance && !existingContainer) {
+        botEditorComponentInstance = null;
     }
 
     // Check if BotEditor tool is selected
@@ -543,12 +563,24 @@ function setupBotEditor(options: ExtensionModuleOptions) {
 
     // Also subscribe to map editor visibility changes (sidebar might appear/disappear)
     unsubscribeMapEditorVisibility = mapEditorVisibilityStore.subscribe((visible) => {
-        // When visibility changes, try to inject if map editor is activated
-        if (get(mapEditorActivated) && localUserStore.isLogged() && visible) {
-            setTimeout(() => {
-                // Always try to inject - injectBotEditorTool will handle existing button
-                tryInjectBotTool();
-            }, 300);
+        // When visibility changes
+        if (get(mapEditorActivated) && localUserStore.isLogged()) {
+            if (visible) {
+                // Sidebar is now visible - try to inject button if needed
+                setTimeout(() => {
+                    tryInjectBotTool();
+                }, 300);
+
+                // If bot editor is selected and was open, re-inject the component
+                if (get(mapEditorSelectedToolStore) === BOT_EDITOR_TOOL_NAME && botEditorOpen) {
+                    setTimeout(() => {
+                        injectBotEditorComponent();
+                    }, 200);
+                }
+            } else {
+                // Sidebar is collapsed - don't remove component, just mark that it might need re-injection
+                // The component will be re-injected when sidebar reopens
+            }
         }
     });
 
