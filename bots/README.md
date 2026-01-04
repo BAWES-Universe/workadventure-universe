@@ -107,19 +107,15 @@ See [SCALABILITY.md](./docs/SCALABILITY.md) for detailed resource usage and opti
 
 ## Documentation
 
-- [ARCHITECTURE.md](./docs/ARCHITECTURE.md) - Detailed architecture and design
-- [SCALABILITY.md](./docs/SCALABILITY.md) - Resource usage and scalability
-- [DATA_STORAGE.md](./docs/DATA_STORAGE.md) - Data storage and manipulation
-- [SCALING_REQUIREMENTS.md](./docs/SCALING_REQUIREMENTS.md) - Infrastructure and scaling requirements
-- [ADMIN_API_REQUIREMENTS.md](./docs/ADMIN_API_REQUIREMENTS.md) - Admin API implementation requirements
-- [ADMIN_API_QUICK_REFERENCE.md](./docs/ADMIN_API_QUICK_REFERENCE.md) - Quick reference for Admin API
-- [ADMIN_API_INTEGRATION.md](./docs/ADMIN_API_INTEGRATION.md) - Admin API integration guide
-- [ASSIGNED_SPACES.md](./docs/ASSIGNED_SPACES.md) - Assigned spaces feature
-- [BEHAVIORS.md](./docs/BEHAVIORS.md) - Behavior system documentation
-- [CHAT_AND_MOVEMENT_INSTRUCTIONS.md](./docs/CHAT_AND_MOVEMENT_INSTRUCTIONS.md) - Chat and movement instructions
-- [HORIZONTAL_SCALING.md](./docs/HORIZONTAL_SCALING.md) - Horizontal scaling guide
-- [SECURITY.md](./docs/SECURITY.md) - Security considerations and best practices
-- [QUICK_START.md](./docs/QUICK_START.md) - Getting started guide
+See [docs/README.md](./docs/README.md) for organized documentation.
+
+**Quick Links:**
+- [Quick Start Guide](./docs/getting-started/QUICK_START.md) - Get started quickly
+- [Implementation Plan](./docs/getting-started/IMPLEMENTATION_PLAN.md) - Step-by-step roadmap
+- [Architecture Overview](./docs/architecture/ARCHITECTURE.md) - System design
+- [Horizontal Scaling](./docs/scaling/HORIZONTAL_SCALING.md) - Multi-server setup
+- [Admin API Integration](./docs/admin-api/ADMIN_API_INTEGRATION.md) - Admin API guide
+- [Security Guide](./docs/security/SECURITY.md) - Security best practices
 
 ## Getting Started
 
