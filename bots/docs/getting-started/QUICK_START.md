@@ -196,9 +196,30 @@ docker-compose -f docker-compose.yaml -f docker-compose.bots.yaml up
 - `BOT_SERVER_PORT`: Bot server REST API port (default: `3001`)
 - `BOT_SERVER_ID`: Unique server identifier for horizontal scaling
 
+**Traefik Routing:**
+The bot server is accessible via Traefik at `http://bot-server.workadventure.localhost`. You need to add this hostname to your hosts file:
+
+**Linux / macOS:**
+Edit `/etc/hosts` and add:
+```
+127.0.0.1 bot-server.workadventure.localhost
+```
+
+**Windows:**
+Edit `C:\Windows\System32\drivers\etc\hosts` (requires administrator privileges) and add:
+```
+127.0.0.1 bot-server.workadventure.localhost
+```
+
+Note: On Windows, you may need to run your text editor as Administrator to edit the hosts file.
+
 **Health Check:**
-The bot server exposes a health check endpoint at `/health`:
+The bot server exposes a health check endpoint:
 ```bash
+# Via Traefik (recommended)
+curl http://bot-server.workadventure.localhost/health
+
+# Direct access (from within Docker network)
 curl http://localhost:3001/health
 ```
 

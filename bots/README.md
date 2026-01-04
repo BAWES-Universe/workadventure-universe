@@ -153,8 +153,25 @@ docker-compose -f docker-compose.yaml -f docker-compose.bots.yaml up
 
 **Configuration:**
 - Environment variables for Admin API, Redis, and WorkAdventure URLs
-- Traefik integration for reverse proxy routing
+- Traefik integration for reverse proxy routing (accessible at `http://bot-server.workadventure.localhost`)
 - Health checks for container orchestration
+
+**Hostname Setup:**
+The bot server is accessible via Traefik at `http://bot-server.workadventure.localhost`. You need to add this hostname to your hosts file:
+
+**Linux / macOS:**
+Edit `/etc/hosts` and add:
+```
+127.0.0.1 bot-server.workadventure.localhost
+```
+
+**Windows:**
+Edit `C:\Windows\System32\drivers\etc\hosts` (requires administrator privileges) and add:
+```
+127.0.0.1 bot-server.workadventure.localhost
+```
+
+Note: On Windows, you may need to run your text editor as Administrator to edit the hosts file.
 
 See [Quick Start Guide](./docs/getting-started/QUICK_START.md) for deployment instructions and [Architecture](./docs/architecture/ARCHITECTURE.md) for deployment architecture details.
 
