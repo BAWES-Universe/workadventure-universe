@@ -117,6 +117,7 @@ See [SCALABILITY.md](./docs/SCALABILITY.md) for detailed resource usage and opti
 - [ASSIGNED_SPACES.md](./docs/ASSIGNED_SPACES.md) - Assigned spaces feature
 - [BEHAVIORS.md](./docs/BEHAVIORS.md) - Behavior system documentation
 - [CHAT_AND_MOVEMENT_INSTRUCTIONS.md](./docs/CHAT_AND_MOVEMENT_INSTRUCTIONS.md) - Chat and movement instructions
+- [HORIZONTAL_SCALING.md](./docs/HORIZONTAL_SCALING.md) - Horizontal scaling guide
 - [SECURITY.md](./docs/SECURITY.md) - Security considerations and best practices
 - [QUICK_START.md](./docs/QUICK_START.md) - Getting started guide
 

@@ -40,6 +40,9 @@
 - ✅ ADMIN_API_REQUIREMENTS.md with Admin API implementation requirements
 - ✅ SECURITY.md with security considerations and best practices
 - ✅ CHAT_AND_MOVEMENT_INSTRUCTIONS.md with chat and movement instructions guide
+- ✅ HORIZONTAL_SCALING.md with horizontal scaling setup and configuration
+- ✅ BotRegistry with Redis support for multi-server coordination
+- ✅ BotServerCoordinator for bot distribution across servers
 
 ## 🚧 Next Steps (Priority Order)
 

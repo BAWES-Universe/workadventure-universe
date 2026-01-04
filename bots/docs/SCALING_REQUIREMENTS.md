@@ -187,14 +187,24 @@ This document outlines the scaling requirements for the bot system, including in
 
 **Bot Servers:**
 - Deploy multiple bot server instances
-- Load balance bot distribution
-- Use message queue (Redis/RabbitMQ) for coordination
-- Shared bot registry (Redis)
+- Load balance bot distribution using `BotServerCoordinator`
+- Use Redis for shared state coordination
+- Shared bot registry (`BotRegistry`) via Redis
+- Automatic bot distribution based on server capacity
+- Server heartbeat for health monitoring
+
+**Implementation:**
+- `BotRegistry`: Redis-based shared state
+- `BotServerCoordinator`: Bot distribution logic
+- Supports both WorkAdventure Redis and Admin API Redis
+- Uses separate Redis database (DB 1) to avoid conflicts
 
 **Database:**
 - Read replicas for analytics queries
 - Write sharding for high write volume
 - Connection pooling per instance
+
+See [HORIZONTAL_SCALING.md](./HORIZONTAL_SCALING.md) for detailed setup guide.
 
 ### Vertical Scaling
 
