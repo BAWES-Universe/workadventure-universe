@@ -2,93 +2,173 @@ import { get } from "svelte/store";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
-import { mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
-import { modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
-import type { ModalEvent } from "../../Api/Events/ModalEvent";
+import { mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
+import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 
-let botModalOpen = false;
+const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
+let botEditorOpen = false;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeMapEditor: (() => void) | null = null;
 let unsubscribeMapEditorVisibility: (() => void) | null = null;
-let unsubscribeModal: (() => void) | null = null;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let _extensionOptions: ExtensionModuleOptions | null = null; // Stored for potential future use
+let unsubscribeSelectedTool: (() => void) | null = null;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Stored for potential future use
+let _extensionOptions: ExtensionModuleOptions | null = null;
 let toolButtonElement: HTMLElement | null = null;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-let _sidebarContainer: HTMLElement | null = null; // Stored for potential future use
+let sidebarContentElement: HTMLElement | null = null;
+let botEditorComponentInstance: { destroy: () => void } | null = null;
 let buttonClickHandler: ((e: Event) => void) | null = null;
 
-// Helper to extract OIDC access token from JWT
-function getAccessTokenFromJwt(jwtToken: string | null): string | null {
-    if (!jwtToken) {
-        return null;
-    }
-    try {
-        const base64Url = jwtToken.split(".")[1];
-        const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-        const jsonPayload = decodeURIComponent(
-            atob(base64)
-                .split("")
-                .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-                .join("")
-        );
-        const payload = JSON.parse(jsonPayload);
-        return payload.accessToken || null;
-    } catch (e) {
-        console.error("Error parsing JWT:", e);
-        return null;
+// Function to open the bot editor in sidebar
+function openBotEditor() {
+    if (botEditorOpen) return;
+
+    botEditorOpen = true;
+    mapEditorVisibilityStore.set(true);
+
+    // Set the selected tool to our custom BotEditor tool name
+    // We use a type assertion since BotEditor isn't in the enum, but the store accepts it at runtime
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mapEditorSelectedToolStore.set(BOT_EDITOR_TOOL_NAME as any);
+
+    // Try to inject the component into the sidebar
+    injectBotEditorComponent();
+}
+
+// Function to close the bot editor
+function closeBotEditor() {
+    botEditorOpen = false;
+    removeBotEditorComponent();
+
+    // If BotEditor was selected, switch to EntityEditor or close
+    if (get(mapEditorSelectedToolStore) === BOT_EDITOR_TOOL_NAME) {
+        mapEditorSelectedToolStore.set(EditorToolName.EntityEditor);
     }
 }
 
-// Function to open the bot editor modal
-function openBotEditorModal(options: ExtensionModuleOptions) {
-    if (botModalOpen) return;
+// Function to inject BotEditor component into the sidebar content area
+function injectBotEditorComponent() {
+    if (botEditorComponentInstance) {
+        return; // Already injected
+    }
 
-    const accessToken = getAccessTokenFromJwt(options.userAccessToken);
-    if (!accessToken) {
-        console.warn("No access token available for bot editor");
+    // Check if BotEditor tool is selected
+    if (get(mapEditorSelectedToolStore) !== BOT_EDITOR_TOOL_NAME) {
         return;
     }
 
-    // For now, we'll use a modal. Later we can create a custom sidebar
-    // TODO: Create BotEditorModal component that opens as sidebar or modal
-    const botEditorUrl = `${options.adminUrl || ""}/bots/editor?accessToken=${encodeURIComponent(
-        accessToken
-    )}&playUri=${encodeURIComponent(options.roomId)}`;
+    // Find the sidebar content area - it's the div with class "sidebar" inside #map-editor-right
+    const mapEditorRight = document.querySelector("#map-editor-right");
+    if (!mapEditorRight) {
+        // Retry after a short delay
+        setTimeout(injectBotEditorComponent, 100);
+        return;
+    }
 
-    const modalEvent: ModalEvent = {
-        title: "Bot Editor",
-        src: botEditorUrl,
-        allow: "fullscreen",
-        allowApi: true,
-        position: "right",
-        allowFullScreen: true,
-    };
+    const sidebar = mapEditorRight.querySelector(".sidebar");
+    if (!sidebar || !(sidebar instanceof HTMLElement)) {
+        setTimeout(injectBotEditorComponent, 100);
+        return;
+    }
 
-    modalIframeStore.set(modalEvent);
-    modalVisibilityStore.set(true);
-    botModalOpen = true;
+    sidebarContentElement = sidebar;
+
+    // Hide existing conditional content (EntityEditor, AreaEditor, etc.)
+    const conditionalContent = sidebar.querySelectorAll(":scope > *:not(.flex.flex-row.justify-end)");
+    conditionalContent.forEach((el) => {
+        if (el instanceof HTMLElement && el.id !== "bot-editor-container") {
+            el.style.display = "none";
+        }
+    });
+
+    // Create container for bot editor
+    const botEditorContainer = document.createElement("div");
+    botEditorContainer.id = "bot-editor-container";
+    botEditorContainer.className = "bot-editor-wrapper";
+
+    // Insert after header buttons
+    const headerButtons = sidebar.querySelector(".flex.flex-row.justify-end");
+    if (headerButtons && headerButtons.nextSibling) {
+        sidebar.insertBefore(botEditorContainer, headerButtons.nextSibling);
+    } else {
+        sidebar.appendChild(botEditorContainer);
+    }
+
+    // Mount Svelte component directly using dynamic import
+    void import("./BotEditor.svelte")
+        .then((module) => {
+            const BotEditorComponent = module.default;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            botEditorComponentInstance = new (BotEditorComponent as any)({
+                target: botEditorContainer,
+                props: {},
+            });
+        })
+        .catch((error) => {
+            console.error("Failed to load BotEditor component:", error);
+        });
 }
 
-// Function to close the bot editor modal
-function closeBotEditorModal() {
-    modalVisibilityStore.set(false);
-    modalIframeStore.set(null);
-    botModalOpen = false;
+// Function to remove BotEditor component from sidebar
+function removeBotEditorComponent() {
+    if (botEditorComponentInstance) {
+        botEditorComponentInstance.destroy();
+        botEditorComponentInstance = null;
+    }
+
+    const container = document.querySelector("#bot-editor-container");
+    if (container && container.parentElement) {
+        container.parentElement.removeChild(container);
+    }
+
+    // Show conditional content again
+    if (sidebarContentElement) {
+        const conditionalContent = sidebarContentElement.querySelectorAll(":scope > *");
+        conditionalContent.forEach((el) => {
+            if (el instanceof HTMLElement && el.id !== "bot-editor-container") {
+                el.style.display = "";
+            }
+        });
+    }
 }
 
 // Function to inject bot editor tool button into map editor sidebar
 function injectBotEditorTool(sidebar: HTMLElement, options: ExtensionModuleOptions) {
-    // Find the tools container - try multiple selectors
-    let toolsContainer = sidebar.querySelector(".flex.flex-col.gap-2");
+    // Find the tools container - it's the div with classes: p-2 bg-contrast/80 rounded-2xl flex flex-col gap-2 backdrop-blur-md
+    // This is inside .side-bar-container > .side-bar > div (after .close-window)
+    const toolsContainerElement = sidebar.querySelector(
+        "div.p-2.bg-contrast\\/80.rounded-2xl.flex.flex-col.gap-2.backdrop-blur-md"
+    );
+    let toolsContainer: HTMLElement | null =
+        toolsContainerElement instanceof HTMLElement ? toolsContainerElement : null;
+
     if (!toolsContainer) {
-        // Try alternative selector
-        toolsContainer = sidebar.querySelector(".p-2.bg-contrast\\/80.rounded-2xl.flex.flex-col.gap-2");
+        // Try finding by walking the DOM - find the div after .close-window
+        const closeWindow = sidebar.querySelector(".close-window");
+        if (closeWindow && closeWindow.parentElement) {
+            const siblings = Array.from(closeWindow.parentElement.children);
+            const closeIndex = siblings.indexOf(closeWindow);
+            if (closeIndex >= 0 && closeIndex < siblings.length - 1) {
+                const nextSibling = siblings[closeIndex + 1];
+                if (
+                    nextSibling instanceof HTMLElement &&
+                    nextSibling.classList.contains("flex") &&
+                    nextSibling.classList.contains("flex-col") &&
+                    nextSibling.classList.contains("gap-2")
+                ) {
+                    toolsContainer = nextSibling;
+                }
+            }
+        }
     }
+
     if (!toolsContainer) {
-        // Try finding by class pattern
+        // Last resort: find any div with flex flex-col gap-2 inside sidebar
         toolsContainer = Array.from(sidebar.querySelectorAll("div")).find(
-            (el) => el.classList.contains("flex") && el.classList.contains("flex-col") && el.classList.contains("gap-2")
+            (el) =>
+                el.classList.contains("flex") &&
+                el.classList.contains("flex-col") &&
+                el.classList.contains("gap-2") &&
+                el.classList.contains("backdrop-blur-md")
         ) as HTMLElement | null;
     }
 
@@ -98,49 +178,136 @@ function injectBotEditorTool(sidebar: HTMLElement, options: ExtensionModuleOptio
     }
 
     // Check if button already exists
-    if (sidebar.querySelector("#bot-editor-tool-btn")) {
+    if (toolsContainer.querySelector("#bot-editor-tool-btn")) {
         return;
     }
 
-    // Create tool button element
+    // Import icon dynamically - we'll use IconUser from @wa-icons
+    // For now, create a simple button structure that matches the other tools
     const toolButton = document.createElement("div");
     toolButton.id = "bot-editor-tool-btn";
     toolButton.className = "tool-button relative";
-    toolButton.innerHTML = `
-        <button
-            class="peer p-3 aspect-square w-12 rounded hover:bg-white/10"
-            id="BotEditor"
-            type="button"
-            title="Bot Editor"
-        >
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="font-size: 22px; width: 22px; height: 22px;">
-                <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2ZM21 9V7L15 1H5C3.89 1 3 1.89 3 3V21C3 22.11 3.89 23 5 23H11V21H5V3H13V9H21ZM14 10V12H22V10H14ZM14 14V16H22V14H14ZM14 18V20H22V18H14Z" fill="currentColor"/>
-            </svg>
-        </button>
-        <div class="bg-contrast/90 backdrop-blur-xl text-white tooltip absolute text-nowrap p-2 invisible opacity-0 transition-all peer-hover:visible peer-hover:opacity-100 rounded top-1/2 -translate-y-1/2 right-[130%]">
-            Bot Editor
-        </div>
-    `;
+
+    // Create button element
+    const button = document.createElement("button");
+    button.className = "peer p-3 aspect-square w-12 rounded hover:bg-white/10";
+    button.id = "BotEditor";
+    button.type = "button";
+    button.title = "Bot Editor";
+
+    // Create robot icon SVG
+    const iconSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    iconSvg.setAttribute("viewBox", "0 0 24 24");
+    iconSvg.setAttribute("fill", "none");
+    iconSvg.setAttribute("stroke", "currentColor");
+    iconSvg.setAttribute("stroke-width", "1.5");
+    iconSvg.setAttribute("stroke-linecap", "round");
+    iconSvg.setAttribute("stroke-linejoin", "round");
+    iconSvg.style.fontSize = "22px";
+    iconSvg.style.width = "22px";
+    iconSvg.style.height = "22px";
+
+    // Robot icon - antenna, head, eyes, body, and control panel
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+    // Antenna
+    const antenna = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    antenna.setAttribute("x1", "12");
+    antenna.setAttribute("y1", "2");
+    antenna.setAttribute("x2", "12");
+    antenna.setAttribute("y2", "4");
+    g.appendChild(antenna);
+
+    const antennaDot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    antennaDot.setAttribute("cx", "12");
+    antennaDot.setAttribute("cy", "2");
+    antennaDot.setAttribute("r", "1");
+    antennaDot.setAttribute("fill", "currentColor");
+    g.appendChild(antennaDot);
+
+    // Head (rounded rectangle)
+    const head = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    head.setAttribute("x", "6");
+    head.setAttribute("y", "4");
+    head.setAttribute("width", "12");
+    head.setAttribute("height", "8");
+    head.setAttribute("rx", "1");
+    g.appendChild(head);
+
+    // Eyes
+    const eye1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    eye1.setAttribute("cx", "9");
+    eye1.setAttribute("cy", "7.5");
+    eye1.setAttribute("r", "1");
+    eye1.setAttribute("fill", "currentColor");
+    g.appendChild(eye1);
+
+    const eye2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    eye2.setAttribute("cx", "15");
+    eye2.setAttribute("cy", "7.5");
+    eye2.setAttribute("r", "1");
+    eye2.setAttribute("fill", "currentColor");
+    g.appendChild(eye2);
+
+    // Body
+    const body = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    body.setAttribute("x", "7");
+    body.setAttribute("y", "13");
+    body.setAttribute("width", "10");
+    body.setAttribute("height", "8");
+    body.setAttribute("rx", "1");
+    g.appendChild(body);
+
+    // Control panel buttons
+    const button1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    button1.setAttribute("cx", "9.5");
+    button1.setAttribute("cy", "16.5");
+    button1.setAttribute("r", "0.8");
+    button1.setAttribute("fill", "currentColor");
+    g.appendChild(button1);
+
+    const button2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    button2.setAttribute("cx", "12");
+    button2.setAttribute("cy", "16.5");
+    button2.setAttribute("r", "0.8");
+    button2.setAttribute("fill", "currentColor");
+    g.appendChild(button2);
+
+    const button3 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    button3.setAttribute("cx", "14.5");
+    button3.setAttribute("cy", "16.5");
+    button3.setAttribute("r", "0.8");
+    button3.setAttribute("fill", "currentColor");
+    g.appendChild(button3);
+
+    iconSvg.appendChild(g);
+    button.appendChild(iconSvg);
+
+    // Create tooltip
+    const tooltip = document.createElement("div");
+    tooltip.className =
+        "bg-contrast/90 backdrop-blur-xl text-white tooltip absolute text-nowrap p-2 invisible opacity-0 transition-all peer-hover:visible peer-hover:opacity-100 rounded top-1/2 -translate-y-1/2 right-[130%]";
+    tooltip.textContent = "Bot Editor";
+
+    toolButton.appendChild(button);
+    toolButton.appendChild(tooltip);
 
     // Add click handler
-    const button = toolButton.querySelector("button");
-    if (button) {
-        buttonClickHandler = (e: Event) => {
-            e.preventDefault();
-            openBotEditorModal(options);
-        };
-        button.addEventListener("click", buttonClickHandler);
-    }
+    buttonClickHandler = (e: Event) => {
+        e.preventDefault();
+        openBotEditor();
+    };
+    button.addEventListener("click", buttonClickHandler);
 
-    // Insert before the close button (or at the end if close button not found)
-    const closeButton = sidebar.querySelector(".close-window");
-    if (closeButton && closeButton.parentElement) {
-        // Insert in the tools container, after other tools
-        toolsContainer.appendChild(toolButton);
+    // Insert into tools container - place between EntityEditor and WAMSettingsEditor (configure my room)
+    const configureMyRoomButton = toolsContainer.querySelector("button#WAMSettingsEditor");
+    if (configureMyRoomButton && configureMyRoomButton.parentElement) {
+        // Insert before the Configure My Room button
+        configureMyRoomButton.parentElement.insertBefore(toolButton, configureMyRoomButton);
     } else {
+        // Fallback: if WAMSettingsEditor button not found, append at end
         toolsContainer.appendChild(toolButton);
     }
-
     toolButtonElement = toolButton;
 }
 
@@ -175,7 +342,6 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     const tryInjectBotTool = () => {
         const sidebar = document.querySelector(".side-bar-container") as HTMLElement;
         if (sidebar && localUserStore.isLogged()) {
-            _sidebarContainer = sidebar;
             injectBotEditorTool(sidebar, options);
             return true;
         }
@@ -209,7 +375,6 @@ function setupBotEditor(options: ExtensionModuleOptions) {
         } else {
             // Map editor is inactive, remove tool button
             removeBotEditorTool();
-            _sidebarContainer = null;
         }
     });
 
@@ -269,13 +434,6 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
             setupBotEditor(options);
         }, 1000);
     }
-
-    // Listen for modal close events
-    unsubscribeModal = modalVisibilityStore.subscribe((visible) => {
-        if (!visible && botModalOpen) {
-            botModalOpen = false;
-        }
-    });
 }
 
 const botExtensionModule: ExtensionModule = {
@@ -303,15 +461,15 @@ const botExtensionModule: ExtensionModule = {
             unsubscribeMapEditorVisibility();
             unsubscribeMapEditorVisibility = null;
         }
-        if (unsubscribeModal) {
-            unsubscribeModal();
-            unsubscribeModal = null;
+        if (unsubscribeSelectedTool) {
+            unsubscribeSelectedTool();
+            unsubscribeSelectedTool = null;
         }
         // Remove tool button
         removeBotEditorTool();
-        _sidebarContainer = null;
+        closeBotEditor();
+        sidebarContentElement = null;
         _extensionOptions = null;
-        closeBotEditorModal();
     },
 };
 
