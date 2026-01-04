@@ -12,6 +12,7 @@ Welcome to the WorkAdventure Bot System documentation. This documentation is org
 - **[Architecture Overview](./architecture/ARCHITECTURE.md)** - System design and components
 - **[Behaviors](./architecture/BEHAVIORS.md)** - Bot behavior system
 - **[Assigned Spaces](./architecture/ASSIGNED_SPACES.md)** - Bot area assignment feature
+- **[Conversation Memory](./architecture/CONVERSATION_MEMORY.md)** - Per-bot, per-player memory system
 
 ### Admin API
 - **[Admin API Requirements](./admin-api/ADMIN_API_REQUIREMENTS.md)** - What your Admin API needs to implement

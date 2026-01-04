@@ -7,6 +7,7 @@ This section contains detailed architecture documentation for the bot system.
 - **[Architecture Overview](./ARCHITECTURE.md)** - System design, components, and data flow
 - **[Behaviors](./BEHAVIORS.md)** - Bot behavior system documentation
 - **[Assigned Spaces](./ASSIGNED_SPACES.md)** - Bot area assignment feature
+- **[Conversation Memory](./CONVERSATION_MEMORY.md)** - Per-bot, per-player memory system
 
 ## Quick Navigation
 

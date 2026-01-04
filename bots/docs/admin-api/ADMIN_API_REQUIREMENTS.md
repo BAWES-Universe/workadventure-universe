@@ -292,6 +292,96 @@ Content-Type: application/json
 - Consider batching or async processing
 - Index on botId, timestamp for queries
 
+### 5. Conversation Memory
+
+#### POST `/api/bots/memory/:botId`
+
+**Purpose:** Save conversation memories for a bot
+
+**Request:**
+```http
+POST /api/bots/memory/bot-123
+Authorization: Bearer {ADMIN_API_TOKEN}
+Content-Type: application/json
+
+{
+  "memories": [
+    {
+      "playerId": 123,
+      "playerName": "John",
+      "conversationHistory": [...],
+      "emotions": {
+        "botEmotion": { "anger": 20, "happiness": 70, "trust": 60, "familiarity": 80 },
+        "playerEmotion": { "anger": 0, "happiness": 80, "trust": 70 }
+      },
+      "personalInfo": {
+        "birthday": "January 15",
+        "name": "John",
+        "preferences": ["pizza", "video games"],
+        "facts": [["favorite_color", "blue"]]
+      },
+      "relationship": {
+        "firstMet": 1704067200000,
+        "lastMet": 1704153600000,
+        "totalConversations": 5,
+        "totalMessages": 25,
+        "importantEvents": [...]
+      },
+      "lastUpdated": 1704153600000,
+      "createdAt": 1704067200000
+    }
+  ],
+  "timestamp": 1704153600000
+}
+```
+
+**Response:**
+- `200 OK` or `204 No Content` on success
+
+**Requirements:**
+- Upsert logic (update if exists, create if not)
+- Index on botId, playerId for fast lookups
+- Handle large memory objects efficiently
+- Consider batching for multiple memories
+
+#### GET `/api/bots/memory/:botId`
+
+**Purpose:** Load conversation memories for a bot
+
+**Request:**
+```http
+GET /api/bots/memory/bot-123
+Authorization: Bearer {ADMIN_API_TOKEN}
+```
+
+**Response:**
+```json
+{
+  "memories": [
+    {
+      "playerId": 123,
+      "playerName": "John",
+      "conversationHistory": [...],
+      "emotions": {...},
+      "personalInfo": {...},
+      "relationship": {...},
+      "lastUpdated": 1704153600000,
+      "createdAt": 1704067200000
+    }
+  ]
+}
+```
+
+**Response Codes:**
+- `200 OK` with memories array
+- `404 Not Found` if bot has no memories (return empty array `[]`)
+
+**Requirements:**
+- Return all memories for the bot
+- Efficient querying (index on botId)
+- Handle large result sets
+- Return empty array if no memories exist (not an error)
+
 ## Database Schema
 
 ### bots_configuration
@@ -398,6 +488,40 @@ CREATE TABLE bots_messages (
   FOREIGN KEY (bot_id) REFERENCES bots_configuration(bot_id) ON DELETE CASCADE
 );
 ```
+
+### bots_memory
+
+```sql
+CREATE TABLE bots_memory (
+  id SERIAL PRIMARY KEY,
+  bot_id VARCHAR(255) NOT NULL,
+  player_id INTEGER NOT NULL,
+  memory_data JSONB NOT NULL, -- Full BotPlayerMemory object
+  last_updated TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  
+  -- Unique constraint (one memory per bot-player pair)
+  UNIQUE(bot_id, player_id),
+  
+  -- Indexes
+  INDEX idx_bot_id (bot_id),
+  INDEX idx_player_id (player_id),
+  INDEX idx_last_updated (last_updated),
+  INDEX idx_bot_player (bot_id, player_id),
+  
+  -- Foreign key (optional)
+  FOREIGN KEY (bot_id) REFERENCES bots_configuration(bot_id) ON DELETE CASCADE
+);
+```
+
+**Memory Data Structure (JSONB):**
+The `memory_data` field stores a complete `BotPlayerMemory` object including:
+- Conversation history (last N messages)
+- Emotional state (bot and player emotions)
+- Personal information (birthday, name, preferences, facts)
+- Relationship context (first met, total conversations, important events)
+
+See [CONVERSATION_MEMORY.md](../architecture/CONVERSATION_MEMORY.md) for detailed structure.
 
 ## Scaling Requirements
 
@@ -548,6 +672,7 @@ CREATE TABLE bots_messages (
 2. ✅ Usage metrics tracking endpoint
 3. ✅ Basic database schema
 4. ✅ Authentication
+5. ✅ Conversation memory storage endpoints
 
 ### Phase 2: Analytics (Important)
 1. ✅ Usage query endpoint with filters

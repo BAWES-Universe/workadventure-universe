@@ -156,6 +156,14 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Get conversation memory for a player
+     * Override in behaviors that use memory
+     */
+    getConversationMemory(playerId: number): any {
+        return null;
+    }
+
+    /**
      * Get behavior configuration
      */
     getConfig(): BehaviorConfig {

@@ -27,6 +27,11 @@
   - Cooldown system
   - Wandering behavior
   - Prevents multiple bots targeting same player
+  - **Conversation Memory**: Per-bot, per-player memory system
+    - Remembers past conversations
+    - Tracks emotional state (bot and player)
+    - Extracts and remembers personal information (birthday, name, preferences)
+    - Relationship context (first met, conversation stats, important events)
 
 ### Documentation
 - ✅ Comprehensive README with architecture overview

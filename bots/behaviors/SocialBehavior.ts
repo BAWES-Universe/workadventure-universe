@@ -5,6 +5,7 @@
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
+import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
 
 export interface SocialBehaviorConfig extends BehaviorConfig {
     type: 'social';
@@ -35,9 +36,14 @@ export class SocialBehavior extends BaseBehavior {
     private wanderTarget: PositionInterface | null = null;
     private lastWanderUpdate: number = 0;
     private lastConversationCheck: number = 0;
+    private conversationMemory: ConversationMemory;
 
     constructor(config: SocialBehaviorConfig) {
         super(config);
+        this.conversationMemory = new ConversationMemory(
+            config.conversationHistorySize || 50,
+            1000 // Max 1000 player memories per bot
+        );
     }
 
     update(deltaTime: number): void {
@@ -75,6 +81,10 @@ export class SocialBehavior extends BaseBehavior {
 
         const config = this.config as SocialBehaviorConfig;
         const currentTime = Date.now();
+        const botId = this.bot.getBotId();
+
+        // Start conversation in memory
+        this.conversationMemory.startConversation(botId, this.targetPlayerId);
 
         // Start conversation
         this.activeConversations.set(this.targetPlayerId, {
@@ -84,10 +94,14 @@ export class SocialBehavior extends BaseBehavior {
             lastMessageTime: currentTime,
         });
 
-        // Send initial greeting
-        const greeting = this.getConversationStarter(config.conversationTopics);
+        // Get conversation context for personalized greeting
+        const memory = this.conversationMemory.getMemory(botId, this.targetPlayerId);
+        const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
+
         if (greeting) {
             this.bot.sendChatMessage(spaceName, greeting);
+            // Record bot's message in memory
+            this.conversationMemory.addMessage(botId, this.targetPlayerId, greeting, 'bot', spaceName);
         }
 
         // Clear target
@@ -116,10 +130,20 @@ export class SocialBehavior extends BaseBehavior {
     onChatMessage(spaceName: string, message: string, senderId: number): void {
         if (!this.bot) return;
 
+        const botId = this.bot.getBotId();
         const conversation = this.activeConversations.get(senderId);
+        
         if (conversation) {
             conversation.lastMessageTime = Date.now();
+            
+            // Store player's message in memory
+            this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
+            
+            // Extract personal information from message
+            this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+            
             // TODO: Process message with AI and respond
+            // AI will use conversationMemory.getConversationContext() to get full context
         }
     }
 
@@ -326,6 +350,85 @@ export class SocialBehavior extends BaseBehavior {
         }
         const topic = topics[Math.floor(Math.random() * topics.length)];
         return `Hi! I'd love to chat about ${topic}. What do you think?`;
+    }
+
+    /**
+     * Get personalized greeting based on conversation memory
+     */
+    private getPersonalizedGreeting(topics: string[], memory: BotPlayerMemory | null): string {
+        if (!memory) {
+            return this.getConversationStarter(topics);
+        }
+
+        const emotions = memory.emotions;
+        const personalInfo = memory.personalInfo;
+        const relationship = memory.relationship;
+
+        // Check if bot is angry at player
+        if (emotions.botEmotion.anger > 60) {
+            return `Oh, it's you again. What do you want?`;
+        }
+
+        // Check if player is angry at bot
+        if (emotions.playerEmotion.anger > 60) {
+            return `I can see you're still upset. I'm sorry about that.`;
+        }
+
+        // Check if it's player's birthday (if we know it)
+        if (personalInfo.birthday) {
+            const today = new Date();
+            const birthdayDate = this.parseBirthday(personalInfo.birthday);
+            if (birthdayDate && this.isToday(birthdayDate)) {
+                return `Happy birthday, ${personalInfo.name || 'friend'}! 🎉`;
+            }
+        }
+
+        // Use player's name if we know it
+        if (personalInfo.name && relationship.totalConversations > 1) {
+            return `Hey ${personalInfo.name}! Good to see you again.`;
+        }
+
+        // First time meeting
+        if (relationship.totalConversations === 1) {
+            return `Hello! Nice to meet you. How are you doing today?`;
+        }
+
+        // Returning player
+        if (relationship.totalConversations > 1) {
+            const daysSinceLastMet = (Date.now() - relationship.lastMet) / (1000 * 60 * 60 * 24);
+            if (daysSinceLastMet > 1) {
+                return `Long time no see! How have you been?`;
+            }
+            return `Hey! We were just talking. What's up?`;
+        }
+
+        // Default
+        return this.getConversationStarter(topics);
+    }
+
+    /**
+     * Parse birthday string to Date (simple implementation)
+     */
+    private parseBirthday(birthdayStr: string): Date | null {
+        // Simple parsing - can be enhanced
+        try {
+            // Try "January 15" format
+            const date = new Date(birthdayStr);
+            if (!isNaN(date.getTime())) {
+                return date;
+            }
+        } catch (e) {
+            // Ignore
+        }
+        return null;
+    }
+
+    /**
+     * Check if date is today (ignoring year)
+     */
+    private isToday(date: Date): boolean {
+        const today = new Date();
+        return date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
     }
 }
 
