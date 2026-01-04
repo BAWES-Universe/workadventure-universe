@@ -4,23 +4,21 @@ export interface BotData {
     botId?: string;
     name?: string;
     description?: string;
-    position?: {
-        x: number;
-        y: number;
-    };
     characterTexture?: string;
     characterTextureIds?: string[];
     behaviorType?: "idle" | "patrol" | "social";
     behaviorConfig?: {
-        conversationRadius?: number;
-        wanderRadius?: number;
-        wanderCenter?: { x: number; y: number };
-        assignedSpace?: {
-            center?: { x: number; y: number };
-            radius?: number;
+        // Assigned space defines where the bot operates (center + radius)
+        // For idle bots: radius=0 means they won't move
+        // For social/patrol bots: radius defines the operational area
+        assignedSpace: {
+            center: { x: number; y: number };
+            radius: number;
         };
-        waypoints?: Array<{ x: number; y: number }>;
-        minTimeBetweenConversations?: number;
+        // Behavior-specific configs
+        conversationRadius?: number; // For social bots: detection range for players
+        waypoints?: Array<{ x: number; y: number }>; // For patrol bots
+        minTimeBetweenConversations?: number; // For social bots
         [key: string]: unknown;
     };
     chatInstructions?: string;

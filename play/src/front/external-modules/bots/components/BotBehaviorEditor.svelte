@@ -7,7 +7,7 @@
     let behaviorType: "idle" | "patrol" | "social" = "idle";
     let assignedSpaceCenterX = 0;
     let assignedSpaceCenterY = 0;
-    let assignedSpaceRadius = 50;
+    let assignedSpaceRadius = 0; // Default to 0 for idle bots
 
     // Behavior-specific configs
     let patrolWaypoints: Array<{ x: number; y: number }> = [];
@@ -22,7 +22,10 @@
             if (bot.behaviorConfig?.assignedSpace) {
                 assignedSpaceCenterX = bot.behaviorConfig.assignedSpace.center?.x || 0;
                 assignedSpaceCenterY = bot.behaviorConfig.assignedSpace.center?.y || 0;
-                assignedSpaceRadius = bot.behaviorConfig.assignedSpace.radius || 50;
+                assignedSpaceRadius = bot.behaviorConfig.assignedSpace.radius ?? (behaviorType === "idle" ? 0 : 50);
+            } else {
+                // Initialize with defaults
+                assignedSpaceRadius = behaviorType === "idle" ? 0 : 50;
             }
             if (bot.behaviorConfig?.waypoints) {
                 patrolWaypoints = [...bot.behaviorConfig.waypoints];
@@ -42,12 +45,18 @@
         if (bot && initialized) {
             bot.behaviorType = behaviorType;
             if (!bot.behaviorConfig) {
-                bot.behaviorConfig = {};
+                bot.behaviorConfig = {
+                    assignedSpace: {
+                        center: { x: 0, y: 0 },
+                        radius: behaviorType === "idle" ? 0 : 50,
+                    },
+                };
             }
+            // Ensure assignedSpace always exists
             if (!bot.behaviorConfig.assignedSpace) {
                 bot.behaviorConfig.assignedSpace = {
                     center: { x: 0, y: 0 },
-                    radius: 50,
+                    radius: behaviorType === "idle" ? 0 : 50,
                 };
             }
             bot.behaviorConfig.assignedSpace.center = {
@@ -76,8 +85,23 @@
         updateBot();
     }
 
+    // Ensure radius is always 0 for idle bots
+    $: if (behaviorType === "idle" && assignedSpaceRadius !== 0) {
+        assignedSpaceRadius = 0;
+        if (initialized) {
+            updateBot();
+        }
+    }
+
     // Update bot when inputs change (use event handlers to avoid cycles)
     function handleBehaviorTypeChange() {
+        // When switching to idle, set radius to 0
+        if (behaviorType === "idle") {
+            assignedSpaceRadius = 0;
+        } else if (assignedSpaceRadius === 0) {
+            // When switching from idle to other, set default radius
+            assignedSpaceRadius = 50;
+        }
         updateBot();
     }
 
@@ -110,31 +134,67 @@
 
     <!-- Assigned Space -->
     <div class="border-t pt-4">
-        <h3 class="text-sm font-semibold mb-2">Assigned Space</h3>
-        <div class="space-y-2">
-            <div class="flex gap-2">
-                <input
-                    type="number"
-                    class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    bind:value={assignedSpaceCenterX}
-                    on:input={handleAssignedSpaceChange}
-                    placeholder="Center X"
-                />
-                <input
-                    type="number"
-                    class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    bind:value={assignedSpaceCenterY}
-                    on:input={handleAssignedSpaceChange}
-                    placeholder="Center Y"
-                />
-                <input
-                    type="number"
-                    class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    bind:value={assignedSpaceRadius}
-                    on:input={handleAssignedSpaceChange}
-                    placeholder="Radius"
-                />
+        <h3 class="text-sm font-semibold mb-3">Location</h3>
+        <div class="space-y-3">
+            <!-- Center X/Y -->
+            <div>
+                <label class="block text-xs text-white/60 mb-1">Position (X, Y)</label>
+                <div class="flex gap-2">
+                    <input
+                        type="number"
+                        class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        bind:value={assignedSpaceCenterX}
+                        on:input={handleAssignedSpaceChange}
+                        placeholder="X"
+                    />
+                    <input
+                        type="number"
+                        class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        bind:value={assignedSpaceCenterY}
+                        on:input={handleAssignedSpaceChange}
+                        placeholder="Y"
+                    />
+                </div>
             </div>
+            <!-- Radius -->
+            {#if behaviorType === "idle"}
+                <div>
+                    <label class="block text-xs text-white/60 mb-1">Radius</label>
+                    <input
+                        type="number"
+                        class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent opacity-50"
+                        bind:value={assignedSpaceRadius}
+                        on:input={handleAssignedSpaceChange}
+                        placeholder="0"
+                        min="0"
+                        disabled
+                    />
+                    <p class="text-xs text-white/50 mt-1">
+                        Idle bots are stationary and do not move. Radius is set to 0 and cannot be changed.
+                    </p>
+                </div>
+            {:else}
+                <div>
+                    <label class="block text-xs text-white/60 mb-1">Radius</label>
+                    <input
+                        type="number"
+                        class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        bind:value={assignedSpaceRadius}
+                        on:input={handleAssignedSpaceChange}
+                        placeholder="50"
+                        min="0"
+                    />
+                    <p class="text-xs text-white/50 mt-1">
+                        {#if behaviorType === "social"}
+                            How far the bot can wander from the center position (in tiles). The bot will stay within
+                            this area.
+                        {:else if behaviorType === "patrol"}
+                            Maximum distance from center. Waypoints should ideally be within this radius, but the bot
+                            will return to this area if it strays too far.
+                        {/if}
+                    </p>
+                </div>
+            {/if}
         </div>
     </div>
 

@@ -29,8 +29,12 @@ abstract class BaseBehavior {
 
 **Configuration:**
 ```typescript
-interface IdleBehaviorConfig {
-  position: { x: number; y: number };
+interface IdleBehaviorConfig extends BehaviorConfig {
+  type: 'idle';
+  assignedSpace: {
+    center: { x: number; y: number };
+    radius: number;  // For idle bots, radius=0 means they won't move
+  };
   responseRadius: number;  // Distance to respond to players
   greetingMessages: string[];  // Random greetings
   idleAnimations: string[];  // Idle animations to play
@@ -38,7 +42,9 @@ interface IdleBehaviorConfig {
 ```
 
 **Behavior:**
-- Stay at fixed position
+- Stay at fixed position (assignedSpace.center)
+- If radius=0, bot will not move at all
+- If radius>0, bot may have slight movement (not currently implemented)
 - When player approaches within `responseRadius`, greet them
 - Join conversation if player initiates
 - Respond to chat messages naturally
@@ -50,7 +56,12 @@ interface IdleBehaviorConfig {
 
 **Configuration:**
 ```typescript
-interface PatrolBehaviorConfig {
+interface PatrolBehaviorConfig extends BehaviorConfig {
+  type: 'patrol';
+  assignedSpace: {
+    center: { x: number; y: number };
+    radius: number;  // Maximum distance from center (boundary enforcement)
+  };
   waypoints: Array<{ x: number; y: number }>;
   loop: boolean;  // Loop back to start
   pauseAtWaypoints: number;  // Seconds to pause
@@ -60,7 +71,9 @@ interface PatrolBehaviorConfig {
 ```
 
 **Behavior:**
+- Spawns at assignedSpace.center
 - Move between waypoints
+- If bot strays outside assignedSpace.radius, it will return to the assigned space
 - Pause at each waypoint
 - Optionally respond to nearby players
 - Loop route if configured
@@ -71,28 +84,33 @@ interface PatrolBehaviorConfig {
 
 **Configuration:**
 ```typescript
-interface SocialBehaviorConfig {
-  conversationRadius: number;  // Distance to detect players
-  minTimeBetweenConversations: number;  // Cooldown (seconds)
+interface SocialBehaviorConfig extends BehaviorConfig {
+  type: 'social';
+  assignedSpace: {
+    center: { x: number; y: number };
+    radius: number;  // How far the bot can wander from center
+  };
+  conversationRadius: number;  // Distance to detect players (different from assignedSpace.radius)
+  minTimeBetweenConversations: number;  // Cooldown (milliseconds)
   maxConversationDuration: number;  // Max chat time
   conversationHistorySize: number;  // Remember last N players
   respectPlayerStatus: boolean;  // Check player availability
   maxConcurrentConversations: number;  // Limit active chats
   conversationTopics: string[];  // Topics to discuss
-  wanderRadius: number;  // Area to wander in
-  wanderCenter: { x: number; y: number };
 }
 ```
 
 **Behavior:**
-- Wander within `wanderRadius`
-- Detect players within `conversationRadius`
+- Spawns at assignedSpace.center
+- Wander within `assignedSpace.radius` (random targets within this area)
+- Detect players within `conversationRadius` (detection range, can be different from wander radius)
 - Check if player is available (not busy, not in conversation)
 - Check conversation history (avoid recent players)
 - Check if other bots are targeting same player
 - Approach player and initiate conversation
 - Maintain conversation for reasonable duration
 - Leave gracefully when done
+- Return to assigned space if it strays outside the radius
 
 **Smart Conversation Management:**
 ```typescript

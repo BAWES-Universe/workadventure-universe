@@ -27,7 +27,6 @@
     let editingName = false;
     let editingDescription = false;
     let editingTexture = false;
-    let editingPosition = false;
     let editingBehavior = false;
     let editingInstructions = false;
 
@@ -38,22 +37,31 @@
             if (bot.botId !== lastBotId || !currentBot) {
                 currentBot = { ...bot };
                 lastBotId = bot.botId ?? null;
-                // Ensure position exists
-                if (!currentBot.position) {
-                    currentBot.position = { x: 0, y: 0 };
+                // Ensure assignedSpace exists
+                if (!currentBot.behaviorConfig) {
+                    currentBot.behaviorConfig = {
+                        assignedSpace: {
+                            center: { x: 0, y: 0 },
+                            radius: currentBot.behaviorType === "idle" ? 0 : 50,
+                        },
+                    };
+                } else if (!currentBot.behaviorConfig.assignedSpace) {
+                    currentBot.behaviorConfig.assignedSpace = {
+                        center: { x: 0, y: 0 },
+                        radius: currentBot.behaviorType === "idle" ? 0 : 50,
+                    };
                 }
             }
         } else if (!bot && lastBotId !== null) {
             currentBot = {
                 name: "",
                 description: "",
-                position: { x: 0, y: 0 },
                 behaviorType: "idle",
                 enabled: true,
                 behaviorConfig: {
                     assignedSpace: {
                         center: { x: 0, y: 0 },
-                        radius: 50,
+                        radius: 0,
                     },
                 },
                 chatInstructions: "",
@@ -64,13 +72,12 @@
             currentBot = {
                 name: "",
                 description: "",
-                position: { x: 0, y: 0 },
                 behaviorType: "idle",
                 enabled: true,
                 behaviorConfig: {
                     assignedSpace: {
                         center: { x: 0, y: 0 },
-                        radius: 50,
+                        radius: 0,
                     },
                 },
                 chatInstructions: "",
@@ -338,76 +345,6 @@
                 </div>
             </div>
 
-            <!-- Starting Position -->
-            <div class="border-b border-white/10">
-                <div class="flex items-center gap-2 mb-2">
-                    <h3 class="text-base text-white/80 normal-case">Starting position</h3>
-                    <button
-                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                        on:click={() => (editingPosition = true)}
-                    >
-                        Edit
-                    </button>
-                </div>
-                {#if editingPosition}
-                    <div class="space-y-2">
-                        <div class="flex gap-2">
-                            {#if currentBot.position}
-                                <input
-                                    type="number"
-                                    class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    bind:value={currentBot.position.x}
-                                    placeholder="X"
-                                />
-                                <input
-                                    type="number"
-                                    class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    bind:value={currentBot.position.y}
-                                    placeholder="Y"
-                                />
-                            {/if}
-                            <button
-                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                on:click={() => {
-                                    // TODO: Implement position picker from map
-                                    console.log("Pick position from map");
-                                }}
-                            >
-                                Pick from Map
-                            </button>
-                        </div>
-                        <div class="flex gap-2">
-                            <button
-                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
-                                on:click={() => {
-                                    editingPosition = false;
-                                    handleSave();
-                                }}
-                            >
-                                Save
-                            </button>
-                            <button
-                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                on:click={() => {
-                                    editingPosition = false;
-                                    if (bot) {
-                                        currentBot = { ...bot };
-                                    }
-                                }}
-                            >
-                                Cancel
-                            </button>
-                        </div>
-                    </div>
-                {:else}
-                    <p class="text-sm text-white/70">
-                        {currentBot.position?.x !== undefined && currentBot.position?.y !== undefined
-                            ? `(${currentBot.position.x}, ${currentBot.position.y})`
-                            : "Not set"}
-                    </p>
-                {/if}
-            </div>
-
             <!-- Behavior -->
             <div class="border-b border-white/10">
                 <div class="flex items-center gap-2 mb-3">
@@ -450,9 +387,13 @@
                         <p class="text-sm text-white/70">{getBehaviorLabel(currentBot.behaviorType)}</p>
                         {#if currentBot.behaviorConfig?.assignedSpace}
                             <p class="text-xs text-white/50">
-                                Assigned space: ({currentBot.behaviorConfig.assignedSpace.center?.x || 0}, {currentBot
-                                    .behaviorConfig.assignedSpace.center?.y || 0}) radius {currentBot.behaviorConfig
-                                    .assignedSpace.radius || 50}
+                                Location: ({currentBot.behaviorConfig.assignedSpace.center?.x || 0}, {currentBot
+                                    .behaviorConfig.assignedSpace.center?.y || 0})
+                                {#if currentBot.behaviorType === "idle" && currentBot.behaviorConfig.assignedSpace.radius === 0}
+                                    (stationary)
+                                {:else}
+                                    radius {currentBot.behaviorConfig.assignedSpace.radius || 0}
+                                {/if}
                             </p>
                         {/if}
                         {#if currentBot.behaviorType === "patrol" && currentBot.behaviorConfig?.waypoints}

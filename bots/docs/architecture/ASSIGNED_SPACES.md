@@ -2,22 +2,32 @@
 
 ## Overview
 
-Bots can be assigned to specific areas (spaces) on the map. When a bot moves outside its assigned space or finishes a conversation, it will automatically return to its assigned area.
+**All bots use an assigned space** to define their location and operational area. The `assignedSpace` consists of:
+- **Center (X, Y)**: The bot's spawn position and operational center
+- **Radius**: How far the bot can move from the center
+
+When a bot moves outside its assigned space or finishes a conversation, it will automatically return to its assigned area.
 
 ## Configuration
 
-Assign a space to a bot by including `assignedSpace` in the behavior configuration:
+**Assigned space is required for all bots.** Include `assignedSpace` in the behavior configuration:
 
 ```typescript
 const behavior = new SocialBehavior({
     type: 'social',
     assignedSpace: {
-        center: { x: 500, y: 500 },  // Center of the assigned area
-        radius: 200,                  // Maximum distance from center
+        center: { x: 500, y: 500 },  // Bot spawns here and operates from this center
+        radius: 200,                  // Maximum distance from center (wander boundary)
     },
     // ... other config
 });
 ```
+
+### Radius Behavior by Bot Type
+
+- **Idle bots**: `radius = 0` means the bot will not move (stationary). The bot spawns at `center` and stays there.
+- **Social bots**: `radius` defines how far the bot can wander from the center while seeking conversations.
+- **Patrol bots**: `radius` defines the boundary. If the bot strays outside, it returns to the assigned space.
 
 ## How It Works
 
@@ -65,26 +75,26 @@ This bot will:
 - Greet players who approach
 - Return to reception after conversations
 
-### 2. Zone-Specific Helper
+### 2. Stationary Helper Bot
 
-A bot assigned to a specific zone:
+An idle bot that stays in one place:
 
 ```typescript
 const zoneBot = new IdleBehavior({
     type: 'idle',
     assignedSpace: {
-        center: { x: 500, y: 500 },
-        radius: 100,
+        center: { x: 500, y: 500 },  // Bot spawns and stays here
+        radius: 0,                     // Radius 0 = stationary (won't move)
     },
-    position: { x: 500, y: 500 },
     responseRadius: 150,
 });
 ```
 
 This bot will:
-- Stay in its assigned zone
-- Help players in that area
-- Never leave the zone
+- Spawn at (500, 500)
+- Stay at that exact position (radius=0 means no movement)
+- Help players who approach within responseRadius
+- Never leave the position
 
 ### 3. Patrol Route in Area
 
@@ -133,8 +143,9 @@ protected returnToAssignedSpace(): void
 - Waypoints should be within assigned space
 
 #### IdleBehavior
-- Position should be within assigned space
-- Stays at assigned position
+- Spawns at assignedSpace.center
+- If radius=0: Bot stays at exact position (stationary)
+- If radius>0: Bot may have slight movement (not currently implemented)
 
 ## Visual Representation
 

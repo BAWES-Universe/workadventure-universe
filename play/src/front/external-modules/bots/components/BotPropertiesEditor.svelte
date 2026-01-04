@@ -6,8 +6,6 @@
 
     let name = "";
     let description = "";
-    let x = 0;
-    let y = 0;
     let characterTexture = "";
     let initialized = false;
 
@@ -16,8 +14,6 @@
         if (bot && !initialized) {
             name = bot.name || "";
             description = bot.description || "";
-            x = bot.position?.x || 0;
-            y = bot.position?.y || 0;
             characterTexture = bot.characterTexture || "";
             initialized = true;
         }
@@ -28,11 +24,6 @@
         if (bot && initialized) {
             bot.name = name;
             bot.description = description;
-            if (!bot.position) {
-                bot.position = { x: 0, y: 0 };
-            }
-            bot.position.x = x;
-            bot.position.y = y;
             bot.characterTexture = characterTexture;
         }
     }
@@ -46,17 +37,8 @@
         updateBot();
     }
 
-    function handlePositionChange() {
-        updateBot();
-    }
-
     function handleTextureChange() {
         updateBot();
-    }
-
-    function handlePickPosition() {
-        // TODO: Implement position picker from map
-        console.log("Pick position from map");
     }
 </script>
 
@@ -81,32 +63,6 @@
             placeholder="Enter bot description"
             rows="3"
         />
-    </div>
-
-    <div>
-        <label class="block text-sm font-medium mb-1">Position</label>
-        <div class="flex gap-2">
-            <input
-                type="number"
-                class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                bind:value={x}
-                on:input={handlePositionChange}
-                placeholder="X"
-            />
-            <input
-                type="number"
-                class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                bind:value={y}
-                on:input={handlePositionChange}
-                placeholder="Y"
-            />
-            <button
-                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
-                on:click={handlePickPosition}
-            >
-                Pick from Map
-            </button>
-        </div>
     </div>
 
     <div>

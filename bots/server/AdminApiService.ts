@@ -46,7 +46,11 @@ export interface BotConfiguration {
     // Movement Instructions (Sensitive - stored in Admin API only)
     movementInstructions?: string; // Instructions for who to approach and when
     
-    assignedSpace?: {
+    // Assigned space defines where the bot operates (center + radius)
+    // Required: All bots must have an assigned space
+    // For idle bots: radius=0 means they won't move
+    // For social/patrol bots: radius defines the operational area
+    assignedSpace: {
         center: { x: number; y: number };
         radius: number;
     };

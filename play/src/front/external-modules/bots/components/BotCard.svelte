@@ -128,7 +128,7 @@
             {/if}
 
             <div class="flex items-center gap-4 text-xs text-white/50">
-                {#if bot.position}
+                {#if bot.behaviorConfig?.assignedSpace?.center}
                     <div class="flex items-center gap-1">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path
@@ -144,7 +144,8 @@
                                 d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
                             />
                         </svg>
-                        ({bot.position.x}, {bot.position.y})
+                        ({bot.behaviorConfig?.assignedSpace?.center?.x || 0}, {bot.behaviorConfig?.assignedSpace?.center
+                            ?.y || 0})
                     </div>
                 {/if}
                 {#if bot.enabled !== undefined}

@@ -7,7 +7,8 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
-    position: { x: number; y: number };
+    // assignedSpace is inherited from BehaviorConfig
+    // For idle bots: radius=0 means they won't move
     responseRadius: number; // Distance to respond to players
     greetingMessages: string[]; // Random greetings
     idleAnimations?: string[]; // Idle animations to play
