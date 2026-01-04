@@ -223,6 +223,32 @@ curl http://bot-server.workadventure.localhost/health
 curl http://localhost:3001/health
 ```
 
+**Troubleshooting:**
+If you get "Not Found" when accessing the bot server or can't find it in Traefik dashboard:
+
+1. **Verify hosts file entry** - Make sure you've added `127.0.0.1 bot-server.workadventure.localhost` to your hosts file
+2. **Check Traefik discovery** - Traefik may not automatically discover containers from override files. Try:
+   ```bash
+   # Restart both bot-server and Traefik
+   docker-compose -f docker-compose.yaml -f docker-compose.bots.yaml restart bot-server
+   docker-compose -f docker-compose.yaml restart reverse-proxy
+   ```
+3. **Verify container is running and has correct labels**:
+   ```bash
+   docker-compose -f docker-compose.yaml -f docker-compose.bots.yaml ps bot-server
+   docker inspect workadventure-universe-bot-server-1 --format '{{range $k, $v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' | grep traefik
+   ```
+4. **Test direct access** (bypassing Traefik):
+   ```bash
+   # From within Docker network
+   docker exec workadventure-universe-reverse-proxy-1 wget -qO- http://workadventure-universe-bot-server-1:3001/health
+   ```
+5. **Check Traefik logs** for discovery issues:
+   ```bash
+   docker logs workadventure-universe-reverse-proxy-1 --tail=50 | grep -i "bot\|provider\|docker"
+   ```
+6. **If Traefik still doesn't discover it**, you may need to add the `bot-server` service directly to `docker-compose.yaml` instead of using the override file.
+
 ## Authentication Requirements
 
 - **Bot Editor**: Only authenticated users can access the bot editor tool in the map editor sidebar

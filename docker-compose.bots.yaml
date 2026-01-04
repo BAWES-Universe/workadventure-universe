@@ -21,9 +21,10 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.bot-server.rule=Host(`bot-server.workadventure.localhost`)"
       - "traefik.http.routers.bot-server.entryPoints=web"
+      - "traefik.http.routers.bot-server.service=bot-server"
       - "traefik.http.services.bot-server.loadbalancer.server.port=3001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
