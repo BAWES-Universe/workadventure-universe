@@ -40,6 +40,7 @@
     }
 
     // Check if this is a new bot (no botId means it hasn't been saved yet)
+    // Note: After creation, bots have a botId, so this is mainly for editing
     $: isNewBot = !currentBot.botId;
 
     function handleSave() {
@@ -101,9 +102,7 @@
             <IconChevronLeft font-size="20" />
         </button>
         <div class="flex-1">
-            <h2 class="text-xl font-semibold text-white">
-                {isNewBot ? "Setup Bot" : "Edit Bot"}
-            </h2>
+            <h2 class="text-xl font-semibold text-white">Edit Bot</h2>
             {#if currentBot.name}
                 <p class="text-sm text-white/60 mt-1">{currentBot.name}</p>
             {/if}
@@ -137,7 +136,7 @@
                             (what the bot should say) and movement instructions (how it should move and who to approach).
                         </li>
                         <li>
-                            <strong>Save:</strong> Click "Create Bot" at the bottom to save your bot configuration.
+                            <strong>Save:</strong> Click "Save Changes" at the bottom to update your bot configuration.
                         </li>
                     </ol>
                 </div>
@@ -209,7 +208,7 @@
                 {#if isSaving}
                     Saving...
                 {:else}
-                    {currentBot.botId ? "Save Changes" : "Create Bot"}
+                    Save Changes
                 {/if}
             </button>
         </div>

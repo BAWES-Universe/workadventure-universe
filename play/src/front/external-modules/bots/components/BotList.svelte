@@ -3,10 +3,10 @@
     import type { BotData } from "../types";
     import BotCard from "./BotCard.svelte";
 
+    export let bots: BotData[] = [];
     export let onSelectBot: (bot: BotData | null) => void;
     export let onCreateBot: () => void;
 
-    let bots: BotData[] = [];
     let loading = true;
     let error: string | null = null;
 
@@ -18,9 +18,9 @@
             // TODO: Replace with actual API call
             // const response = await botApiService.getBots();
             // bots = response.data;
-
-            // Mock data for now
-            bots = [];
+            // Don't overwrite bots if they're already loaded
+            // The parent component manages the bots list
+            // This function is mainly for retry scenarios
         } catch (e) {
             error = e instanceof Error ? e.message : "Failed to load bots";
             console.error("Error loading bots:", e);
@@ -44,7 +44,13 @@
     }
 
     onMount(() => {
-        void loadBots();
+        // Only load if bots array is empty
+        // If bots are already provided via prop, skip loading
+        if (bots.length === 0) {
+            void loadBots();
+        } else {
+            loading = false;
+        }
     });
 </script>
 

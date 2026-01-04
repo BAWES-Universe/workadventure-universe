@@ -9,6 +9,7 @@
     let currentView: View = "list";
     let selectedBot: BotData | null = null;
     let showCreateModal = false;
+    let bots: BotData[] = [];
 
     function handleSelectBot(bot: BotData | null) {
         selectedBot = bot;
@@ -20,8 +21,12 @@
     }
 
     function handleCreateBotSubmit(name: string, textureId: string) {
-        // Create new bot with just name and texture
-        selectedBot = {
+        // Generate a temporary botId (in real implementation, this comes from API)
+        const botId = `bot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        // Create new bot with botId (immediately saved)
+        const newBot: BotData = {
+            botId,
             name,
             characterTexture: textureId,
             characterTextureIds: [textureId],
@@ -35,7 +40,18 @@
             },
             chatInstructions: "",
             movementInstructions: "",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
         };
+
+        // TODO: Replace with actual API call
+        // await botApiService.createBot(newBot);
+
+        // Add to list
+        bots = [...bots, newBot];
+
+        // Navigate to detail page
+        selectedBot = newBot;
         showCreateModal = false;
         currentView = "detail";
     }
@@ -50,11 +66,16 @@
     }
 
     function handleSave() {
-        // After save, return to list
+        // After save, refresh the list and return to it
         handleBackToList();
     }
 
     function handleDelete() {
+        // Remove from list
+        const botIdToDelete = selectedBot?.botId;
+        if (botIdToDelete) {
+            bots = bots.filter((b) => b.botId !== botIdToDelete);
+        }
         // After delete, return to list
         handleBackToList();
     }
@@ -62,7 +83,7 @@
 
 <div class="bot-editor h-full flex flex-col pt-[30px]">
     {#if currentView === "list"}
-        <BotList onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
+        <BotList bind:bots onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
     {:else if currentView === "detail"}
         <BotDetailView bot={selectedBot} onBack={handleBackToList} onSave={handleSave} onDelete={handleDelete} />
     {/if}
