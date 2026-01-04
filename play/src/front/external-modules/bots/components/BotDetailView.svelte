@@ -1,6 +1,12 @@
 <script lang="ts">
+    import { onMount } from "svelte";
+    import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
+    import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import type { BotData } from "../types";
-    import BotPropertiesEditor from "./BotPropertiesEditor.svelte";
+    import type { WokaData } from "../../../Components/Woka/WokaTypes";
+    import WokaImage from "../../../Components/Woka/WokaImage.svelte";
+    import BotTexturePicker from "./BotTexturePicker.svelte";
     import BotBehaviorEditor from "./BotBehaviorEditor.svelte";
     import BotInstructionsEditor from "./BotInstructionsEditor.svelte";
     import { IconChevronLeft } from "@wa-icons";
@@ -10,17 +16,51 @@
     export let onSave: () => void;
     export let onDelete: () => void;
 
-    let activeTab: "properties" | "behavior" | "instructions" = "properties";
     let currentBot: BotData;
     let isSaving = false;
     let saveError: string | null = null;
+    let wokaData: WokaData | null = null;
+    let assetsDirection: number = 0;
+    let lastBotId: string | null = null;
 
-    // Initialize bot data
+    // Editing states
+    let editingName = false;
+    let editingDescription = false;
+    let editingTexture = false;
+    let editingPosition = false;
+    let editingBehavior = false;
+    let editingInstructions = false;
+
+    // Initialize bot data - only update when bot prop changes (different bot or first load)
     $: {
         if (bot) {
-            currentBot = { ...bot };
-        } else {
-            // This shouldn't happen anymore - bots are created via modal
+            // Only update if it's a different bot or we don't have currentBot yet
+            if (bot.botId !== lastBotId || !currentBot) {
+                currentBot = { ...bot };
+                lastBotId = bot.botId ?? null;
+                // Ensure position exists
+                if (!currentBot.position) {
+                    currentBot.position = { x: 0, y: 0 };
+                }
+            }
+        } else if (!bot && lastBotId !== null) {
+            currentBot = {
+                name: "",
+                description: "",
+                position: { x: 0, y: 0 },
+                behaviorType: "idle",
+                enabled: true,
+                behaviorConfig: {
+                    assignedSpace: {
+                        center: { x: 0, y: 0 },
+                        radius: 50,
+                    },
+                },
+                chatInstructions: "",
+                movementInstructions: "",
+            };
+            lastBotId = null;
+        } else if (!currentBot) {
             currentBot = {
                 name: "",
                 description: "",
@@ -39,28 +79,60 @@
         }
     }
 
-    // Check if this is a new bot (no botId means it hasn't been saved yet)
-    // Note: After creation, bots have a botId, so this is mainly for editing
-    $: isNewBot = !currentBot.botId;
+    function getTextureUrl(relativeUrl: string): string {
+        if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) {
+            return relativeUrl;
+        }
+        return `${ABSOLUTE_PUSHER_URL}${relativeUrl}`;
+    }
+
+    async function loadWokaData() {
+        try {
+            let roomUrl: string;
+            if (gameManager?.currentStartedRoom?.href) {
+                roomUrl = gameManager.currentStartedRoom.href;
+            } else if (window.location.href) {
+                roomUrl = window.location.href;
+            } else {
+                return;
+            }
+
+            const response = await fetch(`${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}`, {
+                headers: {
+                    Authorization: localUserStore.getAuthToken() || "",
+                },
+                credentials: "include",
+            });
+
+            if (response.ok) {
+                wokaData = await response.json();
+            }
+        } catch (err) {
+            console.warn("Could not load woka data:", err);
+        }
+    }
 
     function handleSave() {
         isSaving = true;
         saveError = null;
 
         try {
-            // Validate required fields
             if (!currentBot.name || currentBot.name.trim() === "") {
                 saveError = "Bot name is required";
                 isSaving = false;
                 return;
             }
 
+            // Update the bot prop with currentBot changes
+            if (bot) {
+                // Copy all properties from currentBot to bot
+                // This mutates the bot object, which is the same reference as selectedBot in parent
+                Object.assign(bot, currentBot);
+                bot.updatedAt = new Date().toISOString();
+            }
+
             // TODO: Replace with actual API call
-            // if (currentBot.botId) {
-            //     await botApiService.updateBot(currentBot.botId, currentBot);
-            // } else {
-            //     await botApiService.createBot(currentBot);
-            // }
+            // await botApiService.updateBot(currentBot.botId, currentBot);
 
             console.log("Saving bot:", currentBot);
             onSave();
@@ -74,7 +146,6 @@
 
     function handleDelete() {
         if (!currentBot.botId) {
-            // New bot, just go back
             onBack();
             return;
         }
@@ -93,130 +164,410 @@
             alert("Failed to delete bot. Please try again.");
         }
     }
+
+    function getBehaviorLabel(type?: string): string {
+        switch (type) {
+            case "idle":
+                return "Idle (Stand in place)";
+            case "patrol":
+                return "Patrol (Follow waypoints)";
+            case "social":
+                return "Social (Seek conversations)";
+            default:
+                return "Unknown";
+        }
+    }
+
+    function handleTextureSelect(textureId: string) {
+        currentBot.characterTexture = textureId;
+        currentBot.characterTextureIds = [textureId];
+        editingTexture = false;
+        handleSave();
+        // Stay on detail page - don't navigate away
+    }
+
+    onMount(() => {
+        void loadWokaData();
+    });
 </script>
 
-<div class="bot-detail-view h-full flex flex-col">
+<div class="bot-detail-view flex flex-col h-full min-h-0">
     <!-- Header -->
-    <div class="flex items-center gap-3 mb-4 pb-4 border-b border-white/20">
+    <div class="flex items-center gap-3 mb-4 pb-4 border-b border-white/20 flex-shrink-0">
         <button class="p-2 hover:bg-white/10 rounded transition-colors" on:click={onBack} title="Back to list">
             <IconChevronLeft font-size="20" />
         </button>
         <div class="flex-1">
-            <h2 class="text-xl font-semibold text-white">Edit Bot</h2>
-            {#if currentBot.name}
-                <p class="text-sm text-white/60 mt-1">{currentBot.name}</p>
-            {/if}
+            <h2 class="text-base text-white">Bot details</h2>
         </div>
-    </div>
-
-    <!-- Setup Instructions for New Bots -->
-    {#if isNewBot}
-        <div class="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 mb-4">
-            <div class="flex items-start gap-3">
-                <svg class="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path
-                        fill-rule="evenodd"
-                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                        clip-rule="evenodd"
-                    />
-                </svg>
-                <div class="flex-1">
-                    <h3 class="text-sm font-semibold text-white mb-2">Next Steps: Complete Your Bot Setup</h3>
-                    <ol class="list-decimal list-inside space-y-2 text-sm text-white/80">
-                        <li>
-                            <strong>Set Position:</strong> Go to the <strong>Properties</strong> tab and set where your bot
-                            should appear on the map. You can enter coordinates manually or use the "Pick from Map" button.
-                        </li>
-                        <li>
-                            <strong>Configure Behavior:</strong> In the <strong>Behavior</strong> tab, choose how your bot
-                            should act (Idle, Patrol, or Social) and set up its assigned space.
-                        </li>
-                        <li>
-                            <strong>Add Instructions:</strong> In the <strong>Instructions</strong> tab, write chat instructions
-                            (what the bot should say) and movement instructions (how it should move and who to approach).
-                        </li>
-                        <li>
-                            <strong>Save:</strong> Click "Save Changes" at the bottom to update your bot configuration.
-                        </li>
-                    </ol>
-                </div>
-            </div>
-        </div>
-    {/if}
-
-    <!-- Tabs -->
-    <div class="flex border-b border-white/20 mb-4">
         <button
-            class="px-4 py-2 text-sm font-medium transition-colors {activeTab === 'properties'
-                ? 'border-b-2 border-white text-white'
-                : 'text-white/60 hover:text-white'}"
-            on:click={() => (activeTab = "properties")}
+            class="px-4 py-2 text-red-400 hover:bg-red-500/20 rounded transition-colors"
+            on:click={handleDelete}
+            disabled={isSaving}
         >
-            Properties
-        </button>
-        <button
-            class="px-4 py-2 text-sm font-medium transition-colors {activeTab === 'behavior'
-                ? 'border-b-2 border-white text-white'
-                : 'text-white/60 hover:text-white'}"
-            on:click={() => (activeTab = "behavior")}
-        >
-            Behavior
-        </button>
-        <button
-            class="px-4 py-2 text-sm font-medium transition-colors {activeTab === 'instructions'
-                ? 'border-b-2 border-white text-white'
-                : 'text-white/60 hover:text-white'}"
-            on:click={() => (activeTab = "instructions")}
-        >
-            Instructions
+            Delete Bot
         </button>
     </div>
 
     <!-- Content -->
-    <div class="flex-1 overflow-y-auto space-y-4">
-        {#if activeTab === "properties"}
-            <BotPropertiesEditor bind:bot={currentBot} />
-        {:else if activeTab === "behavior"}
-            <BotBehaviorEditor bind:bot={currentBot} />
-        {:else if activeTab === "instructions"}
-            <BotInstructionsEditor bind:bot={currentBot} />
-        {/if}
+    <div class="scrollable-content">
+        <div class="space-y-4 pb-4">
+            <!-- Woka and Name Section -->
+            <div class="flex items-start gap-6 pb-4 border-b border-white/10">
+                <div class="flex-shrink-0">
+                    <div
+                        class="w-32 h-32 bg-white/5 rounded-lg border border-white/20 flex items-center justify-center overflow-hidden"
+                    >
+                        {#if currentBot.characterTexture && wokaData}
+                            <WokaImage
+                                selectedTextures={{ woka: currentBot.characterTexture }}
+                                {wokaData}
+                                {getTextureUrl}
+                                canvasSize={96}
+                                direction={assetsDirection}
+                            />
+                        {:else}
+                            <div class="text-white/40 text-xs">No texture</div>
+                        {/if}
+                    </div>
+                    <button
+                        class="w-32 mt-2 px-3 py-2 text-sm bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
+                        on:click={() => (editingTexture = true)}
+                    >
+                        Change Woka
+                    </button>
+                </div>
+                <div class="flex-1">
+                    {#if editingName}
+                        <div class="space-y-2">
+                            <input
+                                type="text"
+                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-2xl font-semibold"
+                                bind:value={currentBot.name}
+                                placeholder="Enter bot name"
+                                autofocus
+                                on:keydown={(e) => {
+                                    // Prevent event from bubbling if needed
+                                    if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        editingName = false;
+                                        handleSave();
+                                    }
+                                }}
+                            />
+                            <div class="flex gap-2">
+                                <button
+                                    class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                                    on:click={() => {
+                                        editingName = false;
+                                        handleSave();
+                                    }}
+                                >
+                                    Save
+                                </button>
+                                <button
+                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                    on:click={() => {
+                                        editingName = false;
+                                        if (bot) {
+                                            currentBot = { ...bot };
+                                        }
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    {:else}
+                        <div class="flex items-center gap-2 mb-3">
+                            <h1 class="text-2xl font-semibold text-white">{currentBot.name || "Unnamed Bot"}</h1>
+                            <button
+                                class="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                                on:click={() => (editingName = true)}
+                            >
+                                Edit
+                            </button>
+                        </div>
+                    {/if}
+
+                    <!-- Description -->
+                    <div class="mb-4">
+                        {#if editingDescription}
+                            <div class="space-y-2">
+                                <textarea
+                                    class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    bind:value={currentBot.description}
+                                    placeholder="Enter bot description"
+                                    rows="3"
+                                />
+                                <div class="flex gap-2">
+                                    <button
+                                        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                                        on:click={() => {
+                                            editingDescription = false;
+                                            handleSave();
+                                        }}
+                                    >
+                                        Save
+                                    </button>
+                                    <button
+                                        class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                        on:click={() => {
+                                            editingDescription = false;
+                                            if (bot) {
+                                                currentBot = { ...bot };
+                                            }
+                                        }}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        {:else}
+                            <div class="flex items-center gap-2">
+                                <p class="text-sm text-white/70 flex-1">{currentBot.description || "No description"}</p>
+                                <button
+                                    class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                                    on:click={() => (editingDescription = true)}
+                                >
+                                    Edit
+                                </button>
+                            </div>
+                        {/if}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Starting Position -->
+            <div class="border-b border-white/10">
+                <div class="flex items-center gap-2 mb-2">
+                    <h3 class="text-base text-white/80 normal-case">Starting position</h3>
+                    <button
+                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                        on:click={() => (editingPosition = true)}
+                    >
+                        Edit
+                    </button>
+                </div>
+                {#if editingPosition}
+                    <div class="space-y-2">
+                        <div class="flex gap-2">
+                            {#if currentBot.position}
+                                <input
+                                    type="number"
+                                    class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    bind:value={currentBot.position.x}
+                                    placeholder="X"
+                                />
+                                <input
+                                    type="number"
+                                    class="w-24 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    bind:value={currentBot.position.y}
+                                    placeholder="Y"
+                                />
+                            {/if}
+                            <button
+                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                on:click={() => {
+                                    // TODO: Implement position picker from map
+                                    console.log("Pick position from map");
+                                }}
+                            >
+                                Pick from Map
+                            </button>
+                        </div>
+                        <div class="flex gap-2">
+                            <button
+                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                                on:click={() => {
+                                    editingPosition = false;
+                                    handleSave();
+                                }}
+                            >
+                                Save
+                            </button>
+                            <button
+                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                on:click={() => {
+                                    editingPosition = false;
+                                    if (bot) {
+                                        currentBot = { ...bot };
+                                    }
+                                }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                {:else}
+                    <p class="text-sm text-white/70">
+                        {currentBot.position?.x !== undefined && currentBot.position?.y !== undefined
+                            ? `(${currentBot.position.x}, ${currentBot.position.y})`
+                            : "Not set"}
+                    </p>
+                {/if}
+            </div>
+
+            <!-- Behavior -->
+            <div class="border-b border-white/10">
+                <div class="flex items-center gap-2 mb-3">
+                    <h3 class="text-base text-white/80 normal-case">Behavior</h3>
+                    <button
+                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                        on:click={() => (editingBehavior = true)}
+                    >
+                        Edit
+                    </button>
+                </div>
+                {#if editingBehavior}
+                    <div class="p-4 bg-white/5 rounded-lg border border-white/20">
+                        <BotBehaviorEditor bind:bot={currentBot} />
+                        <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
+                            <button
+                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                                on:click={() => {
+                                    editingBehavior = false;
+                                    handleSave();
+                                }}
+                            >
+                                Save
+                            </button>
+                            <button
+                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                on:click={() => {
+                                    editingBehavior = false;
+                                    if (bot) {
+                                        currentBot = { ...bot };
+                                    }
+                                }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                {:else}
+                    <div class="space-y-2">
+                        <p class="text-sm text-white/70">{getBehaviorLabel(currentBot.behaviorType)}</p>
+                        {#if currentBot.behaviorConfig?.assignedSpace}
+                            <p class="text-xs text-white/50">
+                                Assigned space: ({currentBot.behaviorConfig.assignedSpace.center?.x || 0}, {currentBot
+                                    .behaviorConfig.assignedSpace.center?.y || 0}) radius {currentBot.behaviorConfig
+                                    .assignedSpace.radius || 50}
+                            </p>
+                        {/if}
+                        {#if currentBot.behaviorType === "patrol" && currentBot.behaviorConfig?.waypoints}
+                            <p class="text-xs text-white/50">
+                                {currentBot.behaviorConfig.waypoints.length} waypoint{currentBot.behaviorConfig
+                                    .waypoints.length !== 1
+                                    ? "s"
+                                    : ""}
+                            </p>
+                        {/if}
+                    </div>
+                {/if}
+            </div>
+
+            <!-- Instructions -->
+            <div>
+                <div class="flex items-center gap-2 mb-3">
+                    <h3 class="text-base text-white/80 normal-case">Instructions</h3>
+                    <button
+                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                        on:click={() => (editingInstructions = true)}
+                    >
+                        Edit
+                    </button>
+                </div>
+                {#if editingInstructions}
+                    <div class="p-4 bg-white/5 rounded-lg border border-white/20">
+                        <BotInstructionsEditor bind:bot={currentBot} />
+                        <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
+                            <button
+                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                                on:click={() => {
+                                    editingInstructions = false;
+                                    handleSave();
+                                }}
+                            >
+                                Save
+                            </button>
+                            <button
+                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                on:click={() => {
+                                    editingInstructions = false;
+                                    if (bot) {
+                                        currentBot = { ...bot };
+                                    }
+                                }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                {:else}
+                    <div class="space-y-4">
+                        <div>
+                            <p class="text-sm text-white/80 font-semibold mb-2">Chat instructions</p>
+                            <p class="text-sm text-white/70 whitespace-pre-wrap">
+                                {currentBot.chatInstructions || "No chat instructions set"}
+                            </p>
+                        </div>
+                        <div>
+                            <p class="text-sm text-white/80 font-semibold mb-2">Movement instructions</p>
+                            <p class="text-sm text-white/70 whitespace-pre-wrap">
+                                {currentBot.movementInstructions || "No movement instructions set"}
+                            </p>
+                        </div>
+                    </div>
+                {/if}
+            </div>
+        </div>
     </div>
 
-    <!-- Footer -->
-    <div class="flex items-center justify-between gap-2 mt-6 pt-4 border-t border-white/20">
-        <div>
-            {#if saveError}
-                <div class="text-sm text-red-400">{saveError}</div>
-            {/if}
+    {#if saveError}
+        <div class="mt-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded p-2">
+            {saveError}
         </div>
-        <div class="flex items-center gap-2">
-            {#if currentBot.botId}
+    {/if}
+</div>
+
+<!-- Texture Picker Modal -->
+{#if editingTexture && wokaData}
+    <div
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        on:click={() => (editingTexture = false)}
+        role="dialog"
+        aria-modal="true"
+    >
+        <div
+            class="bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 border border-white/20"
+            on:click|stopPropagation
+        >
+            <h3 class="text-xl font-semibold text-white mb-4">Select Character Texture</h3>
+            <BotTexturePicker selectedTextureId={currentBot.characterTexture || ""} onSelect={handleTextureSelect} />
+            <div class="flex justify-end mt-4">
                 <button
-                    class="px-4 py-2 text-red-400 hover:bg-red-500/20 rounded transition-colors"
-                    on:click={handleDelete}
-                    disabled={isSaving}
+                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
+                    on:click={() => (editingTexture = false)}
                 >
-                    Delete
+                    Cancel
                 </button>
-            {/if}
-            <button
-                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                on:click={handleSave}
-                disabled={isSaving}
-            >
-                {#if isSaving}
-                    Saving...
-                {:else}
-                    Save Changes
-                {/if}
-            </button>
+            </div>
         </div>
     </div>
-</div>
+{/if}
 
 <style>
     .bot-detail-view {
         color: white;
+        height: 100%;
+        min-height: 0;
+    }
+
+    .bot-detail-view .scrollable-content {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
 </style>

@@ -11,6 +11,19 @@
     let showCreateModal = false;
     let bots: BotData[] = [];
 
+    // Function to update a bot in the bots array
+    function updateBotInList(updatedBot: BotData) {
+        const index = bots.findIndex((b) => b.botId === updatedBot.botId);
+        if (index !== -1) {
+            bots[index] = { ...updatedBot };
+            bots = bots; // Trigger reactivity
+            // Update selectedBot if it's the same bot
+            if (selectedBot?.botId === updatedBot.botId) {
+                selectedBot = bots[index];
+            }
+        }
+    }
+
     function handleSelectBot(bot: BotData | null) {
         selectedBot = bot;
         currentView = "detail";
@@ -66,8 +79,11 @@
     }
 
     function handleSave() {
-        // After save, refresh the list and return to it
-        handleBackToList();
+        // Update the bot in the bots array using selectedBot (which was updated via Object.assign)
+        if (selectedBot?.botId) {
+            updateBotInList(selectedBot);
+        }
+        // Stay on detail page - don't navigate away
     }
 
     function handleDelete() {
@@ -81,7 +97,7 @@
     }
 </script>
 
-<div class="bot-editor h-full flex flex-col pt-[30px]">
+<div class="bot-editor flex flex-col h-full min-h-0" style="padding-top: 30px;">
     {#if currentView === "list"}
         <BotList bind:bots onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
     {:else if currentView === "detail"}

@@ -148,6 +148,10 @@ function injectBotEditorComponent() {
     botEditorContainer.style.pointerEvents = "auto";
     botEditorContainer.style.position = "relative";
     botEditorContainer.style.zIndex = "0"; // Lower than header buttons
+    botEditorContainer.style.height = "100%";
+    botEditorContainer.style.display = "flex";
+    botEditorContainer.style.flexDirection = "column";
+    botEditorContainer.style.minHeight = "0";
 
     // Insert after header buttons (headerButtons was already found above)
     if (headerButtons && headerButtons.nextSibling) {

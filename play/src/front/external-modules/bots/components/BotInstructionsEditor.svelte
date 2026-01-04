@@ -31,8 +31,8 @@
 
 <div class="space-y-6">
     <div>
-        <label for="chat-instructions" class="block text-sm font-medium mb-2 text-white">
-            Chat Instructions
+        <label for="chat-instructions" class="block text-sm text-white/80 mb-2 font-semibold">
+            Chat instructions
             <span class="text-white/50 text-xs font-normal ml-2">
                 (What the bot should say and how it should communicate)
             </span>
@@ -52,8 +52,8 @@
     </div>
 
     <div>
-        <label for="movement-instructions" class="block text-sm font-medium mb-2 text-white">
-            Movement Instructions
+        <label for="movement-instructions" class="block text-sm text-white/80 mb-2 font-semibold">
+            Movement instructions
             <span class="text-white/50 text-xs font-normal ml-2"> (How the bot should move and who to approach) </span>
         </label>
         <textarea

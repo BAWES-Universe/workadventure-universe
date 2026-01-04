@@ -1,9 +1,56 @@
 <script lang="ts">
+    import { onMount } from "svelte";
+    import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
+    import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import type { BotData } from "../types";
+    import type { WokaData } from "../../../Components/Woka/WokaTypes";
+    import WokaImage from "../../../Components/Woka/WokaImage.svelte";
 
     export let bot: BotData;
     export let onSelect: () => void;
     export let onToggle: (bot: BotData, enabled: boolean) => void;
+
+    let wokaData: WokaData | null = null;
+    let assetsDirection: number = 0;
+
+    function getTextureUrl(relativeUrl: string): string {
+        if (relativeUrl.startsWith("http://") || relativeUrl.startsWith("https://")) {
+            return relativeUrl;
+        }
+        return `${ABSOLUTE_PUSHER_URL}${relativeUrl}`;
+    }
+
+    async function loadWokaData() {
+        try {
+            let roomUrl: string;
+            if (gameManager?.currentStartedRoom?.href) {
+                roomUrl = gameManager.currentStartedRoom.href;
+            } else if (window.location.href) {
+                roomUrl = window.location.href;
+            } else {
+                return;
+            }
+
+            const response = await fetch(`${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}`, {
+                headers: {
+                    Authorization: localUserStore.getAuthToken() || "",
+                },
+                credentials: "include",
+            });
+
+            if (response.ok) {
+                wokaData = await response.json();
+            }
+        } catch (err) {
+            // Silently fail - woka preview is optional
+            console.warn("Could not load woka data for preview:", err);
+        }
+    }
+
+    onMount(() => {
+        void loadWokaData();
+    });
 
     function getBehaviorLabel(type?: string): string {
         switch (type) {
@@ -49,7 +96,25 @@
     }}
 >
     <div class="flex items-start justify-between gap-4">
-        <!-- Left: Bot Info -->
+        <!-- Left: Woka Preview -->
+        {#if bot.characterTexture && wokaData}
+            <div class="flex-shrink-0">
+                <div
+                    class="w-12 h-12 bg-white/5 rounded border border-white/10 flex items-center justify-center overflow-hidden"
+                >
+                    <WokaImage
+                        selectedTextures={{ woka: bot.characterTexture }}
+                        {wokaData}
+                        {getTextureUrl}
+                        canvasSize={48}
+                        direction={assetsDirection}
+                        classList="p-0.5"
+                    />
+                </div>
+            </div>
+        {/if}
+
+        <!-- Center: Bot Info -->
         <div class="flex-1 min-w-0">
             <div class="flex items-center gap-3 mb-2">
                 <h3 class="text-lg font-semibold text-white truncate">{bot.name || "Unnamed Bot"}</h3>
