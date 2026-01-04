@@ -177,7 +177,38 @@ The bot system is designed to scale efficiently:
 
 For detailed scalability information, see [SCALABILITY.md](./SCALABILITY.md).
 
+## Docker Compose Setup
+
+The bot server can be deployed using Docker Compose:
+
+```bash
+# Start bot server alongside WorkAdventure
+docker-compose -f docker-compose.yaml -f docker-compose.bots.yaml up
+```
+
+**Environment Variables:**
+- `ADMIN_API_URL`: URL of your Admin API
+- `ADMIN_API_TOKEN`: Bearer token for Admin API authentication
+- `PUSHER_URL`: WorkAdventure pusher URL
+- `REDIS_HOST`: Redis hostname (default: `redis`)
+- `REDIS_PORT`: Redis port (default: `6379`)
+- `REDIS_DB_NUMBER`: Redis database number for bots (default: `1`)
+- `BOT_SERVER_PORT`: Bot server REST API port (default: `3001`)
+- `BOT_SERVER_ID`: Unique server identifier for horizontal scaling
+
+**Health Check:**
+The bot server exposes a health check endpoint at `/health`:
+```bash
+curl http://localhost:3001/health
+```
+
+## Authentication Requirements
+
+- **Bot Editor**: Only authenticated users can access the bot editor tool in the map editor sidebar
+- **Bot Interaction**: Unauthenticated users can still interact with bots (chat, proximity, etc.)
+- The extension module checks `localUserStore.isLogged()` before showing the bot editor tool
+
 ## Questions?
 
-See the [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed technical information.
+See the [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) for detailed technical information.
 

@@ -116,7 +116,7 @@ export class BotUsageTracker {
 
         const metrics = this.metrics.get(key);
         if (metrics) {
-            metrics.totalActiveTime = this.activeTime.get(key);
+            metrics.totalActiveTime = this.activeTime.get(key) || 0;
             metrics.lastActiveAt = new Date();
         }
     }

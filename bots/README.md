@@ -136,3 +136,25 @@ Only the extension module UI code lives in WorkAdventure's directory structure. 
 
 See [Architecture Overview](./docs/architecture/ARCHITECTURE.md) for detailed implementation details.
 
+## Deployment
+
+The bot server is deployed as a standalone Docker service using `docker-compose.bots.yaml`:
+
+```bash
+# Start bot server alongside WorkAdventure
+docker-compose -f docker-compose.yaml -f docker-compose.bots.yaml up
+```
+
+**Key Components:**
+- **Bot Server**: REST API server for bot management (port 3001)
+- **Bot Manager**: Orchestrates bot lifecycle and spawning
+- **Bot Registry**: Redis-based registry for horizontal scaling
+- **Health Check**: `/health` endpoint for monitoring
+
+**Configuration:**
+- Environment variables for Admin API, Redis, and WorkAdventure URLs
+- Traefik integration for reverse proxy routing
+- Health checks for container orchestration
+
+See [Quick Start Guide](./docs/getting-started/QUICK_START.md) for deployment instructions and [Architecture](./docs/architecture/ARCHITECTURE.md) for deployment architecture details.
+

@@ -219,3 +219,153 @@ class UltravoxProvider implements AIProvider {
 
 **Important**: Bots are always visible to players. Optimization reduces update frequency and AI processing, not visibility.
 
+## Deployment Architecture
+
+The bot system consists of multiple components that work together:
+
+### Component Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    WorkAdventure Frontend                    │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ Extension Module (play/src/front/external-modules/    │  │
+│  │                      bots/)                          │  │
+│  │  - Bot Editor UI (sidebar tool)                      │  │
+│  │  - Only visible to authenticated users               │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │ HTTP API calls
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Bot Server (bots/server/)                │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
+│  │ BotManager   │  │ BotAPI       │  │ BotRegistry  │    │
+│  │              │  │ (REST API)    │  │ (Redis)       │    │
+│  └──────────────┘  └──────────────┘  └──────────────┘    │
+│         │                  │                  │            │
+│         └──────────────────┼──────────────────┘            │
+│                            │                                │
+│         ┌──────────────────▼──────────────────┐            │
+│         │      BotClient Instances            │            │
+│         │  (WebSocket connections)            │            │
+│         └─────────────────────────────────────┘            │
+└─────────────────────────────────────────────────────────────┘
+         │                    │                    │
+         │                    │                    │
+         ▼                    ▼                    ▼
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ WorkAdventure│   │ Admin API     │   │ Redis        │
+│ Pusher       │   │ (Config/     │   │ (Registry)    │
+│ (WebSocket)   │   │  Metrics)    │   │              │
+└──────────────┘   └──────────────┘   └──────────────┘
+```
+
+### Bot Server as Middleman
+
+The **Bot Server** acts as a middleman/orchestrator between:
+
+1. **WorkAdventure Frontend** (via Extension Module)
+   - Receives bot creation/editing requests from authenticated users
+   - Provides REST API for bot management
+
+2. **Admin API**
+   - Stores sensitive bot configuration (AI API keys, chat/movement instructions)
+   - Tracks bot usage metrics (conversations, messages, active time)
+   - Stores conversation memory
+
+3. **WAM Files** (via Map Storage Service)
+   - Stores public bot metadata (bot ID, name, position, behavior type)
+   - Read by bot server to discover bots on maps
+
+4. **WorkAdventure Pusher** (WebSocket)
+   - Bot clients connect directly to pusher
+   - Bots appear as regular players in the game
+
+### Data Flow
+
+#### Bot Creation Flow
+```
+1. Authenticated user opens Bot Editor (sidebar tool)
+2. User configures bot (properties, behavior, AI config)
+3. Extension Module saves:
+   - Public data → WAM file (via map editor API)
+   - Sensitive data → Admin API (via Bot Server REST API)
+4. Bot Server reads WAM file to discover bots
+5. Bot Server loads sensitive config from Admin API
+6. Bot Server spawns BotClient instance
+7. BotClient connects to WorkAdventure Pusher
+8. Bot appears in game and follows behavior
+```
+
+#### Bot Spawning Flow
+```
+1. Map loads → Bot Server detects bots in WAM file
+2. Bot Server calls Admin API to load sensitive config
+3. Bot Server creates BotClient with full configuration
+4. BotClient connects to WorkAdventure Pusher
+5. Bot appears in game and starts behavior loop
+```
+
+### Docker Compose Setup
+
+The bot server is deployed as a standalone Docker service using `docker-compose.bots.yaml`:
+
+```yaml
+services:
+  bot-server:
+    build:
+      context: .
+      dockerfile: bots/Dockerfile
+    environment:
+      PUSHER_URL: ${PUSHER_URL}
+      ADMIN_API_URL: ${ADMIN_API_URL}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB_NUMBER: 1
+      BOT_SERVER_PORT: 3001
+      BOT_SERVER_ID: ${BOT_SERVER_ID:-server-1}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bot-server.rule=Host(`bot-server.workadventure.localhost`)"
+      - "traefik.http.routers.bot-server.entryPoints=web"
+      - "traefik.http.services.bot-server.loadbalancer.server.port=3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+**Key Features:**
+- Runs alongside main WorkAdventure services
+- Uses Traefik for reverse proxy routing
+- Health check endpoint for monitoring
+- Connects to shared Redis instance (different DB number)
+- Environment variable configuration
+
+### Authentication and Access Control
+
+- **Bot Editor Access**: Only authenticated users (`localUserStore.isLogged()`) can see and use the bot editor tool
+- **Bot Interaction**: Unauthenticated users can still interact with bots (chat, proximity, etc.)
+- **Bot Server API**: Requires JWT token authentication
+- **Admin API**: Uses bearer token authentication
+
+### Horizontal Scaling
+
+For horizontal scaling, multiple bot server instances can run:
+
+1. Each instance has unique `BOT_SERVER_ID`
+2. All instances connect to shared Redis (same DB number)
+3. `BotRegistry` coordinates bot distribution across servers
+4. Load balancer distributes API requests
+5. Bots are assigned to servers based on capacity
+
+See [HORIZONTAL_SCALING.md](../scaling/HORIZONTAL_SCALING.md) for detailed setup instructions.
+

@@ -1,0 +1,31 @@
+services:
+  bot-server:
+    build:
+      context: .
+      dockerfile: bots/Dockerfile
+    environment:
+      PUSHER_URL: ${PUSHER_URL:-http://play.workadventure.localhost}
+      ADMIN_API_URL: ${ADMIN_API_URL:-}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      WORKADVENTURE_URL: ws://pusher:8080
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB_NUMBER: 1
+      BOT_SERVER_PORT: 3001
+      BOT_SERVER_ID: ${BOT_SERVER_ID:-server-1}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.bot-server.rule=Host(`bot-server.workadventure.localhost`)"
+      - "traefik.http.routers.bot-server.entryPoints=web"
+      - "traefik.http.services.bot-server.loadbalancer.server.port=3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
