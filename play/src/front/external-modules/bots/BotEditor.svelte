@@ -1,12 +1,14 @@
 <script lang="ts">
     import BotList from "./components/BotList.svelte";
     import BotDetailView from "./components/BotDetailView.svelte";
+    import CreateBotModal from "./components/CreateBotModal.svelte";
     import type { BotData } from "./types";
 
     type View = "list" | "detail";
 
     let currentView: View = "list";
     let selectedBot: BotData | null = null;
+    let showCreateModal = false;
 
     function handleSelectBot(bot: BotData | null) {
         selectedBot = bot;
@@ -14,8 +16,32 @@
     }
 
     function handleCreateBot() {
-        selectedBot = null; // New bot
+        showCreateModal = true;
+    }
+
+    function handleCreateBotSubmit(name: string, textureId: string) {
+        // Create new bot with just name and texture
+        selectedBot = {
+            name,
+            characterTexture: textureId,
+            characterTextureIds: [textureId],
+            behaviorType: "idle",
+            enabled: true,
+            behaviorConfig: {
+                assignedSpace: {
+                    center: { x: 0, y: 0 },
+                    radius: 50,
+                },
+            },
+            chatInstructions: "",
+            movementInstructions: "",
+        };
+        showCreateModal = false;
         currentView = "detail";
+    }
+
+    function handleCloseCreateModal() {
+        showCreateModal = false;
     }
 
     function handleBackToList() {
@@ -40,6 +66,8 @@
     {:else if currentView === "detail"}
         <BotDetailView bot={selectedBot} onBack={handleBackToList} onSave={handleSave} onDelete={handleDelete} />
     {/if}
+
+    <CreateBotModal isOpen={showCreateModal} onClose={handleCloseCreateModal} onCreate={handleCreateBotSubmit} />
 </div>
 
 <style>

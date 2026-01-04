@@ -20,13 +20,13 @@
         if (bot) {
             currentBot = { ...bot };
         } else {
-            // New bot - initialize with defaults
+            // This shouldn't happen anymore - bots are created via modal
             currentBot = {
                 name: "",
                 description: "",
                 position: { x: 0, y: 0 },
                 behaviorType: "idle",
-                enabled: true, // New bots are enabled by default
+                enabled: true,
                 behaviorConfig: {
                     assignedSpace: {
                         center: { x: 0, y: 0 },
@@ -38,6 +38,9 @@
             };
         }
     }
+
+    // Check if this is a new bot (no botId means it hasn't been saved yet)
+    $: isNewBot = !currentBot.botId;
 
     function handleSave() {
         isSaving = true;
@@ -99,13 +102,48 @@
         </button>
         <div class="flex-1">
             <h2 class="text-xl font-semibold text-white">
-                {currentBot.botId ? "Edit Bot" : "Create New Bot"}
+                {isNewBot ? "Setup Bot" : "Edit Bot"}
             </h2>
             {#if currentBot.name}
                 <p class="text-sm text-white/60 mt-1">{currentBot.name}</p>
             {/if}
         </div>
     </div>
+
+    <!-- Setup Instructions for New Bots -->
+    {#if isNewBot}
+        <div class="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 mb-4">
+            <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path
+                        fill-rule="evenodd"
+                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                        clip-rule="evenodd"
+                    />
+                </svg>
+                <div class="flex-1">
+                    <h3 class="text-sm font-semibold text-white mb-2">Next Steps: Complete Your Bot Setup</h3>
+                    <ol class="list-decimal list-inside space-y-2 text-sm text-white/80">
+                        <li>
+                            <strong>Set Position:</strong> Go to the <strong>Properties</strong> tab and set where your bot
+                            should appear on the map. You can enter coordinates manually or use the "Pick from Map" button.
+                        </li>
+                        <li>
+                            <strong>Configure Behavior:</strong> In the <strong>Behavior</strong> tab, choose how your bot
+                            should act (Idle, Patrol, or Social) and set up its assigned space.
+                        </li>
+                        <li>
+                            <strong>Add Instructions:</strong> In the <strong>Instructions</strong> tab, write chat instructions
+                            (what the bot should say) and movement instructions (how it should move and who to approach).
+                        </li>
+                        <li>
+                            <strong>Save:</strong> Click "Create Bot" at the bottom to save your bot configuration.
+                        </li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    {/if}
 
     <!-- Tabs -->
     <div class="flex border-b border-white/20 mb-4">
