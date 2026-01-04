@@ -119,5 +119,20 @@ See [docs/README.md](./docs/README.md) for organized documentation.
 
 ## Getting Started
 
-See [QUICK_START.md](./docs/QUICK_START.md) for getting started guide and [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for detailed implementation details.
+1. **Read the [Quick Start Guide](./docs/getting-started/QUICK_START.md)** - Get up and running quickly
+2. **Follow the [Implementation Plan](./docs/getting-started/IMPLEMENTATION_PLAN.md)** - Step-by-step roadmap
+3. **Review the [Extension Module Guide](./docs/getting-started/EXTENSION_MODULE_GUIDE.md)** - How to build the extension
+
+## Architecture Overview
+
+The bot system is built as an **independent extension**:
+
+- **Extension Module**: Lives in `play/src/front/external-modules/bots/` (UI injection)
+- **Bot Server**: Lives in `bots/server/` (standalone service)
+- **Bot Clients**: Live in `bots/client/` (WebSocket clients)
+- **Behaviors**: Live in `bots/behaviors/` (behavior system)
+
+Only the extension module UI code lives in WorkAdventure's directory structure. All other code (server, client, behaviors) remains independent in the `bots/` directory.
+
+See [Architecture Overview](./docs/architecture/ARCHITECTURE.md) for detailed implementation details.
 

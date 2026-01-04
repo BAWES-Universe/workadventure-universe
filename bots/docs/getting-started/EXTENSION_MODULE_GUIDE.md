@@ -36,7 +36,8 @@ When a module is registered in the room metadata (via Admin API):
 ┌─────────────────────────────────────────┐
 │  Bot Extension (Your Code)              │
 │  ┌───────────────────────────────────┐  │
-│  │ bots/editor/extension/            │  │
+│  │ play/src/front/external-modules/  │  │
+│  │   bots/                           │  │
 │  │  - index.ts (Extension Module)    │  │
 │  │  - BotEditor.svelte (UI)          │  │
 │  └───────────────────────────────────┘  │
@@ -58,8 +59,10 @@ When a module is registered in the room metadata (via Admin API):
 
 ### 1. Create Extension Module Structure
 
+The extension module should be placed directly in WorkAdventure's external-modules directory:
+
 ```
-bots/editor/extension/
+play/src/front/external-modules/bots/
 ├── index.ts                    # Extension module entry point
 ├── BotEditorButton.svelte      # Button to open editor
 ├── BotEditorModal.svelte       # Main editor modal
@@ -69,29 +72,29 @@ bots/editor/extension/
     └── BotAIConfigEditor.svelte
 ```
 
-### 2. Link to WorkAdventure
+**Note**: The extension module lives in WorkAdventure's directory structure, but all other bot code (server, client, behaviors) remains in the `bots/` directory as standalone components.
 
-**Option A: Symlink (Development)**
-```bash
-ln -s ../../bots/editor/extension play/src/front/external-modules/bots
+### 2. Directory Structure
+
+```
+workadventure-universe/
+├── bots/                      # Independent bot system
+│   ├── server/                # Bot server (standalone)
+│   ├── client/                # Bot clients (standalone)
+│   ├── behaviors/             # Behaviors (standalone)
+│   └── docs/                  # Documentation
+└── play/src/front/external-modules/bots/  # Extension module (in WorkAdventure)
+    ├── index.ts
+    ├── BotEditorButton.svelte
+    └── components/
+        └── ...
 ```
 
-**Option B: Copy Script (Production)**
-```bash
-# Create copy script
-cp -r bots/editor/extension play/src/front/external-modules/bots
-```
-
-**Option C: Build Script**
-```json
-// bots/package.json
-{
-  "scripts": {
-    "link-extension": "ln -sf ../../bots/editor/extension ../play/src/front/external-modules/bots",
-    "copy-extension": "cp -r editor/extension ../play/src/front/external-modules/bots"
-  }
-}
-```
+This approach:
+- ✅ No symlinks or copy scripts needed
+- ✅ Works directly with WorkAdventure's module loader
+- ✅ Only UI extension code in WorkAdventure's structure
+- ✅ All server/client code stays independent in `bots/`
 
 ### 3. Register Module in Admin API
 
@@ -105,13 +108,15 @@ Your Admin API's `/api/room/access` endpoint should return:
 }
 ```
 
+WorkAdventure will automatically load the module from `play/src/front/external-modules/bots/index.ts`.
+
 ## Extension Module Implementation
 
 ### Basic Structure
 
 ```typescript
-// bots/editor/extension/index.ts
-import type { ExtensionModule, ExtensionModuleOptions } from "../../../play/src/front/ExternalModule/ExtensionModule";
+// play/src/front/external-modules/bots/index.ts
+import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import BotEditorButton from "./BotEditorButton.svelte";
 
 const botExtensionModule: ExtensionModule = {
@@ -160,22 +165,22 @@ options.externalSvelteComponent.addComponentToZone(
 ### 1. Development
 
 ```bash
-# Work in bots/editor/extension/
-cd bots/editor/extension
-# Make changes...
+# Work directly in WorkAdventure's external-modules directory
+cd play/src/front/external-modules/bots
 
-# Link to WorkAdventure
-npm run link-extension
+# Make changes to extension module...
 
 # Test in WorkAdventure
-cd ../../play
+cd ../../../../..
 npm run dev
 ```
+
+**Note**: The extension module code lives directly in WorkAdventure's directory structure. All other bot code (server, client, behaviors) remains in the `bots/` directory as standalone components.
 
 ### 2. Testing
 
 1. Start WorkAdventure
-2. Ensure module is registered in Admin API
+2. Ensure module is registered in Admin API (`modules: ["bots"]`)
 3. Load a room with bot module enabled
 4. Check browser console for initialization
 5. Test UI components
@@ -183,13 +188,12 @@ npm run dev
 ### 3. Production
 
 ```bash
-# Copy extension to WorkAdventure
-npm run copy-extension
-
-# Build WorkAdventure
+# Build WorkAdventure (extension module included automatically)
 cd play
 npm run build
 ```
+
+The extension module is part of WorkAdventure's build process, so no separate build step is needed.
 
 ## Integration Points
 
@@ -220,11 +224,12 @@ The extension module communicates with the bot server via:
 
 ## Best Practices
 
-1. **Keep It Independent**: Don't modify WorkAdventure code
-2. **Use ExtensionModule System**: Leverage provided APIs
-3. **Handle Errors Gracefully**: Extension failures shouldn't break WorkAdventure
-4. **Clean Up**: Always remove components in `destroy()`
-5. **Test Thoroughly**: Test with and without module enabled
+1. **Keep Server Code Independent**: Bot server, client, and behaviors stay in `bots/` directory
+2. **Extension Module in WorkAdventure**: Only the UI extension module lives in WorkAdventure's structure
+3. **Use ExtensionModule System**: Leverage provided APIs, don't modify WorkAdventure core
+4. **Handle Errors Gracefully**: Extension failures shouldn't break WorkAdventure
+5. **Clean Up**: Always remove components in `destroy()`
+6. **Test Thoroughly**: Test with and without module enabled
 
 ## Troubleshooting
 

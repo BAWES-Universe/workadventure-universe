@@ -46,28 +46,26 @@
 
 ## 🚧 Next Steps (Priority Order)
 
-### 1. Bot Editor UI (High Priority)
-**Goal**: Allow authenticated users to create and configure bots via sidebar
+### 1. Extension Module Setup (High Priority)
+**Goal**: Create WorkAdventure extension module that injects bot editor UI
 
 **Tasks:**
-- Add `BotEditor` to `EditorToolName` enum
-- Create `BotEditor.svelte` component (similar to EntityEditor)
-- Create `BotPropertiesEditor.svelte` for basic config
-- Create `BotBehaviorEditor.svelte` for behavior selection
-- Create `BotAIConfigEditor.svelte` for AI settings
-- Add bot editor button to `MapEditorSideBar.svelte`
-- Integrate with map editor system
-- Store bot data in WAM file format
+- Create extension module in `play/src/front/external-modules/bots/`
+- Implement `index.ts` with ExtensionModule interface
+- Create `BotEditorButton.svelte` component
+- Create `BotEditorModal.svelte` main editor UI
+- Inject button into action bar via `externalSvelteComponent.addComponentToZone()`
+- Register module in Admin API metadata (`modules: ["bots"]`)
 
 **Files to Create:**
-- `play/src/front/Components/MapEditor/BotEditor/BotEditor.svelte`
-- `play/src/front/Components/MapEditor/BotEditor/BotPropertiesEditor.svelte`
-- `play/src/front/Components/MapEditor/BotEditor/BotBehaviorEditor.svelte`
-- `play/src/front/Components/MapEditor/BotEditor/BotAIConfigEditor.svelte`
+- `play/src/front/external-modules/bots/index.ts` - Extension module entry point
+- `play/src/front/external-modules/bots/BotEditorButton.svelte` - Button component
+- `play/src/front/external-modules/bots/BotEditorModal.svelte` - Main editor modal
+- `play/src/front/external-modules/bots/components/BotPropertiesEditor.svelte`
+- `play/src/front/external-modules/bots/components/BotBehaviorEditor.svelte`
+- `play/src/front/external-modules/bots/components/BotAIConfigEditor.svelte`
 
-**Files to Modify:**
-- `play/src/front/Phaser/Game/MapEditor/MapEditorModeManager.ts` - Add BotEditor tool
-- `play/src/front/Components/MapEditor/MapEditorSideBar.svelte` - Add bot editor button
+**Note**: Extension module lives in WorkAdventure's directory structure. All other bot code (server, client, behaviors) remains in `bots/` directory as standalone components.
 
 ### 2. Backend Bot Management (High Priority)
 **Goal**: Persist bots and spawn them when maps load
@@ -175,9 +173,10 @@
 ## Integration Points
 
 1. **WebSocket Protocol**: Uses same protocol as browser clients
-2. **Map Editor**: Will integrate as a tool (like Entity Editor)
-3. **Map Storage**: Bot configs stored in WAM files
-4. **Backend Services**: Bot spawning and management
+2. **Extension Module**: UI injected via WorkAdventure's ExtensionModule system (`play/src/front/external-modules/bots/`)
+3. **Map Storage**: Bot configs stored in WAM files (public data only)
+4. **Admin API**: Sensitive bot configuration stored in Admin API
+5. **Backend Services**: Bot spawning and management (standalone service in `bots/server/`)
 
 ## Notes
 
@@ -185,7 +184,8 @@
 - Behaviors are **modular** and **extensible**
 - Smart conversation management prevents spam and respects players
 - Ready for AI integration (LMStudio initially, Ultravox/GPT Voice later)
-- UI integration follows existing patterns (Entity Editor)
+- **Independent Extension**: Uses WorkAdventure's ExtensionModule system, no upstream code changes needed
+- **Clean Separation**: Extension module UI in WorkAdventure's structure, all server/client code in `bots/` directory
 
 ## Questions?
 
