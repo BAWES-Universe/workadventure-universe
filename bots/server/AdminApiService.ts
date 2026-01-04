@@ -5,7 +5,16 @@
  */
 
 import axios, { type AxiosResponse } from 'axios';
-import * as Sentry from '@sentry/node';
+
+// Optional Sentry integration (uncomment if @sentry/node is installed)
+// import * as Sentry from '@sentry/node';
+
+// Helper to safely capture exceptions (works with or without Sentry)
+const captureException = (error: Error) => {
+    // Uncomment if Sentry is configured:
+    // Sentry.captureException(error);
+    console.error('AdminApiService error:', error);
+};
 
 export interface BotConfiguration {
     botId: string;
@@ -16,8 +25,27 @@ export interface BotConfiguration {
     userId?: string; // User who created the bot
     behaviorType: 'idle' | 'patrol' | 'social';
     behaviorConfig: Record<string, any>;
+    
+    // AI Configuration (Sensitive - stored in Admin API only)
     aiProvider?: 'lmstudio' | 'ultravox' | 'gpt-voice';
-    aiConfig?: Record<string, any>;
+    aiConfig?: {
+        // Sensitive credentials (never in WAM files)
+        apiKey?: string;
+        endpoint?: string;
+        token?: string;
+        // Public config
+        model?: string;
+        temperature?: number;
+        maxTokens?: number;
+        [key: string]: any;
+    };
+    
+    // Chat Instructions (Sensitive - stored in Admin API only)
+    chatInstructions?: string; // System prompt/instructions for AI behavior
+    
+    // Movement Instructions (Sensitive - stored in Admin API only)
+    movementInstructions?: string; // Instructions for who to approach and when
+    
     assignedSpace?: {
         center: { x: number; y: number };
         radius: number;
@@ -94,7 +122,7 @@ export class AdminApiService {
             );
         } catch (error) {
             console.error('[AdminApiService] Error saving bot configuration:', error);
-            Sentry.captureException(error);
+            captureException(error);
             throw error;
         }
     }
@@ -127,7 +155,7 @@ export class AdminApiService {
                 return null;
             }
             console.error('[AdminApiService] Error getting bot configuration:', error);
-            Sentry.captureException(error);
+            captureException(error);
             throw error;
         }
     }
@@ -163,7 +191,7 @@ export class AdminApiService {
             }));
         } catch (error) {
             console.error('[AdminApiService] Error getting bot configurations:', error);
-            Sentry.captureException(error);
+            captureException(error);
             throw error;
         }
     }
@@ -184,7 +212,7 @@ export class AdminApiService {
             });
         } catch (error) {
             console.error('[AdminApiService] Error deleting bot configuration:', error);
-            Sentry.captureException(error);
+            captureException(error);
             throw error;
         }
     }
@@ -213,7 +241,7 @@ export class AdminApiService {
             );
         } catch (error) {
             console.error('[AdminApiService] Error tracking bot usage:', error);
-            Sentry.captureException(error);
+            captureException(error);
             // Don't throw - usage tracking shouldn't break bot functionality
         }
     }
@@ -252,7 +280,7 @@ export class AdminApiService {
             }));
         } catch (error) {
             console.error('[AdminApiService] Error getting bot usage:', error);
-            Sentry.captureException(error);
+            captureException(error);
             throw error;
         }
     }

@@ -13,6 +13,10 @@ ADMIN_API_URL=http://your-admin-api.com
 ADMIN_API_TOKEN=your-api-token
 ```
 
+## Security Note
+
+**⚠️ Important**: Sensitive bot configuration (AI credentials, chat instructions, movement instructions) must be stored in Admin API, never in publicly accessible WAM files. See [SECURITY.md](./SECURITY.md) for details.
+
 ## Admin API Endpoints
 
 Your Admin API should implement these endpoints:
@@ -307,22 +311,37 @@ CREATE TABLE bots_messages (
 
 ## Example Queries
 
-### Get all bots in a world
+### Get all bots in a world (exclude sensitive data)
 ```sql
-SELECT * FROM bots_configuration 
+SELECT 
+  bot_id, name, room_url, world_url, universe_url, user_id,
+  behavior_type, behavior_config, ai_provider, assigned_space,
+  created_at, updated_at
+FROM bots_configuration 
 WHERE world_url = 'https://play.workadventu.re/@/org/world';
+-- Note: ai_config, chat_instructions, movement_instructions excluded
 ```
 
-### Get usage stats for a user's bots
+### Get usage stats for a user's bots (exclude sensitive data)
 ```sql
 SELECT 
   bc.name,
+  bc.behavior_type,
   bu.total_conversations,
   bu.total_messages,
   bu.total_active_time
 FROM bots_configuration bc
 JOIN bots_usage bu ON bc.bot_id = bu.bot_id
 WHERE bc.user_id = 'user-456';
+-- Note: Sensitive fields (ai_config, instructions) excluded
+```
+
+### Get bot with sensitive data (authenticated request)
+```sql
+SELECT * FROM bots_configuration 
+WHERE bot_id = 'bot-123' AND user_id = 'user-456';
+-- Returns all fields including sensitive data
+-- Only if user has permission
 ```
 
 ### Get daily conversation trends
@@ -335,4 +354,15 @@ WHERE bot_id = 'bot-123'
 GROUP BY DATE(timestamp)
 ORDER BY date;
 ```
+
+## Security Best Practices
+
+1. **Never expose sensitive data in list endpoints**
+2. **Require authentication for sensitive data access**
+3. **Validate user permissions before returning sensitive data**
+4. **Consider encrypting sensitive columns at rest**
+5. **Log access to sensitive data for audit purposes**
+6. **Sanitize chat/movement instructions on input**
+
+See [SECURITY.md](./SECURITY.md) for detailed security guidelines.
 

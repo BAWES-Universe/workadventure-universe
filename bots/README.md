@@ -105,7 +105,22 @@ The bot system is highly scalable, supporting thousands of bots simultaneously:
 
 See [SCALABILITY.md](./docs/SCALABILITY.md) for detailed resource usage and optimization strategies.
 
+## Documentation
+
+- [ARCHITECTURE.md](./docs/ARCHITECTURE.md) - Detailed architecture and design
+- [SCALABILITY.md](./docs/SCALABILITY.md) - Resource usage and scalability
+- [DATA_STORAGE.md](./docs/DATA_STORAGE.md) - Data storage and manipulation
+- [SCALING_REQUIREMENTS.md](./docs/SCALING_REQUIREMENTS.md) - Infrastructure and scaling requirements
+- [ADMIN_API_REQUIREMENTS.md](./docs/ADMIN_API_REQUIREMENTS.md) - Admin API implementation requirements
+- [ADMIN_API_QUICK_REFERENCE.md](./docs/ADMIN_API_QUICK_REFERENCE.md) - Quick reference for Admin API
+- [ADMIN_API_INTEGRATION.md](./docs/ADMIN_API_INTEGRATION.md) - Admin API integration guide
+- [ASSIGNED_SPACES.md](./docs/ASSIGNED_SPACES.md) - Assigned spaces feature
+- [BEHAVIORS.md](./docs/BEHAVIORS.md) - Behavior system documentation
+- [CHAT_AND_MOVEMENT_INSTRUCTIONS.md](./docs/CHAT_AND_MOVEMENT_INSTRUCTIONS.md) - Chat and movement instructions
+- [SECURITY.md](./docs/SECURITY.md) - Security considerations and best practices
+- [QUICK_START.md](./docs/QUICK_START.md) - Getting started guide
+
 ## Getting Started
 
-See [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for detailed implementation details.
+See [QUICK_START.md](./docs/QUICK_START.md) for getting started guide and [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for detailed implementation details.
 
