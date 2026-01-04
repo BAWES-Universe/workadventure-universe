@@ -99,6 +99,18 @@ function injectBotEditorComponent() {
 
     sidebarContentElement = sidebar;
 
+    // Ensure header buttons have proper z-index to be clickable
+    // They're already absolutely positioned, so just ensure z-index is high enough
+    const headerButtons = sidebar.querySelector(".flex.flex-row.justify-end");
+    if (headerButtons instanceof HTMLElement) {
+        // Don't override position (they're already absolutely positioned)
+        // Just ensure z-index is high enough to be above bot editor content
+        const currentZIndex = window.getComputedStyle(headerButtons).zIndex;
+        if (!currentZIndex || currentZIndex === "auto") {
+            headerButtons.style.zIndex = "10"; // Ensure header buttons are above bot editor content
+        }
+    }
+
     // Hide existing conditional content (EntityEditor, AreaEditor, etc.)
     const conditionalContent = sidebar.querySelectorAll(":scope > *:not(.flex.flex-row.justify-end)");
     conditionalContent.forEach((el) => {
@@ -111,13 +123,14 @@ function injectBotEditorComponent() {
     const botEditorContainer = document.createElement("div");
     botEditorContainer.id = "bot-editor-container";
     botEditorContainer.className = "bot-editor-wrapper";
-    // Ensure it doesn't block pointer events to other elements
+    // Ensure it doesn't block pointer events to header buttons
+    // Header buttons are absolutely positioned at top-4 right-2, so add padding to avoid that area
     botEditorContainer.style.pointerEvents = "auto";
     botEditorContainer.style.position = "relative";
-    botEditorContainer.style.zIndex = "1";
+    botEditorContainer.style.zIndex = "0"; // Lower than header buttons
+    botEditorContainer.style.paddingTop = "3rem"; // Add padding to avoid header buttons area (top-4 = 1rem, plus some margin)
 
-    // Insert after header buttons
-    const headerButtons = sidebar.querySelector(".flex.flex-row.justify-end");
+    // Insert after header buttons (headerButtons was already found above)
     if (headerButtons && headerButtons.nextSibling) {
         sidebar.insertBefore(botEditorContainer, headerButtons.nextSibling);
     } else {
