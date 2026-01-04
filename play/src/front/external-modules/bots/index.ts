@@ -144,11 +144,10 @@ function injectBotEditorComponent() {
     botEditorContainer.id = "bot-editor-container";
     botEditorContainer.className = "bot-editor-wrapper";
     // Ensure it doesn't block pointer events to header buttons
-    // Header buttons are absolutely positioned at top-4 right-2, so add padding to avoid that area
+    // Header buttons are absolutely positioned, so we ensure proper z-index
     botEditorContainer.style.pointerEvents = "auto";
     botEditorContainer.style.position = "relative";
     botEditorContainer.style.zIndex = "0"; // Lower than header buttons
-    botEditorContainer.style.paddingTop = "3rem"; // Add padding to avoid header buttons area (top-4 = 1rem, plus some margin)
 
     // Insert after header buttons (headerButtons was already found above)
     if (headerButtons && headerButtons.nextSibling) {
