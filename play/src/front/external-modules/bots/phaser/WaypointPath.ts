@@ -44,7 +44,6 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     private waypoints: Waypoint[];
     private pathGraphics: Phaser.GameObjects.Graphics;
     private markers: WaypointMarker[] = [];
-    private addButton: Phaser.GameObjects.Container | null = null;
     private selectedIndex: number = -1;
     private isEditing: boolean = false;
     private isDragging: boolean = false;
@@ -102,20 +101,16 @@ export class WaypointPath extends Phaser.GameObjects.Container {
         this.isEditing = editing;
 
         // Update marker interactivity
-        this.markers.forEach((marker) => {
+        this.markers.forEach((marker, index) => {
             if (editing) {
                 marker.container.setInteractive({ cursor: "grab", draggable: true });
-                marker.deleteButton.setVisible(true);
+                // Don't show delete button for first waypoint (index 0)
+                marker.deleteButton.setVisible(index > 0);
             } else {
                 marker.container.disableInteractive();
                 marker.deleteButton.setVisible(false);
             }
         });
-
-        // Show/hide add button
-        if (this.addButton) {
-            this.addButton.setVisible(editing);
-        }
 
         // Show/hide instructions
         this.updateInstructions();
@@ -249,20 +244,12 @@ export class WaypointPath extends Phaser.GameObjects.Container {
         });
         this.markers = [];
 
-        if (this.addButton) {
-            this.addButton.destroy();
-            this.addButton = null;
-        }
-
         // Create markers
         this.waypoints.forEach((wp, index) => {
             const marker = this.createMarker(wp, index);
             this.markers.push(marker);
             this.add(marker.container);
         });
-
-        // Create "+" add button
-        this.createAddButton();
 
         // Update instructions
         this.updateInstructions();
@@ -293,6 +280,7 @@ export class WaypointPath extends Phaser.GameObjects.Container {
         deleteButton.setStrokeStyle(2, 0xffffff);
         deleteButton.setVisible(false);
         deleteButton.setInteractive({ cursor: "pointer" });
+        deleteButton.setData("isDeleteButton", true); // Mark as delete button for hit testing
         container.add(deleteButton);
 
         // Delete button X
@@ -311,18 +299,21 @@ export class WaypointPath extends Phaser.GameObjects.Container {
         // Setup events
         if (this.isEditing) {
             container.setInteractive({ cursor: "grab", draggable: true });
-            deleteButton.setVisible(true);
+            // Don't show delete button for first waypoint (index 0)
+            deleteButton.setVisible(index > 0);
         }
 
-        // Delete button click - use stored index from container data
-        deleteButton.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
-            pointer.event.stopPropagation();
-            const currentIndex = container.getData("waypointIndex") as number;
-            // Use setTimeout to prevent the event from interfering with other handlers
-            setTimeout(() => {
-                this.removeWaypoint(currentIndex);
-            }, 0);
-        });
+        // Delete button click - use stored index from container data (only for non-first waypoints)
+        if (index > 0) {
+            deleteButton.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
+                pointer.event.stopPropagation();
+                const currentIndex = container.getData("waypointIndex") as number;
+                // Use setTimeout to prevent the event from interfering with other handlers
+                setTimeout(() => {
+                    this.removeWaypoint(currentIndex);
+                }, 0);
+            });
+        }
 
         // Hover effects
         container.on(Phaser.Input.Events.POINTER_OVER, () => {
@@ -381,68 +372,6 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     }
 
     /**
-     * Create the "+" button to add waypoints
-     */
-    private createAddButton(): void {
-        // Position after the last waypoint or at constraint center if no waypoints
-        let startX = this.constraintCenter.x;
-        let startY = this.constraintCenter.y;
-
-        if (this.waypoints.length > 0) {
-            const last = this.waypoints[this.waypoints.length - 1];
-            startX = last.x + 64;
-            startY = last.y;
-        }
-
-        const container = this.scene.add.container(startX, startY);
-
-        // Circle background
-        const circle = this.scene.add.arc(0, 0, 20, 0, 360, false, 0x22c55e, 1);
-        circle.setStrokeStyle(3, 0x166534);
-        container.add(circle);
-
-        // Plus sign
-        const plus = this.scene.add.text(0, 0, "+", {
-            fontSize: "24px",
-            fontStyle: "bold",
-            color: "#ffffff",
-        });
-        plus.setOrigin(0.5, 0.5);
-        container.add(plus);
-
-        // Label
-        const label = this.scene.add.text(0, 32, "Add Point", {
-            fontSize: "11px",
-            color: "#ffffff",
-            backgroundColor: "#00000088",
-            padding: { x: 4, y: 2 },
-        });
-        label.setOrigin(0.5, 0);
-        container.add(label);
-
-        container.setSize(40, 40);
-        container.setInteractive({ cursor: "pointer" });
-        container.setVisible(this.isEditing);
-
-        // Hover effect
-        container.on(Phaser.Input.Events.POINTER_OVER, () => {
-            circle.setFillStyle(0x4ade80, 1);
-        });
-
-        container.on(Phaser.Input.Events.POINTER_OUT, () => {
-            circle.setFillStyle(0x22c55e, 1);
-        });
-
-        // Click to add waypoint - use container's CURRENT position
-        container.on(Phaser.Input.Events.POINTER_DOWN, () => {
-            this.addWaypoint(container.x, container.y);
-        });
-
-        this.addButton = container;
-        this.add(container);
-    }
-
-    /**
      * Update instruction text
      */
     private updateInstructions(): void {
@@ -451,16 +380,23 @@ export class WaypointPath extends Phaser.GameObjects.Container {
             this.instructionText = null;
         }
 
-        if (this.isEditing && this.waypoints.length === 0) {
+        if (this.isEditing) {
+            const message =
+                this.waypoints.length === 0
+                    ? "Click inside the green circle to add patrol points"
+                    : this.waypoints.length === 1
+                    ? "1 point (start) - Click to add more waypoints"
+                    : `${this.waypoints.length} points - Click to add, drag to move, × to delete`;
+
             this.instructionText = this.scene.add.text(
                 this.constraintCenter.x,
-                this.constraintCenter.y - 50,
-                "Click + to add patrol points",
+                this.constraintCenter.y - this.constraintRadius - 20,
+                message,
                 {
-                    fontSize: "14px",
+                    fontSize: "13px",
                     color: "#ffffff",
                     backgroundColor: "#22c55ecc",
-                    padding: { x: 8, y: 4 },
+                    padding: { x: 10, y: 6 },
                 }
             );
             this.instructionText.setOrigin(0.5, 1);
@@ -490,12 +426,6 @@ export class WaypointPath extends Phaser.GameObjects.Container {
                 }
             }
         });
-
-        // Update add button position
-        if (this.addButton && this.waypoints.length > 0) {
-            const last = this.waypoints[this.waypoints.length - 1];
-            this.addButton.setPosition(last.x + 64, last.y);
-        }
 
         // Don't draw lines if less than 2 waypoints
         if (this.waypoints.length < 2) return;
@@ -562,9 +492,6 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     public setVisible(visible: boolean): this {
         super.setVisible(visible);
         this.markers.forEach((m) => m.container.setVisible(visible));
-        if (this.addButton) {
-            this.addButton.setVisible(visible && this.isEditing);
-        }
         return this;
     }
 
@@ -574,7 +501,6 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     public destroy(fromScene?: boolean): void {
         this.pathGraphics.destroy();
         this.markers.forEach((m) => m.container.destroy());
-        this.addButton?.destroy();
         this.instructionText?.destroy();
         super.destroy(fromScene);
     }

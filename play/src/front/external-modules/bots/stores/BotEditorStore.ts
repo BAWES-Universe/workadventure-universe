@@ -173,10 +173,17 @@ export function confirmPlacement(): BotData | undefined {
 
 /**
  * Enter waypoint editing mode for patrol bots
+ * Auto-creates first waypoint at bot's center if none exist
  */
 export function startWaypointEditing(): void {
     const bot = get(selectedBotStore);
     if (bot?.behaviorConfig?.behaviorType === "patrol") {
+        // Auto-create first waypoint at bot's center if no waypoints exist
+        const waypoints = bot.behaviorConfig.patrolWaypoints || [];
+        if (waypoints.length === 0) {
+            const center = bot.behaviorConfig.assignedSpace?.center || { x: 0, y: 0 };
+            addWaypoint(bot.id, center.x, center.y);
+        }
         botEditorModeStore.set("waypoint-edit");
     }
 }
@@ -196,6 +203,15 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot) {
+            // Check if position changed significantly (more than 10 pixels)
+            const oldCenter = bot.behaviorConfig?.assignedSpace?.center;
+            const dx = oldCenter ? x - oldCenter.x : 0;
+            const dy = oldCenter ? y - oldCenter.y : 0;
+            const movedSignificantly = Math.sqrt(dx * dx + dy * dy) > 10;
+
+            // Clear patrol waypoints if bot was moved significantly
+            const shouldClearWaypoints = movedSignificantly && bot.behaviorConfig?.behaviorType === "patrol";
+
             const updatedBot: BotData = {
                 ...bot,
                 behaviorConfig: {
@@ -204,6 +220,8 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
                         ...bot.behaviorConfig.assignedSpace,
                         center: { x, y },
                     },
+                    // Clear waypoints if bot moved
+                    ...(shouldClearWaypoints ? { patrolWaypoints: [] } : {}),
                 },
             };
             const newMap = new Map(bots);

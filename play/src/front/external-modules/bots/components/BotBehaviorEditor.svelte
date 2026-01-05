@@ -28,6 +28,25 @@
             if (newConvRadius !== undefined && newConvRadius !== conversationRadius) {
                 conversationRadius = newConvRadius;
             }
+            // Sync waypoints from map changes (important for patrol behavior)
+            if (bot && storeBot.behaviorConfig?.patrolWaypoints) {
+                bot.behaviorConfig = {
+                    ...bot.behaviorConfig,
+                    patrolWaypoints: storeBot.behaviorConfig.patrolWaypoints,
+                };
+                // Force reactivity by reassigning bot
+                bot = bot;
+            }
+            // Sync assigned space center (when bot is moved)
+            if (bot && storeBot.behaviorConfig?.assignedSpace?.center) {
+                bot.behaviorConfig = {
+                    ...bot.behaviorConfig,
+                    assignedSpace: {
+                        ...bot.behaviorConfig.assignedSpace,
+                        center: storeBot.behaviorConfig.assignedSpace.center,
+                    },
+                };
+            }
         }
     });
 
@@ -290,6 +309,26 @@
                 </span>
             </div>
 
+            <!-- Waypoint List -->
+            {#if waypointCount > 0}
+                <div class="mb-3 max-h-32 overflow-y-auto">
+                    <div class="flex flex-wrap gap-1">
+                        {#each bot?.behaviorConfig?.patrolWaypoints || [] as waypoint, index (index)}
+                            <div class="flex items-center gap-1 bg-green-500/20 px-2 py-1 rounded text-xs">
+                                <span
+                                    class="w-4 h-4 rounded-full bg-green-500 text-white text-[10px] flex items-center justify-center font-bold"
+                                >
+                                    {index + 1}
+                                </span>
+                                <span class="text-green-200 font-mono text-[10px]">
+                                    {Math.round(waypoint.x)},{Math.round(waypoint.y)}
+                                </span>
+                            </div>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
+
             <button
                 class="w-full px-4 py-3 bg-green-500/20 text-green-200 rounded-lg hover:bg-green-500/30 transition-colors flex items-center justify-center gap-2 font-medium"
                 on:click={handleEditWaypoints}
@@ -302,18 +341,16 @@
                         d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
                     />
                 </svg>
-                Edit Waypoints on Map
+                {waypointCount > 0 ? "Edit Waypoints" : "Add Waypoints"}
             </button>
 
-            <p class="text-xs text-white/50 mt-3">
-                Click to open the visual waypoint editor. Add points by clicking "+", drag to reposition, click "×" to
-                remove.
-            </p>
-            <div class="mt-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded">
-                <p class="text-xs text-yellow-200">
-                    <strong>Important:</strong> All waypoints must be placed within the Movement Area circle above. The radius
-                    acts as a safety boundary - if the bot strays outside (due to pathfinding issues or obstacles), it will
-                    return to the assigned space.
+            <div class="mt-3 space-y-2">
+                <p class="text-xs text-white/60">
+                    <strong class="text-green-300">How to use:</strong> Click the button above, then click anywhere inside
+                    the green circle to add waypoints. Drag waypoints to reposition, click × to delete.
+                </p>
+                <p class="text-xs text-white/40">
+                    Moving the bot will clear existing waypoints so you can redraw the patrol route.
                 </p>
             </div>
         </div>

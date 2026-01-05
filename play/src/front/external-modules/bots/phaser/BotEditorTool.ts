@@ -267,8 +267,51 @@ export class BotEditorTool {
         }
 
         if (mode === "waypoint-edit") {
-            // Don't process clicks here - waypoint interaction is handled by the WaypointPath component directly
-            // The + button handles adding waypoints
+            // Check if clicking on an existing waypoint marker or delete button (don't add if so)
+            const hitObjects = this.scene?.input.hitTestPointer(pointer);
+            const hitWaypointElement = hitObjects?.some((obj) => {
+                // Check if this object is part of a waypoint (has waypointIndex data) or is a delete button
+                return obj.getData?.("waypointIndex") !== undefined || obj.getData?.("isDeleteButton") === true;
+            });
+
+            if (hitWaypointElement) {
+                // Let the waypoint handle its own click (drag/delete)
+                return;
+            }
+
+            // Click anywhere within the radius to add a waypoint
+            const selectedBot = get(selectedBotStore);
+            if (selectedBot) {
+                const center = selectedBot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
+                const radius = selectedBot.behaviorConfig?.assignedSpace?.radius || 100;
+
+                // Check if click is within the constraint radius
+                const dx = pointer.worldX - center.x;
+                const dy = pointer.worldY - center.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance <= radius) {
+                    // Snap to grid if shift is held
+                    let x = pointer.worldX;
+                    let y = pointer.worldY;
+                    if (this.shiftKey?.isDown) {
+                        x = Math.round(x / 32) * 32;
+                        y = Math.round(y / 32) * 32;
+                    }
+
+                    // Get current waypoints
+                    const currentWaypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
+
+                    // Add waypoint at click location
+                    addWaypoint(selectedBot.id, x, y);
+
+                    // Update the waypoint path display with new waypoints array
+                    const waypointPath = this.waypointPaths.get(selectedBot.id);
+                    if (waypointPath) {
+                        waypointPath.setWaypoints([...currentWaypoints, { x, y }]);
+                    }
+                }
+            }
             return;
         }
 
@@ -384,8 +427,20 @@ export class BotEditorTool {
                     // Enable waypoint editing for selected bot
                     const selectedBot = get(selectedBotStore);
                     if (selectedBot) {
-                        const waypointPath = this.waypointPaths.get(selectedBot.id);
-                        waypointPath?.setEditing(true);
+                        let waypointPath = this.waypointPaths.get(selectedBot.id);
+
+                        // Create waypoint path if it doesn't exist
+                        if (!waypointPath) {
+                            this.createWaypointPath(selectedBot);
+                            waypointPath = this.waypointPaths.get(selectedBot.id);
+                        }
+
+                        if (waypointPath) {
+                            // Sync waypoints from store (important when first waypoint was auto-created)
+                            const waypoints = selectedBot.behaviorConfig?.patrolWaypoints || [];
+                            waypointPath.setWaypoints(waypoints);
+                            waypointPath.setEditing(true);
+                        }
                     }
                     break;
                 }
