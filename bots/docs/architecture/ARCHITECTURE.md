@@ -209,13 +209,26 @@ class UltravoxProvider implements AIProvider {
 4. **Permission System**: Only authenticated users can create bots
 5. **Bot Validation**: Validate bot behavior before execution
 
+## Navigation & Pathfinding
+
+Bots use pathfinding to navigate around obstacles in maps. The system reuses WorkAdventure's `PathfindingManager` logic with EasyStar.js to calculate optimal paths.
+
+**Key Features:**
+- Automatic obstacle avoidance
+- Natural movement patterns
+- Support for complex map layouts
+- Consistent with player movement
+
+For detailed implementation, see [Pathfinding](./PATHFINDING.md).
+
 ## Performance Optimization
 
 1. **Spatial Partitioning**: Only update bots in active areas (they remain visible)
 2. **Update Frequency Optimization**: Reduce update rate for distant bots (60fps → 30fps → 10fps)
-3. **Behavior Caching**: Cache behavior decisions
-4. **Message Batching**: Batch WebSocket messages
-5. **Async Processing**: Non-blocking AI calls
+3. **Pathfinding Caching**: Cache common paths (e.g., waypoint routes)
+4. **Behavior Caching**: Cache behavior decisions
+5. **Message Batching**: Batch WebSocket messages
+6. **Async Processing**: Non-blocking AI calls
 
 **Important**: Bots are always visible to players. Optimization reduces update frequency and AI processing, not visibility.
 

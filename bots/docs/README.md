@@ -13,6 +13,7 @@ Welcome to the WorkAdventure Bot System documentation. This documentation is org
 - **[Behaviors](./architecture/BEHAVIORS.md)** - Bot behavior system
 - **[Assigned Spaces](./architecture/ASSIGNED_SPACES.md)** - Bot area assignment feature
 - **[Conversation Memory](./architecture/CONVERSATION_MEMORY.md)** - Per-bot, per-player memory system
+- **[Pathfinding](./architecture/PATHFINDING.md)** - Bot navigation and obstacle avoidance
 
 ### Admin API
 - **[Admin API Requirements](./admin-api/ADMIN_API_REQUIREMENTS.md)** - What your Admin API needs to implement
@@ -64,6 +65,7 @@ Welcome to the WorkAdventure Bot System documentation. This documentation is org
 - **Understand security** → [Security Guide](./security/SECURITY.md)
 - **Configure bot behaviors** → [Behaviors](./architecture/BEHAVIORS.md)
 - **Set up bot instructions** → [Chat & Movement Instructions](./security/CHAT_AND_MOVEMENT_INSTRUCTIONS.md)
+- **Implement bot navigation** → [Pathfinding](./architecture/PATHFINDING.md)
 
 ## 🔗 Related Resources
 
