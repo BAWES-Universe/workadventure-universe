@@ -13,6 +13,7 @@ import {
     editingWaypointIndexStore,
     updateBotPosition,
     updateBotRadius,
+    updateConversationRadius,
     addWaypoint,
     updateWaypoint,
     removeWaypoint,
@@ -266,19 +267,35 @@ export class BotEditorTool {
         }
 
         if (mode === "waypoint-edit") {
-            const selectedBot = get(selectedBotStore);
-            if (selectedBot) {
-                const waypointPath = this.waypointPaths.get(selectedBot.id);
-                // Check if clicking on path to insert waypoint
-                waypointPath?.handlePathClick(pointer.worldX, pointer.worldY);
-            }
+            // Don't process clicks here - waypoint interaction is handled by the WaypointPath component directly
+            // The + button handles adding waypoints
             return;
         }
 
         // Check if clicking on empty space to deselect
+        // But don't deselect if clicking within the selected bot's radius circle or on any bot preview
+        const selectedBot = get(selectedBotStore);
+        if (selectedBot && mode === "detail") {
+            const preview = this.botPreviews.get(selectedBot.id);
+            if (preview) {
+                // Check if click is within the radius circle or on the bot itself
+                const dx = pointer.worldX - preview.x;
+                const dy = pointer.worldY - preview.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const radius = selectedBot.behaviorConfig?.assignedSpace?.radius || 0;
+
+                // Don't deselect if clicking within radius or on the bot square (32x32)
+                if (distance <= Math.max(radius + 20, 32)) {
+                    return;
+                }
+            }
+        }
+
+        // Check if clicking on any bot
         const hitObjects = this.scene?.input.hitTestPointer(pointer);
         const hitBot = hitObjects?.find((obj) => {
-            return this.botPreviews.has((obj as BotPreview).getBotId?.());
+            const botId = (obj as BotPreview).getBotId?.();
+            return botId && this.botPreviews.has(botId);
         });
 
         if (!hitBot && mode === "detail") {
@@ -414,6 +431,10 @@ export class BotEditorTool {
             updateBotRadius(botId, radius);
         });
 
+        preview.on(BotPreviewEvent.ConversationRadiusChanged, (botId: string, radius: number) => {
+            updateConversationRadius(botId, radius);
+        });
+
         this.botPreviews.set(bot.id, preview);
 
         // Create waypoint path if patrol bot
@@ -432,6 +453,11 @@ export class BotEditorTool {
 
         const waypoints = bot.behaviorConfig?.patrolWaypoints || [];
         const waypointPath = new WaypointPath(this.scene, waypoints);
+
+        // Set constraint boundary (waypoints must stay within radius)
+        const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
+        const radius = bot.behaviorConfig?.assignedSpace?.radius || 0;
+        waypointPath.setConstraint(center, radius);
 
         // Setup event handlers
         waypointPath.on(WaypointPathEvent.WaypointMoved, (index: number, x: number, y: number) => {
@@ -474,7 +500,13 @@ export class BotEditorTool {
                         this.createWaypointPath(bot);
                         waypointPath = this.waypointPaths.get(bot.id);
                     }
-                    waypointPath?.setWaypoints(bot.behaviorConfig.patrolWaypoints || []);
+                    if (waypointPath) {
+                        // Update constraint when radius/position changes
+                        const center = bot.behaviorConfig?.assignedSpace?.center || { x: 0, y: 0 };
+                        const radius = bot.behaviorConfig?.assignedSpace?.radius || 0;
+                        waypointPath.setConstraint(center, radius);
+                        waypointPath.setWaypoints(bot.behaviorConfig.patrolWaypoints || []);
+                    }
                 } else {
                     // Remove waypoint path if behavior changed
                     this.deleteWaypointPath(bot.id);

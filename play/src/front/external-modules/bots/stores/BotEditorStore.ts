@@ -84,6 +84,12 @@ export function upsertBot(bot: BotData): void {
         newMap.set(bot.id, bot);
         return newMap;
     });
+
+    // Also update selectedBotStore if this is the selected bot
+    const selected = get(selectedBotStore);
+    if (selected?.id === bot.id) {
+        selectedBotStore.set(bot);
+    }
 }
 
 /**
@@ -230,6 +236,35 @@ export function updateBotRadius(botId: string, radius: number): void {
                         ...bot.behaviorConfig.assignedSpace,
                         radius,
                     },
+                },
+            };
+            const newMap = new Map(bots);
+            newMap.set(botId, updatedBot);
+
+            // Update selected bot if it's the same one
+            const selected = get(selectedBotStore);
+            if (selected?.id === botId) {
+                selectedBotStore.set(updatedBot);
+            }
+
+            return newMap;
+        }
+        return bots;
+    });
+}
+
+/**
+ * Update a bot's conversation radius (social bots)
+ */
+export function updateConversationRadius(botId: string, conversationRadius: number): void {
+    botPreviewsStore.update((bots) => {
+        const bot = bots.get(botId);
+        if (bot && bot.behaviorConfig?.behaviorType === "social") {
+            const updatedBot: BotData = {
+                ...bot,
+                behaviorConfig: {
+                    ...bot.behaviorConfig,
+                    conversationRadius,
                 },
             };
             const newMap = new Map(bots);

@@ -1,11 +1,12 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import type { BotData } from "../types";
     import type { WokaData } from "../../../Components/Woka/WokaTypes";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
+    import { selectedBotStore, upsertBot } from "../stores/BotEditorStore";
     import BotTexturePicker from "./BotTexturePicker.svelte";
     import BotBehaviorEditor from "./BotBehaviorEditor.svelte";
     import BotInstructionsEditor from "./BotInstructionsEditor.svelte";
@@ -22,7 +23,6 @@
     let saveError: string | null = null;
     let wokaData: WokaData | null = null;
     let assetsDirection: number = 0;
-    let lastBotId: string | null = null;
 
     // Editing states
     let editingName = false;
@@ -31,61 +31,42 @@
     let editingBehavior = false;
     let editingInstructions = false;
 
-    // Initialize bot data - only update when bot prop changes (different bot or first load)
-    $: {
-        if (bot) {
-            // Only update if it's a different bot or we don't have currentBot yet
-            if (bot.id !== lastBotId || !currentBot) {
-                currentBot = { ...bot };
-                lastBotId = bot.id ?? null;
-                // Ensure assignedSpace exists
+    // Subscribe to store for real-time updates from map
+    const unsubscribe = selectedBotStore.subscribe((storeBot) => {
+        if (storeBot && storeBot.id === currentBot?.id) {
+            // Update position and radius from store (map changes)
+            if (storeBot.behaviorConfig?.assignedSpace) {
                 if (!currentBot.behaviorConfig) {
-                    currentBot.behaviorConfig = {
-                        assignedSpace: {
-                            center: { x: 0, y: 0 },
-                            radius: currentBot.behaviorType === "idle" ? 0 : 50,
-                        },
-                    };
-                } else if (!currentBot.behaviorConfig.assignedSpace) {
-                    currentBot.behaviorConfig.assignedSpace = {
-                        center: { x: 0, y: 0 },
-                        radius: currentBot.behaviorType === "idle" ? 0 : 50,
-                    };
+                    currentBot.behaviorConfig = { assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } };
                 }
+                currentBot.behaviorConfig.assignedSpace = { ...storeBot.behaviorConfig.assignedSpace };
+                currentBot = currentBot; // Trigger reactivity
             }
-        } else if (!bot && lastBotId !== null) {
-            currentBot = {
-                id: "",
-                name: "",
-                description: "",
-                behaviorType: "idle",
-                enabled: true,
-                behaviorConfig: {
-                    assignedSpace: {
-                        center: { x: 0, y: 0 },
-                        radius: 0,
-                    },
-                },
-                chatInstructions: "",
-                movementInstructions: "",
-            };
-            lastBotId = null;
-        } else if (!currentBot) {
-            currentBot = {
-                id: "",
-                name: "",
-                description: "",
-                behaviorType: "idle",
-                enabled: true,
-                behaviorConfig: {
-                    assignedSpace: {
-                        center: { x: 0, y: 0 },
-                        radius: 0,
-                    },
-                },
-                chatInstructions: "",
-                movementInstructions: "",
-            };
+        }
+    });
+
+    onDestroy(() => {
+        unsubscribe();
+    });
+
+    // Initialize from prop
+    $: if (bot && bot.id !== currentBot?.id) {
+        currentBot = {
+            ...bot,
+            behaviorConfig: bot.behaviorConfig || {
+                assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
+            },
+        };
+        if (!currentBot.behaviorConfig.assignedSpace) {
+            currentBot.behaviorConfig.assignedSpace = { center: { x: 0, y: 0 }, radius: 0 };
+        }
+    }
+
+    // Auto-save when currentBot changes
+    function autoSave() {
+        if (currentBot?.id) {
+            upsertBot(currentBot);
+            onSave();
         }
     }
 
@@ -119,38 +100,6 @@
             }
         } catch (err) {
             console.warn("Could not load woka data:", err);
-        }
-    }
-
-    function handleSave() {
-        isSaving = true;
-        saveError = null;
-
-        try {
-            if (!currentBot.name || currentBot.name.trim() === "") {
-                saveError = "Bot name is required";
-                isSaving = false;
-                return;
-            }
-
-            // Update the bot prop with currentBot changes
-            if (bot) {
-                // Copy all properties from currentBot to bot
-                // This mutates the bot object, which is the same reference as selectedBot in parent
-                Object.assign(bot, currentBot);
-                bot.updatedAt = new Date().toISOString();
-            }
-
-            // TODO: Replace with actual API call
-            // await botApiService.updateBot(currentBot.botId, currentBot);
-
-            console.log("Saving bot:", currentBot);
-            onSave();
-        } catch (e) {
-            saveError = e instanceof Error ? e.message : "Failed to save bot";
-            console.error("Error saving bot:", e);
-        } finally {
-            isSaving = false;
         }
     }
 
@@ -192,8 +141,7 @@
         currentBot.characterTexture = textureId;
         currentBot.characterTextureIds = [textureId];
         editingTexture = false;
-        handleSave();
-        // Stay on detail page - don't navigate away
+        autoSave();
     }
 
     onMount(() => {
@@ -278,37 +226,20 @@
                                 bind:value={currentBot.name}
                                 placeholder="Enter bot name"
                                 autofocus
+                                on:input={() => autoSave()}
                                 on:keydown={(e) => {
-                                    // Prevent event from bubbling if needed
                                     if (e.key === "Enter") {
                                         e.preventDefault();
                                         editingName = false;
-                                        handleSave();
                                     }
                                 }}
                             />
-                            <div class="flex gap-2">
-                                <button
-                                    class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
-                                    on:click={() => {
-                                        editingName = false;
-                                        handleSave();
-                                    }}
-                                >
-                                    Save
-                                </button>
-                                <button
-                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                    on:click={() => {
-                                        editingName = false;
-                                        if (bot) {
-                                            currentBot = { ...bot };
-                                        }
-                                    }}
-                                >
-                                    Cancel
-                                </button>
-                            </div>
+                            <button
+                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                on:click={() => (editingName = false)}
+                            >
+                                Close
+                            </button>
                         </div>
                     {:else}
                         <div class="flex items-center gap-2 mb-3">
@@ -331,29 +262,14 @@
                                     bind:value={currentBot.description}
                                     placeholder="Enter bot description"
                                     rows="3"
+                                    on:input={() => autoSave()}
                                 />
-                                <div class="flex gap-2">
-                                    <button
-                                        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
-                                        on:click={() => {
-                                            editingDescription = false;
-                                            handleSave();
-                                        }}
-                                    >
-                                        Save
-                                    </button>
-                                    <button
-                                        class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                        on:click={() => {
-                                            editingDescription = false;
-                                            if (bot) {
-                                                currentBot = { ...bot };
-                                            }
-                                        }}
-                                    >
-                                        Cancel
-                                    </button>
-                                </div>
+                                <button
+                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                    on:click={() => (editingDescription = false)}
+                                >
+                                    Close
+                                </button>
                             </div>
                         {:else}
                             <div class="flex items-center gap-2">
@@ -389,19 +305,20 @@
                                 if (onLocate) onLocate();
                             }}
                             on:editWaypoints={() => {
-                                // Stay in edit mode but trigger map waypoint editing
                                 if (onLocate) onLocate();
+                            }}
+                            on:change={() => {
+                                autoSave();
                             }}
                         />
                         <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
                             <button
-                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
+                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
                                 on:click={() => {
                                     editingBehavior = false;
-                                    handleSave();
                                 }}
                             >
-                                Done
+                                Close
                             </button>
                         </div>
                     </div>
@@ -444,27 +361,15 @@
                 </div>
                 {#if editingInstructions}
                     <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                        <BotInstructionsEditor bind:bot={currentBot} />
+                        <BotInstructionsEditor bind:bot={currentBot} on:change={() => autoSave()} />
                         <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
-                            <button
-                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-sm"
-                                on:click={() => {
-                                    editingInstructions = false;
-                                    handleSave();
-                                }}
-                            >
-                                Save
-                            </button>
                             <button
                                 class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
                                 on:click={() => {
                                     editingInstructions = false;
-                                    if (bot) {
-                                        currentBot = { ...bot };
-                                    }
                                 }}
                             >
-                                Cancel
+                                Close
                             </button>
                         </div>
                     </div>

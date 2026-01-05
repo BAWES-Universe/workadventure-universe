@@ -38,6 +38,7 @@ interface WaypointMarker {
  * - Click "+" to add waypoint at end
  * - Click "X" on marker to delete
  * - Directional arrows showing patrol direction
+ * - Constraint to stay within a radius boundary
  */
 export class WaypointPath extends Phaser.GameObjects.Container {
     private waypoints: Waypoint[];
@@ -52,6 +53,10 @@ export class WaypointPath extends Phaser.GameObjects.Container {
 
     // Instruction overlay
     private instructionText: Phaser.GameObjects.Text | null = null;
+
+    // Constraint boundary (waypoints must stay within this)
+    private constraintCenter: { x: number; y: number } = { x: 0, y: 0 };
+    private constraintRadius: number = 0;
 
     constructor(scene: Phaser.Scene, waypoints: Waypoint[] = []) {
         super(scene, 0, 0);
@@ -146,10 +151,52 @@ export class WaypointPath extends Phaser.GameObjects.Container {
     }
 
     /**
-     * Add a waypoint at position
+     * Set constraint boundary (waypoints must stay within this circle)
+     */
+    public setConstraint(center: { x: number; y: number }, radius: number): void {
+        const centerChanged = this.constraintCenter.x !== center.x || this.constraintCenter.y !== center.y;
+        this.constraintCenter = center;
+        this.constraintRadius = radius;
+
+        // Rebuild if center changed to reposition the + button
+        if (centerChanged && this.waypoints.length === 0) {
+            this.rebuildMarkers();
+        }
+    }
+
+    /**
+     * Constrain a position to stay within the boundary
+     */
+    private constrainPosition(x: number, y: number): { x: number; y: number } {
+        if (this.constraintRadius <= 0) {
+            return { x, y };
+        }
+
+        const dx = x - this.constraintCenter.x;
+        const dy = y - this.constraintCenter.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // If within bounds, return as-is
+        if (distance <= this.constraintRadius) {
+            return { x, y };
+        }
+
+        // Constrain to edge of circle (with small buffer to keep inside)
+        const buffer = 8;
+        const constrainedRadius = this.constraintRadius - buffer;
+        const scale = constrainedRadius / distance;
+        return {
+            x: this.constraintCenter.x + dx * scale,
+            y: this.constraintCenter.y + dy * scale,
+        };
+    }
+
+    /**
+     * Add a waypoint at position (constrained to boundary)
      */
     public addWaypoint(x: number, y: number, index?: number): void {
-        const newWaypoint = { x, y };
+        const constrained = this.constrainPosition(x, y);
+        const newWaypoint = { x: constrained.x, y: constrained.y };
 
         if (index !== undefined && index >= 0 && index <= this.waypoints.length) {
             this.waypoints.splice(index, 0, newWaypoint);
@@ -159,7 +206,7 @@ export class WaypointPath extends Phaser.GameObjects.Container {
 
         this.rebuildMarkers();
         this.draw();
-        this.emit(WaypointPathEvent.WaypointAdded, this.waypoints.length - 1, x, y);
+        this.emit(WaypointPathEvent.WaypointAdded, this.waypoints.length - 1, constrained.x, constrained.y);
     }
 
     /**
@@ -267,10 +314,14 @@ export class WaypointPath extends Phaser.GameObjects.Container {
             deleteButton.setVisible(true);
         }
 
-        // Delete button click
+        // Delete button click - use stored index from container data
         deleteButton.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
             pointer.event.stopPropagation();
-            this.removeWaypoint(index);
+            const currentIndex = container.getData("waypointIndex") as number;
+            // Use setTimeout to prevent the event from interfering with other handlers
+            setTimeout(() => {
+                this.removeWaypoint(currentIndex);
+            }, 0);
         });
 
         // Hover effects
@@ -305,6 +356,11 @@ export class WaypointPath extends Phaser.GameObjects.Container {
                 newY = Math.round(newY / 32) * 32;
             }
 
+            // Constrain to boundary
+            const constrained = this.constrainPosition(newX, newY);
+            newX = constrained.x;
+            newY = constrained.y;
+
             container.setPosition(newX, newY);
             this.waypoints[index] = { x: newX, y: newY };
             this.draw();
@@ -328,17 +384,17 @@ export class WaypointPath extends Phaser.GameObjects.Container {
      * Create the "+" button to add waypoints
      */
     private createAddButton(): void {
-        // Position after the last waypoint or at center if no waypoints
-        let x = 0;
-        let y = 0;
+        // Position after the last waypoint or at constraint center if no waypoints
+        let startX = this.constraintCenter.x;
+        let startY = this.constraintCenter.y;
 
         if (this.waypoints.length > 0) {
             const last = this.waypoints[this.waypoints.length - 1];
-            x = last.x + 64;
-            y = last.y;
+            startX = last.x + 64;
+            startY = last.y;
         }
 
-        const container = this.scene.add.container(x, y);
+        const container = this.scene.add.container(startX, startY);
 
         // Circle background
         const circle = this.scene.add.arc(0, 0, 20, 0, 360, false, 0x22c55e, 1);
@@ -377,9 +433,9 @@ export class WaypointPath extends Phaser.GameObjects.Container {
             circle.setFillStyle(0x22c55e, 1);
         });
 
-        // Click to add waypoint
+        // Click to add waypoint - use container's CURRENT position
         container.on(Phaser.Input.Events.POINTER_DOWN, () => {
-            this.addWaypoint(x, y);
+            this.addWaypoint(container.x, container.y);
         });
 
         this.addButton = container;
@@ -396,12 +452,17 @@ export class WaypointPath extends Phaser.GameObjects.Container {
         }
 
         if (this.isEditing && this.waypoints.length === 0) {
-            this.instructionText = this.scene.add.text(0, -40, "Click + to add patrol points", {
-                fontSize: "14px",
-                color: "#ffffff",
-                backgroundColor: "#22c55ecc",
-                padding: { x: 8, y: 4 },
-            });
+            this.instructionText = this.scene.add.text(
+                this.constraintCenter.x,
+                this.constraintCenter.y - 50,
+                "Click + to add patrol points",
+                {
+                    fontSize: "14px",
+                    color: "#ffffff",
+                    backgroundColor: "#22c55ecc",
+                    padding: { x: 8, y: 4 },
+                }
+            );
             this.instructionText.setOrigin(0.5, 1);
             this.add(this.instructionText);
         }

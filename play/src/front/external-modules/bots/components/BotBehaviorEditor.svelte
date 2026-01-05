@@ -1,17 +1,39 @@
 <script lang="ts">
-    import { onMount, createEventDispatcher } from "svelte";
+    import { onMount, onDestroy, createEventDispatcher } from "svelte";
     import type { BotData } from "../types";
-    import { updateBotRadius, startWaypointEditing } from "../stores/BotEditorStore";
+    import { startWaypointEditing, upsertBot, selectedBotStore } from "../stores/BotEditorStore";
 
     export let bot: BotData | null = null;
 
-    const dispatch = createEventDispatcher<{ locate: void; editWaypoints: void }>();
+    const dispatch = createEventDispatcher<{ locate: void; editWaypoints: void; change: void }>();
 
     let behaviorType: "idle" | "patrol" | "social" = "idle";
     let assignedSpaceRadius = 0;
     let conversationRadius = 100;
     let minTimeBetweenConversations = 60000;
     let initialized = false;
+    let isUserEditing = false; // Track if user is actively editing to prevent external updates
+
+    // Subscribe to store for real-time updates from map
+    const unsubscribe = selectedBotStore.subscribe((storeBot) => {
+        // Only sync from store if we're not actively editing
+        if (storeBot && storeBot.id === bot?.id && initialized && !isUserEditing) {
+            // Sync radius from map changes
+            const newRadius = storeBot.behaviorConfig?.assignedSpace?.radius;
+            if (newRadius !== undefined && newRadius !== assignedSpaceRadius) {
+                assignedSpaceRadius = newRadius;
+            }
+            // Sync conversation radius from map changes
+            const newConvRadius = storeBot.behaviorConfig?.conversationRadius;
+            if (newConvRadius !== undefined && newConvRadius !== conversationRadius) {
+                conversationRadius = newConvRadius;
+            }
+        }
+    });
+
+    onDestroy(() => {
+        unsubscribe();
+    });
 
     // Initialize from bot
     onMount(() => {
@@ -28,7 +50,7 @@
         }
     });
 
-    // Update bot
+    // Update bot and sync to store
     function updateBot() {
         if (bot && initialized) {
             bot.behaviorType = behaviorType;
@@ -50,14 +72,21 @@
             bot.behaviorConfig.assignedSpace.radius = assignedSpaceRadius;
 
             if (behaviorType === "social") {
+                // Ensure conversation radius doesn't exceed movement area
+                if (conversationRadius > assignedSpaceRadius) {
+                    conversationRadius = assignedSpaceRadius;
+                }
                 bot.behaviorConfig.conversationRadius = conversationRadius;
                 bot.behaviorConfig.minTimeBetweenConversations = minTimeBetweenConversations;
             }
 
-            // Also update the store for real-time map preview
+            // Sync to store for real-time map preview
             if (bot.id) {
-                updateBotRadius(bot.id, assignedSpaceRadius);
+                upsertBot(bot);
             }
+
+            // Notify parent of change
+            dispatch("change");
         }
     }
 
@@ -65,6 +94,19 @@
     function handleBehaviorTypeChange() {
         if (behaviorType === "idle") {
             assignedSpaceRadius = 0;
+        } else if (behaviorType === "social") {
+            // Set good defaults for social bots
+            if (assignedSpaceRadius < 100) {
+                assignedSpaceRadius = 150; // Movement area
+            }
+            if (conversationRadius === 0 || conversationRadius > assignedSpaceRadius) {
+                conversationRadius = Math.min(80, assignedSpaceRadius); // Detection range (smaller)
+            }
+        } else if (behaviorType === "patrol") {
+            // Set reasonable default for patrol
+            if (assignedSpaceRadius < 50) {
+                assignedSpaceRadius = 100;
+            }
         } else if (assignedSpaceRadius === 0) {
             assignedSpaceRadius = 100;
         }
@@ -73,6 +115,10 @@
 
     // Handle radius slider change
     function handleRadiusChange() {
+        // Ensure conversation radius stays within bounds
+        if (behaviorType === "social" && conversationRadius > assignedSpaceRadius) {
+            conversationRadius = assignedSpaceRadius;
+        }
         updateBot();
     }
 
@@ -183,10 +229,14 @@
             <input
                 type="range"
                 class="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                min="16"
+                min={behaviorType === "social" ? conversationRadius : 16}
                 max="500"
                 step="16"
                 bind:value={assignedSpaceRadius}
+                on:mousedown={() => (isUserEditing = true)}
+                on:mouseup={() => (isUserEditing = false)}
+                on:touchstart={() => (isUserEditing = true)}
+                on:touchend={() => (isUserEditing = false)}
                 on:input={handleRadiusChange}
             />
 
@@ -205,7 +255,9 @@
                     />
                 </svg>
                 {#if behaviorType === "social"}
-                    Area where bot will wander looking for conversations
+                    Boundary where bot wanders. Detection range (purple) must be smaller.
+                {:else if behaviorType === "patrol"}
+                    Safety boundary - all waypoints must be inside this circle.
                 {:else}
                     Drag the circle edge on the map for precise control
                 {/if}
@@ -257,6 +309,13 @@
                 Click to open the visual waypoint editor. Add points by clicking "+", drag to reposition, click "×" to
                 remove.
             </p>
+            <div class="mt-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded">
+                <p class="text-xs text-yellow-200">
+                    <strong>Important:</strong> All waypoints must be placed within the Movement Area circle above. The radius
+                    acts as a safety boundary - if the bot strays outside (due to pathfinding issues or obstacles), it will
+                    return to the assigned space.
+                </p>
+            </div>
         </div>
     {/if}
 
@@ -276,12 +335,19 @@
                         type="range"
                         class="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-purple-500"
                         min="50"
-                        max="300"
+                        max={assignedSpaceRadius}
                         step="10"
                         bind:value={conversationRadius}
+                        on:mousedown={() => (isUserEditing = true)}
+                        on:mouseup={() => (isUserEditing = false)}
+                        on:touchstart={() => (isUserEditing = true)}
+                        on:touchend={() => (isUserEditing = false)}
                         on:input={handleSocialSettingsChange}
                     />
-                    <p class="text-xs text-white/40 mt-1">How close a player must be to trigger conversation</p>
+                    <p class="text-xs text-white/40 mt-1">
+                        How close a player must be to trigger conversation (max: {assignedSpaceRadius}px). Drag purple
+                        circle on map.
+                    </p>
                 </div>
 
                 <div>

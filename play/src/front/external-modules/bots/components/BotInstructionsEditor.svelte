@@ -1,8 +1,10 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, createEventDispatcher } from "svelte";
     import type { BotData } from "../types";
 
     export let bot: BotData | null = null;
+
+    const dispatch = createEventDispatcher<{ change: void }>();
 
     let chatInstructions = "";
     let movementInstructions = "";
@@ -19,12 +21,14 @@
     function updateChatInstructions() {
         if (bot) {
             bot.chatInstructions = chatInstructions;
+            dispatch("change");
         }
     }
 
     function updateMovementInstructions() {
         if (bot) {
             bot.movementInstructions = movementInstructions;
+            dispatch("change");
         }
     }
 </script>
