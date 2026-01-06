@@ -423,15 +423,9 @@ export class BotClient {
     }
 
     private async handleJoinSpaceRequest(request: JoinSpaceRequestMessage): Promise<void> {
-        // Skip ALL proximity/bubble/jitsi spaces for bots
-        // These trigger media connections (audio/video) which bots don't support
-        // This prevents the loading indicator showing for bot cameras
-        const isProximitySpace = request.spaceName.includes('proximity') || 
-                                  request.spaceName.includes('bubble') ||
-                                  request.spaceName.includes('jitsi');
-        
-        if (isProximitySpace) {
-            console.log(`[Bot ${this.config.botId}] Skipping proximity/media space: ${request.spaceName}`);
+        // Skip Jitsi spaces - bots don't do video conferences
+        if (request.spaceName.includes('jitsi')) {
+            console.log(`[Bot ${this.config.botId}] Skipping jitsi space: ${request.spaceName}`);
             return;
         }
 
@@ -440,14 +434,81 @@ export class BotClient {
             const filterType = request.filterType ?? FilterType.ALL_USERS;
             const propertiesToSync = request.propertiesToSync || [];
             
+            console.log(`[Bot ${this.config.botId}] Joining space: ${request.spaceName}`);
+            
             const spaceUserId = await this.emitJoinSpace(request.spaceName, filterType, propertiesToSync);
             this.spaces.set(request.spaceName, spaceUserId);
+            
+            // Immediately tell others we have NO camera/mic/screenshare
+            // This prevents the "loading" indicator for our video
+            this.sendSpaceUserUpdate(request.spaceName, {
+                cameraState: false,
+                microphoneState: false,
+                screenSharingState: false,
+            });
+            
+            console.log(`[Bot ${this.config.botId}] Joined space: ${request.spaceName}, sent media state: off`);
+            
             if (this.behavior) {
                 this.behavior.onSpaceJoined(request.spaceName);
             }
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error joining space:`, error);
         }
+    }
+    
+    /**
+     * Send an update about this bot's user state in a space
+     */
+    private sendSpaceUserUpdate(spaceName: string, updates: Partial<{
+        cameraState: boolean;
+        microphoneState: boolean;
+        screenSharingState: boolean;
+        megaphoneState: boolean;
+    }>): void {
+        // Build the updateMask paths based on what we're updating
+        const paths: string[] = [];
+        if ('cameraState' in updates) paths.push('cameraState');
+        if ('microphoneState' in updates) paths.push('microphoneState');
+        if ('screenSharingState' in updates) paths.push('screenSharingState');
+        if ('megaphoneState' in updates) paths.push('megaphoneState');
+        
+        // Get our spaceUserId for this space
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            console.warn(`[Bot ${this.config.botId}] Cannot update space user - not in space: ${spaceName}`);
+            return;
+        }
+        
+        this.send({
+            message: {
+                $case: 'updateSpaceUserMessage',
+                updateSpaceUserMessage: {
+                    spaceName,
+                    user: {
+                        spaceUserId: spaceUserId,
+                        name: this.config.name,
+                        playUri: this.config.roomUrl,
+                        color: '',
+                        characterTextures: [],
+                        isLogged: false,
+                        availabilityStatus: 0,
+                        roomName: undefined,
+                        visitCardUrl: undefined,
+                        tags: ['bot'],
+                        cameraState: updates.cameraState ?? false,
+                        microphoneState: updates.microphoneState ?? false,
+                        screenSharingState: updates.screenSharingState ?? false,
+                        megaphoneState: updates.megaphoneState ?? false,
+                        jitsiParticipantId: undefined,
+                        uuid: this.config.botId,
+                        chatID: undefined,
+                        showVoiceIndicator: false,
+                    },
+                    updateMask: paths,
+                },
+            },
+        });
     }
 
     private async handleLeaveSpaceRequest(request: LeaveSpaceRequestMessage): Promise<void> {
