@@ -444,8 +444,8 @@ export class BotClient {
         }
 
         try {
-            // Default filterType to 0 (UNSPECIFIED) if not provided
-            const filterType = request.filterType ?? FilterType.UNSPECIFIED;
+            // Default filterType to ALL_USERS (0) if not provided
+            const filterType = request.filterType ?? FilterType.ALL_USERS;
             const propertiesToSync = request.propertiesToSync || [];
             
             const spaceUserId = await this.emitJoinSpace(request.spaceName, filterType, propertiesToSync);
