@@ -29,6 +29,11 @@ export abstract class BaseBehavior {
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     protected closestPlayerId: number | null = null;
+    
+    // Track previous bot position to detect if bot moved into player vs player moved into bot
+    private previousBotPosition: PositionInterface | null = null;
+    // Track previous distances to detect if player is moving closer
+    private previousDistances: Map<number, number> = new Map();
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -39,6 +44,9 @@ export abstract class BaseBehavior {
      */
     setBot(bot: BotClient): void {
         this.bot = bot;
+        // Initialize bot position tracking
+        const botPos = bot.getState().getPosition();
+        this.previousBotPosition = { x: botPos.x, y: botPos.y };
     }
 
     /**
@@ -76,6 +84,22 @@ export abstract class BaseBehavior {
         
         // Track if player is within proximity
         const wasNearby = this.nearbyPlayers.has(playerId);
+        const previousDistance = this.previousDistances.get(playerId);
+        
+        // Check if bot moved significantly (more than 5px) since last update
+        // This helps distinguish bot walking over player vs player moving into bot
+        let botMovedSignificantly = false;
+        let botMovementDistance = 0;
+        if (this.previousBotPosition) {
+            const botDx = botPos.x - this.previousBotPosition.x;
+            const botDy = botPos.y - this.previousBotPosition.y;
+            botMovementDistance = Math.sqrt(botDx * botDx + botDy * botDy);
+            botMovedSignificantly = botMovementDistance > 5; // 5px threshold - bot moved significantly
+        }
+        
+        // Check if player is moving closer (distance decreasing by more than 2px)
+        // This indicates player is actively approaching
+        const playerMovingCloser = previousDistance !== undefined && distance < previousDistance - 2;
         
         // Hysteresis: Use smaller radius to enter, larger radius to leave
         // This prevents flickering when player is at the edge
@@ -84,9 +108,17 @@ export abstract class BaseBehavior {
         
         if (!wasNearby && distance <= enterRadius) {
             // Player just entered proximity
-            this.nearbyPlayers.set(playerId, position);
-            console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px)`);
-            this.updateProximityEngagement();
+            // Only engage if:
+            // 1. Player is actively moving closer (player approaching bot)
+            // 2. OR bot hasn't moved significantly (bot is stationary, player moved into range)
+            if (playerMovingCloser || !botMovedSignificantly) {
+                this.nearbyPlayers.set(playerId, position);
+                console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px) - ${playerMovingCloser ? 'player moving closer' : 'bot stationary'}`);
+                this.updateProximityEngagement();
+            } else {
+                // Bot walked over stationary player - don't engage
+                console.log(`[Behavior] Bot walked over stationary player ${playerId} (bot moved ${Math.round(botMovementDistance)}px, player distance ${Math.round(distance)}px) - ignoring`);
+            }
         } else if (wasNearby && distance > leaveRadius) {
             // Player just left proximity (needs to go further to disengage)
             this.nearbyPlayers.delete(playerId);
@@ -97,6 +129,18 @@ export abstract class BaseBehavior {
             this.nearbyPlayers.set(playerId, position);
             this.updateProximityEngagement();
         }
+        
+        // Update previous distance for next check
+        this.previousDistances.set(playerId, distance);
+    }
+    
+    /**
+     * Called when bot position updates - track bot movement to distinguish from player movement
+     */
+    onBotPositionUpdated(): void {
+        if (!this.bot) return;
+        const botPos = this.bot.getState().getPosition();
+        this.previousBotPosition = { x: botPos.x, y: botPos.y };
     }
     
     /**

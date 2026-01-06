@@ -32,19 +32,24 @@ export class PatrolBehavior extends BaseBehavior {
         if (!this.bot) return;
 
         const config = this.config as PatrolBehaviorConfig;
+        
+        // Track bot position at START of update cycle (before any movement)
+        // This is critical for detecting if bot walked over stationary players
+        this.onBotPositionUpdated();
 
-        // If engaged with nearby player, stop and face them
+        // If engaged with nearby player, stop immediately and face them
+        // This must be checked FIRST before any movement logic
         if (this.isEngaged) {
-            this.bot.stop();
+            this.bot.stop(); // Ensure bot stops immediately - call stop() every frame when engaged
             this.wasEngaged = true;
-            return;
+            return; // Don't do anything else when engaged
         }
 
         // If we just became disengaged, resume patrol immediately
         if (this.wasEngaged && !this.isEngaged) {
             this.wasEngaged = false;
             this.isPaused = false; // Clear any pause state
-            // Don't return - continue to move
+            // Continue to movement logic below
         }
 
         // Handle pause at waypoint
@@ -68,7 +73,7 @@ export class PatrolBehavior extends BaseBehavior {
             }
         }
 
-        // Move towards current waypoint
+        // Move towards current waypoint (will check isEngaged internally)
         if (this.targetWaypoint) {
             this.moveTowardsWaypoint(config);
         }
@@ -102,6 +107,12 @@ export class PatrolBehavior extends BaseBehavior {
 
     private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {
         if (!this.bot || !this.targetWaypoint) return;
+        
+        // CRITICAL: Don't move if engaged with a player
+        if (this.isEngaged) {
+            this.bot.stop();
+            return;
+        }
 
         const botPos = this.bot.getState().getPosition();
         const dx = this.targetWaypoint.x - botPos.x;

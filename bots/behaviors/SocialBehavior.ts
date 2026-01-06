@@ -58,6 +58,7 @@ export class SocialBehavior extends BaseBehavior {
         // If engaged in conversation, stop moving and face the player
         if (this.isEngaged) {
             this.bot.stop();
+            this.onBotPositionUpdated(); // Track position even when stopped
             return;
         }
 
@@ -73,6 +74,9 @@ export class SocialBehavior extends BaseBehavior {
         } else {
             this.wander(config, deltaTime);
         }
+        
+        // Track bot position after movement
+        this.onBotPositionUpdated();
     }
 
     onPlayerMoved(playerId: number, position: PositionInterface): void {

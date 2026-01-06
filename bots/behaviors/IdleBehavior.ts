@@ -29,6 +29,13 @@ export class IdleBehavior extends BaseBehavior {
         const config = this.config as IdleBehaviorConfig;
         const currentTime = Date.now();
 
+        // If engaged, ensure bot is stopped (idle bots don't move anyway)
+        if (this.isEngaged) {
+            this.bot.stop();
+            this.onBotPositionUpdated(); // Track position
+            return;
+        }
+
         // Play idle animations periodically
         if (config.idleAnimations && config.idleAnimations.length > 0) {
             const interval = config.animationInterval || 5000;
@@ -47,6 +54,9 @@ export class IdleBehavior extends BaseBehavior {
                 this.greetedPlayers.add(player.userId);
             }
         }
+        
+        // Track bot position (idle bots don't move, but track for consistency)
+        this.onBotPositionUpdated();
     }
 
     onPlayerMoved(playerId: number, position: { x: number; y: number }): void {
