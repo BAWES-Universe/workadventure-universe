@@ -14,6 +14,7 @@ services:
       REDIS_DB_NUMBER: 1
       BOT_SERVER_PORT: 3001
       BOT_SERVER_ID: ${BOT_SERVER_ID:-server-1}
+      SECRET_KEY: ${SECRET_KEY}
     depends_on:
       - redis
     restart: unless-stopped

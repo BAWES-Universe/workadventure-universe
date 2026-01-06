@@ -6,6 +6,8 @@
  */
 
 import WebSocket from 'ws';
+import jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
 import {
     ClientToServerMessage,
     ServerToClientMessage,
@@ -20,6 +22,9 @@ import {
 import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { BotState } from './BotState';
 import type { BaseBehavior } from '../behaviors/BaseBehavior';
+
+// Get the secret key from environment - must match pusher's SECRET_KEY
+const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
 
 export interface BotConfig {
     botId: string;
@@ -49,6 +54,23 @@ export class BotClient {
     }
 
     /**
+     * Generate a JWT token for this bot
+     */
+    private generateBotToken(): string {
+        // Generate a unique identifier for this bot
+        const botIdentifier = `bot-${this.config.botId}`;
+        
+        // Create a JWT token matching the AuthTokenData schema
+        const tokenData = {
+            identifier: botIdentifier,
+            username: this.config.name,
+            tags: ['bot'],
+        };
+        
+        return jwt.sign(tokenData, SECRET_KEY, { expiresIn: '30d' });
+    }
+
+    /**
      * Connect to WorkAdventure server
      */
     async connect(): Promise<void> {
@@ -72,20 +94,24 @@ export class BotClient {
                 params.set('companionTextureId', this.config.companionTextureId);
             }
             params.set('availabilityStatus', '0'); // ONLINE
-            params.set('version', '1.0.0'); // TODO: Get from apiVersionHash
+            params.set('version', 'dev'); // Must match apiVersionHash from @workadventure/messages
             params.set('chatID', '');
             params.set('roomName', '');
             params.set('cameraState', 'false');
             params.set('microphoneState', 'false');
             params.set('screenSharingState', 'false');
 
-            const subProtocols = this.config.token ? [this.config.token] : undefined;
+            // Generate bot token for authentication
+            const token = this.config.token || this.generateBotToken();
+            const subProtocols = [token];
 
+            console.log(`[Bot ${this.config.botId}] Connecting to: ${url.toString()}`);
+            console.log(`[Bot ${this.config.botId}] Using token: ${token.substring(0, 50)}...`);
             this.ws = new WebSocket(url.toString(), subProtocols);
             this.ws.binaryType = 'arraybuffer';
 
             this.ws.on('open', () => {
-                console.log(`[Bot ${this.config.botId}] Connected`);
+                console.log(`[Bot ${this.config.botId}] Connected successfully`);
                 this.connected = true;
                 resolve();
             });
@@ -95,13 +121,21 @@ export class BotClient {
                 reject(error);
             });
 
-            this.ws.on('close', () => {
-                console.log(`[Bot ${this.config.botId}] Disconnected`);
+            this.ws.on('close', (code: number, reason: Buffer) => {
+                const reasonStr = reason ? reason.toString() : 'No reason provided';
+                console.log(`[Bot ${this.config.botId}] Disconnected - Code: ${code}, Reason: ${reasonStr}`);
                 this.connected = false;
             });
 
             this.ws.on('message', (data: ArrayBuffer) => {
                 this.handleMessage(data);
+            });
+
+            // Handle ping/pong for keepalive
+            this.ws.on('ping', (data: Buffer) => {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.pong(data);
+                }
             });
         });
     }
@@ -331,6 +365,14 @@ export class BotClient {
                 }
                 break;
 
+            case 'errorMessage':
+                console.error(`[Bot ${this.config.botId}] Server error:`, message.errorMessage.message);
+                break;
+
+            case 'errorScreenMessage':
+                console.error(`[Bot ${this.config.botId}] Server error screen:`, JSON.stringify(message.errorScreenMessage, null, 2));
+                break;
+
             case 'answerMessage':
                 this.handleAnswer(message.answerMessage);
                 break;
@@ -437,15 +479,38 @@ export class BotClient {
     }
 
     private sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+        // Safety checks for undefined values
+        const x = position?.x ?? 0;
+        const y = position?.y ?? 0;
+        const top = this.config.viewport?.top ?? 0;
+        const bottom = this.config.viewport?.bottom ?? 1000;
+        const left = this.config.viewport?.left ?? 0;
+        const right = this.config.viewport?.right ?? 1000;
+        
+        // Ensure direction is a valid enum value
+        const safeDirection = typeof direction === 'number' ? direction : PositionMessage_Direction.DOWN;
+
+        // Check for NaN values
+        if (isNaN(x) || isNaN(y)) {
+            console.warn(`[Bot ${this.config.botId}] Invalid position: x=${x}, y=${y}`);
+            return;
+        }
+
         this.send({
             message: {
                 $case: 'userMovesMessage',
                 userMovesMessage: {
                     position: {
-                        x: position.x,
-                        y: position.y,
-                        direction,
-                        moving,
+                        x: Math.floor(x),
+                        y: Math.floor(y),
+                        direction: safeDirection,
+                        moving: !!moving,
+                    },
+                    viewport: {
+                        top: Math.floor(top),
+                        bottom: Math.floor(bottom),
+                        left: Math.floor(left),
+                        right: Math.floor(right),
                     },
                 },
             },

@@ -103,15 +103,100 @@ export class BotManager {
         let behavior;
         const behaviorConfig = config.behaviorConfig || { type: config.behaviorType };
         
+        // Transform Admin API config format to behavior format
+        const transformBehaviorConfig = (type: string, cfg: Record<string, any>): Record<string, any> => {
+            const transformed = { ...cfg, type };
+            
+            // Transform patrol config: patrolWaypoints → waypoints
+            if (type === 'patrol') {
+                // Convert patrolWaypoints to waypoints (Admin API uses patrolWaypoints)
+                console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, cfg.patrolWaypoints, `waypoints:`, cfg.waypoints);
+                if (cfg.patrolWaypoints && Array.isArray(cfg.patrolWaypoints)) {
+                    transformed.waypoints = cfg.patrolWaypoints;
+                    console.log(`[BotManager] Set waypoints from patrolWaypoints:`, transformed.waypoints);
+                } else if (cfg.waypoints && Array.isArray(cfg.waypoints)) {
+                    // Already has waypoints, use it
+                    transformed.waypoints = cfg.waypoints;
+                    console.log(`[BotManager] Set waypoints from existing waypoints:`, transformed.waypoints);
+                } else {
+                    // No waypoints provided, use empty array
+                    transformed.waypoints = [];
+                    console.log(`[BotManager] No waypoints found, using empty array`);
+                }
+                // Ensure waypoints is always an array (safety check)
+                if (!Array.isArray(transformed.waypoints)) {
+                    console.warn(`[BotManager] Invalid waypoints for patrol bot, using empty array`);
+                    transformed.waypoints = [];
+                }
+                console.log(`[BotManager] Final transformed waypoints:`, transformed.waypoints);
+                // Ensure required fields have defaults
+                if (typeof transformed.loop === 'undefined') transformed.loop = true;
+                if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
+                if (typeof transformed.speed === 'undefined') transformed.speed = 100;
+                if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
+            }
+            
+            // Transform social config: ensure required fields
+            if (type === 'social') {
+                if (typeof transformed.conversationRadius === 'undefined') {
+                    transformed.conversationRadius = cfg.conversationRadius || 200;
+                }
+                if (typeof transformed.minTimeBetweenConversations === 'undefined') {
+                    transformed.minTimeBetweenConversations = cfg.minTimeBetweenConversations || 300000;
+                }
+                if (typeof transformed.maxConversationDuration === 'undefined') {
+                    transformed.maxConversationDuration = 300000; // 5 minutes
+                }
+                if (typeof transformed.conversationHistorySize === 'undefined') {
+                    transformed.conversationHistorySize = 50;
+                }
+                if (typeof transformed.respectPlayerStatus === 'undefined') {
+                    transformed.respectPlayerStatus = true;
+                }
+                if (typeof transformed.maxConcurrentConversations === 'undefined') {
+                    transformed.maxConcurrentConversations = 1;
+                }
+                if (!transformed.conversationTopics) transformed.conversationTopics = [];
+                // Use assignedSpace for wander area
+                if (config.assignedSpace) {
+                    transformed.wanderRadius = config.assignedSpace.radius || 200;
+                    transformed.wanderCenter = config.assignedSpace.center || { x: 0, y: 0 };
+                } else {
+                    transformed.wanderRadius = 200;
+                    transformed.wanderCenter = { x: 0, y: 0 };
+                }
+                if (typeof transformed.wanderSpeed === 'undefined') transformed.wanderSpeed = 50;
+                if (typeof transformed.approachDistance === 'undefined') transformed.approachDistance = 50;
+            }
+            
+            // Ensure assignedSpace exists for all behaviors
+            if (!transformed.assignedSpace && config.assignedSpace) {
+                transformed.assignedSpace = config.assignedSpace;
+            }
+            
+            return transformed;
+        };
+        
         // Helper to safely cast behavior config (comes from Admin API, may not match exact interface)
         const createBehavior = (type: string, cfg: Record<string, any>) => {
+            console.log(`[BotManager] createBehavior called for type: ${type}, cfg keys:`, Object.keys(cfg));
+            const transformedConfig = transformBehaviorConfig(type, cfg);
+            console.log(`[BotManager] After transformation, waypoints:`, transformedConfig.waypoints);
+            
             switch (type) {
                 case 'idle':
-                    return new IdleBehavior(cfg as Parameters<typeof IdleBehavior>[0]);
+                    return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
                 case 'patrol':
-                    return new PatrolBehavior(cfg as Parameters<typeof PatrolBehavior>[0]);
+                    console.log(`[BotManager] Creating PatrolBehavior with config:`, JSON.stringify(transformedConfig, null, 2));
+                    // Final safety check - ensure waypoints exists
+                    if (!transformedConfig.waypoints || !Array.isArray(transformedConfig.waypoints)) {
+                        console.error(`[BotManager] ERROR: waypoints is missing or invalid in transformed config!`, transformedConfig);
+                        transformedConfig.waypoints = [];
+                    }
+                    console.log(`[BotManager] Final waypoints before constructor:`, transformedConfig.waypoints);
+                    return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
                 case 'social':
-                    return new SocialBehavior(cfg as Parameters<typeof SocialBehavior>[0]);
+                    return new SocialBehavior(transformedConfig as Parameters<typeof SocialBehavior>[0]);
                 default:
                     throw new Error(`Unknown behavior type: ${type}`);
             }
@@ -363,6 +448,23 @@ export class BotManager {
      */
     getRoomState(roomId: string): RoomState | null {
         return this.roomsWithBots.get(roomId) || null;
+    }
+
+    /**
+     * Update all bots (called from game loop)
+     */
+    update(deltaTime: number): void {
+        this.bots.forEach((instance) => {
+            if (instance.status === 'connected' && instance.client) {
+                try {
+                    instance.client.update(deltaTime);
+                    instance.lastHeartbeat = Date.now();
+                } catch (error) {
+                    console.error(`[BotManager] Error updating bot ${instance.botId}:`, error);
+                    instance.status = 'error';
+                }
+            }
+        });
     }
 
     /**
