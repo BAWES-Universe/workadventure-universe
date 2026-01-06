@@ -30,10 +30,8 @@ export abstract class BaseBehavior {
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     protected closestPlayerId: number | null = null;
     
-    // Track previous bot position to detect if bot moved into player vs player moved into bot
+    // Track previous bot position (for position updates)
     private previousBotPosition: PositionInterface | null = null;
-    // Track previous distances to detect if player is moving closer
-    private previousDistances: Map<number, number> = new Map();
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -82,52 +80,28 @@ export abstract class BaseBehavior {
         const dy = position.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        // Track if player is within proximity
-        const wasNearby = this.nearbyPlayers.has(playerId);
-        const previousDistance = this.previousDistances.get(playerId);
-        
-        // Check if bot moved significantly (more than 5px) since last update
-        // This helps distinguish bot walking over player vs player moving into bot
-        let botMovedSignificantly = false;
-        let botMovementDistance = 0;
-        if (this.previousBotPosition) {
-            const botDx = botPos.x - this.previousBotPosition.x;
-            const botDy = botPos.y - this.previousBotPosition.y;
-            botMovementDistance = Math.sqrt(botDx * botDx + botDy * botDy);
-            botMovedSignificantly = botMovementDistance > 5; // 5px threshold - bot moved significantly
+        // Only track players within a reasonable distance to prevent memory leaks
+        const MAX_TRACKING_DISTANCE = 200;
+        if (distance > MAX_TRACKING_DISTANCE) {
+            this.nearbyPlayers.delete(playerId);
+            return;
         }
         
-        // Check if player is moving closer (distance decreasing by more than 2px)
-        // This indicates player is actively approaching
-        const playerMovingCloser = previousDistance !== undefined && distance < previousDistance - 2;
+        // Track if player is within proximity
+        const wasNearby = this.nearbyPlayers.has(playerId);
         
         // Hysteresis: Use smaller radius to enter, larger radius to leave
-        // This prevents flickering when player is at the edge
         const enterRadius = this.PROXIMITY_RADIUS;
         const leaveRadius = this.DISENGAGE_RADIUS;
         
         if (!wasNearby && distance <= enterRadius) {
             // Player just entered proximity
-            // Only engage if:
-            // 1. Player is actively moving closer (distance decreasing) - player approaching bot
-            // 2. OR bot is stationary (hasn't moved significantly) - player moved into bot's range
-            // Do NOT engage if: bot moved significantly AND player is not moving closer (bot walked over stationary player)
-            const isFirstTimeSeeingPlayer = previousDistance === undefined;
-            
-            // If bot moved significantly AND player is not moving closer, ignore (bot walked over player)
-            if (botMovedSignificantly && !playerMovingCloser) {
-                console.log(`[Behavior] Bot walked over stationary player ${playerId} (bot moved ${Math.round(botMovementDistance)}px, player distance ${Math.round(distance)}px) - ignoring`);
-                // Still update distance for next check
-                this.previousDistances.set(playerId, distance);
-                return;
-            }
-            
-            // Otherwise, engage (player moving closer OR bot stationary)
+            // onPlayerMoved is only called when player moves, so this means player approached bot
             this.nearbyPlayers.set(playerId, position);
-            console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px) - ${playerMovingCloser ? 'player moving closer' : 'bot stationary'}`);
+            console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px) - engaging`);
             this.updateProximityEngagement();
         } else if (wasNearby && distance > leaveRadius) {
-            // Player just left proximity (needs to go further to disengage)
+            // Player left proximity
             this.nearbyPlayers.delete(playerId);
             console.log(`[Behavior] Player ${playerId} left proximity (${Math.round(distance)}px)`);
             this.updateProximityEngagement();
@@ -136,9 +110,6 @@ export abstract class BaseBehavior {
             this.nearbyPlayers.set(playerId, position);
             this.updateProximityEngagement();
         }
-        
-        // Update previous distance for next check
-        this.previousDistances.set(playerId, distance);
     }
     
     /**
@@ -178,20 +149,21 @@ export abstract class BaseBehavior {
                 }
             }
             
-            // If just became engaged, immediately stop and face
-            if (!wasEngaged && closestPos) {
-                this.bot.stopAndUpdate(); // Force immediate stop
-                this.closestPlayerId = closestId;
-                this.facePosition(closestPos); // This will also call stopAndUpdate since isEngaged is true
-                console.log(`[Behavior] Engaged with player ${closestId} - stopped and facing`);
-            } else if (closestPos && closestId !== this.closestPlayerId) {
-                // Different player, face them
-                this.closestPlayerId = closestId;
-                this.facePosition(closestPos);
-                console.log(`[Behavior] Facing player ${closestId}`);
-            } else if (closestPos) {
-                // Keep facing them as they move
-                this.facePosition(closestPos);
+            // Face the closest player
+            if (closestPos) {
+                if (closestId !== this.closestPlayerId) {
+                    // Different player or first time
+                    this.closestPlayerId = closestId;
+                    this.facePosition(closestPos);
+                    if (!wasEngaged) {
+                        console.log(`[Behavior] Engaged with player ${closestId} - stopped and facing`);
+                    } else {
+                        console.log(`[Behavior] Facing player ${closestId}`);
+                    }
+                } else {
+                    // Same player, but they might have moved - update facing
+                    this.facePosition(closestPos);
+                }
             }
         } else {
             // No longer engaged
@@ -360,16 +332,10 @@ export abstract class BaseBehavior {
             direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
         }
 
-        // Update bot direction without moving
+        // Update bot direction without moving and send immediately
         this.bot.getState().setDirection(direction);
         this.bot.getState().setMoving(false);
-        
-        // If engaged, force immediate update to stop and face
-        if (this.isEngaged) {
-            this.bot.stopAndUpdate();
-        } else {
-            this.bot.stop();
-        }
+        this.bot.stopAndUpdate(); // Force immediate position/direction update to server
     }
 
     /**

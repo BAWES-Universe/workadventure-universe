@@ -21,7 +21,6 @@ export class PatrolBehavior extends BaseBehavior {
     private isPaused: boolean = false;
     private pauseStartTime: number = 0;
     private targetWaypoint: PositionInterface | null = null;
-    private wasEngaged: boolean = false; // Track previous engagement state
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -33,34 +32,38 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
-        // Track bot position at START of update cycle (before any movement)
-        // This is critical for detecting if bot walked over stationary players
+        // If engaged in conversation, stop moving and face the player (EXACTLY like social bot)
+        if (this.isEngaged) {
+            // CRITICAL: Stop immediately and ensure we stay stopped
+            this.bot.stop();
+            this.onBotPositionUpdated(); // Track position even when stopped
+            
+            // Continuously face the closest player every frame
+            if (this.nearbyPlayers.size > 0) {
+                let closestDistance = Infinity;
+                let closestPos: PositionInterface | null = null;
+                const botPos = this.bot.getState().getPosition();
+                for (const playerPos of this.nearbyPlayers.values()) {
+                    const dx = playerPos.x - botPos.x;
+                    const dy = playerPos.y - botPos.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < closestDistance) {
+                        closestDistance = dist;
+                        closestPos = playerPos;
+                    }
+                }
+                if (closestPos) {
+                    this.facePosition(closestPos);
+                }
+            }
+            // CRITICAL: Return immediately - don't do ANY movement logic
+            return;
+        }
+
+        // Track bot position after checking engagement
         this.onBotPositionUpdated();
 
-        // If engaged with nearby player, stop immediately and face them
-        // This must be checked FIRST before any movement logic
-        if (this.isEngaged) {
-            // Force immediate stop and position update
-            if (!this.wasEngaged) {
-                // Just became engaged - force immediate stop
-                this.bot.stopAndUpdate();
-                console.log(`[PatrolBehavior] Engaged - stopped immediately`);
-            } else {
-                // Already engaged - ensure we're still stopped
-                this.bot.stop();
-            }
-            this.wasEngaged = true;
-            return; // Don't do anything else when engaged
-        }
-
-        // If we just became disengaged, resume patrol immediately
-        if (this.wasEngaged && !this.isEngaged) {
-            this.wasEngaged = false;
-            this.isPaused = false; // Clear any pause state
-            // Continue to movement logic below
-        }
-
-        // Handle pause at waypoint
+        // Handle pause at waypoint (only for waypoint pauses, not conversations)
         if (this.isPaused) {
             const pauseDuration = (Date.now() - this.pauseStartTime) / 1000;
             if (pauseDuration >= config.pauseAtWaypoints) {
@@ -81,42 +84,59 @@ export class PatrolBehavior extends BaseBehavior {
             }
         }
 
-        // Move towards current waypoint (will check isEngaged internally)
-        if (this.targetWaypoint) {
+        // Move towards current waypoint (double-check isEngaged before moving)
+        if (this.targetWaypoint && !this.isEngaged) {
             this.moveTowardsWaypoint(config);
         }
     }
 
+    /**
+     * Only join spaces if player moved into our proximity (not bot walked into idle player)
+     * This matches social bot behavior - onPlayerMoved is only called when player moves
+     */
+    shouldJoinProximitySpace(spaceName: string): boolean {
+        // nearbyPlayers only contains players who moved (onPlayerMoved only called when player moves)
+        // If empty, bot walked into idle player - decline
+        const shouldJoin = this.nearbyPlayers.size > 0;
+        if (!shouldJoin) {
+            console.log(`[PatrolBehavior] Declining space - bot walked into idle player`);
+        }
+        return shouldJoin;
+    }
+
     onSpaceJoined(spaceName: string): void {
-        // Pause patrol when in conversation
-        this.isPaused = true;
-        this.pauseStartTime = Date.now();
+        // Only send greeting if we have nearby players (player approached us)
+        if (this.bot && this.nearbyPlayers.size > 0) {
+            setTimeout(() => {
+                if (this.bot && this.nearbyPlayers.size > 0) {
+                    try {
+                        this.bot.sendChatMessage(spaceName, "Hello! How can I help you?");
+                    } catch (error) {
+                        console.warn(`[PatrolBehavior] Failed to send greeting:`, error);
+                    }
+                }
+            }, 300);
+        }
     }
 
     onSpaceLeft(spaceName: string): void {
-        // Return to assigned space if configured
-        this.returnToAssignedSpace();
-
-        // Resume patrol after conversation
-        const config = this.config as PatrolBehaviorConfig;
-        if (config.respondToPlayers) {
-            // Wait a bit before resuming
-            this.pauseStartTime = Date.now();
-            this.isPaused = true;
-        } else {
-            this.isPaused = false;
+        // Ensure bot is stopped when space is left (in case of rapid join/leave spam)
+        // isEngaged will be false and bot will resume in next update() cycle
+        if (this.bot && this.isEngaged) {
+            // Still engaged (maybe another space), ensure stopped
+            this.bot.stop();
         }
     }
 
     onPlayerMoved(playerId: number, position: { x: number; y: number }): void {
-        // Call base behavior for proximity tracking and facing
+        // Call base behavior for proximity tracking and facing (EXACTLY like social bot)
         super.onPlayerMoved(playerId, position);
     }
 
     private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {
         if (!this.bot || !this.targetWaypoint) return;
         
-        // CRITICAL: Don't move if engaged with a player
+        // CRITICAL: Don't move if engaged (triple-check safety)
         if (this.isEngaged) {
             this.bot.stop();
             return;

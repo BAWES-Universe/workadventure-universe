@@ -497,6 +497,13 @@ export class BotClient {
             return;
         }
 
+        // Check with behavior if we should join this proximity space
+        // This allows behaviors to decline bubbles (e.g., patrol bot walking over idle player)
+        if (this.behavior && !this.behavior.shouldJoinProximitySpace(request.spaceName)) {
+            console.log(`[Bot ${this.config.botId}] Behavior declined space: ${request.spaceName}`);
+            return;
+        }
+
         try {
             // Default filterType to ALL_USERS (0) if not provided
             const filterType = request.filterType ?? FilterType.ALL_USERS;
