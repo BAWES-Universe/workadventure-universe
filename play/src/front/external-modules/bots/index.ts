@@ -676,10 +676,12 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
     // Even unauthenticated users need bots to spawn
     try {
         const botServerUrl = getBotServerUrl();
+        console.log(`[Bot Extension] Derived bot-server URL: ${botServerUrl}`);
         botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId, botServerUrl);
 
         // Notify bot-server that a player entered the room (spawns bots)
         // This should happen for ALL users, not just authenticated ones
+        console.log(`[Bot Extension] Notifying room enter for: ${options.roomId}`);
         botApiService
             .notifyRoomEnter(options.roomId)
             .then((result) => {
@@ -688,17 +690,19 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
                 );
             })
             .catch((e) => {
-                console.warn("[Bot Extension] Failed to notify room enter (bots may not spawn):", e);
+                console.error("[Bot Extension] Failed to notify room enter (bots may not spawn):", e);
             });
     } catch (e) {
-        console.warn("[Bot Extension] Failed to initialize API service for room enter:", e);
+        console.error("[Bot Extension] Failed to initialize API service for room enter:", e);
     }
 }
 
 // Function to initialize the bot editor integration
 function initializeBotEditor(options: ExtensionModuleOptions) {
+    console.log("[Bot Extension] Initializing bot editor, waiting for user connection...");
     // Wait for user to be connected, then initialize (like admin-api module)
     unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
+        console.log(`[Bot Extension] User connection status changed: ${connected}`);
         if (connected) {
             // Notify room enter for ALL users (authenticated or not)
             notifyRoomEnterForAllUsers(options);
@@ -718,7 +722,10 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
     });
 
     // Also check if already connected
-    if (get(userIsConnected)) {
+    const alreadyConnected = get(userIsConnected);
+    console.log(`[Bot Extension] Already connected check: ${alreadyConnected}`);
+    if (alreadyConnected) {
+        console.log("[Bot Extension] User already connected, notifying room enter immediately");
         notifyRoomEnterForAllUsers(options);
 
         if (localUserStore.isLogged()) {
