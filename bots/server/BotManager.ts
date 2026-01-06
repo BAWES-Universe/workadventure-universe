@@ -15,6 +15,12 @@ export interface BotInstance {
     lastHeartbeat: number;
 }
 
+interface RoomState {
+    botIds: Set<string>;
+    playerCount: number;
+    lastActivity: number;
+}
+
 // Store botId mapping since BotClient doesn't expose it directly
 const botIdMap = new WeakMap<BotClient, string>();
 
@@ -23,6 +29,7 @@ export class BotManager {
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
     private isInitialized = false;
+    private roomsWithBots: Map<string, RoomState> = new Map();
 
     constructor(adminApiService: AdminApiService, botRegistry: BotRegistry) {
         this.adminApiService = adminApiService;
@@ -161,6 +168,17 @@ export class BotManager {
             // Remove from map
             this.bots.delete(botId);
 
+            // Remove from room tracking
+            for (const [roomId, roomState] of this.roomsWithBots.entries()) {
+                if (roomState.botIds.has(botId)) {
+                    roomState.botIds.delete(botId);
+                    // If room has no bots left, clean up room state
+                    if (roomState.botIds.size === 0) {
+                        this.roomsWithBots.delete(roomId);
+                    }
+                }
+            }
+
             console.log(`[BotManager] Bot ${botId} despawned successfully`);
         } catch (error) {
             console.error(`[BotManager] Error despawning bot ${botId}:`, error);
@@ -242,6 +260,112 @@ export class BotManager {
     }
 
     /**
+     * Ensure bots are spawned for a room when players enter
+     * This is called when a player enters a room to spawn all enabled bots for that room
+     */
+    async ensureBotsForRoom(roomId: string): Promise<void> {
+        const room = this.roomsWithBots.get(roomId);
+        
+        // If bots already spawned for this room, just update activity timestamp
+        if (room && room.botIds.size > 0) {
+            room.lastActivity = Date.now();
+            room.playerCount++;
+            console.log(`[BotManager] Room ${roomId} already has ${room.botIds.size} bots, player count: ${room.playerCount}`);
+            return;
+        }
+
+        console.log(`[BotManager] Ensuring bots for room: ${roomId}`);
+
+        try {
+            // Load all enabled bots for this room from Admin API
+            const bots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
+            
+            // Filter to only enabled bots (if enabled field exists)
+            const enabledBots = bots.filter(bot => {
+                // Check if bot has enabled field (may not be in BotConfiguration interface yet)
+                const botAny = bot as any;
+                return botAny.enabled !== false; // Default to enabled if field doesn't exist
+            });
+
+            if (enabledBots.length === 0) {
+                console.log(`[BotManager] No enabled bots found for room: ${roomId}`);
+                return;
+            }
+
+            // Initialize room state
+            const roomState: RoomState = {
+                botIds: new Set(),
+                playerCount: 1,
+                lastActivity: Date.now(),
+            };
+
+            // Spawn each enabled bot
+            for (const bot of enabledBots) {
+                try {
+                    // Check if bot is already spawned (might be from a previous room entry)
+                    if (this.bots.has(bot.botId)) {
+                        console.log(`[BotManager] Bot ${bot.botId} already spawned, adding to room tracking`);
+                        roomState.botIds.add(bot.botId);
+                        continue;
+                    }
+
+                    await this.spawnBot(bot.botId, bot);
+                    roomState.botIds.add(bot.botId);
+                    console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
+                } catch (error) {
+                    console.error(`[BotManager] Failed to spawn bot ${bot.botId} for room ${roomId}:`, error);
+                    // Continue spawning other bots even if one fails
+                }
+            }
+
+            // Store room state
+            this.roomsWithBots.set(roomId, roomState);
+            console.log(`[BotManager] Spawned ${roomState.botIds.size} bots for room ${roomId}`);
+        } catch (error) {
+            console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Handle player leaving a room
+     * When player count reaches 0, despawn all bots for that room
+     */
+    async handlePlayerLeaveRoom(roomId: string): Promise<void> {
+        const room = this.roomsWithBots.get(roomId);
+        if (!room) {
+            return;
+        }
+
+        room.playerCount--;
+        room.lastActivity = Date.now();
+
+        // If no players left, despawn all bots for this room
+        if (room.playerCount <= 0) {
+            console.log(`[BotManager] No players left in room ${roomId}, despawning ${room.botIds.size} bots`);
+            
+            const despawnPromises = Array.from(room.botIds).map(botId => 
+                this.despawnBot(botId).catch(error => {
+                    console.error(`[BotManager] Error despawning bot ${botId}:`, error);
+                })
+            );
+
+            await Promise.all(despawnPromises);
+            this.roomsWithBots.delete(roomId);
+            console.log(`[BotManager] Despawned all bots for room ${roomId}`);
+        } else {
+            console.log(`[BotManager] Room ${roomId} still has ${room.playerCount} players, keeping bots active`);
+        }
+    }
+
+    /**
+     * Get room state
+     */
+    getRoomState(roomId: string): RoomState | null {
+        return this.roomsWithBots.get(roomId) || null;
+    }
+
+    /**
      * Shutdown all bots gracefully
      */
     async shutdown(): Promise<void> {
@@ -249,6 +373,9 @@ export class BotManager {
 
         const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
         await Promise.all(shutdownPromises);
+
+        // Clear room tracking
+        this.roomsWithBots.clear();
 
         // Disconnect bot registry
         await this.botRegistry.disconnect();

@@ -14,7 +14,7 @@ let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeMapEditor: (() => void) | null = null;
 let unsubscribeMapEditorVisibility: (() => void) | null = null;
 let unsubscribeSelectedTool: (() => void) | null = null;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Stored for potential future use
+
 let _extensionOptions: ExtensionModuleOptions | null = null;
 let toolButtonElement: HTMLElement | null = null;
 let sidebarContentElement: HTMLElement | null = null;
@@ -532,6 +532,8 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     _extensionOptions = options;
 
     // Initialize API service (only when bot editor is actually being set up)
+    // Note: Room enter notification is handled separately in initializeBotEditor
+    // for all users, not just authenticated ones
     try {
         botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId);
     } catch (e) {
@@ -626,14 +628,45 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     }
 }
 
+// Function to notify bot-server when player enters room (for all users, authenticated or not)
+function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
+    // Initialize API service with minimal config (just for bot-server calls)
+    // Even unauthenticated users need bots to spawn
+    try {
+        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId);
+
+        // Notify bot-server that a player entered the room (spawns bots)
+        // This should happen for ALL users, not just authenticated ones
+        botApiService
+            .notifyRoomEnter(options.roomId)
+            .then((result) => {
+                console.log(
+                    `[Bot Extension] Room enter notified, ${result.botsSpawned} bots spawned, ${result.playerCount} players`
+                );
+            })
+            .catch((e) => {
+                console.warn("[Bot Extension] Failed to notify room enter (bots may not spawn):", e);
+            });
+    } catch (e) {
+        console.warn("[Bot Extension] Failed to initialize API service for room enter:", e);
+    }
+}
+
 // Function to initialize the bot editor integration
 function initializeBotEditor(options: ExtensionModuleOptions) {
     // Wait for user to be connected, then initialize (like admin-api module)
     unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
-        if (connected && localUserStore.isLogged()) {
-            setTimeout(() => {
-                setupBotEditor(options);
-            }, 1000);
+        if (connected) {
+            // Notify room enter for ALL users (authenticated or not)
+            notifyRoomEnterForAllUsers(options);
+
+            // Only set up bot editor UI for authenticated users
+            if (localUserStore.isLogged()) {
+                setTimeout(() => {
+                    setupBotEditor(options);
+                }, 1000);
+            }
+
             if (unsubscribeUserConnected) {
                 unsubscribeUserConnected();
                 unsubscribeUserConnected = null;
@@ -642,10 +675,14 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
     });
 
     // Also check if already connected
-    if (localUserStore.isLogged()) {
-        setTimeout(() => {
-            setupBotEditor(options);
-        }, 1000);
+    if (get(userIsConnected)) {
+        notifyRoomEnterForAllUsers(options);
+
+        if (localUserStore.isLogged()) {
+            setTimeout(() => {
+                setupBotEditor(options);
+            }, 1000);
+        }
     }
 }
 
@@ -665,6 +702,13 @@ const botExtensionModule: ExtensionModule = {
     },
 
     destroy() {
+        // Notify bot-server that player left the room (may despawn bots if room is empty)
+        if (_extensionOptions?.roomId && botApiService.isInitialized()) {
+            botApiService.notifyRoomLeave(_extensionOptions.roomId).catch((e) => {
+                console.warn("[Bot Editor] Failed to notify room leave:", e);
+            });
+        }
+
         if (unsubscribeUserConnected) {
             unsubscribeUserConnected();
             unsubscribeUserConnected = null;

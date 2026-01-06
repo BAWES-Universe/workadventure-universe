@@ -54,6 +54,8 @@ export interface BotConfiguration {
         center: { x: number; y: number };
         radius: number;
     };
+    enabled?: boolean; // Whether bot is active (defaults to true if not specified)
+    characterTextureIds?: string[]; // Character texture IDs for bot appearance
     createdAt: Date;
     updatedAt: Date;
 }

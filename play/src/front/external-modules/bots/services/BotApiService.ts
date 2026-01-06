@@ -21,14 +21,22 @@ export class BotApiService {
     private accessToken: string | null = null;
     private adminUrl: string | null = null;
     private roomId: string | null = null;
+    private botServerUrl: string | null = null;
 
     /**
      * Initialize the API service with extension options
      */
-    initialize(userAccessToken: string | null, adminUrl: string | undefined, roomId: string): void {
+    initialize(
+        userAccessToken: string | null,
+        adminUrl: string | undefined,
+        roomId: string,
+        botServerUrl?: string
+    ): void {
         this.accessToken = this.getAccessTokenFromJwt(userAccessToken);
         this.adminUrl = adminUrl || null;
         this.roomId = roomId;
+        // Default to bot-server.workadventure.localhost if not provided
+        this.botServerUrl = botServerUrl || "http://bot-server.workadventure.localhost";
     }
 
     /**
@@ -153,6 +161,90 @@ export class BotApiService {
         await this.fetch(`/api/bots/${id}`, {
             method: "DELETE",
         });
+    }
+
+    /**
+     * Call bot-server API (for spawning/despawning bots)
+     * Note: room-enter/leave endpoints don't require authentication
+     */
+    private async fetchBotServer(endpoint: string, options: RequestInit = {}): Promise<Response> {
+        if (!this.botServerUrl) {
+            throw new Error("BotApiService not initialized. Missing botServerUrl.");
+        }
+
+        const url = `${this.botServerUrl}${endpoint}`;
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            ...(options.headers as Record<string, string>),
+        };
+
+        // Only add Authorization header if we have a token (for authenticated users)
+        if (this.accessToken) {
+            headers.Authorization = `Bearer ${this.accessToken}`;
+        }
+
+        const response = await fetch(url, {
+            ...options,
+            headers,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = `Bot-server API error: ${response.status}`;
+            try {
+                const errorJson = JSON.parse(errorText);
+                errorMessage = errorJson.message || errorJson.error || errorMessage;
+            } catch {
+                errorMessage = errorText || errorMessage;
+            }
+            throw new Error(errorMessage);
+        }
+
+        return response;
+    }
+
+    /**
+     * Notify bot-server that a player entered a room (spawns bots)
+     */
+    async notifyRoomEnter(roomId?: string): Promise<{ botsSpawned: number; playerCount: number }> {
+        const id = roomId || this.roomId;
+        if (!id) {
+            throw new Error("roomId is required");
+        }
+
+        try {
+            const response = await this.fetchBotServer("/api/bots/room-enter", {
+                method: "POST",
+                body: JSON.stringify({ roomId: id }),
+            });
+            return response.json();
+        } catch (error) {
+            console.error("[BotApiService] Error notifying room enter:", error);
+            // Don't throw - bot spawning failure shouldn't break the game
+            return { botsSpawned: 0, playerCount: 0 };
+        }
+    }
+
+    /**
+     * Notify bot-server that a player left a room (may despawn bots if room is empty)
+     */
+    async notifyRoomLeave(roomId?: string): Promise<{ botsActive: number; playerCount: number }> {
+        const id = roomId || this.roomId;
+        if (!id) {
+            throw new Error("roomId is required");
+        }
+
+        try {
+            const response = await this.fetchBotServer("/api/bots/room-leave", {
+                method: "POST",
+                body: JSON.stringify({ roomId: id }),
+            });
+            return response.json();
+        } catch (error) {
+            console.error("[BotApiService] Error notifying room leave:", error);
+            // Don't throw - bot despawning failure shouldn't break the game
+            return { botsActive: 0, playerCount: 0 };
+        }
     }
 }
 

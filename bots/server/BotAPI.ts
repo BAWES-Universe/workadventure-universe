@@ -94,6 +94,57 @@ export class BotAPI {
             res.json({ status: 'ok', timestamp: new Date().toISOString() });
         });
 
+        // Room enter/leave endpoints (no auth required - safe public endpoints for bot spawning)
+        // These are safe because they only trigger spawning/despawning based on player count
+        this.app.post('/api/bots/room-enter', async (req: Request, res: Response) => {
+            try {
+                const { roomId } = req.body;
+
+                if (!roomId) {
+                    res.status(400).json({ error: 'Missing roomId' });
+                    return;
+                }
+
+                // Ensure bots are spawned for this room
+                await this.botManager.ensureBotsForRoom(roomId);
+
+                const roomState = this.botManager.getRoomState(roomId);
+                res.json({
+                    roomId,
+                    botsSpawned: roomState?.botIds.size || 0,
+                    playerCount: roomState?.playerCount || 0,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error handling room enter:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Room leave - handle player leaving (may despawn bots if room is empty)
+        this.app.post('/api/bots/room-leave', async (req: Request, res: Response) => {
+            try {
+                const { roomId } = req.body;
+
+                if (!roomId) {
+                    res.status(400).json({ error: 'Missing roomId' });
+                    return;
+                }
+
+                // Handle player leaving (will despawn bots if room becomes empty)
+                await this.botManager.handlePlayerLeaveRoom(roomId);
+
+                const roomState = this.botManager.getRoomState(roomId);
+                res.json({
+                    roomId,
+                    botsActive: roomState?.botIds.size || 0,
+                    playerCount: roomState?.playerCount || 0,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error handling room leave:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // All other routes require authentication
         this.app.use(authenticateToken);
 
