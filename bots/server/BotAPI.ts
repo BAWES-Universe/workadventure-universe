@@ -245,6 +245,45 @@ export class BotAPI {
             }
         });
 
+        // Update a running bot's config (live update)
+        this.app.post('/api/bots/:botId/update', async (req: Request, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const { position, behaviorConfig, behaviorType } = req.body;
+
+                console.log(`[BotAPI] Received update request for bot ${botId}:`, {
+                    position,
+                    behaviorType,
+                    hasConfig: !!behaviorConfig,
+                });
+
+                const result = await this.botManager.updateBot(botId, {
+                    position,
+                    behaviorConfig,
+                    behaviorType,
+                });
+
+                if (!result.updated) {
+                    res.status(404).json({
+                        botId,
+                        updated: false,
+                        reason: result.reason || 'Bot not found or not running',
+                    });
+                    return;
+                }
+
+                console.log(`[BotAPI] Updated bot ${botId}`);
+                res.json({
+                    botId,
+                    updated: true,
+                    changes: result.changes,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error updating bot:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // All other routes require authentication
         this.app.use(authenticateToken);
 

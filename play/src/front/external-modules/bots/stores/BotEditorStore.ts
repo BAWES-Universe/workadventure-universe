@@ -223,6 +223,36 @@ export function stopWaypointEditing(): void {
 }
 
 /**
+ * Send live update to the running bot on the server
+ * This teleports the bot or updates its behavior in real-time
+ */
+export async function sendLiveUpdate(
+    botId: string,
+    updates: {
+        position?: { x: number; y: number };
+        behaviorConfig?: Record<string, unknown>;
+        behaviorType?: string;
+    }
+): Promise<void> {
+    if (!botApiService.isInitialized()) {
+        console.warn("[BotEditorStore] API not initialized, skipping live update");
+        return;
+    }
+
+    try {
+        const result = await botApiService.updateRunningBot(botId, updates);
+        if (result.updated) {
+            console.log(`[BotEditorStore] Live update sent: ${result.changes?.join(", ")}`);
+        } else {
+            // Bot might not be running (e.g., room is empty), that's okay
+            console.log(`[BotEditorStore] Live update skipped: ${result.reason}`);
+        }
+    } catch (error) {
+        console.error("[BotEditorStore] Live update error:", error);
+    }
+}
+
+/**
  * Update a bot's position
  */
 export function updateBotPosition(botId: string, x: number, y: number): void {
@@ -259,6 +289,9 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
                 selectedBotStore.set(updatedBot);
             }
 
+            // Send live update to running bot (teleport it)
+            void sendLiveUpdate(botId, { position: { x, y } });
+
             return newMap;
         }
         return bots;
@@ -291,6 +324,13 @@ export function updateBotRadius(botId: string, radius: number): void {
                 selectedBotStore.set(updatedBot);
             }
 
+            // Send live update to running bot
+            void sendLiveUpdate(botId, {
+                behaviorConfig: {
+                    assignedSpace: { ...updatedBot.behaviorConfig.assignedSpace },
+                },
+            });
+
             return newMap;
         }
         return bots;
@@ -320,6 +360,88 @@ export function updateConversationRadius(botId: string, conversationRadius: numb
                 selectedBotStore.set(updatedBot);
             }
 
+            // Send live update to running bot
+            void sendLiveUpdate(botId, {
+                behaviorConfig: { conversationRadius },
+            });
+
+            return newMap;
+        }
+        return bots;
+    });
+}
+
+/**
+ * Update a bot's behavior type
+ */
+export function updateBehaviorType(botId: string, behaviorType: "idle" | "patrol" | "social"): void {
+    botPreviewsStore.update((bots) => {
+        const bot = bots.get(botId);
+        if (bot) {
+            const updatedBot: BotData = {
+                ...bot,
+                behaviorType,
+                behaviorConfig: {
+                    ...bot.behaviorConfig,
+                    behaviorType,
+                    // Clear waypoints when switching away from patrol
+                    ...(behaviorType !== "patrol" ? { patrolWaypoints: [] } : {}),
+                    // Set default conversation radius when switching to social
+                    ...(behaviorType === "social" && !bot.behaviorConfig?.conversationRadius
+                        ? { conversationRadius: Math.min(100, bot.behaviorConfig?.assignedSpace?.radius || 100) }
+                        : {}),
+                },
+            };
+            const newMap = new Map(bots);
+            newMap.set(botId, updatedBot);
+
+            // Update selected bot if it's the same one
+            const selected = get(selectedBotStore);
+            if (selected?.id === botId) {
+                selectedBotStore.set(updatedBot);
+            }
+
+            // Send live update to running bot (changes behavior in real-time)
+            void sendLiveUpdate(botId, {
+                behaviorType,
+                behaviorConfig: updatedBot.behaviorConfig,
+            });
+
+            return newMap;
+        }
+        return bots;
+    });
+}
+
+/**
+ * Clear all waypoints for a patrol bot
+ */
+export function clearWaypoints(botId: string): void {
+    botPreviewsStore.update((bots) => {
+        const bot = bots.get(botId);
+        if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
+            const updatedBot: BotData = {
+                ...bot,
+                behaviorConfig: {
+                    ...bot.behaviorConfig,
+                    patrolWaypoints: [],
+                },
+            };
+
+            const newMap = new Map(bots);
+            newMap.set(botId, updatedBot);
+
+            // Update selected bot if it's the same one
+            const selected = get(selectedBotStore);
+            if (selected?.id === botId) {
+                selectedBotStore.set(updatedBot);
+            }
+
+            // Send live update with empty waypoints
+            void sendLiveUpdate(botId, {
+                behaviorConfig: { patrolWaypoints: [] },
+            });
+
             return newMap;
         }
         return bots;
@@ -330,6 +452,8 @@ export function updateConversationRadius(botId: string, conversationRadius: numb
  * Add a waypoint to a patrol bot
  */
 export function addWaypoint(botId: string, x: number, y: number, index?: number): void {
+    let updatedWaypoints: Array<{ x: number; y: number }> | undefined;
+
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
@@ -341,6 +465,8 @@ export function addWaypoint(botId: string, x: number, y: number, index?: number)
             } else {
                 waypoints.push(newWaypoint);
             }
+
+            updatedWaypoints = waypoints;
 
             const updatedBot: BotData = {
                 ...bot,
@@ -363,18 +489,28 @@ export function addWaypoint(botId: string, x: number, y: number, index?: number)
         }
         return bots;
     });
+
+    // Send live update with new waypoints
+    if (updatedWaypoints) {
+        void sendLiveUpdate(botId, {
+            behaviorConfig: { patrolWaypoints: updatedWaypoints },
+        });
+    }
 }
 
 /**
  * Update a waypoint position
  */
 export function updateWaypoint(botId: string, waypointIndex: number, x: number, y: number): void {
+    let updatedWaypoints: Array<{ x: number; y: number }> | undefined;
+
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
             const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
             if (waypointIndex >= 0 && waypointIndex < waypoints.length) {
                 waypoints[waypointIndex] = { x, y };
+                updatedWaypoints = waypoints;
 
                 const updatedBot: BotData = {
                     ...bot,
@@ -398,18 +534,28 @@ export function updateWaypoint(botId: string, waypointIndex: number, x: number, 
         }
         return bots;
     });
+
+    // Send live update with new waypoints
+    if (updatedWaypoints) {
+        void sendLiveUpdate(botId, {
+            behaviorConfig: { patrolWaypoints: updatedWaypoints },
+        });
+    }
 }
 
 /**
  * Remove a waypoint
  */
 export function removeWaypoint(botId: string, waypointIndex: number): void {
+    let updatedWaypoints: Array<{ x: number; y: number }> | undefined;
+
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot && bot.behaviorConfig?.behaviorType === "patrol") {
             const waypoints = [...(bot.behaviorConfig.patrolWaypoints || [])];
             if (waypointIndex >= 0 && waypointIndex < waypoints.length) {
                 waypoints.splice(waypointIndex, 1);
+                updatedWaypoints = waypoints;
 
                 const updatedBot: BotData = {
                     ...bot,
@@ -442,6 +588,13 @@ export function removeWaypoint(botId: string, waypointIndex: number): void {
         }
         return bots;
     });
+
+    // Send live update with updated waypoints
+    if (updatedWaypoints) {
+        void sendLiveUpdate(botId, {
+            behaviorConfig: { patrolWaypoints: updatedWaypoints },
+        });
+    }
 }
 
 /**

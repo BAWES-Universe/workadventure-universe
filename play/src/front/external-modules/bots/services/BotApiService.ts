@@ -285,6 +285,30 @@ export class BotApiService {
             return { despawned: false, reason: String(error) };
         }
     }
+
+    /**
+     * Update a running bot's configuration (live update)
+     * This is called when bot config changes in the editor
+     */
+    async updateRunningBot(
+        botId: string,
+        updates: {
+            position?: { x: number; y: number };
+            behaviorConfig?: Record<string, unknown>;
+            behaviorType?: string;
+        }
+    ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${botId}/update`, {
+                method: "POST",
+                body: JSON.stringify(updates),
+            });
+            return response.json();
+        } catch (error) {
+            console.error("[BotApiService] Error updating running bot:", error);
+            return { updated: false, reason: String(error) };
+        }
+    }
 }
 
 // Export singleton instance

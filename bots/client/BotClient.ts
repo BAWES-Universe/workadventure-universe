@@ -239,6 +239,31 @@ export class BotClient {
     }
 
     /**
+     * Teleport bot to a new position instantly
+     */
+    teleportTo(x: number, y: number): void {
+        this.state.setPosition({ x, y });
+        this.config.position = { x, y };
+        this.sendPosition(this.state.getPosition(), this.state.getDirection(), false);
+        console.log(`[Bot ${this.config.botId}] Teleported to (${x}, ${y})`);
+    }
+
+    /**
+     * Update bot configuration (position, behavior config, etc.)
+     */
+    updateConfig(updates: {
+        position?: { x: number; y: number };
+        behaviorConfig?: Record<string, unknown>;
+    }): void {
+        if (updates.position) {
+            this.teleportTo(updates.position.x, updates.position.y);
+        }
+
+        // Behavior config updates are handled by BotManager which creates new behavior
+        console.log(`[Bot ${this.config.botId}] Config updated`);
+    }
+
+    /**
      * Check if connected
      */
     isConnected(): boolean {

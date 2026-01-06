@@ -294,46 +294,141 @@ export class BotManager {
     }
 
     /**
-     * Update bot configuration
+     * Update bot configuration (live update for running bot)
      */
-    async updateBot(botId: string, config: Partial<BotConfiguration>): Promise<void> {
+    async updateBot(
+        botId: string,
+        updates: {
+            position?: { x: number; y: number };
+            behaviorConfig?: Record<string, unknown>;
+            behaviorType?: string;
+        }
+    ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
         const instance = this.bots.get(botId);
         if (!instance) {
-            throw new Error(`Bot ${botId} not found`);
+            return { updated: false, reason: 'Bot not found or not running' };
         }
 
-        // Update config
-        const updatedConfig = { ...instance.config, ...config };
-        instance.config = updatedConfig;
+        const changes: string[] = [];
 
-        // Update behavior if behavior config changed
-        if (config.behaviorConfig || config.behaviorType) {
+        // Handle position update (teleport)
+        if (updates.position) {
+            console.log(`[BotManager] Teleporting bot ${botId} to (${updates.position.x}, ${updates.position.y})`);
+            instance.client.updateConfig({ position: updates.position });
+            
+            // Update stored config
+            if (instance.config.assignedSpace) {
+                instance.config.assignedSpace.center = updates.position;
+            }
+            changes.push('position');
+        }
+
+        // Handle behavior config or type change
+        if (updates.behaviorConfig || updates.behaviorType) {
             const { IdleBehavior, PatrolBehavior, SocialBehavior } = await import('../behaviors');
             
-            let behavior;
-            const behaviorType = config.behaviorType || updatedConfig.behaviorType;
-            const behaviorConfig = config.behaviorConfig || updatedConfig.behaviorConfig || { type: behaviorType };
+            const newBehaviorType = updates.behaviorType || instance.config.behaviorType;
+            const newBehaviorConfig = updates.behaviorConfig || instance.config.behaviorConfig || {};
             
-            // Helper to safely cast behavior config (comes from Admin API, may not match exact interface)
-            const createBehavior = (type: string, cfg: Record<string, any>) => {
+            // Update stored config
+            if (updates.behaviorType) {
+                instance.config.behaviorType = updates.behaviorType as 'idle' | 'patrol' | 'social';
+            }
+            if (updates.behaviorConfig) {
+                instance.config.behaviorConfig = { ...instance.config.behaviorConfig, ...updates.behaviorConfig };
+            }
+            
+            // Transform config for behavior (similar to spawnBot)
+            const transformBehaviorConfig = (type: string, cfg: Record<string, unknown>): Record<string, unknown> => {
+                const transformed: Record<string, unknown> = { ...cfg };
+                
+                // Transform patrol waypoints
+                if (type === 'patrol') {
+                    if (cfg.patrolWaypoints && !cfg.waypoints) {
+                        transformed.waypoints = cfg.patrolWaypoints;
+                    }
+                    if (typeof transformed.loop === 'undefined') transformed.loop = true;
+                    if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
+                    if (typeof transformed.speed === 'undefined') transformed.speed = 100;
+                    if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
+                }
+                
+                // Transform social config
+                if (type === 'social') {
+                    if (typeof transformed.conversationRadius === 'undefined') {
+                        transformed.conversationRadius = (cfg.conversationRadius as number) || 200;
+                    }
+                    if (typeof transformed.minTimeBetweenConversations === 'undefined') {
+                        transformed.minTimeBetweenConversations = 300000;
+                    }
+                    if (typeof transformed.maxConversationDuration === 'undefined') {
+                        transformed.maxConversationDuration = 300000;
+                    }
+                    if (typeof transformed.conversationHistorySize === 'undefined') {
+                        transformed.conversationHistorySize = 50;
+                    }
+                    if (typeof transformed.respectPlayerStatus === 'undefined') {
+                        transformed.respectPlayerStatus = true;
+                    }
+                    if (typeof transformed.maxConcurrentConversations === 'undefined') {
+                        transformed.maxConcurrentConversations = 1;
+                    }
+                    if (!transformed.conversationTopics) transformed.conversationTopics = [];
+                    
+                    // Use assignedSpace for wander area
+                    const assignedSpace = (cfg.assignedSpace || instance.config.assignedSpace) as { center: { x: number; y: number }; radius: number } | undefined;
+                    if (assignedSpace) {
+                        transformed.wanderRadius = assignedSpace.radius || 200;
+                        transformed.wanderCenter = assignedSpace.center || { x: 0, y: 0 };
+                    } else {
+                        transformed.wanderRadius = 200;
+                        transformed.wanderCenter = { x: 0, y: 0 };
+                    }
+                    if (typeof transformed.wanderSpeed === 'undefined') transformed.wanderSpeed = 50;
+                    if (typeof transformed.approachDistance === 'undefined') transformed.approachDistance = 50;
+                }
+                
+                // Ensure assignedSpace exists for all behaviors
+                if (!transformed.assignedSpace && instance.config.assignedSpace) {
+                    transformed.assignedSpace = instance.config.assignedSpace;
+                }
+                
+                return transformed;
+            };
+            
+            const createBehavior = (type: string, cfg: Record<string, unknown>) => {
+                const transformedConfig = transformBehaviorConfig(type, cfg);
+                console.log(`[BotManager] Creating new ${type} behavior with config:`, JSON.stringify(transformedConfig, null, 2));
+                
                 switch (type) {
                     case 'idle':
-                        return new IdleBehavior(cfg as Parameters<typeof IdleBehavior>[0]);
+                        return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
                     case 'patrol':
-                        return new PatrolBehavior(cfg as Parameters<typeof PatrolBehavior>[0]);
+                        // Final safety check for waypoints
+                        if (!transformedConfig.waypoints || !Array.isArray(transformedConfig.waypoints)) {
+                            transformedConfig.waypoints = [];
+                        }
+                        return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
                     case 'social':
-                        return new SocialBehavior(cfg as Parameters<typeof SocialBehavior>[0]);
+                        return new SocialBehavior(transformedConfig as Parameters<typeof SocialBehavior>[0]);
                     default:
                         throw new Error(`Unknown behavior type: ${type}`);
                 }
             };
             
-            behavior = createBehavior(behaviorType, behaviorConfig);
-
+            const behavior = createBehavior(newBehaviorType, newBehaviorConfig);
             instance.client.setBehavior(behavior);
+            
+            if (updates.behaviorType) {
+                changes.push('behaviorType');
+            }
+            if (updates.behaviorConfig) {
+                changes.push('behaviorConfig');
+            }
         }
 
-        console.log(`[BotManager] Bot ${botId} configuration updated`);
+        console.log(`[BotManager] Bot ${botId} updated: ${changes.join(', ')}`);
+        return { updated: true, changes };
     }
 
     /**
