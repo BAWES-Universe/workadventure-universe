@@ -82,6 +82,17 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Determine if the bot should join a proximity/bubble space
+     * Override in subclasses to control chat participation
+     * @param spaceName Space name
+     * @returns true if bot should join, false to decline
+     */
+    shouldJoinProximitySpace(_spaceName: string): boolean {
+        // Default: accept all proximity spaces (players can talk to bots)
+        return true;
+    }
+
+    /**
      * Return bot to its assigned space/area
      */
     protected returnToAssignedSpace(): void {
