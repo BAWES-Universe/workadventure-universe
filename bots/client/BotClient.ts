@@ -444,7 +444,11 @@ export class BotClient {
         }
 
         try {
-            const spaceUserId = await this.emitJoinSpace(request.spaceName, request.filterType, request.propertiesToSync);
+            // Default filterType to 0 (UNSPECIFIED) if not provided
+            const filterType = request.filterType ?? FilterType.UNSPECIFIED;
+            const propertiesToSync = request.propertiesToSync || [];
+            
+            const spaceUserId = await this.emitJoinSpace(request.spaceName, filterType, propertiesToSync);
             this.spaces.set(request.spaceName, spaceUserId);
             if (this.behavior) {
                 this.behavior.onSpaceJoined(request.spaceName);
