@@ -49,7 +49,10 @@ export class IdleBehavior extends BaseBehavior {
         }
     }
 
-    onPlayerMoved(playerId: number): void {
+    onPlayerMoved(playerId: number, position: { x: number; y: number }): void {
+        // Call base behavior for proximity tracking and facing
+        super.onPlayerMoved(playerId, position);
+        
         if (!this.bot) return;
 
         const config = this.config as IdleBehaviorConfig;

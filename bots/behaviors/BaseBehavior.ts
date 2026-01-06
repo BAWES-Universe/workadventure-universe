@@ -23,6 +23,11 @@ export abstract class BaseBehavior {
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
     protected engagedWithUsers: Map<number, { spaceName: string; position?: PositionInterface }> = new Map();
+    
+    // Proximity tracking - players nearby (based on userMovedMessage)
+    protected nearbyPlayers: Map<number, PositionInterface> = new Map();
+    protected readonly PROXIMITY_RADIUS = 80; // Pixels - distance to consider "nearby"
+    protected closestPlayerId: number | null = null;
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -56,7 +61,83 @@ export abstract class BaseBehavior {
      * @param position New position
      */
     onPlayerMoved(playerId: number, position: PositionInterface): void {
-        // Default: do nothing
+        if (!this.bot) return;
+        
+        const botPos = this.bot.getState().getPosition();
+        const dx = position.x - botPos.x;
+        const dy = position.y - botPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Track if player is within proximity
+        const wasNearby = this.nearbyPlayers.has(playerId);
+        
+        if (distance <= this.PROXIMITY_RADIUS) {
+            // Player is nearby
+            this.nearbyPlayers.set(playerId, position);
+            
+            if (!wasNearby) {
+                console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px)`);
+            }
+            
+            // Update engagement state
+            this.updateProximityEngagement();
+        } else {
+            // Player is far away
+            if (wasNearby) {
+                this.nearbyPlayers.delete(playerId);
+                console.log(`[Behavior] Player ${playerId} left proximity (${Math.round(distance)}px)`);
+                
+                // Update engagement state
+                this.updateProximityEngagement();
+            }
+        }
+    }
+    
+    /**
+     * Update engagement state based on nearby players
+     */
+    protected updateProximityEngagement(): void {
+        if (!this.bot) return;
+        
+        const wasEngaged = this.isEngaged;
+        this.isEngaged = this.nearbyPlayers.size > 0;
+        
+        if (this.isEngaged) {
+            // Find closest player
+            let closestDistance = Infinity;
+            let closestId: number | null = null;
+            let closestPos: PositionInterface | null = null;
+            const botPos = this.bot.getState().getPosition();
+            
+            for (const [playerId, playerPos] of this.nearbyPlayers) {
+                const dx = playerPos.x - botPos.x;
+                const dy = playerPos.y - botPos.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist < closestDistance) {
+                    closestDistance = dist;
+                    closestId = playerId;
+                    closestPos = playerPos;
+                }
+            }
+            
+            // Face the closest player
+            if (closestPos && closestId !== this.closestPlayerId) {
+                this.closestPlayerId = closestId;
+                this.facePosition(closestPos);
+                console.log(`[Behavior] Facing player ${closestId}`);
+            } else if (closestPos) {
+                // Keep facing them as they move
+                this.facePosition(closestPos);
+            }
+        } else {
+            // No longer engaged
+            this.closestPlayerId = null;
+            
+            if (wasEngaged) {
+                console.log(`[Behavior] No longer engaged - all players left proximity`);
+            }
+        }
     }
 
     /**
@@ -219,7 +300,7 @@ export abstract class BaseBehavior {
         // Update bot direction without moving
         this.bot.getState().setDirection(direction);
         this.bot.getState().setMoving(false);
-        this.bot.stopMoving();
+        this.bot.stop();
     }
 
     /**

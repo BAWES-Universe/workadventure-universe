@@ -32,8 +32,9 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
 
-        // If engaged in conversation, don't move
+        // If engaged with nearby player, stop and face them
         if (this.isEngaged) {
+            this.bot.stop();
             return;
         }
 
@@ -83,6 +84,11 @@ export class PatrolBehavior extends BaseBehavior {
         } else {
             this.isPaused = false;
         }
+    }
+
+    onPlayerMoved(playerId: number, position: { x: number; y: number }): void {
+        // Call base behavior for proximity tracking and facing
+        super.onPlayerMoved(playerId, position);
     }
 
     private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {

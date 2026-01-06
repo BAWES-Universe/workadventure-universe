@@ -55,8 +55,9 @@ export class SocialBehavior extends BaseBehavior {
         // Clean up old conversations
         this.cleanupConversations(config, currentTime);
 
-        // If engaged in conversation, don't move or seek new conversations
+        // If engaged in conversation, stop moving and face the player
         if (this.isEngaged) {
+            this.bot.stop();
             return;
         }
 
@@ -75,6 +76,9 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     onPlayerMoved(playerId: number, position: PositionInterface): void {
+        // Call base behavior for proximity tracking and facing
+        super.onPlayerMoved(playerId, position);
+        
         // Update target if we're approaching this player
         if (this.targetPlayerId === playerId) {
             // Continue approaching

@@ -336,14 +336,33 @@ export class BotClient {
                 break;
 
             case 'userMovedMessage':
-                const player = this.players.get(message.userMovedMessage.userId);
-                if (player && message.userMovedMessage.position) {
-                    player.position = {
-                        x: message.userMovedMessage.position.x,
-                        y: message.userMovedMessage.position.y,
-                    };
-                    if (this.behavior) {
-                        this.behavior.onPlayerMoved(message.userMovedMessage.userId, player.position);
+                {
+                    const movedPlayer = this.players.get(message.userMovedMessage.userId);
+                    if (movedPlayer && message.userMovedMessage.position) {
+                        movedPlayer.position = {
+                            x: message.userMovedMessage.position.x,
+                            y: message.userMovedMessage.position.y,
+                        };
+                        if (this.behavior) {
+                            this.behavior.onPlayerMoved(message.userMovedMessage.userId, movedPlayer.position);
+                        }
+                    } else if (!movedPlayer && message.userMovedMessage.position) {
+                        // Player not in our list yet, add them
+                        this.players.set(message.userMovedMessage.userId, {
+                            userId: message.userMovedMessage.userId,
+                            name: 'Unknown',
+                            position: {
+                                x: message.userMovedMessage.position.x,
+                                y: message.userMovedMessage.position.y,
+                            },
+                            availabilityStatus: 0,
+                        });
+                        if (this.behavior) {
+                            this.behavior.onPlayerMoved(message.userMovedMessage.userId, {
+                                x: message.userMovedMessage.position.x,
+                                y: message.userMovedMessage.position.y,
+                            });
+                        }
                     }
                 }
                 break;
