@@ -5,6 +5,7 @@ import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
 import { mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
+import { botApiService } from "./services/BotApiService";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
 let botEditorOpen = false;
@@ -640,6 +641,12 @@ const botExtensionModule: ExtensionModule = {
 
     init(roomMetadata: unknown, options: ExtensionModuleOptions) {
         console.log("Bot Extension Module initialized");
+
+        // Store options for later use
+        _extensionOptions = options;
+
+        // Initialize API service
+        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId);
 
         // Initialize bot editor integration
         initializeBotEditor(options);

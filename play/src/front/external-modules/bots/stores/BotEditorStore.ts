@@ -419,6 +419,42 @@ export function removeWaypoint(botId: string, waypointIndex: number): void {
 }
 
 /**
+ * Load bots from API response into the store
+ * Converts API format to BotData format
+ */
+export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
+    const botsMap = new Map<string, BotData>();
+
+    for (const apiBot of apiBots) {
+        const botData: BotData = {
+            id: apiBot.id as string,
+            botId: apiBot.id as string,
+            name: apiBot.name as string,
+            description: (apiBot.description as string) || undefined,
+            characterTexture: (apiBot.characterTextureId as string) || "",
+            characterTextureIds: (apiBot.characterTextureId as string) ? [apiBot.characterTextureId as string] : [],
+            behaviorType: (apiBot.behaviorType as "idle" | "patrol" | "social") || "idle",
+            enabled: (apiBot.enabled as boolean) ?? true,
+            behaviorConfig: (apiBot.behaviorConfig as BotData["behaviorConfig"]) || {
+                behaviorType: (apiBot.behaviorType as "idle" | "patrol" | "social") || "idle",
+                assignedSpace: {
+                    center: { x: 0, y: 0 },
+                    radius: 0,
+                },
+            },
+            chatInstructions: (apiBot.chatInstructions as string) || "",
+            movementInstructions: (apiBot.movementInstructions as string) || "",
+            createdAt: (apiBot.createdAt as string) || new Date().toISOString(),
+            updatedAt: (apiBot.updatedAt as string) || new Date().toISOString(),
+        };
+
+        botsMap.set(botData.id, botData);
+    }
+
+    botPreviewsStore.set(botsMap);
+}
+
+/**
  * Reset all stores to initial state
  */
 export function resetBotEditorStores(): void {
