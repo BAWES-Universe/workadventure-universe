@@ -26,7 +26,8 @@ export abstract class BaseBehavior {
     
     // Proximity tracking - players nearby (based on userMovedMessage)
     protected nearbyPlayers: Map<number, PositionInterface> = new Map();
-    protected readonly PROXIMITY_RADIUS = 80; // Pixels - distance to consider "nearby"
+    protected readonly PROXIMITY_RADIUS = 120; // Pixels - matches WorkAdventure bubble radius
+    protected readonly DISENGAGE_RADIUS = 140; // Slightly larger to prevent flickering at edge
     protected closestPlayerId: number | null = null;
 
     constructor(config: BehaviorConfig) {
@@ -71,25 +72,25 @@ export abstract class BaseBehavior {
         // Track if player is within proximity
         const wasNearby = this.nearbyPlayers.has(playerId);
         
-        if (distance <= this.PROXIMITY_RADIUS) {
-            // Player is nearby
+        // Hysteresis: Use smaller radius to enter, larger radius to leave
+        // This prevents flickering when player is at the edge
+        const enterRadius = this.PROXIMITY_RADIUS;
+        const leaveRadius = this.DISENGAGE_RADIUS;
+        
+        if (!wasNearby && distance <= enterRadius) {
+            // Player just entered proximity
             this.nearbyPlayers.set(playerId, position);
-            
-            if (!wasNearby) {
-                console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px)`);
-            }
-            
-            // Update engagement state
+            console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px)`);
             this.updateProximityEngagement();
-        } else {
-            // Player is far away
-            if (wasNearby) {
-                this.nearbyPlayers.delete(playerId);
-                console.log(`[Behavior] Player ${playerId} left proximity (${Math.round(distance)}px)`);
-                
-                // Update engagement state
-                this.updateProximityEngagement();
-            }
+        } else if (wasNearby && distance > leaveRadius) {
+            // Player just left proximity (needs to go further to disengage)
+            this.nearbyPlayers.delete(playerId);
+            console.log(`[Behavior] Player ${playerId} left proximity (${Math.round(distance)}px)`);
+            this.updateProximityEngagement();
+        } else if (wasNearby) {
+            // Player is still nearby, update their position for facing direction
+            this.nearbyPlayers.set(playerId, position);
+            this.updateProximityEngagement();
         }
     }
     
