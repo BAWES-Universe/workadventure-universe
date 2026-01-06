@@ -18,6 +18,7 @@ import {
     FilterType,
     UpdateSpaceUserMessage,
     SpaceUser,
+    apiVersionHash,
 } from '@workadventure/messages';
 import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { BotState } from './BotState';
@@ -94,7 +95,7 @@ export class BotClient {
                 params.set('companionTextureId', this.config.companionTextureId);
             }
             params.set('availabilityStatus', '0'); // ONLINE
-            params.set('version', 'dev'); // Must match apiVersionHash from @workadventure/messages
+            params.set('version', apiVersionHash); // Imported from @workadventure/messages
             params.set('chatID', '');
             params.set('roomName', '');
             params.set('cameraState', 'false');
