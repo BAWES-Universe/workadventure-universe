@@ -6,6 +6,7 @@ import { mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stor
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { botApiService } from "./services/BotApiService";
+import { destroyBotEditorTool } from "./phaser/BotEditorTool";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
 let botEditorOpen = false;
@@ -178,7 +179,14 @@ function injectBotEditorComponent() {
 
 // Function to remove BotEditor component from sidebar
 function removeBotEditorComponent() {
-    // Destroy component first
+    // Deactivate Phaser tool first (this will clean up all bot previews)
+    try {
+        destroyBotEditorTool();
+    } catch (e) {
+        console.warn("Error deactivating bot editor tool:", e);
+    }
+
+    // Destroy component
     if (botEditorComponentInstance) {
         try {
             botEditorComponentInstance.destroy();
@@ -676,6 +684,12 @@ const botExtensionModule: ExtensionModule = {
         // Remove tool button
         removeBotEditorTool();
         closeBotEditor();
+        // Ensure Phaser tool is deactivated (in case closeBotEditor didn't handle it)
+        try {
+            destroyBotEditorTool();
+        } catch (e) {
+            console.warn("Error deactivating bot editor tool in destroy:", e);
+        }
         sidebarContentElement = null;
         _extensionOptions = null;
     },
