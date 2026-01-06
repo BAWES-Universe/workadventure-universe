@@ -26,8 +26,8 @@ export abstract class BaseBehavior {
     
     // Proximity tracking - players nearby (based on userMovedMessage)
     protected nearbyPlayers: Map<number, PositionInterface> = new Map();
-    protected readonly PROXIMITY_RADIUS = 120; // Pixels - matches WorkAdventure bubble radius
-    protected readonly DISENGAGE_RADIUS = 140; // Slightly larger to prevent flickering at edge
+    protected readonly PROXIMITY_RADIUS = 48; // Pixels - react when player is close inside bubble
+    protected readonly DISENGAGE_RADIUS = 64; // Slightly larger to prevent flickering at edge
     protected closestPlayerId: number | null = null;
 
     constructor(config: BehaviorConfig) {
