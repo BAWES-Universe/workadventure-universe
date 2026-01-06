@@ -423,24 +423,16 @@ export class BotClient {
     }
 
     private async handleJoinSpaceRequest(request: JoinSpaceRequestMessage): Promise<void> {
-        // Skip Jitsi spaces (video calls) - bots don't do video
-        if (request.spaceName.includes('jitsi')) {
-            console.log(`[Bot ${this.config.botId}] Skipping jitsi space: ${request.spaceName}`);
-            return;
-        }
-
-        // For proximity/bubble spaces, let the behavior decide if we should join
-        // This allows social bots to engage while idle bots can stay silent
+        // Skip ALL proximity/bubble/jitsi spaces for bots
+        // These trigger media connections (audio/video) which bots don't support
+        // This prevents the loading indicator showing for bot cameras
         const isProximitySpace = request.spaceName.includes('proximity') || 
-                                  request.spaceName.includes('bubble');
+                                  request.spaceName.includes('bubble') ||
+                                  request.spaceName.includes('jitsi');
         
-        if (isProximitySpace && this.behavior) {
-            // Check if behavior wants to join this space
-            const shouldJoin = this.behavior.shouldJoinProximitySpace?.(request.spaceName) ?? true;
-            if (!shouldJoin) {
-                console.log(`[Bot ${this.config.botId}] Behavior declined proximity space: ${request.spaceName}`);
-                return;
-            }
+        if (isProximitySpace) {
+            console.log(`[Bot ${this.config.botId}] Skipping proximity/media space: ${request.spaceName}`);
+            return;
         }
 
         try {
