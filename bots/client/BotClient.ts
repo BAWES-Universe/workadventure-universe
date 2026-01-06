@@ -228,6 +228,19 @@ export class BotClient {
     stop(): void {
         this.state.setMoving(false);
     }
+    
+    /**
+     * Stop immediately and send position update (for when engaged with players)
+     */
+    stopAndUpdate(): void {
+        this.state.setMoving(false);
+        const position = this.state.getPosition();
+        const direction = this.state.getDirection();
+        this.sendPosition(position, direction, false);
+        this.config.position = position;
+        this.lastSentDirection = direction;
+        this.lastSentMoving = false;
+    }
 
     /**
      * Send chat message to space

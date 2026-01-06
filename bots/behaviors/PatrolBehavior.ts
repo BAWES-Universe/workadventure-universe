@@ -40,7 +40,15 @@ export class PatrolBehavior extends BaseBehavior {
         // If engaged with nearby player, stop immediately and face them
         // This must be checked FIRST before any movement logic
         if (this.isEngaged) {
-            this.bot.stop(); // Ensure bot stops immediately - call stop() every frame when engaged
+            // Force immediate stop and position update
+            if (!this.wasEngaged) {
+                // Just became engaged - force immediate stop
+                this.bot.stopAndUpdate();
+                console.log(`[PatrolBehavior] Engaged - stopped immediately`);
+            } else {
+                // Already engaged - ensure we're still stopped
+                this.bot.stop();
+            }
             this.wasEngaged = true;
             return; // Don't do anything else when engaged
         }
