@@ -64,6 +64,11 @@ export abstract class BaseBehavior {
     onPlayerMoved(playerId: number, position: PositionInterface): void {
         if (!this.bot) return;
         
+        // Ignore other bots - only react to real players
+        if (this.bot.isOtherBot(playerId)) {
+            return;
+        }
+        
         const botPos = this.bot.getState().getPosition();
         const dx = position.x - botPos.x;
         const dy = position.y - botPos.y;

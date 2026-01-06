@@ -40,6 +40,9 @@ export interface BotConfig {
 }
 
 export class BotClient {
+    // Static set of all bot user IDs - shared across all bot instances
+    private static botUserIds: Set<number> = new Set();
+    
     private ws: WebSocket | null = null;
     private state: BotState;
     private behavior: BaseBehavior | null = null;
@@ -54,6 +57,13 @@ export class BotClient {
 
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
+    }
+    
+    /**
+     * Check if a user ID belongs to a bot
+     */
+    static isBot(userId: number): boolean {
+        return BotClient.botUserIds.has(userId);
     }
 
     /**
@@ -147,11 +157,24 @@ export class BotClient {
      * Disconnect from server
      */
     disconnect(): void {
+        // Unregister this bot's userId
+        if (this.userId !== null) {
+            BotClient.botUserIds.delete(this.userId);
+        }
+        
         if (this.ws) {
             this.ws.close();
             this.ws = null;
         }
         this.connected = false;
+    }
+    
+    /**
+     * Check if a player ID is another bot (instance method for convenience)
+     */
+    isOtherBot(playerId: number): boolean {
+        // It's another bot if it's in the bot set AND it's not ourselves
+        return playerId !== this.userId && BotClient.isBot(playerId);
     }
 
     /**
@@ -331,6 +354,8 @@ export class BotClient {
         switch (message.$case) {
             case 'roomJoinedMessage':
                 this.userId = message.roomJoinedMessage.currentUserId;
+                // Register this bot's userId so other bots can ignore it
+                BotClient.botUserIds.add(this.userId);
                 console.log(`[Bot ${this.config.botId}] Joined room, userId: ${this.userId}`);
                 break;
 
