@@ -55,6 +55,11 @@ export class SocialBehavior extends BaseBehavior {
         // Clean up old conversations
         this.cleanupConversations(config, currentTime);
 
+        // If engaged in conversation, don't move or seek new conversations
+        if (this.isEngaged) {
+            return;
+        }
+
         // Check for conversation opportunities periodically
         if (currentTime - this.lastConversationCheck > 1000) {
             this.lastConversationCheck = currentTime;

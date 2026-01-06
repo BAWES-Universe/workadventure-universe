@@ -32,6 +32,11 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
 
+        // If engaged in conversation, don't move
+        if (this.isEngaged) {
+            return;
+        }
+
         // Handle pause at waypoint
         if (this.isPaused) {
             const pauseDuration = (Date.now() - this.pauseStartTime) / 1000;

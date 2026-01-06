@@ -19,6 +19,10 @@ export interface BehaviorConfig {
 export abstract class BaseBehavior {
     protected bot: BotClient | null = null;
     protected config: BehaviorConfig;
+    
+    // Engagement tracking - when players are in conversation with the bot
+    protected isEngaged = false;
+    protected engagedWithUsers: Map<number, { spaceName: string; position?: PositionInterface }> = new Map();
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -144,7 +148,26 @@ export abstract class BaseBehavior {
      * @param user User that joined
      */
     onSpaceUserJoined(spaceName: string, user: SpaceUser): void {
-        // Default: do nothing
+        // Skip if it's the bot itself
+        if (user.id === this.bot?.getUserId()) {
+            return;
+        }
+
+        // Track this user as engaged
+        const userPosition = user.characterPosition ? {
+            x: user.characterPosition.x,
+            y: user.characterPosition.y,
+        } : undefined;
+        
+        this.engagedWithUsers.set(user.id, { spaceName, position: userPosition });
+        this.isEngaged = this.engagedWithUsers.size > 0;
+
+        // Face the player who just joined
+        if (userPosition) {
+            this.facePosition(userPosition);
+        }
+
+        console.log(`[Behavior] User ${user.id} joined space ${spaceName}, now engaged with ${this.engagedWithUsers.size} users`);
     }
 
     /**
@@ -153,7 +176,62 @@ export abstract class BaseBehavior {
      * @param userId User ID that left
      */
     onSpaceUserLeft(spaceName: string, userId: number): void {
-        // Default: do nothing
+        // Remove from engaged users
+        this.engagedWithUsers.delete(userId);
+        this.isEngaged = this.engagedWithUsers.size > 0;
+
+        // If still engaged with others, face the first remaining user
+        if (this.isEngaged) {
+            const firstUser = this.engagedWithUsers.values().next().value;
+            if (firstUser?.position) {
+                this.facePosition(firstUser.position);
+            }
+        }
+
+        console.log(`[Behavior] User ${userId} left space ${spaceName}, now engaged with ${this.engagedWithUsers.size} users`);
+    }
+
+    /**
+     * Check if the bot is currently engaged in conversation
+     */
+    isInConversation(): boolean {
+        return this.isEngaged;
+    }
+
+    /**
+     * Face toward a specific position
+     */
+    protected facePosition(position: PositionInterface): void {
+        if (!this.bot) return;
+
+        const botPos = this.bot.getState().getPosition();
+        const dx = position.x - botPos.x;
+        const dy = position.y - botPos.y;
+
+        // Determine the direction to face
+        let direction: PositionMessage_Direction;
+        if (Math.abs(dx) > Math.abs(dy)) {
+            direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+        } else {
+            direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+        }
+
+        // Update bot direction without moving
+        this.bot.getState().setDirection(direction);
+        this.bot.getState().setMoving(false);
+        this.bot.stopMoving();
+    }
+
+    /**
+     * Face toward a specific player by ID
+     */
+    protected facePlayer(playerId: number): void {
+        if (!this.bot) return;
+
+        const player = this.bot.getPlayerInfo(playerId);
+        if (player?.position) {
+            this.facePosition(player.position);
+        }
     }
 
     /**
