@@ -535,7 +535,10 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     // Note: Room enter notification is handled separately in initializeBotEditor
     // for all users, not just authenticated ones
     try {
-        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId);
+        // Derive bot-server URL from current location (same domain, different subdomain)
+        // Replace 'play' with 'bot-server' in the hostname, or use current origin if no subdomain
+        const botServerUrl = getBotServerUrl();
+        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId, botServerUrl);
     } catch (e) {
         console.warn("[Bot Editor] Failed to initialize API service:", e);
     }
@@ -628,12 +631,42 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     }
 }
 
+/**
+ * Get bot-server URL from current environment
+ * Derives from current window location (replaces 'play' subdomain with 'bot-server')
+ * Falls back to default if pattern doesn't match
+ */
+function getBotServerUrl(): string {
+    try {
+        const hostname = window.location.hostname;
+        // Replace 'play' subdomain with 'bot-server' (works for play.workadventure.localhost -> bot-server.workadventure.localhost)
+        if (hostname.startsWith("play.")) {
+            return `${window.location.protocol}//${hostname.replace("play.", "bot-server.")}${
+                window.location.port ? ":" + window.location.port : ""
+            }`;
+        }
+        // For production or other patterns, try bot-server subdomain
+        if (hostname.includes(".")) {
+            const parts = hostname.split(".");
+            parts[0] = "bot-server";
+            return `${window.location.protocol}//${parts.join(".")}${
+                window.location.port ? ":" + window.location.port : ""
+            }`;
+        }
+    } catch (e) {
+        console.warn("[Bot Extension] Failed to derive bot-server URL from location:", e);
+    }
+    // Fallback to default (works for localhost development)
+    return "http://bot-server.workadventure.localhost";
+}
+
 // Function to notify bot-server when player enters room (for all users, authenticated or not)
 function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
     // Initialize API service with minimal config (just for bot-server calls)
     // Even unauthenticated users need bots to spawn
     try {
-        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId);
+        const botServerUrl = getBotServerUrl();
+        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId, botServerUrl);
 
         // Notify bot-server that a player entered the room (spawns bots)
         // This should happen for ALL users, not just authenticated ones
