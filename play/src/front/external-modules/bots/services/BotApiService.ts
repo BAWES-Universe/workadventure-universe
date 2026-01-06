@@ -206,7 +206,7 @@ export class BotApiService {
     /**
      * Notify bot-server that a player entered a room (spawns bots)
      */
-    async notifyRoomEnter(roomId?: string): Promise<{ botsSpawned: number; playerCount: number }> {
+    async notifyRoomEnter(roomId?: string): Promise<{ botsSpawned: number }> {
         const id = roomId || this.roomId;
         if (!id) {
             throw new Error("roomId is required");
@@ -221,14 +221,14 @@ export class BotApiService {
         } catch (error) {
             console.error("[BotApiService] Error notifying room enter:", error);
             // Don't throw - bot spawning failure shouldn't break the game
-            return { botsSpawned: 0, playerCount: 0 };
+            return { botsSpawned: 0 };
         }
     }
 
     /**
-     * Notify bot-server that a player left a room (may despawn bots if room is empty)
+     * Notify bot-server that a player left a room (verification will despawn bots if room is empty)
      */
-    async notifyRoomLeave(roomId?: string): Promise<{ botsActive: number; playerCount: number }> {
+    async notifyRoomLeave(roomId?: string): Promise<{ botsActive: number }> {
         const id = roomId || this.roomId;
         if (!id) {
             throw new Error("roomId is required");
@@ -243,7 +243,7 @@ export class BotApiService {
         } catch (error) {
             console.error("[BotApiService] Error notifying room leave:", error);
             // Don't throw - bot despawning failure shouldn't break the game
-            return { botsActive: 0, playerCount: 0 };
+            return { botsActive: 0 };
         }
     }
 

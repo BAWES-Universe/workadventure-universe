@@ -17,8 +17,8 @@ export interface BotInstance {
 
 interface RoomState {
     botIds: Set<string>;
-    playerCount: number;
     lastActivity: number;
+    // playerCount removed - verification system queries WA /rooms API for actual count
 }
 
 // Store botId mapping since BotClient doesn't expose it directly
@@ -446,9 +446,35 @@ export class BotManager {
     }
 
     /**
+     * Handle a player entering a room
+     * Initializes room if needed and ensures bots are spawned
+     * Player count is tracked by verification system querying WA /rooms API
+     */
+    async handlePlayerEnterRoom(roomId: string): Promise<void> {
+        let room = this.roomsWithBots.get(roomId);
+        
+        if (!room) {
+            // Room doesn't exist - initialize it
+            room = {
+                botIds: new Set(),
+                lastActivity: Date.now(),
+            };
+            this.roomsWithBots.set(roomId, room);
+            console.log(`[BotManager] Room ${roomId} initialized`);
+        } else {
+            // Room exists - just update activity timestamp
+            room.lastActivity = Date.now();
+        }
+        
+        // Ensure bots are spawned
+        await this.ensureBotsForRoom(roomId);
+    }
+
+    /**
      * Ensure bots are spawned for a room when players enter
      * This is called when a player enters a room to spawn all enabled bots for that room
      * Also syncs with Admin API to spawn new bots and despawn deleted ones
+     * NOTE: This does NOT increment playerCount - use handlePlayerEnterRoom for that
      */
     async ensureBotsForRoom(roomId: string): Promise<void> {
         // Wait for any existing sync to complete (prevent race conditions)
@@ -477,12 +503,15 @@ export class BotManager {
      * Internal implementation of ensureBotsForRoom (called with lock held)
      */
     private async _doEnsureBotsForRoom(roomId: string): Promise<void> {
-        let room = this.roomsWithBots.get(roomId);
+        const room = this.roomsWithBots.get(roomId);
         
-        // Update activity and player count if room exists
-        if (room) {
+        // Room should already exist (created by handlePlayerEnterRoom)
+        // If it doesn't, something went wrong, but we'll continue anyway
+        if (!room) {
+            console.warn(`[BotManager] Room ${roomId} doesn't exist in ensureBotsForRoom - this shouldn't happen`);
+        } else {
+            // Update activity timestamp
             room.lastActivity = Date.now();
-            room.playerCount++;
         }
 
         console.log(`[BotManager] Syncing bots for room: ${roomId}`);
@@ -498,25 +527,27 @@ export class BotManager {
                 return botAny.enabled !== false; // Default to enabled if field doesn't exist
             });
 
-            // Initialize room state if it doesn't exist
+            // Ensure room exists (fallback - should already exist)
             if (!room) {
-                room = {
+                const newRoom = {
                     botIds: new Set(),
-                    playerCount: 1,
                     lastActivity: Date.now(),
                 };
-                this.roomsWithBots.set(roomId, room);
+                this.roomsWithBots.set(roomId, newRoom);
+                console.warn(`[BotManager] Created room ${roomId} as fallback in ensureBotsForRoom`);
             }
+            
+            const targetRoom = room || this.roomsWithBots.get(roomId)!;
 
             // Get set of enabled bot IDs from Admin API
             const enabledBotIds = new Set(enabledBots.map(b => b.botId));
             
             // Despawn bots that are no longer in Admin API (deleted)
-            for (const botId of room.botIds) {
+            for (const botId of targetRoom.botIds) {
                 if (!enabledBotIds.has(botId)) {
                     console.log(`[BotManager] Despawning deleted bot ${botId}`);
                     await this.despawnBot(botId);
-                    room.botIds.delete(botId);
+                    targetRoom.botIds.delete(botId);
                 }
             }
 
@@ -526,12 +557,12 @@ export class BotManager {
                 try {
                     // Check if bot is already spawned
                     if (this.bots.has(bot.botId)) {
-                        room.botIds.add(bot.botId);
+                        targetRoom.botIds.add(bot.botId);
                         continue;
                     }
 
                     await this.spawnBot(bot.botId, bot);
-                    room.botIds.add(bot.botId);
+                    targetRoom.botIds.add(bot.botId);
                     newBotsSpawned++;
                     console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
                 } catch (error) {
@@ -543,7 +574,7 @@ export class BotManager {
             if (newBotsSpawned > 0) {
                 console.log(`[BotManager] Spawned ${newBotsSpawned} new bots for room ${roomId}`);
             }
-            console.log(`[BotManager] Room ${roomId} has ${room.botIds.size} bots total, player count: ${room.playerCount}`);
+            console.log(`[BotManager] Room ${roomId} has ${targetRoom.botIds.size} bots total`);
         } catch (error) {
             console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
             throw error;
@@ -560,25 +591,9 @@ export class BotManager {
             return;
         }
 
-        room.playerCount--;
+        // Just update activity - verification system will check actual WA room count and despawn if empty
         room.lastActivity = Date.now();
-
-        // If no players left, despawn all bots for this room
-        if (room.playerCount <= 0) {
-            console.log(`[BotManager] No players left in room ${roomId}, despawning ${room.botIds.size} bots`);
-            
-            const despawnPromises = Array.from(room.botIds).map(botId => 
-                this.despawnBot(botId).catch(error => {
-                    console.error(`[BotManager] Error despawning bot ${botId}:`, error);
-                })
-            );
-
-            await Promise.all(despawnPromises);
-            this.roomsWithBots.delete(roomId);
-            console.log(`[BotManager] Despawned all bots for room ${roomId}`);
-        } else {
-            console.log(`[BotManager] Room ${roomId} still has ${room.playerCount} players, keeping bots active`);
-        }
+        console.log(`[BotManager] Room ${roomId} activity updated (verification will check if room is empty)`);
     }
 
     /**
@@ -650,13 +665,19 @@ export class BotManager {
      * Verify room occupancy by comparing WA room counts with our bot counts
      * If WA says room has N users but we have N bots, the room is empty -> despawn
      */
-    private async verifyRoomOccupancy(): Promise<void> {
+    async verifyRoomOccupancy(): Promise<void> {
+        console.log(`[BotManager] Verification running - checking ${this.roomsWithBots.size} rooms`);
+        
         if (this.roomsWithBots.size === 0) {
+            console.log('[BotManager] No rooms to verify');
             return; // No rooms to verify
         }
 
         const waRooms = await this.queryWorkAdventureRooms();
+        console.log(`[BotManager] WA rooms query returned ${waRooms.size} rooms`);
+        
         if (waRooms.size === 0) {
+            console.warn('[BotManager] WA rooms query failed or returned no rooms');
             return; // Query failed or no rooms
         }
 
@@ -665,6 +686,7 @@ export class BotManager {
             const ourBotCount = roomState.botIds.size;
 
             // If WA reports exactly our bot count (or less), room is empty
+            // WA user count includes bots, so if waUserCount <= ourBotCount, there are no real players
             if (waUserCount <= ourBotCount) {
                 console.log(
                     `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${ourBotCount} bots. Despawning bots.`
@@ -680,14 +702,11 @@ export class BotManager {
                 await Promise.all(despawnPromises);
                 this.roomsWithBots.delete(roomId);
             } else {
-                // Room has real players, update our player count estimate
+                // Room has real players (waUserCount > ourBotCount)
                 const realPlayerCount = waUserCount - ourBotCount;
-                if (realPlayerCount !== roomState.playerCount) {
-                    console.log(
-                        `[BotManager] Room ${roomId} occupancy corrected: ${roomState.playerCount} -> ${realPlayerCount} (WA: ${waUserCount}, bots: ${ourBotCount})`
-                    );
-                    roomState.playerCount = Math.max(0, realPlayerCount);
-                }
+                console.log(
+                    `[BotManager] Room ${roomId} has ${realPlayerCount} real player(s) (WA: ${waUserCount} total, bots: ${ourBotCount})`
+                );
             }
         }
     }

@@ -685,9 +685,7 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
         botApiService
             .notifyRoomEnter(options.roomId)
             .then((result) => {
-                console.log(
-                    `[Bot Extension] Room enter notified, ${result.botsSpawned} bots spawned, ${result.playerCount} players`
-                );
+                console.log(`[Bot Extension] Room enter notified, ${result.botsSpawned} bots spawned`);
             })
             .catch((e) => {
                 console.error("[Bot Extension] Failed to notify room enter (bots may not spawn):", e);
@@ -700,13 +698,11 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
 // Function to initialize the bot editor integration
 function initializeBotEditor(options: ExtensionModuleOptions) {
     console.log("[Bot Extension] Initializing bot editor, waiting for user connection...");
-    // Wait for user to be connected, then initialize (like admin-api module)
+
+    // Wait for user to be connected, then set up bot editor UI (for authenticated users only)
     unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
         console.log(`[Bot Extension] User connection status changed: ${connected}`);
         if (connected) {
-            // Notify room enter for ALL users (authenticated or not)
-            notifyRoomEnterForAllUsers(options);
-
             // Only set up bot editor UI for authenticated users
             if (localUserStore.isLogged()) {
                 setTimeout(() => {
@@ -724,15 +720,11 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
     // Also check if already connected
     const alreadyConnected = get(userIsConnected);
     console.log(`[Bot Extension] Already connected check: ${alreadyConnected}`);
-    if (alreadyConnected) {
-        console.log("[Bot Extension] User already connected, notifying room enter immediately");
-        notifyRoomEnterForAllUsers(options);
-
-        if (localUserStore.isLogged()) {
-            setTimeout(() => {
-                setupBotEditor(options);
-            }, 1000);
-        }
+    if (alreadyConnected && localUserStore.isLogged()) {
+        console.log("[Bot Extension] User already connected, setting up bot editor");
+        setTimeout(() => {
+            setupBotEditor(options);
+        }, 1000);
     }
 }
 
@@ -747,7 +739,12 @@ const botExtensionModule: ExtensionModule = {
         // Store options for later use
         _extensionOptions = options;
 
-        // Initialize bot editor integration
+        // Notify room enter immediately (user is already in the room when module loads)
+        // This ensures bots spawn even if userIsConnected hasn't fired yet
+        console.log("[Bot Extension] Notifying room enter immediately on init");
+        notifyRoomEnterForAllUsers(options);
+
+        // Initialize bot editor integration (for authenticated users)
         initializeBotEditor(options);
     },
 
