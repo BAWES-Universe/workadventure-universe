@@ -347,22 +347,21 @@ export class BotManager {
     /**
      * Ensure bots are spawned for a room when players enter
      * This is called when a player enters a room to spawn all enabled bots for that room
+     * Also syncs with Admin API to spawn new bots and despawn deleted ones
      */
     async ensureBotsForRoom(roomId: string): Promise<void> {
-        const room = this.roomsWithBots.get(roomId);
+        let room = this.roomsWithBots.get(roomId);
         
-        // If bots already spawned for this room, just update activity timestamp
-        if (room && room.botIds.size > 0) {
+        // Update activity and player count if room exists
+        if (room) {
             room.lastActivity = Date.now();
             room.playerCount++;
-            console.log(`[BotManager] Room ${roomId} already has ${room.botIds.size} bots, player count: ${room.playerCount}`);
-            return;
         }
 
-        console.log(`[BotManager] Ensuring bots for room: ${roomId}`);
+        console.log(`[BotManager] Syncing bots for room: ${roomId}`);
 
         try {
-            // Load all enabled bots for this room from Admin API
+            // Always load bot configs from Admin API to catch new/deleted bots
             const bots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
             
             // Filter to only enabled bots (if enabled field exists)
@@ -372,30 +371,41 @@ export class BotManager {
                 return botAny.enabled !== false; // Default to enabled if field doesn't exist
             });
 
-            if (enabledBots.length === 0) {
-                console.log(`[BotManager] No enabled bots found for room: ${roomId}`);
-                return;
+            // Initialize room state if it doesn't exist
+            if (!room) {
+                room = {
+                    botIds: new Set(),
+                    playerCount: 1,
+                    lastActivity: Date.now(),
+                };
+                this.roomsWithBots.set(roomId, room);
             }
 
-            // Initialize room state
-            const roomState: RoomState = {
-                botIds: new Set(),
-                playerCount: 1,
-                lastActivity: Date.now(),
-            };
+            // Get set of enabled bot IDs from Admin API
+            const enabledBotIds = new Set(enabledBots.map(b => b.botId));
+            
+            // Despawn bots that are no longer in Admin API (deleted)
+            for (const botId of room.botIds) {
+                if (!enabledBotIds.has(botId)) {
+                    console.log(`[BotManager] Despawning deleted bot ${botId}`);
+                    await this.despawnBot(botId);
+                    room.botIds.delete(botId);
+                }
+            }
 
-            // Spawn each enabled bot
+            // Spawn new bots that aren't already running
+            let newBotsSpawned = 0;
             for (const bot of enabledBots) {
                 try {
-                    // Check if bot is already spawned (might be from a previous room entry)
+                    // Check if bot is already spawned
                     if (this.bots.has(bot.botId)) {
-                        console.log(`[BotManager] Bot ${bot.botId} already spawned, adding to room tracking`);
-                        roomState.botIds.add(bot.botId);
+                        room.botIds.add(bot.botId);
                         continue;
                     }
 
                     await this.spawnBot(bot.botId, bot);
-                    roomState.botIds.add(bot.botId);
+                    room.botIds.add(bot.botId);
+                    newBotsSpawned++;
                     console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
                 } catch (error) {
                     console.error(`[BotManager] Failed to spawn bot ${bot.botId} for room ${roomId}:`, error);
@@ -403,9 +413,10 @@ export class BotManager {
                 }
             }
 
-            // Store room state
-            this.roomsWithBots.set(roomId, roomState);
-            console.log(`[BotManager] Spawned ${roomState.botIds.size} bots for room ${roomId}`);
+            if (newBotsSpawned > 0) {
+                console.log(`[BotManager] Spawned ${newBotsSpawned} new bots for room ${roomId}`);
+            }
+            console.log(`[BotManager] Room ${roomId} has ${room.botIds.size} bots total, player count: ${room.playerCount}`);
         } catch (error) {
             console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
             throw error;
