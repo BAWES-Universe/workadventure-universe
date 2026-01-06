@@ -215,6 +215,8 @@
                 movementInstructions: createdBot.movementInstructions || "",
                 createdAt: createdBot.createdAt || new Date().toISOString(),
                 updatedAt: createdBot.updatedAt || new Date().toISOString(),
+                createdBy: createdBot.createdBy || null,
+                updatedBy: createdBot.updatedBy || null,
             };
 
             // Close modal
@@ -281,6 +283,8 @@
                 movementInstructions: updatedBot.movementInstructions || "",
                 createdAt: updatedBot.createdAt || new Date().toISOString(),
                 updatedAt: updatedBot.updatedAt || new Date().toISOString(),
+                createdBy: updatedBot.createdBy || null,
+                updatedBy: updatedBot.updatedBy || null,
             };
 
             // Update store

@@ -446,6 +446,8 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
             movementInstructions: (apiBot.movementInstructions as string) || "",
             createdAt: (apiBot.createdAt as string) || new Date().toISOString(),
             updatedAt: (apiBot.updatedAt as string) || new Date().toISOString(),
+            createdBy: (apiBot.createdBy as BotData["createdBy"]) || null,
+            updatedBy: (apiBot.updatedBy as BotData["updatedBy"]) || null,
         };
 
         botsMap.set(botData.id, botData);

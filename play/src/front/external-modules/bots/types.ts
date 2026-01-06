@@ -1,5 +1,11 @@
 // Bot data types for the editor
 
+export interface BotUser {
+    id: string;
+    name: string | null;
+    email: string | null;
+}
+
 export interface BotData {
     id: string; // Unique identifier (required for stores/phaser)
     botId?: string; // Legacy/API identifier
@@ -30,5 +36,7 @@ export interface BotData {
     enabled?: boolean; // Whether bot is active
     createdAt?: string;
     updatedAt?: string;
+    createdBy?: BotUser | null;
+    updatedBy?: BotUser | null;
     [key: string]: unknown;
 }

@@ -137,6 +137,23 @@
         }
     }
 
+    function formatDate(dateString?: string): string {
+        if (!dateString) return "Unknown";
+        try {
+            const date = new Date(dateString);
+            return date.toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                hour12: true,
+            });
+        } catch {
+            return dateString;
+        }
+    }
+
     function handleTextureSelect(textureId: string) {
         currentBot.characterTexture = textureId;
         currentBot.characterTextureIds = [textureId];
@@ -390,6 +407,35 @@
                     </div>
                 {/if}
             </div>
+
+            <!-- Metadata (Audit Trail) -->
+            {#if currentBot.createdAt || currentBot.updatedAt}
+                <div class="mt-6 pt-6 border-t border-white/10">
+                    <h3 class="text-base text-white/80 normal-case mb-3">Metadata</h3>
+                    <div class="space-y-2 text-sm text-white/60">
+                        {#if currentBot.createdAt}
+                            <div class="flex items-center gap-2">
+                                <span class="text-white/40">Created:</span>
+                                <span>{formatDate(currentBot.createdAt)}</span>
+                                {#if currentBot.createdBy?.name}
+                                    <span class="text-white/40">by</span>
+                                    <span class="text-white/70">{currentBot.createdBy.name}</span>
+                                {/if}
+                            </div>
+                        {/if}
+                        {#if currentBot.updatedAt}
+                            <div class="flex items-center gap-2">
+                                <span class="text-white/40">Last updated:</span>
+                                <span>{formatDate(currentBot.updatedAt)}</span>
+                                {#if currentBot.updatedBy?.name && currentBot.updatedBy.id !== currentBot.createdBy?.id}
+                                    <span class="text-white/40">by</span>
+                                    <span class="text-white/70">{currentBot.updatedBy.name}</span>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                </div>
+            {/if}
         </div>
     </div>
 
