@@ -523,6 +523,13 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     // Store options for cleanup
     _extensionOptions = options;
 
+    // Initialize API service (only when bot editor is actually being set up)
+    try {
+        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId);
+    } catch (e) {
+        console.warn("[Bot Editor] Failed to initialize API service:", e);
+    }
+
     // Helper function to try injecting the bot editor tool
     const tryInjectBotTool = () => {
         const sidebar = document.querySelector(".side-bar-container") as HTMLElement;
@@ -644,9 +651,6 @@ const botExtensionModule: ExtensionModule = {
 
         // Store options for later use
         _extensionOptions = options;
-
-        // Initialize API service
-        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId);
 
         // Initialize bot editor integration
         initializeBotEditor(options);
