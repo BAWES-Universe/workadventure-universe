@@ -39,7 +39,8 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Check for nearby players
-        const nearbyPlayers = this.bot.getNearbyPlayers(config.responseRadius);
+        const responseRadius = config.responseRadius || 100;
+        const nearbyPlayers = this.bot.getNearbyPlayers(responseRadius);
         for (const player of nearbyPlayers) {
             if (!this.greetedPlayers.has(player.userId)) {
                 this.greetPlayer(player.userId);
@@ -61,7 +62,8 @@ export class IdleBehavior extends BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         // Remove from greeted set if player moved away
-        if (distance > config.responseRadius * 2) {
+        const responseRadius = config.responseRadius || 100;
+        if (distance > responseRadius * 2) {
             this.greetedPlayers.delete(playerId);
         }
     }
@@ -71,7 +73,8 @@ export class IdleBehavior extends BaseBehavior {
         if (!this.bot) return;
 
         const config = this.config as IdleBehaviorConfig;
-        const greeting = this.getRandomGreeting(config.greetingMessages);
+        const greetingMessages = config.greetingMessages || [];
+        const greeting = this.getRandomGreeting(greetingMessages);
         if (greeting) {
             this.bot.sendChatMessage(spaceName, greeting);
         }
@@ -90,8 +93,8 @@ export class IdleBehavior extends BaseBehavior {
         // The greeting will be sent in onSpaceJoined
     }
 
-    private getRandomGreeting(messages: string[]): string | null {
-        if (messages.length === 0) return null;
+    private getRandomGreeting(messages: string[] | undefined): string | null {
+        if (!messages || messages.length === 0) return null;
         return messages[Math.floor(Math.random() * messages.length)];
     }
 }
