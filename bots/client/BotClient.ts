@@ -377,7 +377,24 @@ export class BotClient {
             case 'answerMessage':
                 this.handleAnswer(message.answerMessage);
                 break;
+
+            case 'pingMessage':
+                // Respond to server ping to keep connection alive
+                this.sendPong();
+                break;
         }
+    }
+
+    /**
+     * Send pong response to server ping
+     */
+    private sendPong(): void {
+        this.send({
+            message: {
+                $case: 'pingMessage',
+                pingMessage: {},
+            },
+        });
     }
 
     private async handleJoinSpaceRequest(request: JoinSpaceRequestMessage): Promise<void> {

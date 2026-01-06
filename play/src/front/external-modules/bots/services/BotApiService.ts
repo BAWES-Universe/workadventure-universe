@@ -246,6 +246,45 @@ export class BotApiService {
             return { botsActive: 0, playerCount: 0 };
         }
     }
+
+    /**
+     * Spawn a specific bot immediately (called when bot is created)
+     */
+    async spawnBot(botId: string, roomId?: string): Promise<{ spawned: boolean; reason?: string }> {
+        const id = roomId || this.roomId;
+        if (!id) {
+            throw new Error("roomId is required");
+        }
+
+        try {
+            const response = await this.fetchBotServer("/api/bots/spawn", {
+                method: "POST",
+                body: JSON.stringify({ botId, roomId: id }),
+            });
+            return response.json();
+        } catch (error) {
+            console.error("[BotApiService] Error spawning bot:", error);
+            return { spawned: false, reason: String(error) };
+        }
+    }
+
+    /**
+     * Despawn a specific bot immediately (called when bot is deleted)
+     */
+    async despawnBot(botId: string, roomId?: string): Promise<{ despawned: boolean; reason?: string }> {
+        const id = roomId || this.roomId;
+
+        try {
+            const response = await this.fetchBotServer("/api/bots/despawn", {
+                method: "POST",
+                body: JSON.stringify({ botId, roomId: id }),
+            });
+            return response.json();
+        } catch (error) {
+            console.error("[BotApiService] Error despawning bot:", error);
+            return { despawned: false, reason: String(error) };
+        }
+    }
 }
 
 // Export singleton instance

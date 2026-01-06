@@ -310,7 +310,13 @@
         error = null;
 
         try {
+            // Despawn the bot first (so it disappears immediately)
+            const despawnResult = await botApiService.despawnBot(selectedBot.id);
+            console.log("[BotEditor] Despawn result:", despawnResult);
+
+            // Then delete from Admin API
             await botApiService.deleteBot(selectedBot.id);
+
             // Remove from store
             removeBot(selectedBot.id);
             // After delete, return to list

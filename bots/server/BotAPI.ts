@@ -145,6 +145,106 @@ export class BotAPI {
             }
         });
 
+        // Spawn a specific bot immediately (called when bot is created in editor)
+        this.app.post('/api/bots/spawn', async (req: Request, res: Response) => {
+            try {
+                const { botId, roomId } = req.body;
+
+                if (!botId || !roomId) {
+                    res.status(400).json({ error: 'Missing botId or roomId' });
+                    return;
+                }
+
+                // Check if room has active players (only spawn if players are present)
+                const roomState = this.botManager.getRoomState(roomId);
+                if (!roomState || roomState.playerCount === 0) {
+                    res.json({
+                        botId,
+                        roomId,
+                        spawned: false,
+                        reason: 'No players in room - bot will spawn when a player enters',
+                    });
+                    return;
+                }
+
+                // Check if bot is already spawned
+                if (this.botManager.getBot(botId)) {
+                    res.json({
+                        botId,
+                        roomId,
+                        spawned: true,
+                        reason: 'Bot already spawned',
+                    });
+                    return;
+                }
+
+                // Fetch bot config from Admin API
+                const bots = await this.adminApiService.getBotConfigurations({ roomUrl: roomId });
+                const botConfig = bots.find(b => b.botId === botId);
+
+                if (!botConfig) {
+                    res.status(404).json({ error: 'Bot not found in Admin API' });
+                    return;
+                }
+
+                // Spawn the bot
+                await this.botManager.spawnBot(botId, botConfig);
+                roomState.botIds.add(botId);
+
+                console.log(`[BotAPI] Spawned bot ${botId} for room ${roomId}`);
+                res.json({
+                    botId,
+                    roomId,
+                    spawned: true,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error spawning bot:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Despawn a specific bot immediately (called when bot is deleted in editor)
+        this.app.post('/api/bots/despawn', async (req: Request, res: Response) => {
+            try {
+                const { botId, roomId } = req.body;
+
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
+                    return;
+                }
+
+                // Check if bot exists
+                if (!this.botManager.getBot(botId)) {
+                    res.json({
+                        botId,
+                        despawned: false,
+                        reason: 'Bot not currently spawned',
+                    });
+                    return;
+                }
+
+                // Despawn the bot
+                await this.botManager.despawnBot(botId);
+
+                // Remove from room tracking if roomId provided
+                if (roomId) {
+                    const roomState = this.botManager.getRoomState(roomId);
+                    if (roomState) {
+                        roomState.botIds.delete(botId);
+                    }
+                }
+
+                console.log(`[BotAPI] Despawned bot ${botId}`);
+                res.json({
+                    botId,
+                    despawned: true,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error despawning bot:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // All other routes require authentication
         this.app.use(authenticateToken);
 

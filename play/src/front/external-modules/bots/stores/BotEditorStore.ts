@@ -1,5 +1,6 @@
 import { writable, derived, get } from "svelte/store";
 import type { BotData } from "../types";
+import { botApiService } from "../services/BotApiService";
 
 /**
  * Bot Editor Mode
@@ -139,6 +140,7 @@ export function cancelPlacement(): void {
 
 /**
  * Confirm bot placement at current cursor position
+ * Saves position to API and spawns the bot
  */
 export function confirmPlacement(): BotData | undefined {
     const bot = get(placingBotStore);
@@ -164,6 +166,30 @@ export function confirmPlacement(): BotData | undefined {
         // Clear placement state
         placingBotStore.set(undefined);
         placementCursorStore.set(undefined);
+
+        // Save position to Admin API and spawn the bot (async, don't block)
+        if (botApiService.isInitialized() && updatedBot.id) {
+            // Save updated position to API
+            botApiService
+                .updateBot(updatedBot.id, {
+                    behaviorConfig: updatedBot.behaviorConfig,
+                })
+                .then(() => {
+                    console.log("[BotEditorStore] Bot position saved, spawning bot...");
+                    // Spawn the bot on the server
+                    return botApiService.spawnBot(updatedBot.id);
+                })
+                .then((result) => {
+                    if (result.spawned) {
+                        console.log("[BotEditorStore] Bot spawned successfully");
+                    } else {
+                        console.log("[BotEditorStore] Bot spawn result:", result.reason);
+                    }
+                })
+                .catch((error) => {
+                    console.error("[BotEditorStore] Error saving/spawning bot:", error);
+                });
+        }
 
         return updatedBot;
     }
