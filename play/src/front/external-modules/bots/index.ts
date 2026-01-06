@@ -633,31 +633,41 @@ function setupBotEditor(options: ExtensionModuleOptions) {
 
 /**
  * Get bot-server URL from current environment
- * Derives from current window location (replaces 'play' subdomain with 'bot-server')
- * Falls back to default if pattern doesn't match
+ * Derives from current window location by replacing the first subdomain with 'bot-server'
+ * Works for:
+ * - play.workadventure.localhost -> bot-server.workadventure.localhost
+ * - play.workadventu.re -> bot-server.workadventu.re
+ * - localhost:8080 -> bot-server.workadventure.localhost (fallback)
+ * - Any custom domain -> bot-server.{rest of domain}
  */
 function getBotServerUrl(): string {
     try {
-        const hostname = window.location.hostname;
-        // Replace 'play' subdomain with 'bot-server' (works for play.workadventure.localhost -> bot-server.workadventure.localhost)
-        if (hostname.startsWith("play.")) {
-            return `${window.location.protocol}//${hostname.replace("play.", "bot-server.")}${
-                window.location.port ? ":" + window.location.port : ""
-            }`;
+        const { protocol, hostname, port } = window.location;
+
+        // Handle localhost (development)
+        if (hostname === "localhost" || hostname === "127.0.0.1") {
+            // For localhost, use the standard dev domain
+            return `${protocol}//bot-server.workadventure.localhost${port ? `:${port}` : ""}`;
         }
-        // For production or other patterns, try bot-server subdomain
+
+        // Handle subdomain patterns (most common case)
+        // play.workadventure.localhost -> bot-server.workadventure.localhost
+        // play.workadventu.re -> bot-server.workadventu.re
         if (hostname.includes(".")) {
             const parts = hostname.split(".");
+            // Replace first subdomain with 'bot-server'
             parts[0] = "bot-server";
-            return `${window.location.protocol}//${parts.join(".")}${
-                window.location.port ? ":" + window.location.port : ""
-            }`;
+            const newHostname = parts.join(".");
+            return `${protocol}//${newHostname}${port ? `:${port}` : ""}`;
         }
+
+        // Single word hostname (unlikely but handle gracefully)
+        return `${protocol}//bot-server.${hostname}${port ? `:${port}` : ""}`;
     } catch (e) {
         console.warn("[Bot Extension] Failed to derive bot-server URL from location:", e);
+        // Ultimate fallback - use standard dev domain
+        return "http://bot-server.workadventure.localhost";
     }
-    // Fallback to default (works for localhost development)
-    return "http://bot-server.workadventure.localhost";
 }
 
 // Function to notify bot-server when player enters room (for all users, authenticated or not)
