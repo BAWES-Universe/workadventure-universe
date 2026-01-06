@@ -21,6 +21,7 @@ export class PatrolBehavior extends BaseBehavior {
     private isPaused: boolean = false;
     private pauseStartTime: number = 0;
     private targetWaypoint: PositionInterface | null = null;
+    private wasEngaged: boolean = false; // Track previous engagement state
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -35,7 +36,15 @@ export class PatrolBehavior extends BaseBehavior {
         // If engaged with nearby player, stop and face them
         if (this.isEngaged) {
             this.bot.stop();
+            this.wasEngaged = true;
             return;
+        }
+
+        // If we just became disengaged, resume patrol immediately
+        if (this.wasEngaged && !this.isEngaged) {
+            this.wasEngaged = false;
+            this.isPaused = false; // Clear any pause state
+            // Don't return - continue to move
         }
 
         // Handle pause at waypoint
