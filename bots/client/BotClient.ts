@@ -49,6 +49,8 @@ export class BotClient {
     private players: Map<number, PlayerInfo> = new Map();
     private queryId: number = 0;
     private pendingQueries: Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }> = new Map();
+    private lastSentDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
+    private lastSentMoving: boolean = false;
 
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
@@ -171,11 +173,20 @@ export class BotClient {
         // Update behavior
         this.behavior.update(deltaTime);
 
-        // Update position if changed
+        // Update position/direction if changed
         const newPosition = this.state.getPosition();
-        if (newPosition.x !== this.config.position.x || newPosition.y !== this.config.position.y) {
-            this.sendPosition(newPosition, this.state.getDirection(), this.state.isMoving());
+        const newDirection = this.state.getDirection();
+        const newMoving = this.state.isMoving();
+        
+        const positionChanged = newPosition.x !== this.config.position.x || newPosition.y !== this.config.position.y;
+        const directionChanged = this.lastSentDirection !== newDirection;
+        const movingChanged = this.lastSentMoving !== newMoving;
+        
+        if (positionChanged || directionChanged || movingChanged) {
+            this.sendPosition(newPosition, newDirection, newMoving);
             this.config.position = newPosition;
+            this.lastSentDirection = newDirection;
+            this.lastSentMoving = newMoving;
         }
     }
 
