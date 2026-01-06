@@ -30,6 +30,7 @@ export class BotManager {
     private botRegistry: BotRegistry;
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
+    private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
 
     constructor(adminApiService: AdminApiService, botRegistry: BotRegistry) {
         this.adminApiService = adminApiService;
@@ -445,6 +446,32 @@ export class BotManager {
      * Also syncs with Admin API to spawn new bots and despawn deleted ones
      */
     async ensureBotsForRoom(roomId: string): Promise<void> {
+        // Wait for any existing sync to complete (prevent race conditions)
+        const existingLock = this.roomSyncLocks.get(roomId);
+        if (existingLock) {
+            console.log(`[BotManager] Waiting for existing sync for room: ${roomId}`);
+            await existingLock;
+        }
+
+        // Create a new lock for this sync operation
+        let releaseLock: () => void;
+        const lockPromise = new Promise<void>((resolve) => {
+            releaseLock = resolve;
+        });
+        this.roomSyncLocks.set(roomId, lockPromise);
+
+        try {
+            await this._doEnsureBotsForRoom(roomId);
+        } finally {
+            releaseLock!();
+            this.roomSyncLocks.delete(roomId);
+        }
+    }
+
+    /**
+     * Internal implementation of ensureBotsForRoom (called with lock held)
+     */
+    private async _doEnsureBotsForRoom(roomId: string): Promise<void> {
         let room = this.roomsWithBots.get(roomId);
         
         // Update activity and player count if room exists

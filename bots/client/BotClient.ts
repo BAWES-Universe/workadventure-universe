@@ -423,6 +423,18 @@ export class BotClient {
     }
 
     private async handleJoinSpaceRequest(request: JoinSpaceRequestMessage): Promise<void> {
+        // Skip automatic space joins for bots to prevent unwanted chat bubbles
+        // Bots will explicitly join spaces when their behavior requires it
+        // Proximity spaces are typically named like "proximity-{roomId}" or "bubble-{id}"
+        const isProximitySpace = request.spaceName.includes('proximity') || 
+                                  request.spaceName.includes('bubble') ||
+                                  request.spaceName.includes('jitsi');
+        
+        if (isProximitySpace) {
+            console.log(`[Bot ${this.config.botId}] Skipping automatic join for proximity space: ${request.spaceName}`);
+            return;
+        }
+
         try {
             const spaceUserId = await this.emitJoinSpace(request.spaceName, request.filterType, request.propertiesToSync);
             this.spaces.set(request.spaceName, spaceUserId);
