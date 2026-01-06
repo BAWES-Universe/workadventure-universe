@@ -31,6 +31,8 @@ export class BotManager {
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
+    private verificationInterval: NodeJS.Timeout | null = null;
+    private readonly VERIFICATION_INTERVAL_MS = 60 * 1000; // 1 minute
 
     constructor(adminApiService: AdminApiService, botRegistry: BotRegistry) {
         this.adminApiService = adminApiService;
@@ -58,6 +60,9 @@ export class BotManager {
         // Register this server with capacity
         const capacity = parseInt(process.env.BOT_SERVER_CAPACITY || '100', 10);
         await this.botRegistry.registerServer(capacity);
+
+        // Start room occupancy verification
+        this.startRoomVerification();
 
         // TODO: Load bots from storage (WAM files + Admin API)
         // This will be called on server startup
@@ -601,10 +606,126 @@ export class BotManager {
     }
 
     /**
+     * Query WorkAdventure /rooms endpoint to get actual room occupancy
+     * Returns a map of roomUrl -> userCount (includes bots)
+     */
+    private async queryWorkAdventureRooms(): Promise<Map<string, number>> {
+        const pusherUrl = process.env.PUSHER_URL || process.env.WORKADVENTURE_URL || 'http://localhost:8080';
+        const adminToken = process.env.ADMIN_API_TOKEN || '';
+        
+        if (!adminToken) {
+            console.warn('[BotManager] ADMIN_API_TOKEN not set, skipping room verification');
+            return new Map();
+        }
+
+        try {
+            const url = `${pusherUrl}/rooms`;
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'admin-token': adminToken,
+                },
+            });
+
+            if (!response.ok) {
+                console.warn(`[BotManager] Failed to query WA rooms: ${response.status} ${response.statusText}`);
+                return new Map();
+            }
+
+            const rooms: Record<string, number> = await response.json();
+            const roomMap = new Map<string, number>();
+            
+            for (const [roomUrl, userCount] of Object.entries(rooms)) {
+                roomMap.set(roomUrl, userCount);
+            }
+
+            return roomMap;
+        } catch (error) {
+            console.error('[BotManager] Error querying WA rooms:', error);
+            return new Map();
+        }
+    }
+
+    /**
+     * Verify room occupancy by comparing WA room counts with our bot counts
+     * If WA says room has N users but we have N bots, the room is empty -> despawn
+     */
+    private async verifyRoomOccupancy(): Promise<void> {
+        if (this.roomsWithBots.size === 0) {
+            return; // No rooms to verify
+        }
+
+        const waRooms = await this.queryWorkAdventureRooms();
+        if (waRooms.size === 0) {
+            return; // Query failed or no rooms
+        }
+
+        for (const [roomId, roomState] of this.roomsWithBots.entries()) {
+            const waUserCount = waRooms.get(roomId) || 0;
+            const ourBotCount = roomState.botIds.size;
+
+            // If WA reports exactly our bot count (or less), room is empty
+            if (waUserCount <= ourBotCount) {
+                console.log(
+                    `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${ourBotCount} bots. Despawning bots.`
+                );
+                
+                // Despawn all bots for this room
+                const despawnPromises = Array.from(roomState.botIds).map(botId => 
+                    this.despawnBot(botId).catch(error => {
+                        console.error(`[BotManager] Error despawning bot ${botId} during verification:`, error);
+                    })
+                );
+                
+                await Promise.all(despawnPromises);
+                this.roomsWithBots.delete(roomId);
+            } else {
+                // Room has real players, update our player count estimate
+                const realPlayerCount = waUserCount - ourBotCount;
+                if (realPlayerCount !== roomState.playerCount) {
+                    console.log(
+                        `[BotManager] Room ${roomId} occupancy corrected: ${roomState.playerCount} -> ${realPlayerCount} (WA: ${waUserCount}, bots: ${ourBotCount})`
+                    );
+                    roomState.playerCount = Math.max(0, realPlayerCount);
+                }
+            }
+        }
+    }
+
+    /**
+     * Start periodic room occupancy verification
+     */
+    private startRoomVerification(): void {
+        if (this.verificationInterval) {
+            clearInterval(this.verificationInterval);
+        }
+
+        this.verificationInterval = setInterval(() => {
+            void this.verifyRoomOccupancy();
+        }, this.VERIFICATION_INTERVAL_MS);
+
+        console.log(`[BotManager] Room verification started (every ${this.VERIFICATION_INTERVAL_MS / 1000}s)`);
+    }
+
+    /**
+     * Stop periodic room occupancy verification
+     */
+    private stopRoomVerification(): void {
+        if (this.verificationInterval) {
+            clearInterval(this.verificationInterval);
+            this.verificationInterval = null;
+            console.log('[BotManager] Room verification stopped');
+        }
+    }
+
+    /**
      * Shutdown all bots gracefully
      */
     async shutdown(): Promise<void> {
         console.log('[BotManager] Shutting down all bots...');
+
+        // Stop verification interval
+        this.stopRoomVerification();
 
         const shutdownPromises = Array.from(this.bots.keys()).map(botId => this.despawnBot(botId));
         await Promise.all(shutdownPromises);
