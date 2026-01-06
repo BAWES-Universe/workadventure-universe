@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy, createEventDispatcher } from "svelte";
     import type { BotData } from "../types";
-    import { startWaypointEditing, upsertBot, selectedBotStore } from "../stores/BotEditorStore";
+    import { startWaypointEditing, upsertBot, selectedBotStore, sendLiveUpdate } from "../stores/BotEditorStore";
 
     export let bot: BotData | null = null;
 
@@ -130,6 +130,14 @@
             assignedSpaceRadius = 100;
         }
         updateBot();
+
+        // Send live update to bot-server with the new behavior type
+        if (bot?.id && initialized) {
+            void sendLiveUpdate(bot.id, {
+                behaviorType,
+                behaviorConfig: bot.behaviorConfig,
+            });
+        }
     }
 
     // Handle radius slider change
