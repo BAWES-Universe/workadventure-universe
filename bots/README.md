@@ -71,10 +71,17 @@ bots/
 
 ### 3. Behavior System
 - **Idle**: Stand in place, respond to interactions
-- **Patrol**: Follow predefined routes
+- **Patrol**: Follow predefined routes with smart engagement
+  - Only engages when players actively move into proximity
+  - Walks through idle players without triggering bubbles
+  - Skips waypoint pauses if players nearby
 - **Social**: Actively seek conversations with users
+  - Smart conversation management with memory
+  - Respects player status and cooldowns
+  - Wanders without stopping on idle players
 - **Custom**: Extensible behavior system
 - **Assigned Spaces**: Bots can be assigned to specific areas and will return after conversations
+- **Ghost Mode**: All bots can walk through idle players without engaging
 
 ### 4. Smart Conversation Management
 - **Status Awareness**: Respect player availability status
@@ -82,6 +89,8 @@ bots/
 - **Conversation History**: Track who bot has talked to
 - **Busy Detection**: Detect when players are in conversations
 - **Auto-Return**: Bots automatically return to assigned space after conversations end
+- **Idle Player Detection**: Bots only engage when players actively move into proximity
+- **Ghost Mode**: Bots walk through idle players without triggering UI changes
 
 ### 5. AI Integration
 - **LMStudio**: Initial support for local LLM
@@ -116,6 +125,32 @@ See [docs/README.md](./docs/README.md) for organized documentation.
 - [Horizontal Scaling](./docs/scaling/HORIZONTAL_SCALING.md) - Multi-server setup
 - [Admin API Integration](./docs/admin-api/ADMIN_API_INTEGRATION.md) - Admin API guide
 - [Security Guide](./docs/security/SECURITY.md) - Security best practices
+
+## Current Status
+
+### ✅ Production Ready Features
+- **Core Bot System**: Full WebSocket client with state management
+- **Behavior System**: Idle, Patrol, and Social behaviors fully implemented
+- **Bot Editor UI**: Complete visual editor integrated into map editor
+- **Engagement System**: Smart proximity detection and engagement logic
+- **Viewport System**: Dynamic viewport for accurate player detection
+- **Room Management**: On-demand spawning and automatic cleanup
+- **Admin API Integration**: Configuration tracking and usage metrics
+
+### 🚧 Next Major Milestone: AI Integration
+The bot system is ready for AI provider integration. Infrastructure is in place:
+- Conversation memory system
+- Chat message handling
+- Context management
+- Provider interface ready
+
+**Next Steps:**
+1. Implement `AIProvider` interface
+2. Create `LMStudioProvider` for local LLM
+3. Integrate with conversation memory
+4. Add response generation
+
+See [STATUS.md](./STATUS.md) for detailed status and roadmap.
 
 ## Getting Started
 
