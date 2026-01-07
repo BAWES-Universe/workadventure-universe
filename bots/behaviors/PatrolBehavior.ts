@@ -49,9 +49,8 @@ export class PatrolBehavior extends BaseBehavior {
         if (this.inProximitySpace || this.nearbyPlayers.size > 0 || recentlyLeftSpace) {
             this.bot.stop();
             // Keep facing the closest player while stopped
-            if (this.nearbyPlayers.size > 0) {
-                this.faceClosestPlayer();
-            }
+            // Uses live player list, not nearbyPlayers which can be stale
+            this.faceClosestPlayer();
             this.onBotPositionUpdated();
             return;
         }
@@ -108,8 +107,14 @@ export class PatrolBehavior extends BaseBehavior {
         if (this.bot) {
             this.bot.stop();
             
-            // Face the closest nearby player immediately
+            // Face the closest nearby player - try immediately and after short delay
+            // (player list may not be updated yet when onSpaceJoined fires)
             this.faceClosestPlayer();
+            setTimeout(() => {
+                if (this.bot && this.inProximitySpace) {
+                    this.faceClosestPlayer();
+                }
+            }, 100);
         }
         
         // Send greeting
@@ -127,28 +132,48 @@ export class PatrolBehavior extends BaseBehavior {
     }
     
     /**
-     * Face the closest player in nearbyPlayers
+     * Face the closest player - uses bot's live player list for accuracy
      */
     private faceClosestPlayer(): void {
-        if (!this.bot || this.nearbyPlayers.size === 0) return;
+        if (!this.bot) return;
+        
+        // Use bot's getNearbyPlayers for accurate, live player positions
+        const nearbyPlayers = this.bot.getNearbyPlayers(200);
+        if (nearbyPlayers.length === 0) return;
         
         const botPos = this.bot.getState().getPosition();
         let closestDist = Infinity;
         let closestPos: { x: number; y: number } | null = null;
         
-        for (const [, playerPos] of this.nearbyPlayers) {
-            const dx = playerPos.x - botPos.x;
-            const dy = playerPos.y - botPos.y;
+        for (const player of nearbyPlayers) {
+            const dx = player.position.x - botPos.x;
+            const dy = player.position.y - botPos.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < closestDist) {
                 closestDist = dist;
-                closestPos = playerPos;
+                closestPos = player.position;
             }
         }
         
         if (closestPos) {
-            this.facePosition(closestPos);
-            console.log(`[PatrolBehavior] Facing closest player at (${closestPos.x}, ${closestPos.y})`);
+            // Calculate desired direction
+            const dx = closestPos.x - botPos.x;
+            const dy = closestPos.y - botPos.y;
+            let desiredDirection: PositionMessage_Direction;
+            if (Math.abs(dx) > Math.abs(dy)) {
+                desiredDirection = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+            } else {
+                desiredDirection = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+            }
+            
+            // Only update if direction changed
+            const currentDirection = this.bot.getState().getDirection();
+            if (currentDirection !== desiredDirection) {
+                console.log(`[PatrolBehavior] Facing player: direction ${currentDirection} -> ${desiredDirection}`);
+                this.bot.getState().setDirection(desiredDirection);
+                this.bot.getState().setMoving(false);
+                this.bot.stopAndUpdate();
+            }
         }
     }
 
