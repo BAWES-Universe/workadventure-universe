@@ -525,7 +525,11 @@ export class BotClient {
             console.log(`[Bot ${this.config.botId}] Joined space: ${request.spaceName}, sent media state: off`);
             
             if (this.behavior) {
+                console.log(`[Bot ${this.config.botId}] Calling behavior.onSpaceJoined...`);
                 this.behavior.onSpaceJoined(request.spaceName);
+                console.log(`[Bot ${this.config.botId}] behavior.onSpaceJoined completed`);
+            } else {
+                console.log(`[Bot ${this.config.botId}] No behavior to call onSpaceJoined on!`);
             }
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error joining space:`, error);

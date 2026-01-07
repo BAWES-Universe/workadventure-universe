@@ -80,34 +80,42 @@ export abstract class BaseBehavior {
         const dy = position.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        // Only track players within a reasonable distance to prevent memory leaks
-        const MAX_TRACKING_DISTANCE = 200;
-        if (distance > MAX_TRACKING_DISTANCE) {
-            this.nearbyPlayers.delete(playerId);
-            return;
-        }
-        
-        // Track if player is within proximity
         const wasNearby = this.nearbyPlayers.has(playerId);
-        
-        // Hysteresis: Use smaller radius to enter, larger radius to leave
         const enterRadius = this.PROXIMITY_RADIUS;
         const leaveRadius = this.DISENGAGE_RADIUS;
         
+        // If already engaged with this player, use a much larger leave radius
+        // This prevents disengagement due to bot movement before stopping
+        const effectiveLeaveRadius = wasNearby && this.isEngaged ? leaveRadius * 2 : leaveRadius;
+        
         if (!wasNearby && distance <= enterRadius) {
-            // Player just entered proximity
-            // onPlayerMoved is only called when player moves, so this means player approached bot
+            // Player entered proximity
             this.nearbyPlayers.set(playerId, position);
             console.log(`[Behavior] Player ${playerId} entered proximity (${Math.round(distance)}px) - engaging`);
             this.updateProximityEngagement();
-        } else if (wasNearby && distance > leaveRadius) {
+        } else if (wasNearby && distance > effectiveLeaveRadius) {
             // Player left proximity
             this.nearbyPlayers.delete(playerId);
             console.log(`[Behavior] Player ${playerId} left proximity (${Math.round(distance)}px)`);
             this.updateProximityEngagement();
         } else if (wasNearby) {
-            // Player is still nearby, update their position for facing direction
+            // Player still nearby, update position for facing
             this.nearbyPlayers.set(playerId, position);
+            this.updateProximityEngagement();
+        }
+        // Log current state for debugging
+        if (this.nearbyPlayers.size > 0 || this.isEngaged) {
+            console.log(`[Behavior] State: nearbyPlayers=${this.nearbyPlayers.size}, isEngaged=${this.isEngaged}`);
+        }
+    }
+    
+    /**
+     * Called every frame to update engagement state (for continuous facing updates)
+     * This ensures bots face players even when players stop moving
+     */
+    updateEngagement(): void {
+        if (this.isEngaged && this.nearbyPlayers.size > 0) {
+            // Update engagement to refresh facing direction
             this.updateProximityEngagement();
         }
     }
