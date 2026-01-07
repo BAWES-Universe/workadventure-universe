@@ -59,23 +59,6 @@ export class PatrolBehavior extends BaseBehavior {
                 if (firstPlayer) {
                     this.facePosition(firstPlayer);
                 }
-            } else {
-                // Debug: log when no players found - include bot info
-                if (Math.random() < 0.05) {
-                    const allPlayers = this.bot.getAllPlayers();
-                    const botPos = this.bot.getState().getPosition();
-                    const myUserId = this.bot.getUserId();
-                    const BotClient = require('../client/BotClient').BotClient;
-                    const botIds = BotClient.getBotUserIds();
-                    const playerDetails = allPlayers.map(p => {
-                        const dx = p.position.x - botPos.x;
-                        const dy = p.position.y - botPos.y;
-                        const dist = Math.round(Math.sqrt(dx*dx + dy*dy));
-                        const isBot = botIds.includes(p.userId) ? 'B' : 'P';
-                        return `${p.userId}(${isBot})d=${dist}`;
-                    }).join(', ');
-                    console.log(`[Patrol:${myUserId}] No nearby. total=${allPlayers.length}, [${playerDetails}]`);
-                }
             }
             this.onBotPositionUpdated();
             return;
@@ -122,7 +105,6 @@ export class PatrolBehavior extends BaseBehavior {
      */
     shouldJoinProximitySpace(spaceName: string): boolean {
         // ALWAYS accept - even if bot ref is null, space join is critical
-        console.log(`[PatrolBehavior] Accepting space: ${spaceName} (bot=${this.bot ? 'set' : 'null'})`);
         return true;
     }
 
@@ -130,7 +112,6 @@ export class PatrolBehavior extends BaseBehavior {
         // ANY space join means we're in a bubble - STOP
         this.inProximitySpace = true;
         this.currentSpaceName = spaceName;
-        console.log(`[PatrolBehavior] Joined space: ${spaceName} - STOPPING patrol`);
         if (this.bot) {
             this.bot.stop();
         }
@@ -159,7 +140,6 @@ export class PatrolBehavior extends BaseBehavior {
         // Face the player using their position from the event
         if (this.bot && user.characterPosition) {
             const playerPos = { x: user.characterPosition.x, y: user.characterPosition.y };
-            console.log(`[PatrolBehavior] User ${user.id} joined space, facing them at (${playerPos.x}, ${playerPos.y})`);
             this.facePosition(playerPos);
         }
     }
@@ -171,7 +151,6 @@ export class PatrolBehavior extends BaseBehavior {
         this.spaceLeftTime = Date.now();
         // Note: Don't clear engagedWithUsers here - let onSpaceUserLeft handle that
         // This ensures we still know about users if spaces change quickly
-        console.log(`[PatrolBehavior] Left space: ${spaceName} - will resume patrol after ${this.RESUME_DELAY}ms`);
     }
 
     private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {

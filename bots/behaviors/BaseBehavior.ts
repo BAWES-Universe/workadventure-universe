@@ -343,7 +343,6 @@ export abstract class BaseBehavior {
         const oldDirection = this.bot.getState().getDirection();
         // Only update if direction actually changed
         if (oldDirection !== direction) {
-            console.log(`[Behavior] Facing: ${oldDirection} -> ${direction}`);
             this.bot.getState().setDirection(direction);
             this.bot.getState().setMoving(false);
             this.bot.stopAndUpdate(); // Force immediate position/direction update to server

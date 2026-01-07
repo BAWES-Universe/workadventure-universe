@@ -406,7 +406,6 @@ export class BotClient {
                 break;
 
             case 'userJoinedMessage':
-                console.log(`[Bot ${this.config.botId}] userJoinedMessage: userId=${message.userJoinedMessage.userId}, pos=(${message.userJoinedMessage.position?.x},${message.userJoinedMessage.position?.y})`);
                 this.players.set(message.userJoinedMessage.userId, {
                     userId: message.userJoinedMessage.userId,
                     name: message.userJoinedMessage.name,
@@ -451,7 +450,6 @@ export class BotClient {
                 break;
 
             case 'userLeftMessage':
-                console.log(`[Bot ${this.config.botId}] userLeftMessage: userId=${message.userLeftMessage.userId}`);
                 this.players.delete(message.userLeftMessage.userId);
                 break;
 
@@ -470,7 +468,6 @@ export class BotClient {
                 break;
 
             case 'addSpaceUserMessage':
-                console.log(`[Bot ${this.config.botId}] Received addSpaceUserMessage: user=${message.addSpaceUserMessage.user?.id} in space ${message.addSpaceUserMessage.spaceName}`);
                 if (this.behavior) {
                     this.behavior.onSpaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 }
