@@ -90,12 +90,12 @@ export class PatrolBehavior extends BaseBehavior {
         super.onPlayerMoved(playerId, position);
     }
 
-    // Like social bot: always accept (use default from BaseBehavior)
-    // shouldJoinProximitySpace is NOT overridden - uses default true
+    // Like social bot: always accept spaces (use default from BaseBehavior = true)
+    // This prevents server from repeatedly trying to create the space
 
     onSpaceJoined(spaceName: string): void {
-        // Like social bot: if no nearby players, do nothing - just return
-        // Bot keeps walking, space is joined but we don't engage
+        // Like social bot: if no nearby players (bot walked into idle player),
+        // just return - don't engage, keep walking
         if (this.nearbyPlayers.size === 0) return;
         
         // Player actively approached us - engage
@@ -143,6 +143,16 @@ export class PatrolBehavior extends BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance < 10) {
+            // Check if there are any players nearby (even idle ones)
+            // If so, skip the pause to avoid triggering bubble with idle players
+            const playersNearby = this.bot.getNearbyPlayers(100);
+            if (playersNearby.length > 0) {
+                // Player nearby - don't stop, just advance to next waypoint
+                this.advanceToNextWaypoint(config);
+                return;
+            }
+            
+            // No players nearby - safe to pause
             this.bot.stop();
             this.isPaused = true;
             this.pauseStartTime = Date.now();
