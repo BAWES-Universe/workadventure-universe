@@ -28,6 +28,7 @@ export class PatrolBehavior extends BaseBehavior {
     private inProximitySpace: boolean = false; // Track if we're in a bubble/proximity space
     private spaceLeftTime: number = 0; // When we left the last space
     private readonly RESUME_DELAY = 500; // Wait 500ms after leaving space before resuming
+    private currentSpaceName: string = ''; // Current space we're in
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -48,9 +49,34 @@ export class PatrolBehavior extends BaseBehavior {
         
         if (this.inProximitySpace || this.nearbyPlayers.size > 0 || recentlyLeftSpace) {
             this.bot.stop();
-            // Keep facing the closest player while stopped
-            // Uses live player list, not nearbyPlayers which can be stale
-            this.faceClosestPlayer();
+            // Keep facing the closest player using bot's player list (last known positions)
+            const nearbyPlayers = this.bot.getNearbyPlayers(1000);
+            if (nearbyPlayers.length > 0) {
+                this.facePosition(nearbyPlayers[0].position);
+            } else if (this.nearbyPlayers.size > 0) {
+                // Fallback to nearbyPlayers
+                const firstPlayer = this.nearbyPlayers.values().next().value;
+                if (firstPlayer) {
+                    this.facePosition(firstPlayer);
+                }
+            } else {
+                // Debug: log when no players found - include bot info
+                if (Math.random() < 0.05) {
+                    const allPlayers = this.bot.getAllPlayers();
+                    const botPos = this.bot.getState().getPosition();
+                    const myUserId = this.bot.getUserId();
+                    const BotClient = require('../client/BotClient').BotClient;
+                    const botIds = BotClient.getBotUserIds();
+                    const playerDetails = allPlayers.map(p => {
+                        const dx = p.position.x - botPos.x;
+                        const dy = p.position.y - botPos.y;
+                        const dist = Math.round(Math.sqrt(dx*dx + dy*dy));
+                        const isBot = botIds.includes(p.userId) ? 'B' : 'P';
+                        return `${p.userId}(${isBot})d=${dist}`;
+                    }).join(', ');
+                    console.log(`[Patrol:${myUserId}] No nearby. total=${allPlayers.length}, [${playerDetails}]`);
+                }
+            }
             this.onBotPositionUpdated();
             return;
         }
@@ -103,21 +129,13 @@ export class PatrolBehavior extends BaseBehavior {
     onSpaceJoined(spaceName: string): void {
         // ANY space join means we're in a bubble - STOP
         this.inProximitySpace = true;
+        this.currentSpaceName = spaceName;
         console.log(`[PatrolBehavior] Joined space: ${spaceName} - STOPPING patrol`);
         if (this.bot) {
             this.bot.stop();
-            
-            // Face the closest nearby player - try immediately and after short delay
-            // (player list may not be updated yet when onSpaceJoined fires)
-            this.faceClosestPlayer();
-            setTimeout(() => {
-                if (this.bot && this.inProximitySpace) {
-                    this.faceClosestPlayer();
-                }
-            }, 100);
         }
         
-        // Send greeting
+        // Send greeting after a short delay
         if (this.bot) {
             setTimeout(() => {
                 if (this.bot && this.inProximitySpace) {
@@ -132,60 +150,28 @@ export class PatrolBehavior extends BaseBehavior {
     }
     
     /**
-     * Face the closest player - uses bot's live player list for accuracy
+     * Override to face player when they join the space - this gives us their position directly
      */
-    private faceClosestPlayer(): void {
-        if (!this.bot) return;
+    onSpaceUserJoined(spaceName: string, user: any): void {
+        // Call base to track engagement
+        super.onSpaceUserJoined(spaceName, user);
         
-        // Use bot's getNearbyPlayers for accurate, live player positions
-        const nearbyPlayers = this.bot.getNearbyPlayers(200);
-        if (nearbyPlayers.length === 0) return;
-        
-        const botPos = this.bot.getState().getPosition();
-        let closestDist = Infinity;
-        let closestPos: { x: number; y: number } | null = null;
-        
-        for (const player of nearbyPlayers) {
-            const dx = player.position.x - botPos.x;
-            const dy = player.position.y - botPos.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < closestDist) {
-                closestDist = dist;
-                closestPos = player.position;
-            }
-        }
-        
-        if (closestPos) {
-            // Calculate desired direction
-            const dx = closestPos.x - botPos.x;
-            const dy = closestPos.y - botPos.y;
-            let desiredDirection: PositionMessage_Direction;
-            if (Math.abs(dx) > Math.abs(dy)) {
-                desiredDirection = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
-            } else {
-                desiredDirection = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
-            }
-            
-            // Only update if direction changed
-            const currentDirection = this.bot.getState().getDirection();
-            if (currentDirection !== desiredDirection) {
-                console.log(`[PatrolBehavior] Facing player: direction ${currentDirection} -> ${desiredDirection}`);
-                this.bot.getState().setDirection(desiredDirection);
-                this.bot.getState().setMoving(false);
-                this.bot.stopAndUpdate();
-            }
+        // Face the player using their position from the event
+        if (this.bot && user.characterPosition) {
+            const playerPos = { x: user.characterPosition.x, y: user.characterPosition.y };
+            console.log(`[PatrolBehavior] User ${user.id} joined space, facing them at (${playerPos.x}, ${playerPos.y})`);
+            this.facePosition(playerPos);
         }
     }
 
     onSpaceLeft(spaceName: string): void {
-        // Left space - clear ALL engagement state and resume patrol after delay
+        // Left space - resume patrol after delay
         this.inProximitySpace = false;
+        this.currentSpaceName = '';
         this.spaceLeftTime = Date.now();
-        // Clear base behavior engagement states to ensure clean state
-        this.isEngaged = false;
-        this.nearbyPlayers.clear();
-        this.engagedWithUsers.clear();
-        console.log(`[PatrolBehavior] Left space: ${spaceName} - cleared all engagement, will resume patrol after ${this.RESUME_DELAY}ms`);
+        // Note: Don't clear engagedWithUsers here - let onSpaceUserLeft handle that
+        // This ensures we still know about users if spaces change quickly
+        console.log(`[PatrolBehavior] Left space: ${spaceName} - will resume patrol after ${this.RESUME_DELAY}ms`);
     }
 
     private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {

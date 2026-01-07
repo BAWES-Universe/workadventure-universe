@@ -65,6 +65,13 @@ export class BotClient {
     static isBot(userId: number): boolean {
         return BotClient.botUserIds.has(userId);
     }
+    
+    /**
+     * Get all bot user IDs (for debugging)
+     */
+    static getBotUserIds(): number[] {
+        return Array.from(BotClient.botUserIds);
+    }
 
     /**
      * Generate a JWT token for this bot
@@ -99,10 +106,14 @@ export class BotClient {
             }
             params.set('x', Math.floor(this.config.position.x).toString());
             params.set('y', Math.floor(this.config.position.y).toString());
-            params.set('top', Math.floor(this.config.viewport.top).toString());
-            params.set('bottom', Math.floor(this.config.viewport.bottom).toString());
-            params.set('left', Math.floor(this.config.viewport.left).toString());
-            params.set('right', Math.floor(this.config.viewport.right).toString());
+            // Viewport should be centered on bot position with large radius to see all nearby players
+            const viewportRadius = 2000; // Large radius to see players even when they move around
+            const botX = this.config.position.x;
+            const botY = this.config.position.y;
+            params.set('top', Math.floor(Math.max(0, botY - viewportRadius)).toString());
+            params.set('bottom', Math.floor(botY + viewportRadius).toString());
+            params.set('left', Math.floor(Math.max(0, botX - viewportRadius)).toString());
+            params.set('right', Math.floor(botX + viewportRadius).toString());
             if (this.config.companionTextureId) {
                 params.set('companionTextureId', this.config.companionTextureId);
             }
@@ -277,12 +288,34 @@ export class BotClient {
      */
     getNearbyPlayers(radius: number): PlayerInfo[] {
         const botPos = this.state.getPosition();
-        return Array.from(this.players.values()).filter((player) => {
+        const result: PlayerInfo[] = [];
+        
+        for (const player of this.players.values()) {
+            // Skip bots - but log if we're skipping
+            if (BotClient.isBot(player.userId)) {
+                continue;
+            }
+            // Skip players at (0, 0) - likely invalid position data
+            if (player.position.x === 0 && player.position.y === 0) {
+                continue;
+            }
+            
             const dx = player.position.x - botPos.x;
             const dy = player.position.y - botPos.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
-            return distance <= radius;
-        });
+            if (distance <= radius) {
+                result.push(player);
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Get all players in the room (for debugging)
+     */
+    getAllPlayers(): PlayerInfo[] {
+        return Array.from(this.players.values());
     }
 
     /**
@@ -373,6 +406,7 @@ export class BotClient {
                 break;
 
             case 'userJoinedMessage':
+                console.log(`[Bot ${this.config.botId}] userJoinedMessage: userId=${message.userJoinedMessage.userId}, pos=(${message.userJoinedMessage.position?.x},${message.userJoinedMessage.position?.y})`);
                 this.players.set(message.userJoinedMessage.userId, {
                     userId: message.userJoinedMessage.userId,
                     name: message.userJoinedMessage.name,
@@ -417,6 +451,7 @@ export class BotClient {
                 break;
 
             case 'userLeftMessage':
+                console.log(`[Bot ${this.config.botId}] userLeftMessage: userId=${message.userLeftMessage.userId}`);
                 this.players.delete(message.userLeftMessage.userId);
                 break;
 
@@ -435,6 +470,7 @@ export class BotClient {
                 break;
 
             case 'addSpaceUserMessage':
+                console.log(`[Bot ${this.config.botId}] Received addSpaceUserMessage: user=${message.addSpaceUserMessage.user?.id} in space ${message.addSpaceUserMessage.spaceName}`);
                 if (this.behavior) {
                     this.behavior.onSpaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
                 }
@@ -681,10 +717,12 @@ export class BotClient {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;
-        const top = this.config.viewport?.top ?? 0;
-        const bottom = this.config.viewport?.bottom ?? 1000;
-        const left = this.config.viewport?.left ?? 0;
-        const right = this.config.viewport?.right ?? 1000;
+        // Update viewport to be centered on current position with large radius
+        const viewportRadius = 2000;
+        const top = Math.max(0, y - viewportRadius);
+        const bottom = y + viewportRadius;
+        const left = Math.max(0, x - viewportRadius);
+        const right = x + viewportRadius;
         
         // Ensure direction is a valid enum value
         const safeDirection = typeof direction === 'number' ? direction : PositionMessage_Direction.DOWN;

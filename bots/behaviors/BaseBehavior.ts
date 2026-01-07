@@ -340,10 +340,14 @@ export abstract class BaseBehavior {
             direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
         }
 
-        // Update bot direction without moving and send immediately
-        this.bot.getState().setDirection(direction);
-        this.bot.getState().setMoving(false);
-        this.bot.stopAndUpdate(); // Force immediate position/direction update to server
+        const oldDirection = this.bot.getState().getDirection();
+        // Only update if direction actually changed
+        if (oldDirection !== direction) {
+            console.log(`[Behavior] Facing: ${oldDirection} -> ${direction}`);
+            this.bot.getState().setDirection(direction);
+            this.bot.getState().setMoving(false);
+            this.bot.stopAndUpdate(); // Force immediate position/direction update to server
+        }
     }
 
     /**
