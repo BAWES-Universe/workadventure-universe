@@ -39,15 +39,14 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
-        // STOP CONDITIONS: Any of these means stop moving
-        // 1. In a proximity space (bubble active)
-        // 2. isEngaged from base behavior
-        // 3. nearbyPlayers has entries
-        // 4. Recently left a space (give time for re-engagement)
+        // STOP CONDITIONS:
+        // 1. In proximity space (bubble active) - authoritative
+        // 2. nearbyPlayers detected - backup signal when space join is delayed
+        // 3. Recently left space - give time for re-engagement
         const timeSinceSpaceLeft = Date.now() - this.spaceLeftTime;
         const recentlyLeftSpace = this.spaceLeftTime > 0 && timeSinceSpaceLeft < this.RESUME_DELAY;
         
-        if (this.inProximitySpace || this.isEngaged || this.nearbyPlayers.size > 0 || recentlyLeftSpace) {
+        if (this.inProximitySpace || this.nearbyPlayers.size > 0 || recentlyLeftSpace) {
             this.bot.stop();
             this.onBotPositionUpdated();
             return;
@@ -93,10 +92,8 @@ export class PatrolBehavior extends BaseBehavior {
      * The bot will resume patrol when the space is left.
      */
     shouldJoinProximitySpace(spaceName: string): boolean {
-        if (!this.bot) return false;
-        
-        // Always accept - let onSpaceJoined handle stopping
-        console.log(`[PatrolBehavior] Accepting space: ${spaceName}`);
+        // ALWAYS accept - even if bot ref is null, space join is critical
+        console.log(`[PatrolBehavior] Accepting space: ${spaceName} (bot=${this.bot ? 'set' : 'null'})`);
         return true;
     }
 
@@ -123,17 +120,21 @@ export class PatrolBehavior extends BaseBehavior {
     }
 
     onSpaceLeft(spaceName: string): void {
-        // Left space - record time and can resume patrol after delay
+        // Left space - clear ALL engagement state and resume patrol after delay
         this.inProximitySpace = false;
         this.spaceLeftTime = Date.now();
-        console.log(`[PatrolBehavior] Left space: ${spaceName} - will resume patrol after ${this.RESUME_DELAY}ms`);
+        // Clear base behavior engagement states to ensure clean state
+        this.isEngaged = false;
+        this.nearbyPlayers.clear();
+        this.engagedWithUsers.clear();
+        console.log(`[PatrolBehavior] Left space: ${spaceName} - cleared all engagement, will resume patrol after ${this.RESUME_DELAY}ms`);
     }
 
     private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {
         if (!this.bot || !this.targetWaypoint) return;
         
-        // Don't move if in proximity space, engaged, or nearby players
-        if (this.inProximitySpace || this.isEngaged || this.nearbyPlayers.size > 0) {
+        // Don't move if in proximity space OR players nearby
+        if (this.inProximitySpace || this.nearbyPlayers.size > 0) {
             this.bot.stop();
             return;
         }
