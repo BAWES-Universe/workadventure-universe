@@ -26,6 +26,8 @@ export class PatrolBehavior extends BaseBehavior {
     private pauseStartTime: number = 0;
     private targetWaypoint: PositionInterface | null = null;
     private inProximitySpace: boolean = false; // Track if we're in a bubble/proximity space
+    private spaceLeftTime: number = 0; // When we left the last space
+    private readonly RESUME_DELAY = 500; // Wait 500ms after leaving space before resuming
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -41,7 +43,11 @@ export class PatrolBehavior extends BaseBehavior {
         // 1. In a proximity space (bubble active)
         // 2. isEngaged from base behavior
         // 3. nearbyPlayers has entries
-        if (this.inProximitySpace || this.isEngaged || this.nearbyPlayers.size > 0) {
+        // 4. Recently left a space (give time for re-engagement)
+        const timeSinceSpaceLeft = Date.now() - this.spaceLeftTime;
+        const recentlyLeftSpace = this.spaceLeftTime > 0 && timeSinceSpaceLeft < this.RESUME_DELAY;
+        
+        if (this.inProximitySpace || this.isEngaged || this.nearbyPlayers.size > 0 || recentlyLeftSpace) {
             this.bot.stop();
             this.onBotPositionUpdated();
             return;
@@ -117,9 +123,10 @@ export class PatrolBehavior extends BaseBehavior {
     }
 
     onSpaceLeft(spaceName: string): void {
-        // Left space - can resume patrol
+        // Left space - record time and can resume patrol after delay
         this.inProximitySpace = false;
-        console.log(`[PatrolBehavior] Left space: ${spaceName} - can resume patrol`);
+        this.spaceLeftTime = Date.now();
+        console.log(`[PatrolBehavior] Left space: ${spaceName} - will resume patrol after ${this.RESUME_DELAY}ms`);
     }
 
     private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {
