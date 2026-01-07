@@ -48,6 +48,10 @@ export class PatrolBehavior extends BaseBehavior {
         
         if (this.inProximitySpace || this.nearbyPlayers.size > 0 || recentlyLeftSpace) {
             this.bot.stop();
+            // Keep facing the closest player while stopped
+            if (this.nearbyPlayers.size > 0) {
+                this.faceClosestPlayer();
+            }
             this.onBotPositionUpdated();
             return;
         }
@@ -103,6 +107,9 @@ export class PatrolBehavior extends BaseBehavior {
         console.log(`[PatrolBehavior] Joined space: ${spaceName} - STOPPING patrol`);
         if (this.bot) {
             this.bot.stop();
+            
+            // Face the closest nearby player immediately
+            this.faceClosestPlayer();
         }
         
         // Send greeting
@@ -116,6 +123,32 @@ export class PatrolBehavior extends BaseBehavior {
                     }
                 }
             }, 300);
+        }
+    }
+    
+    /**
+     * Face the closest player in nearbyPlayers
+     */
+    private faceClosestPlayer(): void {
+        if (!this.bot || this.nearbyPlayers.size === 0) return;
+        
+        const botPos = this.bot.getState().getPosition();
+        let closestDist = Infinity;
+        let closestPos: { x: number; y: number } | null = null;
+        
+        for (const [, playerPos] of this.nearbyPlayers) {
+            const dx = playerPos.x - botPos.x;
+            const dy = playerPos.y - botPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closestPos = playerPos;
+            }
+        }
+        
+        if (closestPos) {
+            this.facePosition(closestPos);
+            console.log(`[PatrolBehavior] Facing closest player at (${closestPos.x}, ${closestPos.y})`);
         }
     }
 
