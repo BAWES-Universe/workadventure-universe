@@ -38,11 +38,36 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
+        // If following a path, let BotClient handle movement
+        if (this.bot.getIsFollowingPath()) {
+            this.bot.updatePathFollowing(deltaTime);
+            
+            // Check if path completed
+            if (!this.bot.getIsFollowingPath()) {
+                // Reached waypoint
+                const playersNearby = this.bot.getNearbyPlayers(100);
+                if (playersNearby.length > 0) {
+                    // Player nearby - don't stop, just advance to next waypoint
+                    this.advanceToNextWaypoint(config);
+                } else {
+                    // No players nearby - safe to pause
+                    this.isPaused = true;
+                    this.pauseStartTime = Date.now();
+                }
+            }
+            this.onBotPositionUpdated();
+            return;
+        }
+        
         // STOP only if: actively engaged (nearbyPlayers from player movement)
         const timeSinceSpaceLeft = Date.now() - this.spaceLeftTime;
         const recentlyLeftSpace = this.spaceLeftTime > 0 && timeSinceSpaceLeft < this.RESUME_DELAY;
         
         if (this.nearbyPlayers.size > 0 || recentlyLeftSpace) {
+            // Cancel pathfinding if active
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
             this.bot.stop();
             // Face closest player
             if (this.nearbyPlayers.size > 0) {
@@ -82,7 +107,13 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         if (this.targetWaypoint) {
-            this.moveTowardsWaypoint(config);
+            // Only start a new path if we're not already following one
+            if (!this.bot.getIsFollowingPath()) {
+                // Move towards waypoint (async, but we don't await - it will handle pathfinding internally)
+                this.moveTowardsWaypoint(config).catch(error => {
+                    console.error(`[PatrolBehavior] Error moving to waypoint:`, error);
+                });
+            }
         }
     }
 
@@ -128,7 +159,7 @@ export class PatrolBehavior extends BaseBehavior {
         this.spaceLeftTime = Date.now();
     }
 
-    private moveTowardsWaypoint(config: PatrolBehaviorConfig): void {
+    private async moveTowardsWaypoint(config: PatrolBehaviorConfig): Promise<void> {
         if (!this.bot || !this.targetWaypoint) return;
         
         // Don't move if engaged
@@ -159,6 +190,17 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
+        // Try pathfinding first if available
+        if (this.bot.hasPathfinding()) {
+            const success = await this.bot.moveToWithPathfinding(this.targetWaypoint.x, this.targetWaypoint.y);
+            if (success) {
+                // Pathfinding will handle movement via updatePathFollowing
+                return;
+            }
+            // Pathfinding failed, fall through to direct movement
+        }
+
+        // Fallback to direct movement
         const angle = Math.atan2(dy, dx);
         const newX = botPos.x + Math.cos(angle) * config.speed * 0.016;
         const newY = botPos.y + Math.sin(angle) * config.speed * 0.016;

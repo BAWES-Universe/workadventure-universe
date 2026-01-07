@@ -23,6 +23,7 @@ import {
 import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { BotState } from './BotState';
 import type { BaseBehavior } from '../behaviors/BaseBehavior';
+import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -54,6 +55,12 @@ export class BotClient {
     private pendingQueries: Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }> = new Map();
     private lastSentDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
     private lastSentMoving: boolean = false;
+
+    // Pathfinding support
+    private pathfindingManager?: BotPathfindingManager;
+    private currentPath: PositionInterface[] = [];
+    private pathIndex: number = 0;
+    private isFollowingPath: boolean = false;
 
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
@@ -204,7 +211,12 @@ export class BotClient {
             return;
         }
 
-        // Update behavior
+        // Update path following if active (this handles movement)
+        if (this.isFollowingPath) {
+            this.updatePathFollowing(deltaTime);
+        }
+
+        // Update behavior (behavior can still control movement if not following path)
         this.behavior.update(deltaTime);
 
         // Update position/direction if changed
@@ -251,6 +263,161 @@ export class BotClient {
         this.config.position = position;
         this.lastSentDirection = direction;
         this.lastSentMoving = false;
+    }
+
+    /**
+     * Initialize pathfinding with collision grid
+     */
+    initializePathfinding(collisionGrid: number[][], tileDimensions: { width: number; height: number }): void {
+        this.pathfindingManager = new BotPathfindingManager(collisionGrid, tileDimensions);
+    }
+
+    /**
+     * Check if pathfinding is available
+     */
+    hasPathfinding(): boolean {
+        return this.pathfindingManager !== undefined;
+    }
+
+    /**
+     * Check if bot is currently following a path
+     */
+    getIsFollowingPath(): boolean {
+        return this.isFollowingPath;
+    }
+
+    private lastPathTarget: { x: number; y: number } | null = null;
+    private readonly PATH_RECALC_THRESHOLD = 100; // Only recalculate if target moved >100 pixels
+
+    /**
+     * Move to position using pathfinding
+     * Returns true if pathfinding was used, false if fallback to direct movement
+     */
+    async moveToWithPathfinding(x: number, y: number): Promise<boolean> {
+        if (!this.pathfindingManager) {
+            return false;
+        }
+
+        // Don't recalculate if we're already following a path to a similar target
+        if (this.isFollowingPath && this.lastPathTarget) {
+            const targetDx = x - this.lastPathTarget.x;
+            const targetDy = y - this.lastPathTarget.y;
+            const targetDistance = Math.sqrt(targetDx * targetDx + targetDy * targetDy);
+            
+            if (targetDistance < this.PATH_RECALC_THRESHOLD) {
+                // Target hasn't moved much, keep following current path
+                return true;
+            }
+        }
+
+        const botPos = this.state.getPosition();
+        
+        // Check if we're already close to the target
+        const dx = x - botPos.x;
+        const dy = y - botPos.y;
+        const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distanceToTarget < 20) {
+            // Already close enough, no need for pathfinding
+            return false;
+        }
+
+        const path = await this.pathfindingManager.findPath(botPos, { x, y }, true);
+
+        if (path.length === 0) {
+            // No path found, fall back to direct movement
+            return false;
+        }
+
+        // Only update path if we have a valid path with at least 2 waypoints
+        if (path.length < 2) {
+            return false;
+        }
+
+        this.currentPath = path;
+        this.pathIndex = 0;
+        this.isFollowingPath = true;
+        this.lastPathTarget = { x, y };
+        return true;
+    }
+
+    /**
+     * Cancel current pathfinding
+     */
+    cancelPathfinding(): void {
+        this.isFollowingPath = false;
+        this.currentPath = [];
+        this.pathIndex = 0;
+        this.lastPathTarget = null;
+    }
+
+    /**
+     * Update path following (call in update loop)
+     */
+    updatePathFollowing(deltaTime: number): void {
+        if (!this.isFollowingPath || this.currentPath.length === 0) {
+            return;
+        }
+
+        const botPos = this.state.getPosition();
+        
+        // Make sure we have a valid path index
+        if (this.pathIndex >= this.currentPath.length) {
+            this.isFollowingPath = false;
+            this.currentPath = [];
+            this.pathIndex = 0;
+            this.lastPathTarget = null;
+            this.stop();
+            return;
+        }
+
+        const targetPos = this.currentPath[this.pathIndex];
+
+        // Check if reached current waypoint
+        const dx = targetPos.x - botPos.x;
+        const dy = targetPos.y - botPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // Use larger threshold to prevent oscillation (20 pixels)
+        if (distance < 20) {
+            this.pathIndex++;
+            if (this.pathIndex >= this.currentPath.length) {
+                // Reached destination
+                this.isFollowingPath = false;
+                this.currentPath = [];
+                this.pathIndex = 0;
+                this.lastPathTarget = null;
+                this.stop();
+                return;
+            }
+        }
+
+        // Move towards current waypoint
+        const nextTarget = this.currentPath[this.pathIndex];
+        const angle = Math.atan2(nextTarget.y - botPos.y, nextTarget.x - botPos.x);
+        
+        // Use behavior's speed if available, otherwise default to 50 (chill walking speed)
+        // Match old direct movement calculation exactly: speed * 0.016 per frame
+        // This maintains the same movement speed as before pathfinding
+        const speed = (this.behavior as any)?.config?.speed || 50;
+        const moveDistance = speed * 0.016; // Same as old direct movement calculation
+        
+        // Cap movement to prevent overshooting waypoint
+        const cappedDistance = Math.min(moveDistance, distance);
+        const newX = botPos.x + Math.cos(angle) * cappedDistance;
+        const newY = botPos.y + Math.sin(angle) * cappedDistance;
+
+        // Determine direction based on movement
+        const nextDx = nextTarget.x - botPos.x;
+        const nextDy = nextTarget.y - botPos.y;
+        let direction = PositionMessage_Direction.DOWN;
+        if (Math.abs(nextDx) > Math.abs(nextDy)) {
+            direction = nextDx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+        } else {
+            direction = nextDy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+        }
+
+        this.moveTo(newX, newY, direction);
     }
 
     /**

@@ -5,6 +5,7 @@
 import { BotClient } from '../client/BotClient';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
+import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
 
 export interface BotInstance {
@@ -28,6 +29,7 @@ export class BotManager {
     private bots: Map<string, BotInstance> = new Map();
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
+    private mapDataService: MapDataService;
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
@@ -37,6 +39,7 @@ export class BotManager {
     constructor(adminApiService: AdminApiService, botRegistry: BotRegistry) {
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
+        this.mapDataService = new MapDataService();
     }
     
     /**
@@ -215,6 +218,12 @@ export class BotManager {
         // Connect bot
         try {
             await client.connect();
+            
+            // Initialize pathfinding after connection (non-blocking)
+            this.initializePathfinding(client, config.roomUrl).catch(error => {
+                console.warn(`[BotManager] Failed to initialize pathfinding for bot ${botId}:`, error);
+                // Continue without pathfinding - graceful degradation
+            });
             
             const instance: BotInstance = {
                 botId,
@@ -734,6 +743,24 @@ export class BotManager {
             clearInterval(this.verificationInterval);
             this.verificationInterval = null;
             console.log('[BotManager] Room verification stopped');
+        }
+    }
+
+    /**
+     * Initialize pathfinding for a bot
+     */
+    private async initializePathfinding(client: BotClient, roomUrl: string): Promise<void> {
+        try {
+            const mapData = await this.mapDataService.getMapData(roomUrl);
+            if (mapData && mapData.collisionGrid && mapData.tileDimensions) {
+                client.initializePathfinding(mapData.collisionGrid, mapData.tileDimensions);
+                console.log(`[BotManager] Pathfinding initialized for room ${roomUrl}`);
+            } else {
+                console.log(`[BotManager] No collision data available for room ${roomUrl}, pathfinding disabled`);
+            }
+        } catch (error) {
+            console.error(`[BotManager] Error initializing pathfinding for room ${roomUrl}:`, error);
+            throw error;
         }
     }
 

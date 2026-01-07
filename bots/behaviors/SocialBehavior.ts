@@ -55,6 +55,13 @@ export class SocialBehavior extends BaseBehavior {
         // Clean up old conversations
         this.cleanupConversations(config, currentTime);
 
+        // If following a path, let BotClient handle movement
+        if (this.bot.getIsFollowingPath()) {
+            this.bot.updatePathFollowing(deltaTime);
+            this.onBotPositionUpdated();
+            return;
+        }
+
         // If engaged in conversation, stop moving and face the player
         if (this.isEngaged) {
             this.bot.stop();
@@ -70,9 +77,15 @@ export class SocialBehavior extends BaseBehavior {
 
         // Handle movement
         if (this.targetPlayerId) {
-            this.approachPlayer(this.targetPlayerId, config);
+            // Approach player (async, but we don't await - it will handle pathfinding internally)
+            this.approachPlayer(this.targetPlayerId, config).catch(error => {
+                console.error(`[SocialBehavior] Error approaching player:`, error);
+            });
         } else {
-            this.wander(config, deltaTime);
+            // Wander (async, but we don't await - it will handle pathfinding internally)
+            this.wander(config, deltaTime).catch(error => {
+                console.error(`[SocialBehavior] Error wandering:`, error);
+            });
         }
         
         // Track bot position after movement
@@ -223,7 +236,7 @@ export class SocialBehavior extends BaseBehavior {
         return true;
     }
 
-    private approachPlayer(playerId: number, config: SocialBehaviorConfig): void {
+    private async approachPlayer(playerId: number, config: SocialBehaviorConfig): Promise<void> {
         if (!this.bot) return;
 
         const player = this.bot.getPlayerInfo(playerId);
@@ -244,7 +257,17 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        // Move towards player
+        // Try pathfinding first if available
+        if (this.bot.hasPathfinding()) {
+            const success = await this.bot.moveToWithPathfinding(player.position.x, player.position.y);
+            if (success) {
+                // Pathfinding will handle movement via updatePathFollowing
+                return;
+            }
+            // Pathfinding failed, fall through to direct movement
+        }
+
+        // Fallback to direct movement
         const angle = Math.atan2(dy, dx);
         const newX = botPos.x + Math.cos(angle) * config.wanderSpeed * 0.016; // Assuming 60fps
         const newY = botPos.y + Math.sin(angle) * config.wanderSpeed * 0.016;
@@ -260,7 +283,7 @@ export class SocialBehavior extends BaseBehavior {
         this.bot.moveTo(newX, newY, direction);
     }
 
-    private wander(config: SocialBehaviorConfig, deltaTime: number): void {
+    private async wander(config: SocialBehaviorConfig, deltaTime: number): Promise<void> {
         if (!this.bot) return;
 
         // If bot has assigned space and is outside it, return first
@@ -288,6 +311,17 @@ export class SocialBehavior extends BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance > 10) {
+            // Try pathfinding first if available
+            if (this.bot.hasPathfinding()) {
+                const success = await this.bot.moveToWithPathfinding(this.wanderTarget.x, this.wanderTarget.y);
+                if (success) {
+                    // Pathfinding will handle movement via updatePathFollowing
+                    return;
+                }
+                // Pathfinding failed, fall through to direct movement
+            }
+
+            // Fallback to direct movement
             const angle = Math.atan2(dy, dx);
             const newX = botPos.x + Math.cos(angle) * config.wanderSpeed * 0.016;
             const newY = botPos.y + Math.sin(angle) * config.wanderSpeed * 0.016;
