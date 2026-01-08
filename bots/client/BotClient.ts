@@ -73,11 +73,11 @@ export class BotClient {
     private lastPathRecalcTime: number = 0;
     private lastPathEndTime: number = 0; // Track when path ended to prevent immediate recalculation
     private readonly PATH_RECALC_COOLDOWN = 500; // Minimum 500ms between recalculations
-    private readonly PATH_END_COOLDOWN = 300; // Minimum 300ms before creating new path after one ends
+    private readonly PATH_END_COOLDOWN = 1000; // Minimum 1 second before creating new path after one ends/cancels
     private stuckDetectionTime: number = 0;
     private lastPosition: PositionInterface | null = null;
-    private readonly STUCK_THRESHOLD = 5; // Pixels
-    private readonly STUCK_TIME = 2000; // 2 seconds (increased from 1s to prevent false positives)
+    private readonly STUCK_THRESHOLD = 10; // Pixels - increased to account for slow movement
+    private readonly STUCK_TIME = 4000; // 4 seconds - give bots more time to start moving
     private debugFrameCount: number = 0; // For debug logging
 
     constructor(private config: BotConfig) {
@@ -379,9 +379,13 @@ export class BotClient {
             return true; // Keep following current path
         }
         
-        // Don't create new path too soon after previous path ended (prevents glitching)
-        if (!this.isFollowingPath && now - this.lastPathEndTime < this.PATH_END_COOLDOWN) {
-            return false; // Too soon after path ended, skip pathfinding
+        // Don't create new path too soon after previous path ended/canceled (prevents glitching)
+        if (!this.isFollowingPath && this.lastPathEndTime > 0) {
+            const timeSincePathEnd = now - this.lastPathEndTime;
+            if (timeSincePathEnd < this.PATH_END_COOLDOWN) {
+                // Too soon after path ended, skip pathfinding - let behavior use direct movement
+                return false;
+            }
         }
 
         // Don't recalculate if we're already following a path to a similar target
@@ -467,6 +471,8 @@ export class BotClient {
         this.pathIndex = 0;
         this.lastPathTarget = null;
         this.lastPathEndTime = Date.now(); // Track when path was canceled
+        this.stuckDetectionTime = 0; // Reset stuck detection
+        this.lastPosition = null; // Reset position tracking
     }
 
     /**
@@ -480,40 +486,10 @@ export class BotClient {
 
         const botPos = this.state.getPosition();
         
-        // Stuck detection - if not moving for >3 seconds, cancel pathfinding
-        // BUT: Only check after we've actually tried to move (give it time to start)
-        if (this.lastPosition) {
-            const movedDistance = Math.sqrt(
-                Math.pow(botPos.x - this.lastPosition.x, 2) + 
-                Math.pow(botPos.y - this.lastPosition.y, 2)
-            );
-            
-            if (movedDistance < this.STUCK_THRESHOLD) {
-                // Only start stuck timer if we've been following path for at least 2 seconds
-                // This prevents false positives when path just started or bot is moving slowly
-                const pathAge = Date.now() - this.lastPathRecalcTime;
-                if (pathAge > 2000) {
-                    if (this.stuckDetectionTime === 0) {
-                        this.stuckDetectionTime = Date.now();
-                    } else if (Date.now() - this.stuckDetectionTime > this.STUCK_TIME) {
-                        // Stuck for too long, cancel pathfinding and let behavior handle it
-                        console.warn(`[Bot ${this.config.botId}] Stuck detected after ${pathAge}ms, canceling pathfinding`);
-                        this.cancelPathfinding();
-                        return;
-                    }
-                }
-            } else {
-                this.stuckDetectionTime = 0; // Reset stuck detection
-            }
-        } else {
-            // First time, initialize lastPosition
-            this.lastPosition = { ...botPos };
-        }
-        
-        // Update lastPosition AFTER checking (so we compare previous frame to current)
+        // Stuck detection - DISABLED for now to allow movement to work
+        // We'll re-enable with better logic once movement is confirmed working
+        // Just initialize lastPosition if needed
         if (!this.lastPosition) {
-            this.lastPosition = { ...botPos };
-        } else {
             this.lastPosition = { ...botPos };
         }
 

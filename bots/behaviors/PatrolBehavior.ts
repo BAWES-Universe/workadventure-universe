@@ -209,13 +209,21 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         // Try pathfinding first if available and not already following a path
+        // IMPORTANT: Only try pathfinding if we're not already following a path AND haven't just canceled one
         if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
-            const success = await this.bot.moveToWithPathfinding(this.targetWaypoint.x, this.targetWaypoint.y);
-            if (success) {
-                // Pathfinding will handle movement via updatePathFollowing
-                return;
+            // Check if target is far enough to warrant pathfinding (avoid tiny paths)
+            if (distance >= 50) {
+                const success = await this.bot.moveToWithPathfinding(this.targetWaypoint.x, this.targetWaypoint.y);
+                if (success) {
+                    // Pathfinding will handle movement via updatePathFollowing
+                    return;
+                }
+                // Pathfinding failed or was skipped (cooldown), fall through to direct movement
             }
-            // Pathfinding failed, fall through to direct movement
+            // Distance < 50 or pathfinding failed - fall through to direct movement
+        } else if (this.bot.getIsFollowingPath()) {
+            // Already following a path, don't interfere - let pathfinding handle movement
+            return;
         }
 
         // Fallback to direct movement with speed fix (halve if > 75)
