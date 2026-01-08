@@ -229,14 +229,48 @@ export class BotClient {
             return;
         }
 
-        // Update path following if active (this handles movement)
-        if (this.isFollowingPath) {
-            this.updatePathFollowing(deltaTime);
+        // CRITICAL: Call behavior.update FIRST (like original bots branch)
+        // The behavior checks for nearby players and calls stop() if needed
+        // This must happen BEFORE path following to prevent movement when players are nearby
+        this.behavior.update(deltaTime);
+        
+        // After behavior.update, check if we should be stopped
+        // The behavior will have called stop() if players are nearby, but we need to ensure
+        // pathfinding is canceled and we don't continue movement
+        const nearbyPlayersCheck = this.getNearbyPlayers(100);
+        const behaviorNearbyCount = this.behavior && (this.behavior as any).nearbyPlayers ? (this.behavior as any).nearbyPlayers.size : 0;
+        const behaviorIsEngaged = this.behavior && (this.behavior as any).isEngaged;
+        
+        if (nearbyPlayersCheck.length > 0 || behaviorNearbyCount > 0 || behaviorIsEngaged) {
+            // Player nearby - ensure we're stopped and pathfinding is canceled
+            if (this.isFollowingPath) {
+                console.log(`[Bot ${this.config.botId}] 🛑 Player detected - canceling pathfinding (getNearby=${nearbyPlayersCheck.length}, behaviorNearby=${behaviorNearbyCount}, engaged=${behaviorIsEngaged})`);
+                this.cancelPathfinding();
+            }
+            this.stop();
+            return; // Don't continue with movement
         }
 
-        // Update behavior (behavior can still control movement if not following path)
-        // IMPORTANT: If following path, behavior.update should NOT move (it just checks path status)
-        this.behavior.update(deltaTime);
+        // Update path following if active (this handles movement)
+        // CRITICAL: Only do this if bot is actually moving (not stopped)
+        // If stop() was called, isMoving() will be false - respect that!
+        // ALSO: Check if behavior says we should be stopped (e.g., in a space)
+        const behaviorInSpace = this.behavior && (this.behavior as any).currentSpaceName;
+        if (this.isFollowingPath && !behaviorInSpace) {
+            const isMoving = this.state.isMoving();
+            if (isMoving) {
+                this.updatePathFollowing(deltaTime);
+            } else {
+                // Path following is active but bot is stopped - cancel pathfinding
+                console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
+                this.cancelPathfinding();
+            }
+        } else if (this.isFollowingPath && behaviorInSpace) {
+            // Behavior says we're in a space - cancel pathfinding immediately
+            console.log(`[Bot ${this.config.botId}] 🛑 Path following active but in space - canceling pathfinding`);
+            this.cancelPathfinding();
+            this.stop();
+        }
 
         // Update position/direction if changed (with throttling)
         const newPosition = this.state.getPosition();
@@ -276,16 +310,19 @@ export class BotClient {
      * Move bot to position
      */
     moveTo(x: number, y: number, direction: PositionMessage_Direction = PositionMessage_Direction.DOWN): void {
+        const wasMoving = this.state.isMoving();
         this.state.setPosition({ x, y });
         this.state.setDirection(direction);
         this.state.setMoving(true);
+        console.log(`[Bot ${this.config.botId}] 📍 moveTo() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, pos=(${Math.round(x)}, ${Math.round(y)})`);
     }
 
     /**
      * Stop moving
      */
     stop(): void {
-        if (this.state.isMoving()) {
+        const wasMoving = this.state.isMoving();
+        if (wasMoving) {
             movementLogger.log({
                 timestamp: Date.now(),
                 botId: this.config.botId,
@@ -294,6 +331,7 @@ export class BotClient {
             });
         }
         this.state.setMoving(false);
+        console.log(`[Bot ${this.config.botId}] 🛑 STOP() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, isFollowingPath=${this.isFollowingPath}`);
     }
 
     /**
@@ -351,6 +389,16 @@ export class BotClient {
      */
     hasPathfinding(): boolean {
         return this.pathfindingManager !== undefined;
+    }
+
+    /**
+     * Check if a position is walkable (no obstacles)
+     */
+    isWalkable(position: PositionInterface): boolean {
+        if (!this.pathfindingManager) {
+            return true; // Can't check without pathfinding, assume walkable
+        }
+        return this.pathfindingManager.isWalkable(position);
     }
 
     /**
@@ -444,14 +492,27 @@ export class BotClient {
             return false;
         }
 
-        // Smooth and optimize the path
-        const smoothedPath = this.pathSmoother.smoothPath(rawPath);
-
-        // Only use smoothed path if it's still valid (has at least 2 points)
-        if (smoothedPath.length < 2) {
+        // CRITICAL: Validate path doesn't go through obstacles before using it
+        if (!this.validatePath(rawPath)) {
+            console.warn(`[Bot ${this.config.botId}] ⚠️ Path validation failed - path goes through obstacles! Rejecting path.`);
+            movementLogger.log({
+                timestamp: Date.now(),
+                botId: this.config.botId,
+                eventType: 'path_fail',
+                position: botPos,
+                targetPosition: { x, y },
+                metadata: { reason: 'path_validation_failed', pathLength: rawPath.length },
+            });
+            return false;
+        }
+        
+        // Use raw path from pathfinding - it already avoids obstacles
+        // Path smoothing was causing issues with obstacle avoidance
+        // The pathfinding algorithm (EasyStar) already provides smooth paths
+        if (rawPath.length >= 2) {
             this.currentPath = rawPath;
         } else {
-            this.currentPath = smoothedPath;
+            return false;
         }
 
         this.pathIndex = 0;
@@ -476,11 +537,86 @@ export class BotClient {
     }
 
     /**
+     * Validate that a path doesn't go through obstacles
+     * Checks intermediate points along path segments
+     */
+    private validatePath(path: PositionInterface[]): boolean {
+        if (!this.pathfindingManager || path.length < 2) {
+            return true; // Can't validate without pathfinding manager
+        }
+
+        // Check each segment of the path
+        for (let i = 0; i < path.length - 1; i++) {
+            const start = path[i];
+            const end = path[i + 1];
+            
+            // Sample points along the segment to check for collisions
+            const segmentLength = Math.sqrt(
+                Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+            );
+            // Sample every 16 pixels for tighter validation (was 32)
+            const samples = Math.max(3, Math.floor(segmentLength / 16));
+            
+            for (let j = 0; j <= samples; j++) {
+                const t = j / samples;
+                const samplePoint = {
+                    x: start.x + (end.x - start.x) * t,
+                    y: start.y + (end.y - start.y) * t,
+                };
+                
+                // Check if this point is walkable
+                if (!this.pathfindingManager.isWalkable(samplePoint)) {
+                    console.warn(`[Bot ${this.config.botId}] ⚠️ Path validation failed: segment ${i}->${i+1} goes through obstacle at (${samplePoint.x.toFixed(1)}, ${samplePoint.y.toFixed(1)})`);
+                    return false; // Path goes through obstacle
+                }
+            }
+        }
+        
+        return true; // Path is valid
+    }
+
+    /**
      * Update path following (call in update loop)
      * Uses simple movement matching original speed calculation
      */
     updatePathFollowing(deltaTime: number): void {
         if (!this.isFollowingPath || this.currentPath.length === 0) {
+            return;
+        }
+
+        // CRITICAL: Check if behavior says we should be stopped (e.g., in a space with a player)
+        const behaviorInSpace = this.behavior && (this.behavior as any).currentSpaceName;
+        if (behaviorInSpace) {
+            console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - behavior in space ${behaviorInSpace}`);
+            this.cancelPathfinding();
+            this.stop();
+            return;
+        }
+
+        // CRITICAL: Check if bot should be stopped (either by stop() call or nearby players)
+        // If stop() was called, isMoving() will be false - respect that!
+        if (!this.state.isMoving()) {
+            // Bot was stopped (likely by behavior.update() detecting nearby players)
+            console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
+            this.cancelPathfinding();
+            return;
+        }
+
+        // CRITICAL: Check if players are nearby - if so, stop immediately
+        // This prevents bots from continuing to waypoints when players approach
+        // Check both getNearbyPlayers AND behavior's nearbyPlayers map for reliability
+        const nearbyPlayers = this.getNearbyPlayers(100); // Check within 100px
+        const behaviorHasNearby = this.behavior && (this.behavior as any).nearbyPlayers && (this.behavior as any).nearbyPlayers.size > 0;
+        
+        if (nearbyPlayers.length > 0 || behaviorHasNearby) {
+            // Player nearby - cancel pathfinding and stop immediately
+            console.log(`[Bot ${this.config.botId}] 🛑 Player detected during path following (nearby=${nearbyPlayers.length}, behavior=${behaviorHasNearby}) - stopping immediately`);
+            this.cancelPathfinding();
+            this.stop();
+            // Notify behavior to update engagement state
+            if (this.behavior && (this.behavior as any).updateProximityEngagement) {
+                (this.behavior as any).updateProximityEngagement();
+            }
             return;
         }
 
@@ -512,15 +648,28 @@ export class BotClient {
         const dy = currentWaypoint.y - botPos.y;
         const distanceToWaypoint = Math.sqrt(dx * dx + dy * dy);
 
-        // Simple waypoint advancement - only advance when very close
-        // Use a single threshold to prevent oscillation
-        const waypointThreshold = 30; // Advance when within 30px (increased from 20px to prevent glitching)
+        // Waypoint advancement - strict threshold to prevent premature advancement
+        // Based on debug data: 35+ waypoints were advanced at 29px (threshold violation)
+        const waypointThreshold = 20; // Advance when within 20px
         
-        if (distanceToWaypoint < waypointThreshold) {
+        // CRITICAL: Only advance if we're actually within threshold
+        // Debug data showed 35+ waypoints advanced at 29px - the "closer to next" logic was the cause
+        // For complex paths with tight spaces, we must strictly adhere to the threshold
+        // Pathfinding already provides waypoints at appropriate distances
+        const shouldAdvance = distanceToWaypoint < waypointThreshold;
+        
+        // REMOVED: "closer to next" fallback logic - it was causing premature advancement
+        // If we overshoot slightly, the next frame will catch it when we're actually within threshold
+        
+        if (shouldAdvance) {
             const oldIndex = this.pathIndex;
             this.pathIndex++;
             
-            // Log waypoint advancement
+            // Log waypoint advancement with warning if distance exceeds threshold
+            if (distanceToWaypoint > waypointThreshold) {
+                console.warn(`[Bot ${this.config.botId}] ⚠️ Waypoint advanced at ${distanceToWaypoint.toFixed(1)}px (threshold: ${waypointThreshold}px)`);
+            }
+            
             movementLogger.log({
                 timestamp: Date.now(),
                 botId: this.config.botId,
@@ -530,6 +679,10 @@ export class BotClient {
                 waypointIndex: this.pathIndex,
                 pathLength: this.currentPath.length,
                 distanceToTarget: distanceToWaypoint,
+                metadata: {
+                    threshold: waypointThreshold,
+                    exceeded: distanceToWaypoint > waypointThreshold,
+                },
             });
             
             if (this.pathIndex >= this.currentPath.length) {
@@ -581,6 +734,58 @@ export class BotClient {
         const newX = botPos.x + Math.cos(angle) * cappedDistance;
         const newY = botPos.y + Math.sin(angle) * cappedDistance;
         
+        // CRITICAL: Validate new position is walkable before moving
+        // Also check intermediate points for long movements to prevent cutting through walls
+        const newPos = { x: newX, y: newY };
+        if (this.pathfindingManager) {
+            // Check the destination
+            if (!this.pathfindingManager.isWalkable(newPos)) {
+                // New position is in a wall - don't move, cancel pathfinding
+                console.warn(`[Bot ${this.config.botId}] 🚫 BLOCKED movement to non-walkable tile: (${newX.toFixed(1)}, ${newY.toFixed(1)}) from (${botPos.x.toFixed(1)}, ${botPos.y.toFixed(1)})`);
+                movementLogger.log({
+                    timestamp: Date.now(),
+                    botId: this.config.botId,
+                    eventType: 'path_fail',
+                    position: botPos,
+                    targetPosition: targetWaypoint,
+                    metadata: { reason: 'target_tile_not_walkable', attemptedPosition: newPos },
+                });
+                this.cancelPathfinding();
+                return;
+            }
+            
+            // For longer movements, check intermediate points to prevent cutting through walls
+            if (cappedDistance > 10) {
+                const steps = Math.ceil(cappedDistance / 10); // Check every 10 pixels
+                for (let i = 1; i <= steps; i++) {
+                    const t = i / steps;
+                    const intermediateX = botPos.x + (newX - botPos.x) * t;
+                    const intermediateY = botPos.y + (newY - botPos.y) * t;
+                    const intermediatePos = { x: intermediateX, y: intermediateY };
+                    
+                    if (!this.pathfindingManager.isWalkable(intermediatePos)) {
+                        // Intermediate point is in a wall - reduce movement distance
+                        console.warn(`[Bot ${this.config.botId}] ⚠️ Intermediate point blocked at (${intermediateX.toFixed(1)}, ${intermediateY.toFixed(1)}) - reducing movement`);
+                        // Move only to the last safe position
+                        const safeT = (i - 1) / steps;
+                        const safeX = botPos.x + (newX - botPos.x) * safeT;
+                        const safeY = botPos.y + (newY - botPos.y) * safeT;
+                        // Determine direction for safe movement
+                        const safeDx = safeX - botPos.x;
+                        const safeDy = safeY - botPos.y;
+                        let safeDirection = PositionMessage_Direction.DOWN;
+                        if (Math.abs(safeDx) > Math.abs(safeDy)) {
+                            safeDirection = safeDx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+                        } else {
+                            safeDirection = safeDy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                        }
+                        this.moveTo(safeX, safeY, safeDirection);
+                        return;
+                    }
+                }
+            }
+        }
+        
         // Log movement for analysis
         movementLogger.log({
             timestamp: Date.now(),
@@ -598,8 +803,17 @@ export class BotClient {
             metadata: {
                 angle: angle.toFixed(2),
                 capped: cappedDistance < moveDistance,
+                isWalkable: this.pathfindingManager ? this.pathfindingManager.isWalkable(newPos) : true,
             },
         });
+
+        // CRITICAL: Check again if bot should be stopped before moving
+        // This prevents moveTo() from overriding stop() calls
+        if (!this.state.isMoving()) {
+            console.log(`[Bot ${this.config.botId}] 🛑 Movement blocked - bot is stopped`);
+            this.cancelPathfinding();
+            return;
+        }
 
         // Determine direction based on movement
         let direction = PositionMessage_Direction.DOWN;
@@ -648,7 +862,20 @@ export class BotClient {
     getNearbyPlayers(radius: number): PlayerInfo[] {
         const botPos = this.state.getPosition();
         const result: PlayerInfo[] = [];
-        
+
+        // Debug: log total players and bot position
+        if (Math.random() < 0.05) { // 5% chance to avoid spam
+            console.log(`[Bot ${this.config.botId}] getNearbyPlayers: checking ${this.players.size} players within ${radius}px, bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
+            if (this.players.size > 0) {
+                for (const player of this.players.values()) {
+                    const dx = player.position.x - botPos.x;
+                    const dy = player.position.y - botPos.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    console.log(`[Bot ${this.config.botId}]   Player ${player.userId} at (${Math.round(player.position.x)}, ${Math.round(player.position.y)}) - distance: ${Math.round(distance)}px, isBot: ${BotClient.isBot(player.userId)}`);
+                }
+            }
+        }
+
         for (const player of this.players.values()) {
             // Skip bots - but log if we're skipping
             if (BotClient.isBot(player.userId)) {
@@ -664,6 +891,9 @@ export class BotClient {
             const distance = Math.sqrt(dx * dx + dy * dy);
             if (distance <= radius) {
                 result.push(player);
+                if (Math.random() < 0.1) {
+                    console.log(`[Bot ${this.config.botId}] ✅ Found nearby player ${player.userId} at distance ${Math.round(distance)}px`);
+                }
             }
         }
         
@@ -765,32 +995,76 @@ export class BotClient {
                 break;
 
             case 'userJoinedMessage':
-                this.players.set(message.userJoinedMessage.userId, {
-                    userId: message.userJoinedMessage.userId,
-                    name: message.userJoinedMessage.name,
-                    position: {
-                        x: message.userJoinedMessage.position?.x ?? 0,
-                        y: message.userJoinedMessage.position?.y ?? 0,
-                    },
-                    availabilityStatus: message.userJoinedMessage.availabilityStatus ?? 0,
-                });
+                {
+                    const userId = message.userJoinedMessage.userId;
+                    const isBot = BotClient.isBot(userId);
+                    console.log(`[Bot ${this.config.botId}] 📥 userJoinedMessage received - userId=${userId}, isBot=${isBot}`);
+                    if (!isBot) {
+                        const playerPos = {
+                            x: message.userJoinedMessage.position?.x ?? 0,
+                            y: message.userJoinedMessage.position?.y ?? 0,
+                        };
+                        // Calculate distance for logging
+                        const botPos = this.state.getPosition();
+                        const dx = playerPos.x - botPos.x;
+                        const dy = playerPos.y - botPos.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        console.log(`[Bot ${this.config.botId}] ✅ Player ${userId} joined at (${Math.round(playerPos.x)}, ${Math.round(playerPos.y)}), distance: ${Math.round(distance)}px (now ${this.players.size + 1} players)`);
+                        this.players.set(userId, {
+                            userId: userId,
+                            name: message.userJoinedMessage.name,
+                            position: playerPos,
+                            availabilityStatus: message.userJoinedMessage.availabilityStatus ?? 0,
+                        });
+                        // CRITICAL: Notify behavior about the player so it can check if they're nearby
+                        if (this.behavior && playerPos.x > 0 && playerPos.y > 0) {
+                            console.log(`[Bot ${this.config.botId}] 📤 Calling onPlayerMoved for joined player ${userId}`);
+                            this.behavior.onPlayerMoved(userId, playerPos);
+                        }
+                    } else {
+                        this.players.set(userId, {
+                            userId: userId,
+                            name: message.userJoinedMessage.name,
+                            position: {
+                                x: message.userJoinedMessage.position?.x ?? 0,
+                                y: message.userJoinedMessage.position?.y ?? 0,
+                            },
+                            availabilityStatus: message.userJoinedMessage.availabilityStatus ?? 0,
+                        });
+                    }
+                }
                 break;
 
             case 'userMovedMessage':
                 {
-                    const movedPlayer = this.players.get(message.userMovedMessage.userId);
+                    const userId = message.userMovedMessage.userId;
+                    const isBot = BotClient.isBot(userId);
+                    const movedPlayer = this.players.get(userId);
                     if (movedPlayer && message.userMovedMessage.position) {
                         movedPlayer.position = {
                             x: message.userMovedMessage.position.x,
                             y: message.userMovedMessage.position.y,
                         };
-                        if (this.behavior) {
-                            this.behavior.onPlayerMoved(message.userMovedMessage.userId, movedPlayer.position);
+                        if (this.behavior && !isBot) {
+                            // Calculate distance for logging
+                            const botPos = this.state.getPosition();
+                            const dx = movedPlayer.position.x - botPos.x;
+                            const dy = movedPlayer.position.y - botPos.y;
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            if (distance < 150) { // Only log if within 150px
+                                console.log(`[Bot ${this.config.botId}] 📍 Player ${userId} moved to (${Math.round(movedPlayer.position.x)}, ${Math.round(movedPlayer.position.y)}), distance: ${Math.round(distance)}px`);
+                            }
+                            this.behavior.onPlayerMoved(userId, movedPlayer.position);
                         }
-                    } else if (!movedPlayer && message.userMovedMessage.position) {
+                    } else if (!movedPlayer && message.userMovedMessage.position && !isBot) {
                         // Player not in our list yet, add them
-                        this.players.set(message.userMovedMessage.userId, {
-                            userId: message.userMovedMessage.userId,
+                        const botPos = this.state.getPosition();
+                        const dx = message.userMovedMessage.position.x - botPos.x;
+                        const dy = message.userMovedMessage.position.y - botPos.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        console.log(`[Bot ${this.config.botId}] ✅ Player ${userId} moved (new) - adding to players map (now ${this.players.size + 1} players), distance: ${Math.round(distance)}px`);
+                        this.players.set(userId, {
+                            userId: userId,
                             name: 'Unknown',
                             position: {
                                 x: message.userMovedMessage.position.x,
@@ -799,7 +1073,7 @@ export class BotClient {
                             availabilityStatus: 0,
                         });
                         if (this.behavior) {
-                            this.behavior.onPlayerMoved(message.userMovedMessage.userId, {
+                            this.behavior.onPlayerMoved(userId, {
                                 x: message.userMovedMessage.position.x,
                                 y: message.userMovedMessage.position.y,
                             });
@@ -917,9 +1191,13 @@ export class BotClient {
             console.log(`[Bot ${this.config.botId}] Joined space: ${request.spaceName}, sent media state: off`);
             
             if (this.behavior) {
-                console.log(`[Bot ${this.config.botId}] Calling behavior.onSpaceJoined...`);
-                this.behavior.onSpaceJoined(request.spaceName);
-                console.log(`[Bot ${this.config.botId}] behavior.onSpaceJoined completed`);
+                console.log(`[Bot ${this.config.botId}] Calling behavior.onSpaceJoined with spaceName=${request.spaceName}, behavior type=${this.behavior.constructor.name}`);
+                try {
+                    this.behavior.onSpaceJoined(request.spaceName);
+                    console.log(`[Bot ${this.config.botId}] behavior.onSpaceJoined completed successfully`);
+                } catch (error) {
+                    console.error(`[Bot ${this.config.botId}] ERROR in behavior.onSpaceJoined:`, error);
+                }
             } else {
                 console.log(`[Bot ${this.config.botId}] No behavior to call onSpaceJoined on!`);
             }

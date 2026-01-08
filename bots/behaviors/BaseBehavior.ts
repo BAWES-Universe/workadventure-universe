@@ -81,7 +81,10 @@ export abstract class BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
         
         const wasNearby = this.nearbyPlayers.has(playerId);
-        const enterRadius = this.PROXIMITY_RADIUS;
+        
+        // Use a larger enter radius (100px) to match behavior's responseRadius
+        // This ensures players are detected at the same distance the behavior checks
+        const enterRadius = 100; // Match typical responseRadius
         const leaveRadius = this.DISENGAGE_RADIUS;
         
         // If already engaged with this player, use a much larger leave radius
@@ -136,15 +139,17 @@ export abstract class BaseBehavior {
         if (!this.bot) return;
         
         const wasEngaged = this.isEngaged;
-        this.isEngaged = this.nearbyPlayers.size > 0;
+        // Check both proximity-based and space-based engagement
+        this.isEngaged = this.nearbyPlayers.size > 0 || this.engagedWithUsers.size > 0;
         
         if (this.isEngaged) {
-            // Find closest player
+            // Find closest player (check both nearbyPlayers and engagedWithUsers)
             let closestDistance = Infinity;
             let closestId: number | null = null;
             let closestPos: PositionInterface | null = null;
             const botPos = this.bot.getState().getPosition();
             
+            // Check nearby players first (proximity-based)
             for (const [playerId, playerPos] of this.nearbyPlayers) {
                 const dx = playerPos.x - botPos.x;
                 const dy = playerPos.y - botPos.y;
@@ -154,6 +159,23 @@ export abstract class BaseBehavior {
                     closestDistance = dist;
                     closestId = playerId;
                     closestPos = playerPos;
+                }
+            }
+            
+            // Also check engaged users (space-based) if no nearby player found
+            if (!closestPos) {
+                for (const [userId, userData] of this.engagedWithUsers) {
+                    if (userData.position) {
+                        const dx = userData.position.x - botPos.x;
+                        const dy = userData.position.y - botPos.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (dist < closestDistance) {
+                            closestDistance = dist;
+                            closestId = userId;
+                            closestPos = userData.position;
+                        }
+                    }
                 }
             }
             
@@ -178,7 +200,7 @@ export abstract class BaseBehavior {
             this.closestPlayerId = null;
             
             if (wasEngaged) {
-                console.log(`[Behavior] No longer engaged - all players left proximity`);
+                console.log(`[Behavior] No longer engaged - all players left proximity/space`);
             }
         }
     }

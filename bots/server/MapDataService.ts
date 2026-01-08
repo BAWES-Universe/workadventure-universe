@@ -2,6 +2,8 @@
  * MapDataService - Fetches and caches collision grids from map-storage
  */
 
+import { PathTileType } from '../utils/BotPathfindingManager';
+
 interface MapData {
     collisionGrid: number[][];
     tileDimensions: { width: number; height: number };
@@ -26,10 +28,17 @@ export class MapDataService {
         // Check cache first
         const cached = this.cache.get(roomUrl);
         if (cached && Date.now() - cached.cachedAt < this.CACHE_TTL) {
+            console.log(`[MapDataService] Using cached collision grid for ${roomUrl} (cached ${Math.round((Date.now() - cached.cachedAt) / 1000)}s ago)`);
             return {
                 collisionGrid: cached.collisionGrid,
                 tileDimensions: cached.tileDimensions,
             };
+        }
+        
+        // Cache expired or missing - clear it
+        if (cached) {
+            console.log(`[MapDataService] Cache expired for ${roomUrl}, refreshing...`);
+            this.cache.delete(roomUrl);
         }
 
         try {
@@ -182,18 +191,26 @@ export class MapDataService {
             // Use dedicated collision layer
             console.log(`[MapDataService] Using dedicated collision layer: ${collisionLayer.name || 'unnamed'}`);
             
+            // Sample first few values to understand data format
+            const sampleData = Array.isArray(collisionLayer.data[0]) 
+                ? collisionLayer.data[0].slice(0, 10)
+                : collisionLayer.data.slice(0, 10);
+            console.log(`[MapDataService] Sample collision data (first 10 values):`, sampleData);
+            
             if (Array.isArray(collisionLayer.data[0])) {
                 // Already 2D array
+                // Convert: non-zero = collider (1), zero = walkable (0)
                 collisionGrid = collisionLayer.data.map((row: number[]) => 
-                    row.map((val: number) => val !== 0 ? 1 : 0)
+                    row.map((val: number) => val !== 0 ? PathTileType.Collider : PathTileType.Walkable)
                 );
             } else {
                 // 1D array - convert to 2D
                 const width = collisionLayer.width || mapWidth;
                 const height = collisionLayer.height || mapHeight;
                 const layerData = this.convert1DTo2D(collisionLayer.data, width, height);
+                // Convert: non-zero = collider (1), zero = walkable (0)
                 collisionGrid = layerData.map((row: number[]) => 
-                    row.map((val: number) => val !== 0 ? 1 : 0)
+                    row.map((val: number) => val !== 0 ? PathTileType.Collider : PathTileType.Walkable)
                 );
             }
         } else {
@@ -237,12 +254,13 @@ export class MapDataService {
             for (let y = 0; y < mapHeight; y++) {
                 const row: number[] = [];
                 for (let x = 0; x < mapWidth; x++) {
-                    row.push(0);
+                    row.push(PathTileType.Walkable); // Default to walkable
                 }
                 collisionGrid.push(row);
             }
 
             // Process each tile layer and mark colliding tiles
+            // IMPORTANT: Process layers in order, later layers can override earlier ones
             for (const layer of allTileLayers) {
                 if (!layer.data || !layer.width || !layer.height) continue;
                 
@@ -252,7 +270,7 @@ export class MapDataService {
                     for (let x = 0; x < layer.width && x < mapWidth; x++) {
                         const tileGid = layerData[y][x];
                         if (tileGid && tileGid !== 0 && collidesMap.has(tileGid)) {
-                            collisionGrid[y][x] = 1; // Mark as collidable
+                            collisionGrid[y][x] = PathTileType.Collider; // Mark as collidable
                         }
                     }
                 }
@@ -262,7 +280,30 @@ export class MapDataService {
         const logInfo = collidesMap 
             ? `${mapWidth}x${mapHeight} tiles (${collidesMap.size} colliding tile types)`
             : `${mapWidth}x${mapHeight} tiles`;
+        
+        // Count colliding vs walkable tiles for validation
+        let colliderCount = 0;
+        let walkableCount = 0;
+        for (let y = 0; y < mapHeight; y++) {
+            for (let x = 0; x < mapWidth; x++) {
+                if (collisionGrid[y][x] === PathTileType.Collider) {
+                    colliderCount++;
+                } else {
+                    walkableCount++;
+                }
+            }
+        }
+        
         console.log(`[MapDataService] Successfully loaded collision grid: ${logInfo}`);
+        console.log(`[MapDataService] Collision grid stats: ${colliderCount} colliders, ${walkableCount} walkable tiles`);
+        
+        // Validate grid has reasonable distribution (not all colliders or all walkable)
+        if (colliderCount === 0) {
+            console.warn(`[MapDataService] WARNING: No collider tiles found in grid! Bots may walk through walls.`);
+        } else if (walkableCount === 0) {
+            console.warn(`[MapDataService] WARNING: No walkable tiles found in grid! Bots cannot move.`);
+        }
+        
         return {
             collisionGrid,
             tileDimensions: { width: tileWidth, height: tileHeight },

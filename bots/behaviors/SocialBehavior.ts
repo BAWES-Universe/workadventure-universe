@@ -56,17 +56,90 @@ export class SocialBehavior extends BaseBehavior {
         // Clean up old conversations
         this.cleanupConversations(config, currentTime);
 
-        // If following a path, let BotClient handle movement
-        if (this.bot.getIsFollowingPath()) {
-            this.bot.updatePathFollowing(deltaTime);
+        // Check for nearby players first - stop immediately if player is nearby, even if following a path
+        const nearbyPlayers = this.bot.getNearbyPlayers(config.conversationRadius);
+        if (nearbyPlayers.length > 0) {
+            // Player nearby - stop immediately and face them
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+            this.bot.stop();
+            // Face the closest player
+            if (nearbyPlayers.length > 0) {
+                this.facePosition(nearbyPlayers[0].position);
+            }
+            // Update engagement state to ensure proper facing
+            this.updateProximityEngagement();
             this.onBotPositionUpdated();
             return;
         }
 
+        // CRITICAL: Check for nearby players FIRST - stop immediately if any found
+        // The nearbyPlayers map is populated by onPlayerMoved() when players move within PROXIMITY_RADIUS (64px)
+        // This is the PRIMARY source of truth - it's updated in real-time as players move
+        
+        // Update nearbyPlayers map from getNearbyPlayers() if available
+        const nearbyPlayersList = this.bot.getNearbyPlayers(config.conversationRadius || 100);
+        for (const player of nearbyPlayersList) {
+            this.nearbyPlayers.set(player.userId, player.position);
+        }
+        // Only remove players if getNearbyPlayers() found them AND they're now far away
+        if (nearbyPlayersList.length > 0) {
+            for (const [playerId, playerPos] of this.nearbyPlayers) {
+                if (!nearbyPlayersList.find(p => p.userId === playerId)) {
+                    const botPos = this.bot.getState().getPosition();
+                    const dx = playerPos.x - botPos.x;
+                    const dy = playerPos.y - botPos.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance > (config.conversationRadius || 100) * 1.5) {
+                        this.nearbyPlayers.delete(playerId);
+                    }
+                }
+            }
+        }
+        
+        // STOP immediately if players are nearby
+        // PRIMARY: Check nearbyPlayers map (populated by onPlayerMoved in real-time)
+        const hasNearbyPlayers = this.nearbyPlayers.size > 0 || nearbyPlayersList.length > 0;
+        if (hasNearbyPlayers && !this.targetPlayerId) {
+            console.log(`[SocialBehavior] 🛑 STOPPING - nearbyPlayersMap=${this.nearbyPlayers.size}, nearbyPlayersList=${nearbyPlayersList.length}`);
+            // Player nearby and we're not already approaching someone - stop immediately
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+            this.bot.stop();
+            // Face closest player
+            const nearbyPlayers = this.bot.getNearbyPlayers(1000);
+            if (nearbyPlayers.length > 0) {
+                this.facePosition(nearbyPlayers[0].position);
+            } else {
+                const firstPlayer = this.nearbyPlayers.values().next().value;
+                if (firstPlayer) {
+                    this.facePosition(firstPlayer);
+                }
+            }
+            this.updateProximityEngagement();
+            this.onBotPositionUpdated();
+            return; // Don't continue movement
+        }
+        
         // If engaged in conversation, stop moving and face the player
         if (this.isEngaged) {
+            // Cancel any active pathfinding
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
             this.bot.stop();
+            // Update engagement to ensure facing is correct (handles player movement)
+            this.updateProximityEngagement();
             this.onBotPositionUpdated(); // Track position even when stopped
+            return;
+        }
+
+        // If following a path, let BotClient handle movement
+        if (this.bot.getIsFollowingPath()) {
+            this.bot.updatePathFollowing(deltaTime);
+            this.onBotPositionUpdated();
             return;
         }
 
@@ -251,9 +324,11 @@ export class SocialBehavior extends BaseBehavior {
         const dy = player.position.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        // If close enough, stop and wait for space join
+        // If close enough, stop and face the player, then wait for space join
         if (distance <= config.approachDistance) {
             this.bot.stop();
+            // Face the player we're approaching
+            this.facePosition(player.position);
             // Space will be joined automatically by backend when in proximity
             return;
         }

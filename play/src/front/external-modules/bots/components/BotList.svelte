@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import type { BotData } from "../types";
     import { hoveredBotIdStore } from "../stores/BotEditorStore";
+    import { botApiService } from "../services/BotApiService";
     import BotCard from "./BotCard.svelte";
 
     export let bots: BotData[] = [];
@@ -31,16 +32,39 @@
         }
     }
 
-    function handleToggleBot(bot: BotData, enabled: boolean) {
+    async function handleToggleBot(bot: BotData, enabled: boolean) {
+        const originalEnabled = bot.enabled;
+        // Optimistically update UI
+        bot.enabled = enabled;
+        bots = bots; // Trigger reactivity
+
         try {
-            // TODO: Replace with actual API call
-            // await botApiService.updateBot(bot.botId, { enabled });
-            bot.enabled = enabled;
-            bots = bots; // Trigger reactivity
+            // Update bot via Admin API
+            await botApiService.updateBot(bot.id, { enabled });
+
+            // If disabling, despawn the bot immediately
+            if (!enabled) {
+                try {
+                    await botApiService.despawnBot(bot.id);
+                    console.log(`[BotList] Despawned bot ${bot.id} after disabling`);
+                } catch (despawnError) {
+                    console.warn(`[BotList] Failed to despawn bot ${bot.id}:`, despawnError);
+                    // Don't revert - the bot is disabled in the database even if despawning failed
+                }
+            } else {
+                // If enabling, spawn the bot if not already spawned
+                try {
+                    await botApiService.spawnBot(bot.id);
+                    console.log(`[BotList] Spawned bot ${bot.id} after enabling`);
+                } catch (spawnError) {
+                    console.warn(`[BotList] Failed to spawn bot ${bot.id}:`, spawnError);
+                    // Don't revert - the bot is enabled in the database
+                }
+            }
         } catch (e) {
             console.error("Error toggling bot:", e);
             // Revert on error
-            bot.enabled = !enabled;
+            bot.enabled = originalEnabled;
             bots = bots;
         }
     }

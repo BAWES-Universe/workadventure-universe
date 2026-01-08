@@ -36,6 +36,27 @@ export class BotPathfindingManager {
     }
 
     private setEasyStarGrid(collisionGrid: number[][]): void {
+        // Validate grid before setting
+        if (!collisionGrid || collisionGrid.length === 0) {
+            console.error(`[BotPathfindingManager] Invalid collision grid: empty or null`);
+            return;
+        }
+        
+        // Log grid stats for debugging
+        let colliderCount = 0;
+        let walkableCount = 0;
+        for (let y = 0; y < collisionGrid.length; y++) {
+            for (let x = 0; x < (collisionGrid[y]?.length || 0); x++) {
+                const tileType = collisionGrid[y][x];
+                if (tileType === PathTileType.Collider) {
+                    colliderCount++;
+                } else if (tileType === PathTileType.Walkable) {
+                    walkableCount++;
+                }
+            }
+        }
+        console.log(`[BotPathfindingManager] Grid stats: ${colliderCount} colliders, ${walkableCount} walkable tiles (${collisionGrid.length}x${collisionGrid[0]?.length || 0})`);
+        
         this.easyStar.setGrid(collisionGrid);
         // Only walkable tiles, exits, and start positions are acceptable
         this.easyStar.setAcceptableTiles([PathTileType.Walkable, PathTileType.Exit, PathTileType.Start]);
@@ -138,6 +159,21 @@ export class BotPathfindingManager {
         for (const endPoint of endPoints) {
             const path = await this.getPath(startTile, endPoint);
             if (path && path.length > 0) {
+                // CRITICAL: Validate path doesn't go through colliders
+                let pathValid = true;
+                for (const tile of path) {
+                    const tileType = this.grid[tile.y]?.[tile.x];
+                    if (tileType === PathTileType.Collider) {
+                        console.warn(`[BotPathfindingManager] ⚠️ Path includes collider tile (${tile.x}, ${tile.y}) - rejecting path`);
+                        pathValid = false;
+                        break;
+                    }
+                }
+                
+                if (!pathValid) {
+                    continue; // Try next endpoint
+                }
+                
                 // Convert tile path to pixel path
                 const pixelPath = path.map(tile => this.tileToPixels(tile));
                 
@@ -289,10 +325,17 @@ export class BotPathfindingManager {
         const gridHeight = this.grid.length || 0;
 
         if (tile.x < 0 || tile.x >= gridWidth || tile.y < 0 || tile.y >= gridHeight) {
-            return false;
+            return false; // Out of bounds
         }
 
         const tileType = this.grid[tile.y]?.[tile.x];
-        return tileType !== PathTileType.Collider;
+        const isWalkable = tileType !== PathTileType.Collider;
+        
+        // Debug log if position is not walkable (always log for debugging)
+        if (!isWalkable) {
+            console.warn(`[BotPathfindingManager] ⚠️ Position (${position.x.toFixed(1)}, ${position.y.toFixed(1)}) -> tile (${tile.x}, ${tile.y}) is NOT walkable (tileType=${tileType}, expected Collider=${PathTileType.Collider})`);
+        }
+        
+        return isWalkable;
     }
 }
