@@ -154,13 +154,17 @@ export class BotClient {
             const token = this.config.token || this.generateBotToken();
             const subProtocols = [token];
 
-            console.log(`[Bot ${this.config.botId}] Connecting to: ${url.toString()}`);
-            console.log(`[Bot ${this.config.botId}] Using token: ${token.substring(0, 50)}...`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Connecting to: ${url.toString()}`);
+                console.log(`[Bot ${this.config.botId}] Using token: ${token.substring(0, 50)}...`);
+            }
             this.ws = new WebSocket(url.toString(), subProtocols);
             this.ws.binaryType = 'arraybuffer';
 
             this.ws.on('open', () => {
-                console.log(`[Bot ${this.config.botId}] Connected successfully`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] Connected successfully`);
+                }
                 this.connected = true;
                 resolve();
             });
@@ -172,7 +176,10 @@ export class BotClient {
 
             this.ws.on('close', (code: number, reason: Buffer) => {
                 const reasonStr = reason ? reason.toString() : 'No reason provided';
-                console.log(`[Bot ${this.config.botId}] Disconnected - Code: ${code}, Reason: ${reasonStr}`);
+                // Only log disconnections in dev or if it's an error code (not normal close)
+                if (code !== 1000 && (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true')) {
+                    console.warn(`[Bot ${this.config.botId}] Disconnected - Code: ${code}, Reason: ${reasonStr}`);
+                }
                 this.connected = false;
             });
 
@@ -485,7 +492,9 @@ export class BotClient {
 
         // CRITICAL: Validate path doesn't go through obstacles before using it
         if (!this.validatePath(rawPath)) {
-            console.warn(`[Bot ${this.config.botId}] ⚠️ Path validation failed - path goes through obstacles! Rejecting path.`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] ⚠️ Path validation failed - path goes through obstacles! Rejecting path.`);
+            }
             movementLogger.log({
                 timestamp: Date.now(),
                 botId: this.config.botId,
@@ -557,7 +566,9 @@ export class BotClient {
                 
                 // Check if this point is walkable
                 if (!this.pathfindingManager.isWalkable(samplePoint)) {
-                    console.warn(`[Bot ${this.config.botId}] ⚠️ Path validation failed: segment ${i}->${i+1} goes through obstacle at (${samplePoint.x.toFixed(1)}, ${samplePoint.y.toFixed(1)})`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.warn(`[Bot ${this.config.botId}] ⚠️ Path validation failed: segment ${i}->${i+1} goes through obstacle at (${samplePoint.x.toFixed(1)}, ${samplePoint.y.toFixed(1)})`);
+                    }
                     return false; // Path goes through obstacle
                 }
             }
@@ -639,7 +650,9 @@ export class BotClient {
             
             // Log waypoint advancement with warning if distance exceeds threshold
             if (distanceToWaypoint > waypointThreshold) {
-                console.warn(`[Bot ${this.config.botId}] ⚠️ Waypoint advanced at ${distanceToWaypoint.toFixed(1)}px (threshold: ${waypointThreshold}px)`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[Bot ${this.config.botId}] ⚠️ Waypoint advanced at ${distanceToWaypoint.toFixed(1)}px (threshold: ${waypointThreshold}px)`);
+                }
             }
             
             movementLogger.log({
@@ -748,7 +761,9 @@ export class BotClient {
             // Check the destination
             if (!this.pathfindingManager.isWalkable(newPos)) {
                 // New position is in a wall - don't move, cancel pathfinding
-                console.warn(`[Bot ${this.config.botId}] 🚫 BLOCKED movement to non-walkable tile: (${newX.toFixed(1)}, ${newY.toFixed(1)}) from (${botPos.x.toFixed(1)}, ${botPos.y.toFixed(1)})`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[Bot ${this.config.botId}] 🚫 BLOCKED movement to non-walkable tile: (${newX.toFixed(1)}, ${newY.toFixed(1)}) from (${botPos.x.toFixed(1)}, ${botPos.y.toFixed(1)})`);
+                }
                 movementLogger.log({
                     timestamp: Date.now(),
                     botId: this.config.botId,
@@ -772,7 +787,9 @@ export class BotClient {
                     
                     if (!this.pathfindingManager.isWalkable(intermediatePos)) {
                         // Intermediate point is in a wall - reduce movement distance
-                        console.warn(`[Bot ${this.config.botId}] ⚠️ Intermediate point blocked at (${intermediateX.toFixed(1)}, ${intermediateY.toFixed(1)}) - reducing movement`);
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.warn(`[Bot ${this.config.botId}] ⚠️ Intermediate point blocked at (${intermediateX.toFixed(1)}, ${intermediateY.toFixed(1)}) - reducing movement`);
+                        }
                         // Move only to the last safe position
                         const safeT = (i - 1) / steps;
                         const safeX = botPos.x + (newX - botPos.x) * safeT;
@@ -841,7 +858,9 @@ export class BotClient {
     sendChatMessage(spaceName: string, message: string): void {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
-            console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName}`);
+            }
             return;
         }
 
@@ -929,7 +948,9 @@ export class BotClient {
         this.state.setPosition({ x, y });
         this.config.position = { x, y };
         this.sendPosition(this.state.getPosition(), this.state.getDirection(), false);
-        console.log(`[Bot ${this.config.botId}] Teleported to (${x}, ${y})`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Teleported to (${x}, ${y})`);
+        }
     }
 
     /**
@@ -944,7 +965,9 @@ export class BotClient {
         }
 
         // Behavior config updates are handled by BotManager which creates new behavior
-        console.log(`[Bot ${this.config.botId}] Config updated`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Config updated`);
+        }
     }
 
     /**
@@ -1006,14 +1029,18 @@ export class BotClient {
                 this.userId = message.roomJoinedMessage.currentUserId;
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
-                console.log(`[Bot ${this.config.botId}] Joined room, userId: ${this.userId}`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] Joined room, userId: ${this.userId}`);
+                }
                 break;
 
             case 'userJoinedMessage':
                 {
                     const userId = message.userJoinedMessage.userId;
                     const isBot = BotClient.isBot(userId);
-                    console.log(`[Bot ${this.config.botId}] 📥 userJoinedMessage received - userId=${userId}, isBot=${isBot}`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 📥 userJoinedMessage received - userId=${userId}, isBot=${isBot}`);
+                    }
                     if (!isBot) {
                         const playerPos = {
                             x: message.userJoinedMessage.position?.x ?? 0,
@@ -1024,7 +1051,9 @@ export class BotClient {
                         const dx = playerPos.x - botPos.x;
                         const dy = playerPos.y - botPos.y;
                         const distance = Math.sqrt(dx * dx + dy * dy);
-                        console.log(`[Bot ${this.config.botId}] ✅ Player ${userId} joined at (${Math.round(playerPos.x)}, ${Math.round(playerPos.y)}), distance: ${Math.round(distance)}px (now ${this.players.size + 1} players)`);
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Bot ${this.config.botId}] ✅ Player ${userId} joined at (${Math.round(playerPos.x)}, ${Math.round(playerPos.y)}), distance: ${Math.round(distance)}px (now ${this.players.size + 1} players)`);
+                        }
                         this.players.set(userId, {
                             userId: userId,
                             name: message.userJoinedMessage.name,
@@ -1033,7 +1062,9 @@ export class BotClient {
                         });
                         // CRITICAL: Notify behavior about the player so it can check if they're nearby
                         if (this.behavior && playerPos.x > 0 && playerPos.y > 0) {
-                            console.log(`[Bot ${this.config.botId}] 📤 Calling onPlayerMoved for joined player ${userId}`);
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[Bot ${this.config.botId}] 📤 Calling onPlayerMoved for joined player ${userId}`);
+                            }
                             this.behavior.onPlayerMoved(userId, playerPos);
                         }
                     } else {
@@ -1067,7 +1098,9 @@ export class BotClient {
                             const dy = movedPlayer.position.y - botPos.y;
                             const distance = Math.sqrt(dx * dx + dy * dy);
                             if (distance < 150) { // Only log if within 150px
-                                console.log(`[Bot ${this.config.botId}] 📍 Player ${userId} moved to (${Math.round(movedPlayer.position.x)}, ${Math.round(movedPlayer.position.y)}), distance: ${Math.round(distance)}px`);
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[Bot ${this.config.botId}] 📍 Player ${userId} moved to (${Math.round(movedPlayer.position.x)}, ${Math.round(movedPlayer.position.y)}), distance: ${Math.round(distance)}px`);
+                                }
                             }
                             this.behavior.onPlayerMoved(userId, movedPlayer.position);
                         }
@@ -1077,7 +1110,9 @@ export class BotClient {
                         const dx = message.userMovedMessage.position.x - botPos.x;
                         const dy = message.userMovedMessage.position.y - botPos.y;
                         const distance = Math.sqrt(dx * dx + dy * dy);
-                        console.log(`[Bot ${this.config.botId}] ✅ Player ${userId} moved (new) - adding to players map (now ${this.players.size + 1} players), distance: ${Math.round(distance)}px`);
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Bot ${this.config.botId}] ✅ Player ${userId} moved (new) - adding to players map (now ${this.players.size + 1} players), distance: ${Math.round(distance)}px`);
+                        }
                         this.players.set(userId, {
                             userId: userId,
                             name: 'Unknown',
@@ -1174,14 +1209,18 @@ export class BotClient {
     private async handleJoinSpaceRequest(request: JoinSpaceRequestMessage): Promise<void> {
         // Skip Jitsi spaces - bots don't do video conferences
         if (request.spaceName.includes('jitsi')) {
-            console.log(`[Bot ${this.config.botId}] Skipping jitsi space: ${request.spaceName}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Skipping jitsi space: ${request.spaceName}`);
+            }
             return;
         }
 
         // Check with behavior if we should join this proximity space
         // This allows behaviors to decline bubbles (e.g., patrol bot walking over idle player)
         if (this.behavior && !this.behavior.shouldJoinProximitySpace(request.spaceName)) {
-            console.log(`[Bot ${this.config.botId}] Behavior declined space: ${request.spaceName}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Behavior declined space: ${request.spaceName}`);
+            }
             return;
         }
 
@@ -1190,7 +1229,9 @@ export class BotClient {
             const filterType = request.filterType ?? FilterType.ALL_USERS;
             const propertiesToSync = request.propertiesToSync || [];
             
-            console.log(`[Bot ${this.config.botId}] Joining space: ${request.spaceName}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Joining space: ${request.spaceName}`);
+            }
             
             const spaceUserId = await this.emitJoinSpace(request.spaceName, filterType, propertiesToSync);
             this.spaces.set(request.spaceName, spaceUserId);
@@ -1203,18 +1244,26 @@ export class BotClient {
                 screenSharingState: false,
             });
             
-            console.log(`[Bot ${this.config.botId}] Joined space: ${request.spaceName}, sent media state: off`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Joined space: ${request.spaceName}, sent media state: off`);
+            }
             
             if (this.behavior) {
-                console.log(`[Bot ${this.config.botId}] Calling behavior.onSpaceJoined with spaceName=${request.spaceName}, behavior type=${this.behavior.constructor.name}`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] Calling behavior.onSpaceJoined with spaceName=${request.spaceName}, behavior type=${this.behavior.constructor.name}`);
+                }
                 try {
                     this.behavior.onSpaceJoined(request.spaceName);
-                    console.log(`[Bot ${this.config.botId}] behavior.onSpaceJoined completed successfully`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] behavior.onSpaceJoined completed successfully`);
+                    }
                 } catch (error) {
                     console.error(`[Bot ${this.config.botId}] ERROR in behavior.onSpaceJoined:`, error);
                 }
             } else {
-                console.log(`[Bot ${this.config.botId}] No behavior to call onSpaceJoined on!`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] No behavior to call onSpaceJoined on!`);
+                }
             }
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error joining space:`, error);
@@ -1240,7 +1289,9 @@ export class BotClient {
         // Get our spaceUserId for this space
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
-            console.warn(`[Bot ${this.config.botId}] Cannot update space user - not in space: ${spaceName}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] Cannot update space user - not in space: ${spaceName}`);
+            }
             return;
         }
         
@@ -1378,6 +1429,7 @@ export class BotClient {
 
         // Check for NaN values
         if (isNaN(x) || isNaN(y)) {
+            // Keep this as error-level warning - invalid positions are serious
             console.warn(`[Bot ${this.config.botId}] Invalid position: x=${x}, y=${y}`);
             return;
         }
