@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: bots/Dockerfile
+    command: npm run dev
+    working_dir: /usr/src/app/bots
+    volumes:
+      - .:/usr/src/app
     environment:
       PUSHER_URL: ${PUSHER_URL:-http://play.workadventure.localhost}
       ADMIN_API_URL: ${ADMIN_API_URL:-}
