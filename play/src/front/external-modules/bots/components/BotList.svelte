@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import type { BotData } from "../types";
-    import { hoveredBotIdStore } from "../stores/BotEditorStore";
+    import { hoveredBotIdStore, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
     import BotCard from "./BotCard.svelte";
 
@@ -37,10 +37,33 @@
         // Optimistically update UI
         bot.enabled = enabled;
         bots = bots; // Trigger reactivity
+        // Also update store immediately for optimistic UI
+        upsertBot({ ...bot, enabled });
 
         try {
             // Update bot via Admin API
-            await botApiService.updateBot(bot.id, { enabled });
+            const updatedBot = await botApiService.updateBot(bot.id, { enabled });
+
+            // Update store with API response to ensure consistency
+            const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
+            const botData: BotData = {
+                id: updatedBot.id,
+                botId: updatedBot.id,
+                name: updatedBot.name,
+                description: typeof updatedBot.description === "string" ? updatedBot.description : undefined,
+                characterTexture: textureId,
+                characterTextureIds: textureId ? [textureId] : [],
+                behaviorType: updatedBot.behaviorType as "idle" | "patrol" | "social",
+                enabled: updatedBot.enabled ?? enabled, // Use API response, fallback to requested state
+                behaviorConfig: updatedBot.behaviorConfig || bot.behaviorConfig,
+                chatInstructions: updatedBot.chatInstructions || "",
+                movementInstructions: updatedBot.movementInstructions || "",
+                createdAt: updatedBot.createdAt || bot.createdAt || new Date().toISOString(),
+                updatedAt: updatedBot.updatedAt || new Date().toISOString(),
+                createdBy: updatedBot.createdBy || bot.createdBy || null,
+                updatedBy: updatedBot.updatedBy || bot.updatedBy || null,
+            };
+            upsertBot(botData);
 
             // If disabling, despawn the bot immediately
             if (!enabled) {
@@ -66,6 +89,7 @@
             // Revert on error
             bot.enabled = originalEnabled;
             bots = bots;
+            upsertBot({ ...bot, enabled: originalEnabled });
         }
     }
 
