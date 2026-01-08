@@ -24,6 +24,8 @@ import type { PositionInterface, ViewportInterface } from '../../play/src/front/
 import { BotState } from './BotState';
 import type { BaseBehavior } from '../behaviors/BaseBehavior';
 import { BotPathfindingManager } from '../utils/BotPathfindingManager';
+import { PathSmoother } from '../utils/PathSmoother';
+import { movementLogger } from '../utils/MovementLogger';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -55,12 +57,28 @@ export class BotClient {
     private pendingQueries: Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }> = new Map();
     private lastSentDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
     private lastSentMoving: boolean = false;
+    private lastSentPosition: PositionInterface | null = null;
+    private lastSentTime: number = 0;
+    private readonly POSITION_UPDATE_THROTTLE = 200; // Match WorkAdventure's 200ms update interval
+    private readonly POSITION_UPDATE_THRESHOLD = 5; // Only send if moved >5 pixels
 
     // Pathfinding support
     private pathfindingManager?: BotPathfindingManager;
     private currentPath: PositionInterface[] = [];
     private pathIndex: number = 0;
     private isFollowingPath: boolean = false;
+    
+    // Advanced movement system
+    private pathSmoother: PathSmoother = new PathSmoother();
+    private lastPathRecalcTime: number = 0;
+    private lastPathEndTime: number = 0; // Track when path ended to prevent immediate recalculation
+    private readonly PATH_RECALC_COOLDOWN = 500; // Minimum 500ms between recalculations
+    private readonly PATH_END_COOLDOWN = 300; // Minimum 300ms before creating new path after one ends
+    private stuckDetectionTime: number = 0;
+    private lastPosition: PositionInterface | null = null;
+    private readonly STUCK_THRESHOLD = 5; // Pixels
+    private readonly STUCK_TIME = 2000; // 2 seconds (increased from 1s to prevent false positives)
+    private debugFrameCount: number = 0; // For debug logging
 
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
@@ -217,22 +235,40 @@ export class BotClient {
         }
 
         // Update behavior (behavior can still control movement if not following path)
+        // IMPORTANT: If following path, behavior.update should NOT move (it just checks path status)
         this.behavior.update(deltaTime);
 
-        // Update position/direction if changed
+        // Update position/direction if changed (with throttling)
         const newPosition = this.state.getPosition();
         const newDirection = this.state.getDirection();
         const newMoving = this.state.isMoving();
+        const now = Date.now();
         
-        const positionChanged = newPosition.x !== this.config.position.x || newPosition.y !== this.config.position.y;
+        // Calculate position change distance
+        const positionChanged = this.lastSentPosition 
+            ? Math.sqrt(
+                Math.pow(newPosition.x - this.lastSentPosition.x, 2) + 
+                Math.pow(newPosition.y - this.lastSentPosition.y, 2)
+              ) > this.POSITION_UPDATE_THRESHOLD
+            : true; // Always send first update
+        
         const directionChanged = this.lastSentDirection !== newDirection;
         const movingChanged = this.lastSentMoving !== newMoving;
+        const timeSinceLastUpdate = now - this.lastSentTime;
         
-        if (positionChanged || directionChanged || movingChanged) {
+        // Send update if:
+        // - Position changed significantly (>5 pixels)
+        // - Direction changed
+        // - Moving state changed
+        // - Enough time has passed (throttle to 200ms)
+        if ((positionChanged || directionChanged || movingChanged) && 
+            timeSinceLastUpdate >= this.POSITION_UPDATE_THROTTLE) {
             this.sendPosition(newPosition, newDirection, newMoving);
             this.config.position = newPosition;
+            this.lastSentPosition = { ...newPosition };
             this.lastSentDirection = newDirection;
             this.lastSentMoving = newMoving;
+            this.lastSentTime = now;
         }
     }
 
@@ -249,7 +285,44 @@ export class BotClient {
      * Stop moving
      */
     stop(): void {
+        if (this.state.isMoving()) {
+            movementLogger.log({
+                timestamp: Date.now(),
+                botId: this.config.botId,
+                eventType: 'stop',
+                position: this.state.getPosition(),
+            });
+        }
         this.state.setMoving(false);
+    }
+
+    /**
+     * Smooth direction changes to avoid instant 180-degree turns
+     */
+    private smoothDirectionChange(
+        current: PositionMessage_Direction,
+        target: PositionMessage_Direction
+    ): PositionMessage_Direction {
+        // If same direction, return immediately
+        if (current === target) {
+            return target;
+        }
+
+        // Check if it's a 180-degree turn (opposite directions)
+        const isOpposite = 
+            (current === PositionMessage_Direction.UP && target === PositionMessage_Direction.DOWN) ||
+            (current === PositionMessage_Direction.DOWN && target === PositionMessage_Direction.UP) ||
+            (current === PositionMessage_Direction.LEFT && target === PositionMessage_Direction.RIGHT) ||
+            (current === PositionMessage_Direction.RIGHT && target === PositionMessage_Direction.LEFT);
+
+        if (isOpposite) {
+            // For 180-degree turns, allow immediate change (velocity controller handles smooth deceleration)
+            return target;
+        }
+
+        // For other direction changes, allow immediate change
+        // The velocity controller's acceleration will make it smooth
+        return target;
     }
     
     /**
@@ -270,6 +343,7 @@ export class BotClient {
      */
     initializePathfinding(collisionGrid: number[][], tileDimensions: { width: number; height: number }): void {
         this.pathfindingManager = new BotPathfindingManager(collisionGrid, tileDimensions);
+        // Using simple movement matching original speed calculation
     }
 
     /**
@@ -287,7 +361,7 @@ export class BotClient {
     }
 
     private lastPathTarget: { x: number; y: number } | null = null;
-    private readonly PATH_RECALC_THRESHOLD = 100; // Only recalculate if target moved >100 pixels
+    private readonly PATH_RECALC_THRESHOLD = 200; // Only recalculate if target moved >200 pixels (reduced recalculations to prevent glitching)
 
     /**
      * Move to position using pathfinding
@@ -296,6 +370,18 @@ export class BotClient {
     async moveToWithPathfinding(x: number, y: number): Promise<boolean> {
         if (!this.pathfindingManager) {
             return false;
+        }
+
+        const now = Date.now();
+
+        // Cooldown check - don't recalculate too frequently
+        if (now - this.lastPathRecalcTime < this.PATH_RECALC_COOLDOWN && this.isFollowingPath) {
+            return true; // Keep following current path
+        }
+        
+        // Don't create new path too soon after previous path ended (prevents glitching)
+        if (!this.isFollowingPath && now - this.lastPathEndTime < this.PATH_END_COOLDOWN) {
+            return false; // Too soon after path ended, skip pathfinding
         }
 
         // Don't recalculate if we're already following a path to a similar target
@@ -317,27 +403,58 @@ export class BotClient {
         const dy = y - botPos.y;
         const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
         
-        if (distanceToTarget < 20) {
-            // Already close enough, no need for pathfinding
+        // For very close targets (< 50px), skip pathfinding to avoid tiny paths that cause glitching
+        if (distanceToTarget < 50) {
+            // Already close enough, no need for pathfinding - use direct movement instead
             return false;
         }
 
-        const path = await this.pathfindingManager.findPath(botPos, { x, y }, true);
+        const rawPath = await this.pathfindingManager.findPath(botPos, { x, y }, true);
 
-        if (path.length === 0) {
+        if (rawPath.length === 0) {
             // No path found, fall back to direct movement
+            movementLogger.log({
+                timestamp: Date.now(),
+                botId: this.config.botId,
+                eventType: 'path_fail',
+                position: botPos,
+                targetPosition: { x, y },
+                metadata: { reason: 'no_path_found' },
+            });
             return false;
         }
+        
+        // Log path start
+        movementLogger.log({
+            timestamp: Date.now(),
+            botId: this.config.botId,
+            eventType: 'path_start',
+            position: botPos,
+            targetPosition: { x, y },
+            pathLength: rawPath.length,
+            metadata: { rawPathLength: rawPath.length },
+        });
 
         // Only update path if we have a valid path with at least 2 waypoints
-        if (path.length < 2) {
+        if (rawPath.length < 2) {
             return false;
         }
 
-        this.currentPath = path;
+        // Smooth and optimize the path
+        const smoothedPath = this.pathSmoother.smoothPath(rawPath);
+
+        // Only use smoothed path if it's still valid (has at least 2 points)
+        if (smoothedPath.length < 2) {
+            this.currentPath = rawPath;
+        } else {
+            this.currentPath = smoothedPath;
+        }
+
         this.pathIndex = 0;
         this.isFollowingPath = true;
         this.lastPathTarget = { x, y };
+        this.lastPathRecalcTime = now;
+        
         return true;
     }
 
@@ -349,10 +466,12 @@ export class BotClient {
         this.currentPath = [];
         this.pathIndex = 0;
         this.lastPathTarget = null;
+        this.lastPathEndTime = Date.now(); // Track when path was canceled
     }
 
     /**
      * Update path following (call in update loop)
+     * Uses simple movement matching original speed calculation
      */
     updatePathFollowing(deltaTime: number): void {
         if (!this.isFollowingPath || this.currentPath.length === 0) {
@@ -361,60 +480,157 @@ export class BotClient {
 
         const botPos = this.state.getPosition();
         
+        // Stuck detection - if not moving for >3 seconds, cancel pathfinding
+        // BUT: Only check after we've actually tried to move (give it time to start)
+        if (this.lastPosition) {
+            const movedDistance = Math.sqrt(
+                Math.pow(botPos.x - this.lastPosition.x, 2) + 
+                Math.pow(botPos.y - this.lastPosition.y, 2)
+            );
+            
+            if (movedDistance < this.STUCK_THRESHOLD) {
+                // Only start stuck timer if we've been following path for at least 2 seconds
+                // This prevents false positives when path just started or bot is moving slowly
+                const pathAge = Date.now() - this.lastPathRecalcTime;
+                if (pathAge > 2000) {
+                    if (this.stuckDetectionTime === 0) {
+                        this.stuckDetectionTime = Date.now();
+                    } else if (Date.now() - this.stuckDetectionTime > this.STUCK_TIME) {
+                        // Stuck for too long, cancel pathfinding and let behavior handle it
+                        console.warn(`[Bot ${this.config.botId}] Stuck detected after ${pathAge}ms, canceling pathfinding`);
+                        this.cancelPathfinding();
+                        return;
+                    }
+                }
+            } else {
+                this.stuckDetectionTime = 0; // Reset stuck detection
+            }
+        } else {
+            // First time, initialize lastPosition
+            this.lastPosition = { ...botPos };
+        }
+        
+        // Update lastPosition AFTER checking (so we compare previous frame to current)
+        if (!this.lastPosition) {
+            this.lastPosition = { ...botPos };
+        } else {
+            this.lastPosition = { ...botPos };
+        }
+
         // Make sure we have a valid path index
         if (this.pathIndex >= this.currentPath.length) {
             this.isFollowingPath = false;
             this.currentPath = [];
             this.pathIndex = 0;
             this.lastPathTarget = null;
+            this.lastPathEndTime = Date.now(); // Track when path ended
             this.stop();
             return;
         }
 
-        const targetPos = this.currentPath[this.pathIndex];
+        // Get current waypoint
+        const currentWaypoint = this.currentPath[this.pathIndex];
+        
+        // Calculate distance to current waypoint
+        const dx = currentWaypoint.x - botPos.x;
+        const dy = currentWaypoint.y - botPos.y;
+        const distanceToWaypoint = Math.sqrt(dx * dx + dy * dy);
 
-        // Check if reached current waypoint
-        const dx = targetPos.x - botPos.x;
-        const dy = targetPos.y - botPos.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        // Use larger threshold to prevent oscillation (20 pixels)
-        if (distance < 20) {
+        // Simple waypoint advancement - only advance when very close
+        // Use a single threshold to prevent oscillation
+        const waypointThreshold = 30; // Advance when within 30px (increased from 20px to prevent glitching)
+        
+        if (distanceToWaypoint < waypointThreshold) {
+            const oldIndex = this.pathIndex;
             this.pathIndex++;
+            
+            // Log waypoint advancement
+            movementLogger.log({
+                timestamp: Date.now(),
+                botId: this.config.botId,
+                eventType: 'waypoint_advance',
+                position: botPos,
+                targetPosition: currentWaypoint,
+                waypointIndex: this.pathIndex,
+                pathLength: this.currentPath.length,
+                distanceToTarget: distanceToWaypoint,
+            });
+            
             if (this.pathIndex >= this.currentPath.length) {
                 // Reached destination
+                movementLogger.log({
+                    timestamp: Date.now(),
+                    botId: this.config.botId,
+                    eventType: 'path_end',
+                    position: botPos,
+                    targetPosition: this.lastPathTarget ? { x: this.lastPathTarget.x, y: this.lastPathTarget.y } : undefined,
+                });
+                
                 this.isFollowingPath = false;
                 this.currentPath = [];
                 this.pathIndex = 0;
                 this.lastPathTarget = null;
+                this.lastPathEndTime = Date.now(); // Track when path ended
                 this.stop();
                 return;
             }
         }
 
-        // Move towards current waypoint
-        const nextTarget = this.currentPath[this.pathIndex];
-        const angle = Math.atan2(nextTarget.y - botPos.y, nextTarget.x - botPos.x);
+        // Get target waypoint (may have advanced)
+        if (this.pathIndex >= this.currentPath.length) {
+            return; // Path complete, will be handled above
+        }
+
+        const targetWaypoint = this.currentPath[this.pathIndex];
         
-        // Use behavior's speed if available, otherwise default to 50 (chill walking speed)
-        // Match old direct movement calculation exactly: speed * 0.016 per frame
-        // This maintains the same movement speed as before pathfinding
-        const speed = (this.behavior as any)?.config?.speed || 50;
-        const moveDistance = speed * 0.016; // Same as old direct movement calculation
+        // Calculate direction to target
+        const targetDx = targetWaypoint.x - botPos.x;
+        const targetDy = targetWaypoint.y - botPos.y;
+        const distanceToTarget = Math.sqrt(targetDx * targetDx + targetDy * targetDy);
+
+        // Get speed from config
+        const behaviorSpeed = (this.behavior as any)?.config?.speed || 
+                            (this.behavior as any)?.config?.wanderSpeed || 50;
         
-        // Cap movement to prevent overshooting waypoint
-        const cappedDistance = Math.min(moveDistance, distance);
+        // CRITICAL FIX: Config has speed=100, but original bots branch used speed=50
+        // Original: 50 * 0.016 = 0.8 pixels per frame
+        // Current: 100 * 0.016 = 1.6 pixels per frame (2x faster!)
+        // Solution: If speed > 75, halve it to match original behavior
+        const effectiveSpeed = behaviorSpeed > 75 ? behaviorSpeed * 0.5 : behaviorSpeed;
+        
+        const angle = Math.atan2(targetDy, targetDx);
+        const moveDistance = effectiveSpeed * 0.016; // Adjusted for higher config speeds
+        const cappedDistance = Math.min(moveDistance, distanceToTarget);
+        
         const newX = botPos.x + Math.cos(angle) * cappedDistance;
         const newY = botPos.y + Math.sin(angle) * cappedDistance;
+        
+        // Log movement for analysis
+        movementLogger.log({
+            timestamp: Date.now(),
+            botId: this.config.botId,
+            eventType: 'move',
+            position: { x: newX, y: newY },
+            targetPosition: targetWaypoint,
+            speed: behaviorSpeed,
+            effectiveSpeed: effectiveSpeed,
+            moveDistance: cappedDistance,
+            deltaTime: deltaTime,
+            waypointIndex: this.pathIndex,
+            pathLength: this.currentPath.length,
+            distanceToTarget: distanceToTarget,
+            metadata: {
+                angle: angle.toFixed(2),
+                capped: cappedDistance < moveDistance,
+            },
+        });
 
         // Determine direction based on movement
-        const nextDx = nextTarget.x - botPos.x;
-        const nextDy = nextTarget.y - botPos.y;
         let direction = PositionMessage_Direction.DOWN;
-        if (Math.abs(nextDx) > Math.abs(nextDy)) {
-            direction = nextDx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+        if (Math.abs(targetDx) > Math.abs(targetDy)) {
+            direction = targetDx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
         } else {
-            direction = nextDy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+            direction = targetDy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
         }
 
         this.moveTo(newX, newY, direction);

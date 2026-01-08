@@ -141,7 +141,7 @@ export class BotManager {
                 // Ensure required fields have defaults
                 if (typeof transformed.loop === 'undefined') transformed.loop = true;
                 if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
-                if (typeof transformed.speed === 'undefined') transformed.speed = 100;
+                    if (typeof transformed.speed === 'undefined') transformed.speed = 50; // Match original bots branch default
                 if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
             }
             
@@ -364,7 +364,7 @@ export class BotManager {
                     }
                     if (typeof transformed.loop === 'undefined') transformed.loop = true;
                     if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
-                    if (typeof transformed.speed === 'undefined') transformed.speed = 100;
+                    if (typeof transformed.speed === 'undefined') transformed.speed = 50; // Match original bots branch default
                     if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
                 }
                 
@@ -696,20 +696,39 @@ export class BotManager {
 
             // If WA reports exactly our bot count (or less), room is empty
             // WA user count includes bots, so if waUserCount <= ourBotCount, there are no real players
+            // Add a small buffer (1) to account for timing/connection delays
             if (waUserCount <= ourBotCount) {
-                console.log(
-                    `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${ourBotCount} bots. Despawning bots.`
-                );
+                // Double-check: are any bots actually connected?
+                let connectedBots = 0;
+                for (const botId of roomState.botIds) {
+                    const instance = this.bots.get(botId);
+                    if (instance && instance.status === 'connected') {
+                        connectedBots++;
+                    }
+                }
                 
-                // Despawn all bots for this room
-                const despawnPromises = Array.from(roomState.botIds).map(botId => 
-                    this.despawnBot(botId).catch(error => {
-                        console.error(`[BotManager] Error despawning bot ${botId} during verification:`, error);
-                    })
-                );
-                
-                await Promise.all(despawnPromises);
-                this.roomsWithBots.delete(roomId);
+                // Only despawn if WA count is significantly less than our connected bots
+                // This prevents despawning when bots are still connecting or WA count is slightly off
+                if (waUserCount < connectedBots - 1) {
+                    console.log(
+                        `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Despawning bots.`
+                    );
+                    
+                    // Despawn all bots for this room
+                    const despawnPromises = Array.from(roomState.botIds).map(botId => 
+                        this.despawnBot(botId).catch(error => {
+                            console.error(`[BotManager] Error despawning bot ${botId} during verification:`, error);
+                        })
+                    );
+                    
+                    await Promise.all(despawnPromises);
+                    this.roomsWithBots.delete(roomId);
+                } else {
+                    // WA count is close to our bot count, might be timing issue - keep bots
+                    console.log(
+                        `[BotManager] Room ${roomId} verification: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Keeping bots (possible timing issue).`
+                    );
+                }
             } else {
                 // Room has real players (waUserCount > ourBotCount)
                 const realPlayerCount = waUserCount - ourBotCount;

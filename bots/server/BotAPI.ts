@@ -7,6 +7,7 @@ import { BotManager } from './BotManager';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import type { BotConfiguration } from './AdminApiService';
+import { movementLogger } from '../utils/MovementLogger';
 
 export interface BotAPIRequest extends Request {
     userIdentifier?: string;
@@ -17,11 +18,29 @@ export interface BotAPIRequest extends Request {
  * Middleware to verify JWT token
  */
 function authenticateToken(req: BotAPIRequest, res: Response, next: NextFunction): void {
+    const path = req.path || req.originalUrl?.split('?')[0] || '';
+    
+    // Skip auth for movement endpoints (dev only) - safety check
+    if (path.startsWith('/dev/movement/')) {
+        const isDevMode = process.env.ENABLE_MOVEMENT_LOGGING === 'true' || process.env.NODE_ENV === 'development';
+        if (isDevMode) {
+            next();
+            return;
+        }
+    }
+    
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
     if (!token) {
+        console.log(`[authenticateToken] ❌ No token found for path: ${path} - RETURNING 401`);
         res.status(401).json({ error: 'Missing authorization token' });
+        return;
+    }
+
+    // If token doesn't look like a JWT (no dots), reject it
+    if (!token.includes('.')) {
+        res.status(401).json({ error: 'Invalid token' });
         return;
     }
 
@@ -30,6 +49,10 @@ function authenticateToken(req: BotAPIRequest, res: Response, next: NextFunction
         // For now, we'll extract user identifier from token
         // In production, use proper JWT verification
         const base64Url = token.split('.')[1];
+        if (!base64Url) {
+            res.status(401).json({ error: 'Invalid token' });
+            return;
+        }
         const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
         const jsonPayload = decodeURIComponent(
             atob(base64)
@@ -62,16 +85,19 @@ export class BotAPI {
     private server: any = null;
 
     constructor(botManager: BotManager, adminApiService: AdminApiService, botRegistry: BotRegistry) {
+        console.log('[BotAPI] Constructor called');
         this.app = express();
         this.botManager = botManager;
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
 
+        // Keep constructor simple - no route registration here
         this.setupMiddleware();
         this.setupRoutes();
     }
 
     private setupMiddleware(): void {
+        console.log('[BotAPI] setupMiddleware() called');
         this.app.use(express.json());
         this.app.use(express.urlencoded({ extended: true }));
 
@@ -86,6 +112,7 @@ export class BotAPI {
                 next();
             }
         });
+        
     }
 
     private setupRoutes(): void {
@@ -93,16 +120,14 @@ export class BotAPI {
         this.app.get('/health', (req, res) => {
             res.json({ status: 'ok', timestamp: new Date().toISOString() });
         });
-
-        // Test endpoint to manually trigger verification (for testing)
-        this.app.post('/api/bots/verify-rooms', async (req: Request, res: Response) => {
-            try {
-                await this.botManager.verifyRoomOccupancy();
-                res.json({ status: 'ok', message: 'Verification triggered' });
-            } catch (error: any) {
-                console.error('[BotAPI] Error triggering verification:', error);
-                res.status(500).json({ error: error.message });
-            }
+        
+        // Debug endpoint to check environment variables
+        this.app.get('/api/debug/env', (req, res) => {
+            res.json({
+                ENABLE_MOVEMENT_LOGGING: process.env.ENABLE_MOVEMENT_LOGGING,
+                NODE_ENV: process.env.NODE_ENV,
+                isDevMode: process.env.ENABLE_MOVEMENT_LOGGING === 'true' || process.env.NODE_ENV === 'development',
+            });
         });
 
         // Room enter/leave endpoints (no auth required - safe public endpoints for bot spawning)
@@ -295,8 +320,9 @@ export class BotAPI {
             }
         });
 
-        // All other routes require authentication
-        this.app.use(authenticateToken);
+        // Apply authentication ONLY to /api/bots routes (NOT /api/debug, /dev/movement, etc.)
+        // Movement endpoints are registered at /dev/movement/* to bypass any /api/* middleware
+        this.app.use('/api/bots', authenticateToken);
 
         // List all bots for a room/world
         this.app.get('/api/bots', async (req: BotAPIRequest, res: Response) => {
@@ -325,9 +351,8 @@ export class BotAPI {
         this.app.get('/api/bots/:botId', async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
-                const includeSensitive = req.query.includeSensitive === 'true';
 
-                const config = await this.adminApiService.getBotConfiguration(botId, includeSensitive);
+                const config = await this.adminApiService.getBotConfiguration(botId);
                 if (!config) {
                     res.status(404).json({ error: 'Bot not found' });
                     return;
@@ -355,6 +380,7 @@ export class BotAPI {
                 const botId = `bot-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
                 // Save configuration to Admin API
+                const now = new Date();
                 const fullConfig: BotConfiguration = {
                     botId,
                     name: config.name || `Bot ${botId}`,
@@ -369,9 +395,15 @@ export class BotAPI {
                     chatInstructions: config.chatInstructions,
                     movementInstructions: config.movementInstructions,
                     assignedSpace: config.assignedSpace,
+                    createdAt: now,
+                    updatedAt: now,
                 };
 
-                await this.adminApiService.saveBotConfiguration(fullConfig);
+                await this.adminApiService.saveBotConfiguration({
+                    ...fullConfig,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                });
 
                 res.status(201).json({ botId, config: fullConfig });
             } catch (error: any) {
@@ -387,7 +419,7 @@ export class BotAPI {
                 const updates: Partial<BotConfiguration> = req.body;
 
                 // Get existing config
-                const existingConfig = await this.adminApiService.getBotConfiguration(botId, true);
+                const existingConfig = await this.adminApiService.getBotConfiguration(botId);
                 if (!existingConfig) {
                     res.status(404).json({ error: 'Bot not found' });
                     return;
@@ -447,7 +479,7 @@ export class BotAPI {
                 }
 
                 // Load configuration
-                const config = await this.adminApiService.getBotConfiguration(botId, true);
+                const config = await this.adminApiService.getBotConfiguration(botId);
                 if (!config) {
                     res.status(404).json({ error: 'Bot configuration not found' });
                     return;
@@ -506,6 +538,58 @@ export class BotAPI {
      * Start the API server
      */
     start(port: number = 3001): void {
+        const isDevMode = process.env.ENABLE_MOVEMENT_LOGGING === 'true' || process.env.NODE_ENV === 'development';
+        
+        if (isDevMode) {
+            console.log('[BotAPI] Registering movement endpoints in start() (dev mode)');
+            
+            // Register movement endpoints - simple, no conditions
+            this.app.get('/dev/movement/test', (req: Request, res: Response) => {
+                res.json({ status: 'ok', message: 'Movement API is accessible', timestamp: new Date().toISOString() });
+            });
+            
+            this.app.get('/dev/movement/logs', (req: Request, res: Response) => {
+                try {
+                    const botId = req.query.botId as string | undefined;
+                    const count = parseInt(req.query.count as string || '100', 10);
+                    if (botId) {
+                        const events = movementLogger.getRecentEvents(botId, count);
+                        res.json({ botId, events, count: events.length });
+                    } else {
+                        const allEvents = movementLogger.getAllEvents();
+                        res.json({ events: allEvents.slice(-count), count: allEvents.length, total: allEvents.length });
+                    }
+                } catch (error: any) {
+                    console.error('[BotAPI] Error getting movement logs:', error);
+                    res.status(500).json({ error: error.message, events: [], count: 0 });
+                }
+            });
+            
+            this.app.get('/dev/movement/analyze/:botId', (req: Request, res: Response) => {
+                try {
+                    const { botId } = req.params;
+                    const timeWindow = parseInt(req.query.timeWindow as string || '10000', 10);
+                    const analysis = movementLogger.analyzeMovement(botId, timeWindow);
+                    res.json({ botId, timeWindow, ...analysis });
+                } catch (error: any) {
+                    console.error('[BotAPI] Error analyzing movement:', error);
+                    res.status(500).json({ error: error.message });
+                }
+            });
+            
+            this.app.get('/dev/movement/summary', (req: Request, res: Response) => {
+                try {
+                    const summary = movementLogger.getSummary();
+                    res.json(summary);
+                } catch (error: any) {
+                    console.error('[BotAPI] Error getting movement summary:', error);
+                    res.status(500).json({ error: error.message });
+                }
+            });
+            
+            console.log('[BotAPI] Movement endpoints registered at /dev/movement/*');
+        }
+        
         this.server = this.app.listen(port, () => {
             console.log(`[BotAPI] Server running on port ${port}`);
         });

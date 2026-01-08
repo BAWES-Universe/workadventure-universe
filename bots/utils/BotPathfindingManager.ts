@@ -17,6 +17,11 @@ export class BotPathfindingManager {
     private grid: number[][];
     private tileDimensions: { width: number; height: number };
     private currentPathfindingInstanceId: number | null = null;
+    
+    // Path caching for performance
+    private pathCache: Map<string, { path: PositionInterface[]; timestamp: number }> = new Map();
+    private readonly CACHE_TTL = 5000; // Cache paths for 5 seconds
+    private readonly CACHE_MAX_SIZE = 100; // Maximum cached paths
 
     constructor(collisionGrid: number[][], tileDimensions: { width: number; height: number }) {
         this.easyStar = new EasyStar.js();
@@ -66,17 +71,36 @@ export class BotPathfindingManager {
         end: PositionInterface,
         tryFindingNearestAvailable = false
     ): Promise<PositionInterface[]> {
+        // Check cache first
+        const cacheKey = this.getCacheKey(start, end);
+        const cached = this.pathCache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+            return cached.path.map(p => ({ ...p })); // Return copy
+        }
+
         const startTile = this.pixelsToTile(start);
         const endTile = this.pixelsToTile(end);
 
-        // Clamp to grid bounds
+        // Clamp to grid bounds - ensure we never go outside the map
         const gridWidth = this.grid[0]?.length || 0;
         const gridHeight = this.grid.length || 0;
+
+        if (gridWidth === 0 || gridHeight === 0) {
+            console.warn(`[BotPathfindingManager] Invalid grid dimensions: ${gridWidth}x${gridHeight}`);
+            return [];
+        }
 
         startTile.x = Math.max(0, Math.min(startTile.x, gridWidth - 1));
         startTile.y = Math.max(0, Math.min(startTile.y, gridHeight - 1));
         endTile.x = Math.max(0, Math.min(endTile.x, gridWidth - 1));
         endTile.y = Math.max(0, Math.min(endTile.y, gridHeight - 1));
+        
+        // If end tile is outside bounds or in a wall, try to find nearest walkable tile
+        if (endTile.x < 0 || endTile.x >= gridWidth || endTile.y < 0 || endTile.y >= gridHeight) {
+            console.warn(`[BotPathfindingManager] End position outside grid bounds, clamping`);
+            endTile.x = Math.max(0, Math.min(endTile.x, gridWidth - 1));
+            endTile.y = Math.max(0, Math.min(endTile.y, gridHeight - 1));
+        }
 
         // Check if start or end is in a wall
         if (this.grid[startTile.y]?.[startTile.x] === PathTileType.Collider) {
@@ -115,11 +139,52 @@ export class BotPathfindingManager {
             const path = await this.getPath(startTile, endPoint);
             if (path && path.length > 0) {
                 // Convert tile path to pixel path
-                return path.map(tile => this.tileToPixels(tile));
+                const pixelPath = path.map(tile => this.tileToPixels(tile));
+                
+                // Cache the path
+                this.cachePath(cacheKey, pixelPath);
+                
+                // Path smoothing will be handled by PathSmoother in BotClient
+                // This keeps pathfinding manager focused on path calculation
+                return pixelPath;
             }
         }
 
         return [];
+    }
+
+    /**
+     * Generate cache key for path
+     */
+    private getCacheKey(start: PositionInterface, end: PositionInterface): string {
+        // Round to tile coordinates for cache key (paths to same tiles are similar)
+        const startTile = this.pixelsToTile(start);
+        const endTile = this.pixelsToTile(end);
+        return `${startTile.x},${startTile.y}:${endTile.x},${endTile.y}`;
+    }
+
+    /**
+     * Cache a path
+     */
+    private cachePath(key: string, path: PositionInterface[]): void {
+        // Limit cache size
+        if (this.pathCache.size >= this.CACHE_MAX_SIZE) {
+            // Remove oldest entry
+            const oldestKey = this.pathCache.keys().next().value;
+            this.pathCache.delete(oldestKey);
+        }
+
+        this.pathCache.set(key, {
+            path: path.map(p => ({ ...p })), // Store copy
+            timestamp: Date.now(),
+        });
+    }
+
+    /**
+     * Clear path cache (useful when map changes)
+     */
+    clearCache(): void {
+        this.pathCache.clear();
     }
 
     /**

@@ -6,6 +6,7 @@ import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
+import { movementLogger } from '../utils/MovementLogger';
 
 export interface SocialBehaviorConfig extends BehaviorConfig {
     type: 'social';
@@ -257,20 +258,39 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        // Try pathfinding first if available
-        if (this.bot.hasPathfinding()) {
+        // Always try pathfinding first if available and not already following a path - don't move through walls
+        if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
             const success = await this.bot.moveToWithPathfinding(player.position.x, player.position.y);
             if (success) {
                 // Pathfinding will handle movement via updatePathFollowing
                 return;
             }
-            // Pathfinding failed, fall through to direct movement
+            // Pathfinding failed - don't move if we can't find a path (prevents walking through walls)
+            console.warn(`[SocialBehavior] Pathfinding failed for player approach, staying in place`);
+            return;
         }
 
-        // Fallback to direct movement
+        // Only use direct movement if pathfinding is not available
+        // This should only happen during initialization before pathfinding is set up
+        const effectiveSpeed = config.wanderSpeed > 75 ? config.wanderSpeed * 0.5 : config.wanderSpeed;
         const angle = Math.atan2(dy, dx);
-        const newX = botPos.x + Math.cos(angle) * config.wanderSpeed * 0.016; // Assuming 60fps
-        const newY = botPos.y + Math.sin(angle) * config.wanderSpeed * 0.016;
+        const moveDistance = effectiveSpeed * 0.016; // Adjusted for higher config speeds
+        const newX = botPos.x + Math.cos(angle) * moveDistance;
+        const newY = botPos.y + Math.sin(angle) * moveDistance;
+
+        // Log direct movement
+        movementLogger.log({
+            timestamp: Date.now(),
+            botId: this.bot.config.botId,
+            eventType: 'move',
+            position: { x: newX, y: newY },
+            targetPosition: player.position,
+            speed: config.wanderSpeed,
+            effectiveSpeed: effectiveSpeed,
+            moveDistance: moveDistance,
+            distanceToTarget: distance,
+            metadata: { movementType: 'direct_fallback', pathfindingFailed: true },
+        });
 
         // Determine direction
         let direction = PositionMessage_Direction.DOWN;
@@ -311,20 +331,39 @@ export class SocialBehavior extends BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance > 10) {
-            // Try pathfinding first if available
-            if (this.bot.hasPathfinding()) {
+            // Always try pathfinding first if available and not already following a path - don't move through walls
+            if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
                 const success = await this.bot.moveToWithPathfinding(this.wanderTarget.x, this.wanderTarget.y);
                 if (success) {
                     // Pathfinding will handle movement via updatePathFollowing
                     return;
                 }
-                // Pathfinding failed, fall through to direct movement
+                // Pathfinding failed - don't move if we can't find a path (prevents walking through walls)
+                console.warn(`[SocialBehavior] Pathfinding failed for wander target, staying in place`);
+                return;
             }
 
-            // Fallback to direct movement
+            // Only use direct movement if pathfinding is not available
+            // This should only happen during initialization before pathfinding is set up
+            const effectiveSpeed = config.wanderSpeed > 75 ? config.wanderSpeed * 0.5 : config.wanderSpeed;
             const angle = Math.atan2(dy, dx);
-            const newX = botPos.x + Math.cos(angle) * config.wanderSpeed * 0.016;
-            const newY = botPos.y + Math.sin(angle) * config.wanderSpeed * 0.016;
+            const moveDistance = effectiveSpeed * 0.016; // Adjusted for higher config speeds
+            const newX = botPos.x + Math.cos(angle) * moveDistance;
+            const newY = botPos.y + Math.sin(angle) * moveDistance;
+
+            // Log direct movement
+            movementLogger.log({
+                timestamp: Date.now(),
+                botId: this.bot.config.botId,
+                eventType: 'move',
+                position: { x: newX, y: newY },
+                targetPosition: this.wanderTarget,
+                speed: config.wanderSpeed,
+                effectiveSpeed: effectiveSpeed,
+                moveDistance: moveDistance,
+                distanceToTarget: distance,
+                metadata: { movementType: 'direct_fallback', pathfindingFailed: true },
+            });
 
             let direction = PositionMessage_Direction.DOWN;
             if (Math.abs(dx) > Math.abs(dy)) {

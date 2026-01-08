@@ -13,6 +13,7 @@ import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
+import { movementLogger } from '../utils/MovementLogger';
 
 // Environment variables
 const BOT_SERVER_PORT = parseInt(process.env.BOT_SERVER_PORT || '3001', 10);
@@ -44,6 +45,9 @@ async function shutdown(signal: string) {
     try {
         // Stop game loop
         stopGameLoop();
+        
+        // Stop movement analysis
+        stopMovementAnalysis();
         
         // Stop API server
         await botAPI.stop();
@@ -77,6 +81,9 @@ async function start() {
         // Start game loop to update bots
         startGameLoop(botManager);
 
+        // Start periodic movement analysis
+        startMovementAnalysis(botManager);
+
         // TODO: Load bots from storage on startup
         // This would involve:
         // 1. Reading WAM files to find bot entities
@@ -107,6 +114,54 @@ function startGameLoop(botManager: BotManager): void {
     }, UPDATE_INTERVAL);
 
     console.log(`[BotServer] Game loop started (${TARGET_FPS} FPS)`);
+}
+
+// Periodic movement analysis (DEV ONLY)
+let movementAnalysisInterval: NodeJS.Timeout | null = null;
+
+function startMovementAnalysis(botManager: BotManager): void {
+    // Only enable in development
+    const isDevMode = process.env.ENABLE_MOVEMENT_LOGGING === 'true' || process.env.NODE_ENV === 'development';
+    
+    console.log(`[BotServer] Movement logging check: ENABLE_MOVEMENT_LOGGING=${process.env.ENABLE_MOVEMENT_LOGGING}, NODE_ENV=${process.env.NODE_ENV}, isDevMode=${isDevMode}`);
+    
+    if (!isDevMode) {
+        console.log('[BotServer] Movement analysis disabled (production mode)');
+        return;
+    }
+
+    const ANALYSIS_INTERVAL = 30000; // Analyze every 30 seconds
+
+    movementAnalysisInterval = setInterval(() => {
+        const instances = botManager.getAllBotInstances();
+        
+        for (const instance of instances) {
+            const analysis = movementLogger.analyzeMovement(instance.botId, 10000);
+            
+            if (analysis.oscillationDetected) {
+                console.warn(`[MovementAnalysis] Bot ${instance.botId.substring(0, 8)}: OSCILLATION DETECTED! avgSpeed=${analysis.averageSpeed.toFixed(1)}, waypointChanges=${analysis.waypointChanges}, pathFailures=${analysis.pathFailures}`);
+            }
+            
+            // Log summary every 30 seconds
+            if (Math.random() < 0.1) { // 10% chance to log (avoid spam)
+                console.log(`[MovementAnalysis] Bot ${instance.botId.substring(0, 8)}: avgSpeed=${analysis.averageSpeed.toFixed(1)}, totalDist=${analysis.totalDistance.toFixed(1)}, waypoints=${analysis.waypointChanges}, pathFails=${analysis.pathFailures}`);
+            }
+        }
+        
+        const summary = movementLogger.getSummary();
+        if (summary.totalEvents > 0 && Math.random() < 0.05) { // 5% chance
+            console.log(`[MovementAnalysis] Summary: ${summary.totalEvents} events, ${summary.botsTracked} bots, types:`, summary.eventTypes);
+        }
+    }, ANALYSIS_INTERVAL);
+
+    console.log(`[BotServer] Movement analysis started (DEV MODE - every ${ANALYSIS_INTERVAL / 1000}s)`);
+}
+
+function stopMovementAnalysis(): void {
+    if (movementAnalysisInterval) {
+        clearInterval(movementAnalysisInterval);
+        movementAnalysisInterval = null;
+    }
 }
 
 function stopGameLoop(): void {
