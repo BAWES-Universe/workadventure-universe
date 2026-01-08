@@ -244,7 +244,9 @@ export class BotClient {
                 this.updatePathFollowing(deltaTime);
             } else {
                 // Path following is active but bot is stopped - cancel pathfinding
-                console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
+                }
                 this.cancelPathfinding();
             }
         }
@@ -291,22 +293,23 @@ export class BotClient {
         this.state.setPosition({ x, y });
         this.state.setDirection(direction);
         this.state.setMoving(true);
-        console.log(`[Bot ${this.config.botId}] 📍 moveTo() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, pos=(${Math.round(x)}, ${Math.round(y)})`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 📍 moveTo() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, pos=(${Math.round(x)}, ${Math.round(y)})`);
+        }
     }
 
     /**
      * Stop moving
      */
     stop(): void {
-        // DEBUG: Log ALL stop() calls with stack trace
-        const stack = new Error().stack;
-        const caller = stack?.split('\n')[2]?.trim() || 'unknown';
-        const nearbyPlayers = this.getNearbyPlayers(100);
-        console.log(`[Bot ${this.config.botId}] 🛑🛑🛑 STOP() CALLED from: ${caller}, nearbyPlayers=${nearbyPlayers.length}`);
-        if (nearbyPlayers.length > 0) {
-            console.log(`[Bot ${this.config.botId}] ⚠️⚠️⚠️ WARNING: Stopping with ${nearbyPlayers.length} players nearby! This will trigger a bubble!`);
-        }
         const wasMoving = this.state.isMoving();
+        // Only log in development to avoid spam in production
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            const nearbyPlayers = this.getNearbyPlayers(100);
+            if (nearbyPlayers.length > 0) {
+                console.warn(`[Bot ${this.config.botId}] ⚠️ Stopping with ${nearbyPlayers.length} players nearby`);
+            }
+        }
         if (wasMoving) {
             movementLogger.log({
                 timestamp: Date.now(),
@@ -316,7 +319,10 @@ export class BotClient {
             });
         }
         this.state.setMoving(false);
-        console.log(`[Bot ${this.config.botId}] 🛑 STOP() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, isFollowingPath=${this.isFollowingPath}`);
+        // Only log in development
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 🛑 STOP() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, isFollowingPath=${this.isFollowingPath}`);
+        }
     }
 
     /**
@@ -577,7 +583,9 @@ export class BotClient {
         // If stop() was called, isMoving() will be false - respect that!
         if (!this.state.isMoving()) {
             // Bot was stopped (likely by behavior.update() detecting we're in a space)
-            console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
+            }
             this.cancelPathfinding();
             return;
         }
@@ -809,7 +817,9 @@ export class BotClient {
         // CRITICAL: Check again if bot should be stopped before moving
         // This prevents moveTo() from overriding stop() calls
         if (!this.state.isMoving()) {
-            console.log(`[Bot ${this.config.botId}] 🛑 Movement blocked - bot is stopped`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🛑 Movement blocked - bot is stopped`);
+            }
             this.cancelPathfinding();
             return;
         }
@@ -864,13 +874,17 @@ export class BotClient {
 
         // Debug: log total players and bot position
         if (Math.random() < 0.05) { // 5% chance to avoid spam
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] getNearbyPlayers: checking ${this.players.size} players within ${radius}px, bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
+        }
             if (this.players.size > 0) {
                 for (const player of this.players.values()) {
                     const dx = player.position.x - botPos.x;
                     const dy = player.position.y - botPos.y;
                     const distance = Math.sqrt(dx * dx + dy * dy);
-                    console.log(`[Bot ${this.config.botId}]   Player ${player.userId} at (${Math.round(player.position.x)}, ${Math.round(player.position.y)}) - distance: ${Math.round(distance)}px, isBot: ${BotClient.isBot(player.userId)}`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}]   Player ${player.userId} at (${Math.round(player.position.x)}, ${Math.round(player.position.y)}) - distance: ${Math.round(distance)}px, isBot: ${BotClient.isBot(player.userId)}`);
+                    }
                 }
             }
         }
@@ -891,7 +905,9 @@ export class BotClient {
             if (distance <= radius) {
                 result.push(player);
                 if (Math.random() < 0.1) {
-                    console.log(`[Bot ${this.config.botId}] ✅ Found nearby player ${player.userId} at distance ${Math.round(distance)}px`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] ✅ Found nearby player ${player.userId} at distance ${Math.round(distance)}px`);
+                    }
                 }
             }
         }

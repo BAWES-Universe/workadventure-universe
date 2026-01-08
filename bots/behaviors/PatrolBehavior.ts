@@ -86,14 +86,20 @@ export class PatrolBehavior extends BaseBehavior {
                         // Check if ANY players are nearby (idle or active) - use getNearbyPlayers to catch idle players
                         const nearbyPlayersList = this.bot.getNearbyPlayers(100);
                         if (nearbyPlayersList.length > 0 || this.nearbyPlayers.size > 0) {
-                            console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) but players nearby (${nearbyPlayersList.length} idle, ${this.nearbyPlayers.size} active) - skipping pause, continuing immediately (ghost mode)`);
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) but players nearby (${nearbyPlayersList.length} idle, ${this.nearbyPlayers.size} active) - skipping pause, continuing immediately (ghost mode)`);
+                            }
                             this.waypointAttemptStartTime = 0; // Reset
                             this.lastWaypointPosition = null; // Reset
                             this.advanceToNextWaypoint(config);
-                            console.log(`[PatrolBehavior] 🎯 Advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[PatrolBehavior] 🎯 Advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                            }
                         } else {
                             // No players nearby - safe to pause
-                            console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) - pausing for ${config.pauseAtWaypoints}s`);
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) - pausing for ${config.pauseAtWaypoints}s`);
+                            }
                             this.isPaused = true;
                             this.pauseStartTime = Date.now();
                             this.waypointAttemptStartTime = 0; // Reset
@@ -102,13 +108,17 @@ export class PatrolBehavior extends BaseBehavior {
                             if (config.pauseAtWaypoints <= 0) {
                                 this.isPaused = false;
                                 this.advanceToNextWaypoint(config);
-                                console.log(`[PatrolBehavior] 🎯 Advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[PatrolBehavior] 🎯 Advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                                }
                             }
                         }
                     } else {
                         // Not close enough - continue to waypoint using direct movement for precision
                         // BotClient pathfinding ended but we're not at exact position - use direct movement
-                        console.log(`[PatrolBehavior] ⚠️ Path ended but still ${Math.round(distance)}px from waypoint - using direct movement to reach exact position`);
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[PatrolBehavior] ⚠️ Path ended but still ${Math.round(distance)}px from waypoint - using direct movement to reach exact position`);
+                        }
                         this.lastWaypointPosition = { x: botPos.x, y: botPos.y }; // Track position
                         // Use direct movement to reach exact waypoint position
                         const dx = this.targetWaypoint.x - botPos.x;
@@ -165,7 +175,9 @@ export class PatrolBehavior extends BaseBehavior {
             // Check if players are nearby - if so, cancel pause and continue immediately
             const nearbyPlayersList = this.bot.getNearbyPlayers(100);
             if (nearbyPlayersList.length > 0 || this.nearbyPlayers.size > 0 || this.currentSpaceName) {
-                console.log(`[PatrolBehavior] 👻 Players detected during pause - canceling pause, continuing immediately (ghost mode)`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PatrolBehavior] 👻 Players detected during pause - canceling pause, continuing immediately (ghost mode)`);
+                }
                 this.isPaused = false;
                 this.advanceToNextWaypoint(config);
                 return;
@@ -175,7 +187,9 @@ export class PatrolBehavior extends BaseBehavior {
             if (pauseDuration >= config.pauseAtWaypoints) {
                 this.isPaused = false;
                 this.advanceToNextWaypoint(config);
-                console.log(`[PatrolBehavior] 🎯 Pause complete - advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PatrolBehavior] 🎯 Pause complete - advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                }
             }
             return;
         }
@@ -195,7 +209,9 @@ export class PatrolBehavior extends BaseBehavior {
                 // Log when attempting to start movement (rate-limited)
                 const now = Date.now();
                 if (!this.lastMoveAttemptLog || now - this.lastMoveAttemptLog > 2000) {
-                    console.log(`[PatrolBehavior] Attempting to move to waypoint (${this.targetWaypoint.x}, ${this.targetWaypoint.y}), isMoving=${this.bot.getState().isMoving()}, isPaused=${this.isPaused}`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[PatrolBehavior] Attempting to move to waypoint (${this.targetWaypoint.x}, ${this.targetWaypoint.y}), isMoving=${this.bot.getState().isMoving()}, isPaused=${this.isPaused}`);
+                    }
                     this.lastMoveAttemptLog = now;
                 }
                 // Move towards waypoint (async, but we don't await - it will handle pathfinding internally)
@@ -217,8 +233,10 @@ export class PatrolBehavior extends BaseBehavior {
     onSpaceJoined(spaceName: string): void {
         // When bot joins a space, it means a player is in proximity
         // GHOST MODE: Don't stop - continue moving to avoid triggering bubbles
-        console.log(`[PatrolBehavior] SPACE JOINED: ${spaceName}, nearbyPlayers=${this.nearbyPlayers.size} - CONTINUING (ghost mode)`);
-        console.log(`[PatrolBehavior] Setting currentSpaceName to: ${spaceName}`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[PatrolBehavior] SPACE JOINED: ${spaceName}, nearbyPlayers=${this.nearbyPlayers.size} - CONTINUING (ghost mode)`);
+            console.log(`[PatrolBehavior] Setting currentSpaceName to: ${spaceName}`);
+        }
         
         this.currentSpaceName = spaceName;
         
@@ -247,7 +265,9 @@ export class PatrolBehavior extends BaseBehavior {
             const userPos = user.characterPosition || this.bot.getState().getPosition();
             if (!this.nearbyPlayers.has(user.userId)) {
                 this.nearbyPlayers.set(user.userId, userPos);
-                console.log(`[PatrolBehavior] Added player ${user.userId} to nearbyPlayers via space user join`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PatrolBehavior] Added player ${user.userId} to nearbyPlayers via space user join`);
+                }
             }
         }
         
@@ -271,7 +291,9 @@ export class PatrolBehavior extends BaseBehavior {
         // Log pathfinding start (rate-limited to once per second)
         const now = Date.now();
         if (!this.lastPathfindingLog || now - this.lastPathfindingLog > 1000) {
-            console.log(`[PatrolBehavior] Starting path to waypoint (${this.targetWaypoint.x}, ${this.targetWaypoint.y}), isMoving=${this.bot.getState().isMoving()}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[PatrolBehavior] Starting path to waypoint (${this.targetWaypoint.x}, ${this.targetWaypoint.y}), isMoving=${this.bot.getState().isMoving()}`);
+            }
             this.lastPathfindingLog = now;
         }
 
