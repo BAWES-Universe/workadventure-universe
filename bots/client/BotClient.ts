@@ -686,22 +686,53 @@ export class BotClient {
             });
             
             if (this.pathIndex >= this.currentPath.length) {
-                // Reached destination
-                movementLogger.log({
-                    timestamp: Date.now(),
-                    botId: this.config.botId,
-                    eventType: 'path_end',
-                    position: botPos,
-                    targetPosition: this.lastPathTarget ? { x: this.lastPathTarget.x, y: this.lastPathTarget.y } : undefined,
-                });
-                
-                this.isFollowingPath = false;
-                this.currentPath = [];
-                this.pathIndex = 0;
-                this.lastPathTarget = null;
-                this.lastPathEndTime = Date.now(); // Track when path ended
-                this.stop();
-                return;
+                // All path waypoints reached - check if we're close to final target
+                if (this.lastPathTarget) {
+                    const finalDx = this.lastPathTarget.x - botPos.x;
+                    const finalDy = this.lastPathTarget.y - botPos.y;
+                    const finalDistance = Math.sqrt(finalDx * finalDx + finalDy * finalDy);
+                    
+                    // If we're close enough to target (< 30px), consider path complete
+                    // Otherwise, continue with direct movement to reach exact position
+                    if (finalDistance < 30) {
+                        movementLogger.log({
+                            timestamp: Date.now(),
+                            botId: this.config.botId,
+                            eventType: 'path_end',
+                            position: botPos,
+                            targetPosition: { x: this.lastPathTarget.x, y: this.lastPathTarget.y },
+                        });
+                        
+                        this.isFollowingPath = false;
+                        this.currentPath = [];
+                        this.pathIndex = 0;
+                        this.lastPathTarget = null;
+                        this.lastPathEndTime = Date.now();
+                        this.stop();
+                        return;
+                    } else {
+                        // Not close enough - continue with direct movement to exact target
+                        // Add final target as last waypoint to continue movement
+                        this.currentPath.push({ x: this.lastPathTarget.x, y: this.lastPathTarget.y });
+                        // Continue path following with final target
+                    }
+                } else {
+                    // No target - path complete
+                    movementLogger.log({
+                        timestamp: Date.now(),
+                        botId: this.config.botId,
+                        eventType: 'path_end',
+                        position: botPos,
+                    });
+                    
+                    this.isFollowingPath = false;
+                    this.currentPath = [];
+                    this.pathIndex = 0;
+                    this.lastPathTarget = null;
+                    this.lastPathEndTime = Date.now();
+                    this.stop();
+                    return;
+                }
             }
         }
 

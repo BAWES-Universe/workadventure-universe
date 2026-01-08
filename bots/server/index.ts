@@ -84,11 +84,15 @@ async function start() {
         // Start periodic movement analysis
         startMovementAnalysis(botManager);
 
-        // TODO: Load bots from storage on startup
-        // This would involve:
-        // 1. Reading WAM files to find bot entities
-        // 2. Loading sensitive config from Admin API
-        // 3. Spawning bots
+        // Respawn bots for rooms that have players (after hot reload)
+        // Wait a bit for server to be fully ready, then respawn
+        setTimeout(async () => {
+            try {
+                await botManager.respawnBotsForActiveRooms();
+            } catch (error) {
+                console.error('[BotServer] Failed to respawn bots for active rooms:', error);
+            }
+        }, 2000); // Wait 2 seconds for server to be ready
 
     } catch (error) {
         console.error('[BotServer] Failed to start:', error);
@@ -189,3 +193,4 @@ process.on('unhandledRejection', (reason, promise) => {
 // Start the server
 start();
 
+// RESPAWN FIX - 01:16:41

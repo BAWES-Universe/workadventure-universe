@@ -671,6 +671,41 @@ export class BotManager {
     }
 
     /**
+     * Respawn bots for all rooms that have players (called on server startup after hot reload)
+     */
+    async respawnBotsForActiveRooms(): Promise<void> {
+        console.log('[BotManager] Respawning bots for active rooms after server restart...');
+        
+        const waRooms = await this.queryWorkAdventureRooms();
+        if (waRooms.size === 0) {
+            console.log('[BotManager] No active rooms found - bots will spawn when players enter');
+            return;
+        }
+
+        let respawnedCount = 0;
+        for (const [roomId, userCount] of waRooms.entries()) {
+            // Only respawn for rooms that have players (userCount > 0)
+            // Note: userCount includes bots, so we need to check if there are real players
+            if (userCount > 0) {
+                try {
+                    // Initialize room if needed
+                    await this.handlePlayerEnterRoom(roomId);
+                    respawnedCount++;
+                    console.log(`[BotManager] Respawning bots for room ${roomId} (${userCount} users)`);
+                } catch (error) {
+                    console.error(`[BotManager] Failed to respawn bots for room ${roomId}:`, error);
+                }
+            }
+        }
+
+        if (respawnedCount > 0) {
+            console.log(`[BotManager] Respawned bots for ${respawnedCount} active rooms`);
+        } else {
+            console.log('[BotManager] No rooms with players found - bots will spawn when players enter');
+        }
+    }
+
+    /**
      * Verify room occupancy by comparing WA room counts with our bot counts
      * If WA says room has N users but we have N bots, the room is empty -> despawn
      */

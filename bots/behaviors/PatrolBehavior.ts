@@ -28,6 +28,10 @@ export class PatrolBehavior extends BaseBehavior {
     private currentSpaceName: string | null = null;
     private spaceLeftTime: number = 0;
     private readonly RESUME_DELAY = 500;
+    private lastPathfindingLog: number = 0; // Rate limit pathfinding logs
+    private lastMoveAttemptLog: number = 0; // Rate limit move attempt logs
+    private waypointAttemptStartTime: number = 0; // Track when we started trying to reach current waypoint
+    private lastWaypointPosition: PositionInterface | null = null; // Track last position to detect if stuck
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -77,6 +81,10 @@ export class PatrolBehavior extends BaseBehavior {
         // Removing players here causes race conditions where players are detected but then immediately removed
         // Only onPlayerMoved() should remove players when they leave the DISENGAGE_RADIUS
         
+        // CRITICAL: Check behavior's nearbyPlayers BEFORE path following
+        // This ensures we stop immediately when players approach, even during path following
+        const hasNearbyPlayers = this.nearbyPlayers.size > 0 || nearbyPlayersList.length > 0;
+        
         // DEBUG: Log player detection state
         if (Math.random() < 0.05) { // 5% chance to avoid spam
             console.log(`[PatrolBehavior] 🔍 update() - nearbyPlayersMap=${this.nearbyPlayers.size}, getNearbyPlayers()=${nearbyPlayersList.length}, isEngaged=${(this as any).isEngaged}`);
@@ -96,7 +104,6 @@ export class PatrolBehavior extends BaseBehavior {
         // SECONDARY: Check getNearbyPlayers result (may be empty if server hasn't sent updates)
         const timeSinceSpaceLeft = Date.now() - this.spaceLeftTime;
         const recentlyLeftSpace = this.spaceLeftTime > 0 && timeSinceSpaceLeft < this.RESUME_DELAY;
-        const hasNearbyPlayers = this.nearbyPlayers.size > 0 || nearbyPlayersList.length > 0;
         
         // DEBUG: Log the state when players detected
         if (hasNearbyPlayers || recentlyLeftSpace) {
@@ -131,18 +138,10 @@ export class PatrolBehavior extends BaseBehavior {
         }
         
         // If following a path, let BotClient handle movement
+        // BUT: BotClient.updatePathFollowing() already checks for nearby players and stops
+        // So we just need to call it - the stop logic is handled there
         if (this.bot.getIsFollowingPath()) {
-            // CRITICAL: Check again before calling updatePathFollowing
-            // The behavior's nearbyPlayers might have been updated since the check above
-            const finalCheck = this.nearbyPlayers.size > 0 || this.bot.getNearbyPlayers(config.responseRadius || 100).length > 0;
-            if (finalCheck) {
-                console.log(`[PatrolBehavior] 🛑 Path following BLOCKED - nearbyPlayers=${this.nearbyPlayers.size}`);
-                this.bot.cancelPathfinding();
-                this.bot.stop();
-                this.onBotPositionUpdated();
-                return;
-            }
-            
+            // BotClient.updatePathFollowing() will check for nearby players and stop if needed
             this.bot.updatePathFollowing(deltaTime);
             
             // Check if path completed
@@ -163,16 +162,67 @@ export class PatrolBehavior extends BaseBehavior {
                         return;
                     }
                     
-                    // Only pause if we're actually close to the waypoint (within 50px)
-                    if (distance < 50) {
+                    // Check if we're stuck (not making progress towards waypoint)
+                    const now = Date.now();
+                    const timeSinceAttempt = now - this.waypointAttemptStartTime;
+                    const isStuck = timeSinceAttempt > 10000 && distance > 50; // Stuck if trying for >10s and still >50px away
+                    
+                    // Check if we're making progress
+                    let isMakingProgress = false;
+                    if (this.lastWaypointPosition) {
+                        const lastDx = this.targetWaypoint.x - this.lastWaypointPosition.x;
+                        const lastDy = this.targetWaypoint.y - this.lastWaypointPosition.y;
+                        const lastDistance = Math.sqrt(lastDx * lastDx + lastDy * lastDy);
+                        isMakingProgress = distance < lastDistance - 10; // Moved at least 10px closer
+                    }
+                    
+                    // Only pause if we're actually close to the waypoint (within 30px for exact positioning)
+                    if (distance < 30) {
                         // No players nearby - safe to pause
+                        console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) - pausing for ${config.pauseAtWaypoints}s`);
                         this.isPaused = true;
                         this.pauseStartTime = Date.now();
+                        this.waypointAttemptStartTime = 0; // Reset
+                        this.lastWaypointPosition = null; // Reset
+                        // If pauseAtWaypoints is 0, immediately advance to next waypoint
+                        if (config.pauseAtWaypoints <= 0) {
+                            this.isPaused = false;
+                            this.advanceToNextWaypoint(config);
+                            console.log(`[PatrolBehavior] 🎯 Advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                        }
                     } else {
-                        // Not close enough, continue to waypoint (but check again in moveTowardsWaypoint)
-                        this.moveTowardsWaypoint(config, deltaTime).catch(error => {
-                            console.error(`[PatrolBehavior] Error moving to waypoint:`, error);
-                        });
+                        // Not close enough - continue to waypoint using direct movement for precision
+                        // BotClient pathfinding ended but we're not at exact position - use direct movement
+                        console.log(`[PatrolBehavior] ⚠️ Path ended but still ${Math.round(distance)}px from waypoint - using direct movement to reach exact position`);
+                        this.lastWaypointPosition = { x: botPos.x, y: botPos.y }; // Track position
+                        // Use direct movement to reach exact waypoint position
+                        const dx = this.targetWaypoint.x - botPos.x;
+                        const dy = this.targetWaypoint.y - botPos.y;
+                        const angle = Math.atan2(dy, dx);
+                        const effectiveSpeed = config.speed > 75 ? config.speed * 0.5 : config.speed;
+                        const moveDistance = effectiveSpeed * 0.016;
+                        const newX = botPos.x + Math.cos(angle) * moveDistance;
+                        const newY = botPos.y + Math.sin(angle) * moveDistance;
+                        
+                        // Validate new position is walkable
+                        if (this.bot.hasPathfinding() && !this.bot.isWalkable({ x: newX, y: newY })) {
+                            // Can't move directly - might be blocked, try pathfinding again after cooldown
+                            const timeSincePathEnd = Date.now() - (this.bot as any).lastPathEndTime || 0;
+                            if (timeSincePathEnd > 1000) {
+                                this.moveTowardsWaypoint(config, deltaTime).catch(error => {
+                                    console.error(`[PatrolBehavior] Error moving to waypoint:`, error);
+                                });
+                            }
+                        } else {
+                            // Safe to move directly
+                            let direction = PositionMessage_Direction.DOWN;
+                            if (Math.abs(dx) > Math.abs(dy)) {
+                                direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+                            } else {
+                                direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                            }
+                            this.bot.moveTo(newX, newY, direction);
+                        }
                     }
                 }
             }
@@ -200,29 +250,39 @@ export class PatrolBehavior extends BaseBehavior {
             if (pauseDuration >= config.pauseAtWaypoints) {
                 this.isPaused = false;
                 this.advanceToNextWaypoint(config);
+                console.log(`[PatrolBehavior] 🎯 Pause complete - advanced to next waypoint (index ${this.currentWaypointIndex})`);
             }
             return;
         }
 
         if (this.targetWaypoint) {
-            // CRITICAL: Check if bot should be stopped FIRST
-            if (!this.bot.getState().isMoving()) {
-                console.log(`[PatrolBehavior] 🛑 New path BLOCKED - bot is stopped`);
-                return;
-            }
-            
             // CRITICAL: Check for nearby players before starting new path
             const playersNearby = this.nearbyPlayers.size > 0 || this.bot.getNearbyPlayers(config.responseRadius || 100).length > 0;
             if (playersNearby) {
-                console.log(`[PatrolBehavior] 🛑 New path BLOCKED - nearbyPlayers=${this.nearbyPlayers.size}`);
-                this.bot.cancelPathfinding();
+                // Players nearby - don't start movement
+                if (this.bot.getIsFollowingPath()) {
+                    this.bot.cancelPathfinding();
+                }
                 this.bot.stop();
                 return;
             }
             
             // Only start a new path if we're not already following one
             if (!this.bot.getIsFollowingPath()) {
+                // Track when we start trying to reach this waypoint
+                if (this.waypointAttemptStartTime === 0) {
+                    this.waypointAttemptStartTime = Date.now();
+                    this.lastWaypointPosition = this.bot.getState().getPosition();
+                }
+                
+                // Log when attempting to start movement (rate-limited)
+                const now = Date.now();
+                if (!this.lastMoveAttemptLog || now - this.lastMoveAttemptLog > 2000) {
+                    console.log(`[PatrolBehavior] Attempting to move to waypoint (${this.targetWaypoint.x}, ${this.targetWaypoint.y}), isMoving=${this.bot.getState().isMoving()}, isPaused=${this.isPaused}`);
+                    this.lastMoveAttemptLog = now;
+                }
                 // Move towards waypoint (async, but we don't await - it will handle pathfinding internally)
+                // This will start the bot moving if it's stopped
                 this.moveTowardsWaypoint(config, deltaTime).catch(error => {
                     console.error(`[PatrolBehavior] Error moving to waypoint:`, error);
                 });
@@ -302,14 +362,11 @@ export class PatrolBehavior extends BaseBehavior {
         
         // CRITICAL: If we're in a space, don't move
         if (this.currentSpaceName) {
-            console.log(`[PatrolBehavior] 🛑 moveTowardsWaypoint BLOCKED - in space ${this.currentSpaceName}`);
-            return;
-        }
-        
-        // CRITICAL: Check if bot should be stopped FIRST
-        // If stop() was called, don't start new movement
-        if (!this.bot.getState().isMoving()) {
-            console.log(`[PatrolBehavior] 🛑 moveTowardsWaypoint BLOCKED - bot is stopped (isMoving=false)`);
+            const now = Date.now();
+            if (!this.lastPathfindingLog || now - this.lastPathfindingLog > 2000) {
+                console.log(`[PatrolBehavior] 🛑 moveTowardsWaypoint BLOCKED - in space ${this.currentSpaceName}`);
+                this.lastPathfindingLog = now;
+            }
             return;
         }
         
@@ -319,13 +376,22 @@ export class PatrolBehavior extends BaseBehavior {
         const hasNearby = this.nearbyPlayers.size > 0 || nearbyCheck.length > 0;
         
         if (hasNearby) {
-            console.log(`[PatrolBehavior] 🛑 moveTowardsWaypoint BLOCKED - nearbyPlayers=${this.nearbyPlayers.size}, nearbyCheck=${nearbyCheck.length}`);
+            const now = Date.now();
+            if (!this.lastPathfindingLog || now - this.lastPathfindingLog > 2000) {
+                console.log(`[PatrolBehavior] 🛑 moveTowardsWaypoint BLOCKED - nearbyPlayers=${this.nearbyPlayers.size}, nearbyCheck=${nearbyCheck.length}`);
+                this.lastPathfindingLog = now;
+            }
             this.bot.cancelPathfinding();
             this.bot.stop();
             return;
         }
         
-        console.log(`[PatrolBehavior] moveTowardsWaypoint called: target=(${this.targetWaypoint.x}, ${this.targetWaypoint.y}), nearbyPlayers=${this.nearbyPlayers.size}, isMoving=${this.bot.getState().isMoving()}, currentSpace=${this.currentSpaceName || 'none'}`);
+        // Log pathfinding start (rate-limited to once per second)
+        const now = Date.now();
+        if (!this.lastPathfindingLog || now - this.lastPathfindingLog > 1000) {
+            console.log(`[PatrolBehavior] Starting path to waypoint (${this.targetWaypoint.x}, ${this.targetWaypoint.y}), isMoving=${this.bot.getState().isMoving()}`);
+            this.lastPathfindingLog = now;
+        }
 
         const botPos = this.bot.getState().getPosition();
         const dx = this.targetWaypoint.x - botPos.x;
@@ -456,5 +522,9 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         this.updateTargetWaypoint();
+        // Reset tracking when advancing to new waypoint
+        this.waypointAttemptStartTime = 0;
+        this.lastWaypointPosition = null;
     }
 }
+// EXACT POSITION FIX - 01:22:37

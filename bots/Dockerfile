@@ -50,4 +50,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Install ts-node and tsx globally for running TypeScript
 RUN npm install -g ts-node tsx
 # Default to production start command (can be overridden in docker-compose)
+# Note: In dev mode, docker-compose overrides this with "npm run dev" which uses tsx watch
 CMD ["npm", "run", "start"]
