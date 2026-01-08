@@ -230,33 +230,15 @@ export class BotClient {
         }
 
         // CRITICAL: Call behavior.update FIRST (like original bots branch)
-        // The behavior checks for nearby players and calls stop() if needed
-        // This must happen BEFORE path following to prevent movement when players are nearby
+        // The behavior checks nearbyPlayers.size and calls stop() if needed
+        // Bots should "ghost through" idle players (nearbyPlayers.size === 0)
         this.behavior.update(deltaTime);
-        
-        // After behavior.update, check if we should be stopped
-        // The behavior will have called stop() if players are nearby, but we need to ensure
-        // pathfinding is canceled and we don't continue movement
-        const nearbyPlayersCheck = this.getNearbyPlayers(100);
-        const behaviorNearbyCount = this.behavior && (this.behavior as any).nearbyPlayers ? (this.behavior as any).nearbyPlayers.size : 0;
-        const behaviorIsEngaged = this.behavior && (this.behavior as any).isEngaged;
-        
-        if (nearbyPlayersCheck.length > 0 || behaviorNearbyCount > 0 || behaviorIsEngaged) {
-            // Player nearby - ensure we're stopped and pathfinding is canceled
-            if (this.isFollowingPath) {
-                console.log(`[Bot ${this.config.botId}] 🛑 Player detected - canceling pathfinding (getNearby=${nearbyPlayersCheck.length}, behaviorNearby=${behaviorNearbyCount}, engaged=${behaviorIsEngaged})`);
-                this.cancelPathfinding();
-            }
-            this.stop();
-            return; // Don't continue with movement
-        }
 
         // Update path following if active (this handles movement)
         // CRITICAL: Only do this if bot is actually moving (not stopped)
         // If stop() was called, isMoving() will be false - respect that!
-        // ALSO: Check if behavior says we should be stopped (e.g., in a space)
-        const behaviorInSpace = this.behavior && (this.behavior as any).currentSpaceName;
-        if (this.isFollowingPath && !behaviorInSpace) {
+        // Ghost mode: bot continues moving even if players are nearby
+        if (this.isFollowingPath) {
             const isMoving = this.state.isMoving();
             if (isMoving) {
                 this.updatePathFollowing(deltaTime);
@@ -265,11 +247,6 @@ export class BotClient {
                 console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
                 this.cancelPathfinding();
             }
-        } else if (this.isFollowingPath && behaviorInSpace) {
-            // Behavior says we're in a space - cancel pathfinding immediately
-            console.log(`[Bot ${this.config.botId}] 🛑 Path following active but in space - canceling pathfinding`);
-            this.cancelPathfinding();
-            this.stop();
         }
 
         // Update position/direction if changed (with throttling)
@@ -321,6 +298,14 @@ export class BotClient {
      * Stop moving
      */
     stop(): void {
+        // DEBUG: Log ALL stop() calls with stack trace
+        const stack = new Error().stack;
+        const caller = stack?.split('\n')[2]?.trim() || 'unknown';
+        const nearbyPlayers = this.getNearbyPlayers(100);
+        console.log(`[Bot ${this.config.botId}] 🛑🛑🛑 STOP() CALLED from: ${caller}, nearbyPlayers=${nearbyPlayers.length}`);
+        if (nearbyPlayers.length > 0) {
+            console.log(`[Bot ${this.config.botId}] ⚠️⚠️⚠️ WARNING: Stopping with ${nearbyPlayers.length} players nearby! This will trigger a bubble!`);
+        }
         const wasMoving = this.state.isMoving();
         if (wasMoving) {
             movementLogger.log({
@@ -584,39 +569,16 @@ export class BotClient {
             return;
         }
 
-        // CRITICAL: Check if behavior says we should be stopped (e.g., in a space with a player)
-        const behaviorInSpace = this.behavior && (this.behavior as any).currentSpaceName;
-        if (behaviorInSpace) {
-            console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - behavior in space ${behaviorInSpace}`);
-            this.cancelPathfinding();
-            this.stop();
-            return;
-        }
+        // CRITICAL: Ghost mode - bot should continue moving even if in a space
+        // Only stop when actually interacted with (chat message), not just proximity
+        // Don't check for spaces here - let the bot continue moving
 
-        // CRITICAL: Check if bot should be stopped (either by stop() call or nearby players)
+        // CRITICAL: Check if bot should be stopped (either by stop() call)
         // If stop() was called, isMoving() will be false - respect that!
         if (!this.state.isMoving()) {
-            // Bot was stopped (likely by behavior.update() detecting nearby players)
+            // Bot was stopped (likely by behavior.update() detecting we're in a space)
             console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
             this.cancelPathfinding();
-            return;
-        }
-
-        // CRITICAL: Check if players are nearby - if so, stop immediately
-        // This prevents bots from continuing to waypoints when players approach
-        // Check both getNearbyPlayers AND behavior's nearbyPlayers map for reliability
-        const nearbyPlayers = this.getNearbyPlayers(100); // Check within 100px
-        const behaviorHasNearby = this.behavior && (this.behavior as any).nearbyPlayers && (this.behavior as any).nearbyPlayers.size > 0;
-        
-        if (nearbyPlayers.length > 0 || behaviorHasNearby) {
-            // Player nearby - cancel pathfinding and stop immediately
-            console.log(`[Bot ${this.config.botId}] 🛑 Player detected during path following (nearby=${nearbyPlayers.length}, behavior=${behaviorHasNearby}) - stopping immediately`);
-            this.cancelPathfinding();
-            this.stop();
-            // Notify behavior to update engagement state
-            if (this.behavior && (this.behavior as any).updateProximityEngagement) {
-                (this.behavior as any).updateProximityEngagement();
-            }
             return;
         }
 
@@ -636,7 +598,9 @@ export class BotClient {
             this.pathIndex = 0;
             this.lastPathTarget = null;
             this.lastPathEndTime = Date.now(); // Track when path ended
-            this.stop();
+            // GHOST MODE: Don't stop when path ends - let behavior handle it
+            // Only stop if behavior explicitly wants to pause (and no players nearby)
+            // this.stop(); // REMOVED - let behavior decide
             return;
         }
 
@@ -708,7 +672,9 @@ export class BotClient {
                         this.pathIndex = 0;
                         this.lastPathTarget = null;
                         this.lastPathEndTime = Date.now();
-                        this.stop();
+                        // GHOST MODE: Don't stop when path ends - let behavior handle it
+                        // Behavior will check for nearby players and decide whether to pause
+                        // this.stop(); // REMOVED - let behavior decide
                         return;
                     } else {
                         // Not close enough - continue with direct movement to exact target
@@ -730,7 +696,9 @@ export class BotClient {
                     this.pathIndex = 0;
                     this.lastPathTarget = null;
                     this.lastPathEndTime = Date.now();
-                    this.stop();
+                    // GHOST MODE: Don't stop when path ends - let behavior handle it
+                    // Behavior will check for nearby players and decide whether to pause
+                    // this.stop(); // REMOVED - let behavior decide
                     return;
                 }
             }

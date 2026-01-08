@@ -43,99 +43,11 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
-        // DEBUG: Log currentSpaceName every frame to see if it's set
-        if (Math.random() < 0.05) { // 5% chance to avoid spam
-            console.log(`[PatrolBehavior] 🔍 update() - currentSpaceName=${this.currentSpaceName || 'null'}, nearbyPlayers=${this.nearbyPlayers.size}, isFollowingPath=${this.bot.getIsFollowingPath()}, isMoving=${this.bot.getState().isMoving()}`);
-        }
-        
-        // CRITICAL: If we're in a space with a player, STOP immediately
-        // This is the PRIMARY detection method - spaces are created when players are in proximity
-        if (this.currentSpaceName) {
-            console.log(`[PatrolBehavior] 🛑🛑🛑 In space ${this.currentSpaceName} - STOPPING (isFollowingPath=${this.bot.getIsFollowingPath()}, isMoving=${this.bot.getState().isMoving()})`);
-            if (this.bot.getIsFollowingPath()) {
-                console.log(`[PatrolBehavior] 🛑 Canceling pathfinding in update() due to space`);
-                this.bot.cancelPathfinding();
-            }
-            const beforeStop = this.bot.getState().isMoving();
-            this.bot.stop();
-            const afterStop = this.bot.getState().isMoving();
-            console.log(`[PatrolBehavior] 🛑 stop() in update() - before=${beforeStop}, after=${afterStop}`);
-            this.onBotPositionUpdated();
-            return; // Don't continue to movement logic
-        }
-        
-        // CRITICAL: Check for nearby players FIRST - stop immediately if any found
-        // The nearbyPlayers map is populated by onPlayerMoved() when players move within PROXIMITY_RADIUS (64px)
-        // This is the PRIMARY source of truth - it's updated in real-time as players move
-        // getNearbyPlayers() is secondary and may be empty if server hasn't sent player updates
-        
-        // Update nearbyPlayers map from getNearbyPlayers() if available (for players we know about)
-        const nearbyPlayersList = this.bot.getNearbyPlayers(config.responseRadius || 100);
-        for (const player of nearbyPlayersList) {
-            // Add/update players from getNearbyPlayers
-            this.nearbyPlayers.set(player.userId, player.position);
-        }
-        
-        // CRITICAL: Never remove players from nearbyPlayers map in update()
-        // The map is managed by onPlayerMoved() which has proper enter/leave radius logic
-        // Removing players here causes race conditions where players are detected but then immediately removed
-        // Only onPlayerMoved() should remove players when they leave the DISENGAGE_RADIUS
-        
-        // CRITICAL: Check behavior's nearbyPlayers BEFORE path following
-        // This ensures we stop immediately when players approach, even during path following
-        const hasNearbyPlayers = this.nearbyPlayers.size > 0 || nearbyPlayersList.length > 0;
-        
-        // DEBUG: Log player detection state
-        if (Math.random() < 0.05) { // 5% chance to avoid spam
-            console.log(`[PatrolBehavior] 🔍 update() - nearbyPlayersMap=${this.nearbyPlayers.size}, getNearbyPlayers()=${nearbyPlayersList.length}, isEngaged=${(this as any).isEngaged}`);
-            if (nearbyPlayersList.length > 0) {
-                for (const player of nearbyPlayersList) {
-                    const botPos = this.bot.getState().getPosition();
-                    const dx = player.position.x - botPos.x;
-                    const dy = player.position.y - botPos.y;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    console.log(`[PatrolBehavior]   Player ${player.userId} at distance ${Math.round(distance)}px`);
-                }
-            }
-        }
-        
-        // STOP immediately if players are nearby
-        // PRIMARY: Check nearbyPlayers map (populated by onPlayerMoved in real-time)
-        // SECONDARY: Check getNearbyPlayers result (may be empty if server hasn't sent updates)
-        const timeSinceSpaceLeft = Date.now() - this.spaceLeftTime;
-        const recentlyLeftSpace = this.spaceLeftTime > 0 && timeSinceSpaceLeft < this.RESUME_DELAY;
-        
-        // DEBUG: Log the state when players detected
-        if (hasNearbyPlayers || recentlyLeftSpace) {
-            console.log(`[PatrolBehavior] 🛑 STOPPING - nearbyPlayersMap=${this.nearbyPlayers.size}, nearbyPlayersList=${nearbyPlayersList.length}, recentlyLeftSpace=${recentlyLeftSpace}, isEngaged=${(this as any).isEngaged}`);
-        }
-        
-        if (hasNearbyPlayers || recentlyLeftSpace) {
-            console.log(`[PatrolBehavior] 🛑 STOPPING - calling stop() and cancelPathfinding()`);
-            // Cancel pathfinding if active
-            if (this.bot.getIsFollowingPath()) {
-                console.log(`[PatrolBehavior] Canceling pathfinding due to nearby players`);
-                this.bot.cancelPathfinding();
-            }
-            const beforeStop = this.bot.getState().isMoving();
-            this.bot.stop();
-            const afterStop = this.bot.getState().isMoving();
-            console.log(`[PatrolBehavior] 🛑 stop() called - before=${beforeStop}, after=${afterStop}, isFollowingPath=${this.bot.getIsFollowingPath()}`);
-            // Face closest player
-            if (this.nearbyPlayers.size > 0) {
-                const nearbyPlayers = this.bot.getNearbyPlayers(1000);
-                if (nearbyPlayers.length > 0) {
-                    this.facePosition(nearbyPlayers[0].position);
-                } else {
-                    const firstPlayer = this.nearbyPlayers.values().next().value;
-                    if (firstPlayer) {
-                        this.facePosition(firstPlayer);
-                    }
-                }
-            }
-            this.onBotPositionUpdated();
-            return; // CRITICAL: Exit early - don't continue to movement logic
-        }
+        // CRITICAL: Ghost mode behavior - bot should NEVER stop just because players are nearby
+        // The bot should continue moving on its path, even if players are nearby
+        // Only stop when actually interacted with (chat message, explicit interaction)
+        // This prevents bubbles from being triggered by the bot stopping
+        // The bot can slow down or change direction, but must keep moving
         
         // If following a path, let BotClient handle movement
         // BUT: BotClient.updatePathFollowing() already checks for nearby players and stops
@@ -153,15 +65,6 @@ export class PatrolBehavior extends BaseBehavior {
                     const dy = this.targetWaypoint.y - botPos.y;
                     const distance = Math.sqrt(dx * dx + dy * dy);
                     
-                    // CRITICAL: Check for nearby players before continuing
-                    const playersNearby = this.nearbyPlayers.size > 0 || this.bot.getNearbyPlayers(100).length > 0;
-                    if (playersNearby) {
-                        console.log(`[PatrolBehavior] 🛑 Waypoint reached but players nearby - stopping`);
-                        this.bot.stop();
-                        this.onBotPositionUpdated();
-                        return;
-                    }
-                    
                     // Check if we're stuck (not making progress towards waypoint)
                     const now = Date.now();
                     const timeSinceAttempt = now - this.waypointAttemptStartTime;
@@ -177,18 +80,30 @@ export class PatrolBehavior extends BaseBehavior {
                     }
                     
                     // Only pause if we're actually close to the waypoint (within 30px for exact positioning)
+                    // BUT: Don't pause if ANY players are nearby (idle or active) - would start a bubble
+                    // Ghost mode: continue moving if players are nearby to avoid triggering bubbles
                     if (distance < 30) {
-                        // No players nearby - safe to pause
-                        console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) - pausing for ${config.pauseAtWaypoints}s`);
-                        this.isPaused = true;
-                        this.pauseStartTime = Date.now();
-                        this.waypointAttemptStartTime = 0; // Reset
-                        this.lastWaypointPosition = null; // Reset
-                        // If pauseAtWaypoints is 0, immediately advance to next waypoint
-                        if (config.pauseAtWaypoints <= 0) {
-                            this.isPaused = false;
+                        // Check if ANY players are nearby (idle or active) - use getNearbyPlayers to catch idle players
+                        const nearbyPlayersList = this.bot.getNearbyPlayers(100);
+                        if (nearbyPlayersList.length > 0 || this.nearbyPlayers.size > 0) {
+                            console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) but players nearby (${nearbyPlayersList.length} idle, ${this.nearbyPlayers.size} active) - skipping pause, continuing immediately (ghost mode)`);
+                            this.waypointAttemptStartTime = 0; // Reset
+                            this.lastWaypointPosition = null; // Reset
                             this.advanceToNextWaypoint(config);
                             console.log(`[PatrolBehavior] 🎯 Advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                        } else {
+                            // No players nearby - safe to pause
+                            console.log(`[PatrolBehavior] ✅ Waypoint reached (${Math.round(distance)}px away) - pausing for ${config.pauseAtWaypoints}s`);
+                            this.isPaused = true;
+                            this.pauseStartTime = Date.now();
+                            this.waypointAttemptStartTime = 0; // Reset
+                            this.lastWaypointPosition = null; // Reset
+                            // If pauseAtWaypoints is 0, immediately advance to next waypoint
+                            if (config.pauseAtWaypoints <= 0) {
+                                this.isPaused = false;
+                                this.advanceToNextWaypoint(config);
+                                console.log(`[PatrolBehavior] 🎯 Advanced to next waypoint (index ${this.currentWaypointIndex})`);
+                            }
                         }
                     } else {
                         // Not close enough - continue to waypoint using direct movement for precision
@@ -245,7 +160,17 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         // Handle waypoint pause
+        // CRITICAL: Check for nearby players BEFORE pausing - if players nearby, skip pause (ghost mode)
         if (this.isPaused) {
+            // Check if players are nearby - if so, cancel pause and continue immediately
+            const nearbyPlayersList = this.bot.getNearbyPlayers(100);
+            if (nearbyPlayersList.length > 0 || this.nearbyPlayers.size > 0 || this.currentSpaceName) {
+                console.log(`[PatrolBehavior] 👻 Players detected during pause - canceling pause, continuing immediately (ghost mode)`);
+                this.isPaused = false;
+                this.advanceToNextWaypoint(config);
+                return;
+            }
+            
             const pauseDuration = (Date.now() - this.pauseStartTime) / 1000;
             if (pauseDuration >= config.pauseAtWaypoints) {
                 this.isPaused = false;
@@ -256,16 +181,8 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         if (this.targetWaypoint) {
-            // CRITICAL: Check for nearby players before starting new path
-            const playersNearby = this.nearbyPlayers.size > 0 || this.bot.getNearbyPlayers(config.responseRadius || 100).length > 0;
-            if (playersNearby) {
-                // Players nearby - don't start movement
-                if (this.bot.getIsFollowingPath()) {
-                    this.bot.cancelPathfinding();
-                }
-                this.bot.stop();
-                return;
-            }
+            // Ghost mode: bot should continue moving even if players are nearby
+            // Don't stop - keep moving to avoid triggering bubbles
             
             // Only start a new path if we're not already following one
             if (!this.bot.getIsFollowingPath()) {
@@ -299,36 +216,24 @@ export class PatrolBehavior extends BaseBehavior {
 
     onSpaceJoined(spaceName: string): void {
         // When bot joins a space, it means a player is in proximity
-        // Even if nearbyPlayers is empty (player might be stationary), we should stop
-        console.log(`[PatrolBehavior] SPACE JOINED: ${spaceName}, nearbyPlayers=${this.nearbyPlayers.size} - STOPPING BOT`);
+        // GHOST MODE: Don't stop - continue moving to avoid triggering bubbles
+        console.log(`[PatrolBehavior] SPACE JOINED: ${spaceName}, nearbyPlayers=${this.nearbyPlayers.size} - CONTINUING (ghost mode)`);
         console.log(`[PatrolBehavior] Setting currentSpaceName to: ${spaceName}`);
         
         this.currentSpaceName = spaceName;
         
-        // Stop immediately when space is joined (player is in bubble)
-        if (this.bot) {
-            // Cancel any active pathfinding
-            if (this.bot.getIsFollowingPath()) {
-                console.log(`[PatrolBehavior] 🛑 Canceling pathfinding due to space join`);
-                this.bot.cancelPathfinding();
-            }
-            const beforeStop = this.bot.getState().isMoving();
-            this.bot.stop();
-            const afterStop = this.bot.getState().isMoving();
-            console.log(`[PatrolBehavior] 🛑 stop() called from onSpaceJoined - before=${beforeStop}, after=${afterStop}, isFollowingPath=${this.bot.getIsFollowingPath()}`);
-            
-            // If we have nearby players, send greeting
-            if (this.nearbyPlayers.size > 0) {
-                setTimeout(() => {
-                    if (this.bot && this.currentSpaceName === spaceName) {
-                        try {
-                            this.bot.sendChatMessage(spaceName, "Hello! How can I help you?");
-                        } catch (error) {
-                            // Ignore
-                        }
+        // GHOST MODE: Don't stop, don't cancel pathfinding - keep moving
+        // Only send greeting if player actively approached (nearbyPlayers.size > 0)
+        if (this.bot && this.nearbyPlayers.size > 0) {
+            setTimeout(() => {
+                if (this.bot && this.currentSpaceName === spaceName) {
+                    try {
+                        this.bot.sendChatMessage(spaceName, "Hello! How can I help you?");
+                    } catch (error) {
+                        // Ignore
                     }
-                }, 300);
-            }
+                }
+            }, 300);
         }
     }
     
@@ -360,31 +265,8 @@ export class PatrolBehavior extends BaseBehavior {
     private async moveTowardsWaypoint(config: PatrolBehaviorConfig, deltaTime?: number): Promise<void> {
         if (!this.bot || !this.targetWaypoint) return;
         
-        // CRITICAL: If we're in a space, don't move
-        if (this.currentSpaceName) {
-            const now = Date.now();
-            if (!this.lastPathfindingLog || now - this.lastPathfindingLog > 2000) {
-                console.log(`[PatrolBehavior] 🛑 moveTowardsWaypoint BLOCKED - in space ${this.currentSpaceName}`);
-                this.lastPathfindingLog = now;
-            }
-            return;
-        }
-        
-        // CRITICAL: Check for nearby players BEFORE doing anything
-        // Check both nearbyPlayers map (from onPlayerMoved) AND getNearbyPlayers() (from server updates)
-        const nearbyCheck = this.bot.getNearbyPlayers(config.responseRadius || 100);
-        const hasNearby = this.nearbyPlayers.size > 0 || nearbyCheck.length > 0;
-        
-        if (hasNearby) {
-            const now = Date.now();
-            if (!this.lastPathfindingLog || now - this.lastPathfindingLog > 2000) {
-                console.log(`[PatrolBehavior] 🛑 moveTowardsWaypoint BLOCKED - nearbyPlayers=${this.nearbyPlayers.size}, nearbyCheck=${nearbyCheck.length}`);
-                this.lastPathfindingLog = now;
-            }
-            this.bot.cancelPathfinding();
-            this.bot.stop();
-            return;
-        }
+        // GHOST MODE: Continue moving even if in a space - don't stop, don't cancel pathfinding
+        // The bot should keep moving to avoid triggering bubbles
         
         // Log pathfinding start (rate-limited to once per second)
         const now = Date.now();
@@ -399,30 +281,17 @@ export class PatrolBehavior extends BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance < 10) {
-            // Check if there are any players nearby (even idle ones)
-            // If so, skip the pause to avoid triggering bubble with idle players
-            const playersNearby = this.bot.getNearbyPlayers(100);
-            if (playersNearby.length > 0) {
-                // Player nearby - don't stop, just advance to next waypoint
+            // Close enough to waypoint - check if players are nearby
+            const nearbyPlayersList = this.bot.getNearbyPlayers(100);
+            if (nearbyPlayersList.length > 0 || this.nearbyPlayers.size > 0 || this.currentSpaceName) {
+                // Players nearby or in space - don't pause, just advance to next waypoint (ghost mode)
                 this.advanceToNextWaypoint(config);
                 return;
             }
             
-            // No players nearby - safe to pause
-            this.bot.stop();
+            // No players nearby - safe to pause (but don't call stop() - let pause logic handle it)
             this.isPaused = true;
             this.pauseStartTime = Date.now();
-            return;
-        }
-
-        // Check if players are nearby - if so, stop and face them (even if following a path)
-        if (this.nearbyPlayers.size > 0) {
-            // Cancel any active pathfinding to stop movement
-            if (this.bot.getIsFollowingPath()) {
-                this.bot.cancelPathfinding();
-            }
-            this.bot.stop();
-            // Face the closest player (handled by updateProximityEngagement in update loop)
             return;
         }
 
@@ -527,4 +396,3 @@ export class PatrolBehavior extends BaseBehavior {
         this.lastWaypointPosition = null;
     }
 }
-// EXACT POSITION FIX - 01:22:37
