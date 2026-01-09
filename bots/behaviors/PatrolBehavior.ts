@@ -43,6 +43,52 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
+        // Check for nearby players and stop when detected (patrol bots should always respond)
+        // Use respondToPlayers flag if set, otherwise default to true for patrol bots
+        const shouldRespond = config.respondToPlayers !== false; // Default to true if not explicitly false
+        
+        // ALWAYS check for players if respondToPlayers is enabled (or default true)
+        if (shouldRespond) {
+            // Patrol bot uses 100px detection radius (different from social bot's 80px)
+            const responseRadius = config.responseRadius || 100;
+            const nearbyPlayers = this.bot.getNearbyPlayers(responseRadius);
+            
+            // Also check nearbyPlayers map (populated by onPlayerMoved when players move within enterRadius)
+            // This catches players that might be stationary or not detected by getNearbyPlayers
+            const hasNearbyPlayers = nearbyPlayers.length > 0 || this.nearbyPlayers.size > 0;
+            
+            // Always log when players are found (for debugging)
+            if (hasNearbyPlayers) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PatrolBehavior] 🛑 STOPPING - found players (getNearbyPlayers=${nearbyPlayers.length}, nearbyPlayersMap=${this.nearbyPlayers.size}, responseRadius=${responseRadius}, isFollowingPath=${this.bot.getIsFollowingPath()})`);
+                }
+                if (this.bot.getIsFollowingPath()) {
+                    this.bot.cancelPathfinding();
+                }
+                this.bot.stop();
+                // Face the closest player
+                if (nearbyPlayers.length > 0) {
+                    this.facePosition(nearbyPlayers[0].position);
+                } else if (this.nearbyPlayers.size > 0) {
+                    // Use nearbyPlayers map if getNearbyPlayers didn't find them
+                    const firstPlayer = this.nearbyPlayers.values().next().value;
+                    if (firstPlayer) {
+                        this.facePosition(firstPlayer);
+                    }
+                }
+                this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return; // CRITICAL: Return early to prevent updatePathFollowing from being called
+            }
+        } else {
+            // Log if respondToPlayers is explicitly false
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                if (Math.random() < 0.01) { // 1% chance to avoid spam
+                    console.log(`[PatrolBehavior] respondToPlayers is false - not checking for players`);
+                }
+            }
+        }
+        
         // CRITICAL: Ghost mode behavior - bot should NEVER stop just because players are nearby
         // The bot should continue moving on its path, even if players are nearby
         // Only stop when actually interacted with (chat message, explicit interaction)

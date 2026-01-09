@@ -160,7 +160,8 @@ export class BotManager {
                 if (typeof transformed.loop === 'undefined') transformed.loop = true;
                 if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
                     if (typeof transformed.speed === 'undefined') transformed.speed = 50; // Match original bots branch default
-                if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
+                // Default to true for patrol bots - they should respond to players by default
+                if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = true;
             }
             
             // Transform social config: ensure required fields

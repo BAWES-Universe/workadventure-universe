@@ -251,9 +251,33 @@ export class BotClient {
         // CRITICAL: Only do this if bot is actually moving (not stopped)
         // If stop() was called, isMoving() will be false - respect that!
         // Ghost mode: bot continues moving even if players are nearby
+        // BUT: For patrol bots, default to responding unless explicitly disabled
+        const behaviorType = (this.behavior as any)?.config?.type;
+        const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
+        // Default to true for patrol bots unless explicitly set to false
+        const shouldRespond = behaviorType === 'patrol' && respondToPlayers !== false;
+        const isEngaged = (this.behavior as any)?.isEngaged;
+        
         if (this.isFollowingPath) {
             const isMoving = this.state.isMoving();
-            if (isMoving) {
+            
+            // For patrol bots that should respond, if engaged, don't call updatePathFollowing
+            if (shouldRespond && isEngaged) {
+                if (isMoving) {
+                    // Bot should be stopped but is still moving - force stop
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot engaged - stopping and canceling pathfinding`);
+                    }
+                    this.stop();
+                    this.cancelPathfinding();
+                } else {
+                    // Already stopped - just cancel pathfinding
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot engaged and stopped - canceling pathfinding`);
+                    }
+                    this.cancelPathfinding();
+                }
+            } else if (isMoving) {
                 this.updatePathFollowing(deltaTime);
             } else {
                 // Path following is active but bot is stopped - cancel pathfinding
@@ -302,6 +326,29 @@ export class BotClient {
      * Move bot to position
      */
     moveTo(x: number, y: number, direction: PositionMessage_Direction = PositionMessage_Direction.DOWN): void {
+        // CRITICAL: For patrol bots, if engaged (player nearby), don't move
+        // This matches the old commit behavior where facePosition() stops the bot
+        // The respondToPlayers flag controls whether we check for players, but if isEngaged is true,
+        // it means a player was detected and we should stop (unless respondToPlayers is explicitly false for ghost mode)
+        if (this.behavior) {
+            const behaviorType = (this.behavior as any)?.config?.type;
+            const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
+            
+            // Use isInConversation() method if available, otherwise check isEngaged directly
+            const isEngaged = (this.behavior as any)?.isInConversation?.() ?? (this.behavior as any)?.isEngaged ?? false;
+            
+            // For patrol bots: if engaged and respondToPlayers is not explicitly false, block movement
+            // This ensures bots stop when players are nearby (default behavior)
+            // If respondToPlayers is explicitly false, allow ghost mode (continue moving)
+            if (behaviorType === 'patrol' && isEngaged && respondToPlayers !== false) {
+                // Patrol bot is engaged - don't move
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] 🛑 moveTo() BLOCKED - patrol bot is engaged (respondToPlayers=${respondToPlayers}, isEngaged=${isEngaged})`);
+                }
+                return;
+            }
+        }
+        
         const wasMoving = this.state.isMoving();
         this.state.setPosition({ x, y });
         this.state.setDirection(direction);
@@ -842,7 +889,7 @@ export class BotClient {
         });
 
         // CRITICAL: Check again if bot should be stopped before moving
-        // This prevents moveTo() from overriding stop() calls
+        // This prevents moveTo() from overriding stop() calls from behavior
         if (!this.state.isMoving()) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] 🛑 Movement blocked - bot is stopped`);
@@ -857,6 +904,15 @@ export class BotClient {
             direction = targetDx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
         } else {
             direction = targetDy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+        }
+
+        // CRITICAL: Check one more time before calling moveTo() - behavior might have called stop() in the same frame
+        if (!this.state.isMoving()) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🛑 Movement blocked at moveTo() call - bot is stopped`);
+            }
+            this.cancelPathfinding();
+            return;
         }
 
         this.moveTo(newX, newY, direction);
@@ -919,8 +975,8 @@ export class BotClient {
             }
         }
         
-        // Debug: log only when players are actually found within radius (reduced frequency)
-        if (result.length > 0 && Math.random() < 0.1) { // 10% chance when players found
+        // Debug: log when players are found (always log for debugging)
+        if (result.length > 0) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] getNearbyPlayers: found ${result.length} player(s) within ${radius}px (checked ${this.players.size} total), bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
                 for (const player of result) {
