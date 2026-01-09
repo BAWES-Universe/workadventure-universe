@@ -76,10 +76,28 @@ export class BotManager {
 
     /**
      * Spawn a bot instance
+     * If bot already exists and is connected, returns existing instance
+     * If bot exists but is disconnected, despawns it first and spawns a new one
      */
     async spawnBot(botId: string, config: BotConfiguration): Promise<BotClient> {
-        if (this.bots.has(botId)) {
-            throw new Error(`Bot ${botId} already exists`);
+        // Check if bot already exists
+        const existingInstance = this.bots.get(botId);
+        if (existingInstance) {
+            // Bot exists - check if it's connected
+            if (existingInstance.client.isConnected()) {
+                console.log(`[BotManager] Bot ${botId} already exists and is connected, returning existing instance`);
+                return existingInstance.client;
+            } else {
+                // Bot exists but is disconnected - despawn it first
+                console.log(`[BotManager] Bot ${botId} exists but is disconnected, despawning before respawn`);
+                try {
+                    await this.despawnBot(botId);
+                } catch (error) {
+                    console.warn(`[BotManager] Error despawning disconnected bot ${botId}:`, error);
+                    // Continue anyway - try to remove from map manually
+                    this.bots.delete(botId);
+                }
+            }
         }
 
         console.log(`[BotManager] Spawning bot: ${botId}`);
