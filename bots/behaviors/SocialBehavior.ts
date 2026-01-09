@@ -41,6 +41,7 @@ export class SocialBehavior extends BaseBehavior {
     private wanderInProgress: boolean = false; // Prevent multiple concurrent calls
     private readonly WANDER_FAILURE_COOLDOWN = 2000; // 2 seconds before retrying after failure
     private conversationMemory: ConversationMemory;
+    private currentSpaceName: string | null = null; // Track current space to prevent wandering
 
     constructor(config: SocialBehaviorConfig) {
         super(config);
@@ -79,11 +80,12 @@ export class SocialBehavior extends BaseBehavior {
             }
         }
         
-        // GHOST MODE: Only stop if actually in a conversation space (engagedWithUsers)
+        // GHOST MODE: Only stop if actually in a conversation space
         // Don't stop just because players are nearby - continue moving until actively engaging
-        // Check engagedWithUsers directly instead of isEngaged, since isEngaged is set by proximity too
-        if (this.engagedWithUsers.size > 0) {
-            // Actually in a conversation space - stop and face the player
+        // Check both currentSpaceName (immediate) and engagedWithUsers (after users join)
+        // CRITICAL: Check this BEFORE path following to prevent movement in bubbles
+        if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+            // Actually in a conversation space - stop immediately and cancel any movement
             if (this.bot.getIsFollowingPath()) {
                 this.bot.cancelPathfinding();
             }
@@ -94,7 +96,7 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        // If following a path, let BotClient handle movement
+        // If following a path, let BotClient handle movement (only if not in a space)
         if (this.bot.getIsFollowingPath()) {
             this.bot.updatePathFollowing(deltaTime);
             this.onBotPositionUpdated();
@@ -135,7 +137,21 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     onSpaceJoined(spaceName: string): void {
-        if (!this.bot || !this.targetPlayerId) return;
+        if (!this.bot) return;
+
+        // CRITICAL: Track space name immediately to prevent wandering
+        this.currentSpaceName = spaceName;
+
+        // CRITICAL: Cancel any active pathfinding and stop immediately when entering a space
+        if (this.bot.getIsFollowingPath()) {
+            this.bot.cancelPathfinding();
+        }
+        this.bot.stop();
+
+        // Only process conversation if we have a target player
+        if (!this.targetPlayerId) {
+            return;
+        }
 
         const config = this.config as SocialBehaviorConfig;
         const currentTime = Date.now();
@@ -167,6 +183,11 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     onSpaceLeft(spaceName: string): void {
+        // Clear space name tracking
+        if (this.currentSpaceName === spaceName) {
+            this.currentSpaceName = null;
+        }
+
         // Find and remove conversation
         for (const [playerId, state] of this.activeConversations.entries()) {
             if (state.spaceName === spaceName) {
@@ -271,6 +292,11 @@ export class SocialBehavior extends BaseBehavior {
     private async approachPlayer(playerId: number, config: SocialBehaviorConfig): Promise<void> {
         if (!this.bot) return;
 
+        // Don't approach if already in a conversation space
+        if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+            return;
+        }
+
         const player = this.bot.getPlayerInfo(playerId);
         if (!player) {
             this.targetPlayerId = null;
@@ -338,6 +364,11 @@ export class SocialBehavior extends BaseBehavior {
 
     private async wander(config: SocialBehaviorConfig, deltaTime: number): Promise<void> {
         if (!this.bot) return;
+
+        // Don't wander if already in a conversation space
+        if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+            return;
+        }
 
         // Prevent multiple concurrent wander calls
         if (this.wanderInProgress) {

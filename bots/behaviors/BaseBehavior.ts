@@ -82,9 +82,9 @@ export abstract class BaseBehavior {
         
         const wasNearby = this.nearbyPlayers.has(playerId);
         
-        // Use a larger enter radius (100px) to match behavior's responseRadius
-        // This ensures players are detected at the same distance the behavior checks
-        const enterRadius = 100; // Match typical responseRadius
+        // Use enter radius (70px) to detect players for engagement
+        // This ensures players are detected at appropriate distance for interaction
+        const enterRadius = 70; // Reduced from 100px to 70px
         const leaveRadius = this.DISENGAGE_RADIUS;
         
         // If already engaged with this player, use a much larger leave radius
