@@ -90,7 +90,13 @@ export class IdleBehavior extends BaseBehavior {
         const greetingMessages = config.greetingMessages || [];
         const greeting = this.getRandomGreeting(greetingMessages);
         if (greeting) {
-            this.bot.sendChatMessage(spaceName, greeting);
+            // Wait a bit for the space to sync the bot as a user before sending message
+            // The back service needs the bot to be in the space's users list to process the message
+            setTimeout(() => {
+                if (this.bot) {
+                    this.bot.sendChatMessage(spaceName, greeting);
+                }
+            }, 500);
         }
     }
 

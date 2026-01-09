@@ -464,6 +464,8 @@ export class PatrolBehavior extends BaseBehavior {
         // GHOST MODE: Don't stop, don't cancel pathfinding - keep moving
         // Only send greeting if player actively approached (nearbyPlayers.size > 0)
         if (this.bot && this.nearbyPlayers.size > 0) {
+            // Wait for the space to sync the bot as a user before sending message
+            // The back service needs the bot to be in the space's users list to process the message
             setTimeout(() => {
                 if (this.bot && this.currentSpaceName === spaceName) {
                     try {
@@ -477,7 +479,7 @@ export class PatrolBehavior extends BaseBehavior {
                         // Ignore
                     }
                 }
-            }, 300);
+            }, 500);
         }
     }
     

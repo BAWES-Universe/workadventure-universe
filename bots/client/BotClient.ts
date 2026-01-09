@@ -927,18 +927,30 @@ export class BotClient {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName}`);
+                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName} (available spaces: ${Array.from(this.spaces.keys()).join(', ')})`);
             }
             return;
         }
 
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Sending chat message to space ${spaceName}: "${message}"`);
+        }
+
+        // Chat messages are sent via PublicEvent with spaceMessage, not updateSpaceUserMessage
         this.send({
             message: {
-                $case: 'updateSpaceUserMessage',
-                updateSpaceUserMessage: {
+                $case: 'publicEvent',
+                publicEvent: {
                     spaceName,
-                    message: {
-                        message,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceMessage',
+                            spaceMessage: {
+                                message,
+                                characterTextures: [],
+                                name: this.config.name,
+                            },
+                        },
                     },
                 },
             },

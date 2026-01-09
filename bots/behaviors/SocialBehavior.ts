@@ -173,9 +173,15 @@ export class SocialBehavior extends BaseBehavior {
         const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
 
         if (greeting) {
-            this.bot.sendChatMessage(spaceName, greeting);
-            // Record bot's message in memory
-            this.conversationMemory.addMessage(botId, this.targetPlayerId, greeting, 'bot', spaceName);
+            // Wait for the space to sync the bot as a user before sending message
+            // The back service needs the bot to be in the space's users list to process the message
+            setTimeout(() => {
+                if (this.bot && this.currentSpaceName === spaceName) {
+                    this.bot.sendChatMessage(spaceName, greeting);
+                    // Record bot's message in memory
+                    this.conversationMemory.addMessage(botId, this.targetPlayerId, greeting, 'bot', spaceName);
+                }
+            }, 500);
         }
 
         // Clear target
