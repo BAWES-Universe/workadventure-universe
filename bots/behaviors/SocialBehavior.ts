@@ -37,6 +37,9 @@ export class SocialBehavior extends BaseBehavior {
     private wanderTarget: PositionInterface | null = null;
     private lastWanderUpdate: number = 0;
     private lastConversationCheck: number = 0;
+    private lastWanderFailure: number = 0; // Track when pathfinding failed
+    private wanderInProgress: boolean = false; // Prevent multiple concurrent calls
+    private readonly WANDER_FAILURE_COOLDOWN = 2000; // 2 seconds before retrying after failure
     private conversationMemory: ConversationMemory;
 
     constructor(config: SocialBehaviorConfig) {
@@ -381,6 +384,11 @@ export class SocialBehavior extends BaseBehavior {
     private async wander(config: SocialBehaviorConfig, deltaTime: number): Promise<void> {
         if (!this.bot) return;
 
+        // Prevent multiple concurrent wander calls
+        if (this.wanderInProgress) {
+            return;
+        }
+
         // If bot has assigned space and is outside it, return first
         if (!this.isWithinAssignedSpace()) {
             this.returnToAssignedSpace();
@@ -389,6 +397,11 @@ export class SocialBehavior extends BaseBehavior {
 
         const currentTime = Date.now();
         const botPos = this.bot.getState().getPosition();
+
+        // If pathfinding recently failed, wait before retrying
+        if (this.lastWanderFailure > 0 && currentTime - this.lastWanderFailure < this.WANDER_FAILURE_COOLDOWN) {
+            return;
+        }
 
         // Update wander target periodically or when reached
         if (
@@ -406,20 +419,33 @@ export class SocialBehavior extends BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance > 10) {
-            // Always try pathfinding first if available and not already following a path - don't move through walls
+            this.wanderInProgress = true;
+            
+            // Always try pathfinding first if available and not already following a path
             if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
                 const success = await this.bot.moveToWithPathfinding(this.wanderTarget.x, this.wanderTarget.y);
+                this.wanderInProgress = false;
+                
                 if (success) {
                     // Pathfinding will handle movement via updatePathFollowing
+                    this.lastWanderFailure = 0; // Reset failure counter on success
                     return;
                 }
-                // Pathfinding failed - don't move if we can't find a path (prevents walking through walls)
-                console.warn(`[SocialBehavior] Pathfinding failed for wander target, staying in place`);
+                
+                // Pathfinding failed - generate new target and wait before retrying
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[SocialBehavior] Pathfinding failed for wander target at (${this.wanderTarget.x.toFixed(1)}, ${this.wanderTarget.y.toFixed(1)}), generating new target`);
+                }
+                
+                // Generate a new wander target (current one might be invalid)
+                this.wanderTarget = this.generateWanderTarget(config);
+                this.lastWanderUpdate = currentTime;
+                this.lastWanderFailure = currentTime;
                 return;
             }
 
             // Only use direct movement if pathfinding is not available
-            // This should only happen during initialization before pathfinding is set up
+            this.wanderInProgress = false;
             const effectiveSpeed = config.wanderSpeed > 75 ? config.wanderSpeed * 0.5 : config.wanderSpeed;
             const angle = Math.atan2(dy, dx);
             const moveDistance = effectiveSpeed * 0.016; // Adjusted for higher config speeds
@@ -450,6 +476,7 @@ export class SocialBehavior extends BaseBehavior {
             this.bot.moveTo(newX, newY, direction);
         } else {
             this.bot.stop();
+            this.wanderInProgress = false;
         }
     }
 
