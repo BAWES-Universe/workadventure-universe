@@ -247,6 +247,9 @@ export class BotClient {
         // Bots should "ghost through" idle players (nearbyPlayers.size === 0)
         this.behavior.update(deltaTime);
 
+        // If bot is summoned, always allow movement (override normal stopping logic)
+        const isSummoned = (this.behavior as any)?.isSummoned || false;
+
         // Update path following if active (this handles movement)
         // CRITICAL: Only do this if bot is actually moving (not stopped)
         // If stop() was called, isMoving() will be false - respect that!
@@ -264,9 +267,18 @@ export class BotClient {
         if (this.isFollowingPath) {
             const isMoving = this.state.isMoving();
             
-            // For patrol bots that should respond, only stop if in a conversation space
-            // Don't stop just because players are nearby (ghost mode for idle players)
-            if (shouldRespond && isInSpace) {
+            // If summoned, always allow movement (don't stop for spaces)
+            if (isSummoned) {
+                if (isMoving) {
+                    this.updatePathFollowing(deltaTime);
+                } else {
+                    // Summoned but not moving - ensure we start moving
+                    this.state.setMoving(true);
+                    this.updatePathFollowing(deltaTime);
+                }
+            } else if (shouldRespond && isInSpace) {
+                // For patrol bots that should respond, only stop if in a conversation space
+                // Don't stop just because players are nearby (ghost mode for idle players)
                 if (isMoving) {
                     // Bot should be stopped but is still moving - force stop
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -330,9 +342,12 @@ export class BotClient {
      * Move bot to position
      */
     moveTo(x: number, y: number, direction: PositionMessage_Direction = PositionMessage_Direction.DOWN): void {
+        // If bot is summoned, always allow movement (override normal blocking logic)
+        const isSummoned = (this.behavior as any)?.isSummoned || false;
+        
         // CRITICAL: For patrol bots, only block movement if in a conversation space
         // This allows ghost mode: continue moving if players are idle nearby
-        if (this.behavior) {
+        if (this.behavior && !isSummoned) {
             const behaviorType = (this.behavior as any)?.config?.type;
             const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
             
@@ -356,7 +371,7 @@ export class BotClient {
         this.state.setDirection(direction);
         this.state.setMoving(true);
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] 📍 moveTo() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, pos=(${Math.round(x)}, ${Math.round(y)})`);
+            console.log(`[Bot ${this.config.botId}] 📍 moveTo() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, pos=(${Math.round(x)}, ${Math.round(y)})${isSummoned ? ' (SUMMONED)' : ''}`);
         }
     }
 
@@ -470,6 +485,7 @@ export class BotClient {
      */
     async moveToWithPathfinding(x: number, y: number): Promise<boolean> {
         if (!this.pathfindingManager) {
+            console.log(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: No pathfindingManager`);
             return false;
         }
 
@@ -477,6 +493,7 @@ export class BotClient {
 
         // Cooldown check - don't recalculate too frequently
         if (now - this.lastPathRecalcTime < this.PATH_RECALC_COOLDOWN && this.isFollowingPath) {
+            console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Cooldown active (${now - this.lastPathRecalcTime}ms < ${this.PATH_RECALC_COOLDOWN}ms), keeping current path`);
             return true; // Keep following current path
         }
         
@@ -485,6 +502,7 @@ export class BotClient {
             const timeSincePathEnd = now - this.lastPathEndTime;
             if (timeSincePathEnd < this.PATH_END_COOLDOWN) {
                 // Too soon after path ended, skip pathfinding - let behavior use direct movement
+                console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Path end cooldown active (${timeSincePathEnd}ms < ${this.PATH_END_COOLDOWN}ms), skipping pathfinding`);
                 return false;
             }
         }
@@ -511,13 +529,17 @@ export class BotClient {
         // For very close targets (< 50px), skip pathfinding to avoid tiny paths that cause glitching
         if (distanceToTarget < 50) {
             // Already close enough, no need for pathfinding - use direct movement instead
+            console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Target too close (${distanceToTarget.toFixed(1)}px < 50px), skipping pathfinding`);
             return false;
         }
 
+        console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Finding path from (${Math.round(botPos.x)}, ${Math.round(botPos.y)}) to (${Math.round(x)}, ${Math.round(y)})...`);
         const rawPath = await this.pathfindingManager.findPath(botPos, { x, y }, true);
+        console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Pathfinding returned ${rawPath.length} waypoints`);
 
         if (rawPath.length === 0) {
             // No path found, fall back to direct movement
+            console.log(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: No path found from pathfinding algorithm`);
             movementLogger.log({
                 timestamp: Date.now(),
                 botId: this.config.botId,
@@ -542,14 +564,14 @@ export class BotClient {
 
         // Only update path if we have a valid path with at least 2 waypoints
         if (rawPath.length < 2) {
+            console.log(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: Path too short (${rawPath.length} waypoints < 2)`);
             return false;
         }
 
         // CRITICAL: Validate path doesn't go through obstacles before using it
+        console.log(`[Bot ${this.config.botId}] ✅ moveToWithPathfinding: Validating path with ${rawPath.length} waypoints...`);
         if (!this.validatePath(rawPath)) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn(`[Bot ${this.config.botId}] ⚠️ Path validation failed - path goes through obstacles! Rejecting path.`);
-            }
+            console.warn(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: Path validation failed - path goes through obstacles! Rejecting path.`);
             movementLogger.log({
                 timestamp: Date.now(),
                 botId: this.config.botId,
@@ -560,6 +582,7 @@ export class BotClient {
             });
             return false;
         }
+        console.log(`[Bot ${this.config.botId}] ✅ moveToWithPathfinding: Path validation passed`);
         
         // Use raw path from pathfinding - it already avoids obstacles
         // Path smoothing was causing issues with obstacle avoidance
@@ -1063,27 +1086,56 @@ export class BotClient {
      * @param targetPosition Target position to move to
      */
     async summonToPlayer(playerUuid: string, targetPosition: PositionInterface): Promise<void> {
+        console.log(`[Bot ${this.config.botId}] 🎯 SUMMON START - player ${playerUuid} at (${targetPosition.x}, ${targetPosition.y})`);
+        
         if (!this.behavior) {
+            console.error(`[Bot ${this.config.botId}] ❌ No behavior assigned`);
             throw new Error('Bot has no behavior assigned');
         }
 
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] 🎯 Summoning to player ${playerUuid} at (${targetPosition.x}, ${targetPosition.y})`);
-        }
-
         // Start summon in behavior (tracks original position)
-        this.behavior.startSummon(playerUuid, targetPosition);
+        // This will throw an error if bot is engaged with someone else
+        try {
+            this.behavior.startSummon(playerUuid, targetPosition);
+            console.log(`[Bot ${this.config.botId}] ✅ Behavior.startSummon() completed`);
+        } catch (error: any) {
+            console.error(`[Bot ${this.config.botId}] ❌ Behavior.startSummon() failed:`, error.message);
+            // Re-throw the error so BotManager can handle it
+            throw error;
+        }
 
         // Cancel any existing pathfinding
         this.cancelPathfinding();
+        // CRITICAL: Reset path end time so we can immediately start new pathfinding for summon
+        // Otherwise the cooldown check in moveToWithPathfinding() will block us
+        this.lastPathEndTime = 0;
+        console.log(`[Bot ${this.config.botId}] ✅ Canceled existing pathfinding and reset cooldown`);
+
+        // Check if pathfinding is available
+        if (!this.hasPathfinding()) {
+            console.error(`[Bot ${this.config.botId}] ❌ Cannot summon - pathfinding not initialized`);
+            throw new Error('Pathfinding not initialized for bot');
+        }
+        console.log(`[Bot ${this.config.botId}] ✅ Pathfinding is available`);
+
+        // Get bot position for logging
+        const botPos = this.state.getPosition();
+        const dx = targetPosition.x - botPos.x;
+        const dy = targetPosition.y - botPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        console.log(`[Bot ${this.config.botId}] 📍 Bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)}), target at (${Math.round(targetPosition.x)}, ${Math.round(targetPosition.y)}), distance: ${Math.round(distance)}px`);
 
         // Use pathfinding to move to target position
         // The bot will stop automatically when it reaches the position (within threshold)
         // The bubble will initiate automatically when the bot gets close enough
-        await this.moveToWithPathfinding(targetPosition.x, targetPosition.y);
+        console.log(`[Bot ${this.config.botId}] 🚀 Calling moveToWithPathfinding()...`);
+        const pathfindingResult = await this.moveToWithPathfinding(targetPosition.x, targetPosition.y);
 
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] ✅ Summon pathfinding started to (${targetPosition.x}, ${targetPosition.y})`);
+        console.log(`[Bot ${this.config.botId}] ✅ Summon pathfinding ${pathfindingResult ? 'STARTED' : 'FAILED'} to (${targetPosition.x}, ${targetPosition.y})`);
+        console.log(`[Bot ${this.config.botId}] 📊 State: isFollowingPath=${this.isFollowingPath}, isMoving=${this.state.isMoving()}, pathLength=${this.currentPath.length}, pathIndex=${this.pathIndex}`);
+
+        if (!pathfindingResult) {
+            console.error(`[Bot ${this.config.botId}] ❌ Summon pathfinding failed - bot may be too close to target (<50px) or pathfinding unavailable`);
         }
     }
 

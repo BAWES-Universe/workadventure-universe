@@ -204,29 +204,36 @@ export abstract class BaseBehavior {
                     this.closestPlayerId = closestId;
                     
                     // For patrol bots with respondToPlayers, stop and face
-                    if (shouldStopForPlayers) {
+                    // BUT: Don't stop if bot is summoned (needs to reach player first)
+                    if (shouldStopForPlayers && !this.isSummoned) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
                         }
                         this.bot.stop();
                     }
                     
-                    this.facePosition(closestPos);
+                    // Face the player (but don't stop if summoned)
+                    if (!this.isSummoned) {
+                        this.facePosition(closestPos);
+                    }
                     if (!wasEngaged) {
-                        console.log(`[Behavior] Engaged with player ${closestId} - stopped and facing`);
+                        console.log(`[Behavior] Engaged with player ${closestId} - ${this.isSummoned ? 'summoned, continuing' : 'stopped and facing'}`);
                     } else {
                         console.log(`[Behavior] Facing player ${closestId}`);
                     }
                 } else {
                     // Same player, but they might have moved - update facing
-                    // For patrol bots, ensure we're still stopped
-                    if (shouldStopForPlayers && this.bot.getState().isMoving()) {
+                    // For patrol bots, ensure we're still stopped (unless summoned)
+                    if (shouldStopForPlayers && !this.isSummoned && this.bot.getState().isMoving()) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
                         }
                         this.bot.stop();
                     }
-                    this.facePosition(closestPos);
+                    // Face the player (but don't stop if summoned)
+                    if (!this.isSummoned) {
+                        this.facePosition(closestPos);
+                    }
                 }
             }
         } else {
@@ -281,6 +288,14 @@ export abstract class BaseBehavior {
      */
     startSummon(playerUuid: string, targetPosition: PositionInterface): void {
         if (!this.bot) return;
+
+        // Check if bot is engaged with someone else - don't allow summon if busy
+        if (this.engagedWithUsers.size > 0 || this.isEngaged) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Bot cannot be summoned - currently engaged with ${this.engagedWithUsers.size} user(s)`);
+            }
+            throw new Error('Bot is currently engaged with another player and cannot be summoned');
+        }
 
         this.isSummoned = true;
         this.summonedPlayerUuid = playerUuid;
