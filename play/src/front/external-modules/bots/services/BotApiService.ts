@@ -1,5 +1,10 @@
 import type { BotData } from "../types";
 
+interface AuthError extends Error {
+    isAuthError: boolean;
+    isSessionExpired: boolean;
+}
+
 export interface CreateBotDto {
     roomId: string;
     name: string;
@@ -22,6 +27,7 @@ export class BotApiService {
     private adminUrl: string | null = null;
     private roomId: string | null = null;
     private botServerUrl: string | null = null;
+    private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
 
     /**
      * Initialize the API service with extension options
@@ -43,7 +49,126 @@ export class BotApiService {
      * Check if the service is initialized
      */
     isInitialized(): boolean {
-        return !!(this.adminUrl && this.accessToken && this.roomId);
+        // Service is initialized if we have adminUrl and roomId
+        // Authentication can be via session token OR accessToken
+        return !!(this.adminUrl && this.roomId);
+    }
+
+    /**
+     * Get Admin API session token from localStorage
+     * Primary key: admin_session_token (base64-encoded session data)
+     * Fallback key: admin_session_id (session ID - less preferred)
+     * If not found or expired, fetches new session token from Admin API
+     */
+    private async getAdminApiSessionToken(): Promise<string | null> {
+        if (typeof window === "undefined" || typeof localStorage === "undefined") {
+            return null;
+        }
+
+        // Check if we have a cached token
+        const sessionToken = localStorage.getItem("admin_session_token");
+        const expiresAtStr = localStorage.getItem("admin_session_token_expires_at");
+
+        // Check if token exists and is not expired
+        if (sessionToken && expiresAtStr) {
+            const expirationTime = parseInt(expiresAtStr, 10);
+            const now = Date.now();
+
+            // If token expires in more than 5 minutes, use it
+            // Otherwise, refresh proactively
+            if (expirationTime > now + 5 * 60 * 1000) {
+                return sessionToken;
+            }
+
+            // Token expires soon or is expired - clear it and fetch new one
+            localStorage.removeItem("admin_session_token");
+            localStorage.removeItem("admin_session_token_expires_at");
+        }
+
+        // Fallback: admin_session_id (session ID - for backward compatibility)
+        const sessionId = localStorage.getItem("admin_session_id");
+        if (sessionId) {
+            return sessionId;
+        }
+
+        // No valid token found - fetch new one from Admin API
+        if (this.accessToken && this.adminUrl) {
+            // Use cached promise if login is already in progress
+            if (this.sessionTokenPromise) {
+                return this.sessionTokenPromise;
+            }
+
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.log("[BotApiService] Fetching new session token from Admin API");
+            }
+            this.sessionTokenPromise = this.fetchSessionTokenFromAdminApi();
+            const token = await this.sessionTokenPromise;
+            this.sessionTokenPromise = null; // Clear cache after completion
+            return token;
+        }
+
+        return null;
+    }
+
+    /**
+     * Fetch session token from Admin API /api/auth/session endpoint
+     * Uses OIDC accessToken in Authorization header
+     */
+    private async fetchSessionTokenFromAdminApi(): Promise<string | null> {
+        if (!this.adminUrl || !this.accessToken) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.warn("[BotApiService] Cannot fetch session token: missing adminUrl or accessToken");
+            }
+            return null;
+        }
+
+        try {
+            const response = await fetch(`${this.adminUrl}/api/auth/session`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${this.accessToken}`,
+                },
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                    console.warn(
+                        `[BotApiService] Failed to fetch session token: ${response.status} ${response.statusText}`,
+                        errorText
+                    );
+                }
+                return null;
+            }
+
+            const data = await response.json();
+            const sessionToken = data.sessionToken || data.token;
+            const expiresAt = data.expiresAt;
+
+            if (!sessionToken) {
+                if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                    console.warn("[BotApiService] Session token not found in response");
+                }
+                return null;
+            }
+
+            // Store session token and expiration in localStorage
+            localStorage.setItem("admin_session_token", sessionToken);
+            if (expiresAt && typeof expiresAt === "number") {
+                localStorage.setItem("admin_session_token_expires_at", expiresAt.toString());
+            }
+
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.log("[BotApiService] Session token fetched and cached successfully");
+            }
+            return sessionToken;
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error fetching session token from Admin API:", error);
+            }
+            return null;
+        }
     }
 
     /**
@@ -65,38 +190,110 @@ export class BotApiService {
             const payload = JSON.parse(jsonPayload);
             return payload.accessToken || null;
         } catch (e) {
-            console.error("[BotApiService] Error parsing JWT:", e);
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error parsing JWT:", e);
+            }
             return null;
         }
     }
 
     /**
      * Make authenticated API request
+     * Uses Admin API session token if available, falls back to JWT accessToken
      */
     private async fetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
-        if (!this.adminUrl || !this.accessToken) {
-            throw new Error("BotApiService not initialized. Missing adminUrl or accessToken.");
+        if (!this.adminUrl) {
+            throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
-        const url = `${this.adminUrl}${endpoint}`;
+        // Try to get Admin API session token first (async - may fetch new one if missing/expired)
+        const sessionToken = await this.getAdminApiSessionToken();
+
+        // Build base URL
+        let url = `${this.adminUrl}${endpoint}`;
+
+        // Build headers
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            ...(options.headers as Record<string, string>),
+        };
+
+        // PRIMARY METHOD: Use session token as _token query parameter
+        if (sessionToken) {
+            const separator = endpoint.includes("?") ? "&" : "?";
+            url = `${url}${separator}_token=${encodeURIComponent(sessionToken)}`;
+        } else if (this.accessToken) {
+            // FALLBACK METHOD: Use JWT accessToken in Authorization header
+            headers.Authorization = `Bearer ${this.accessToken}`;
+        } else {
+            throw new Error("BotApiService not initialized. Missing session token or accessToken.");
+        }
+
         const response = await fetch(url, {
             ...options,
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${this.accessToken}`,
-                ...options.headers,
-            },
+            headers,
         });
 
         if (!response.ok) {
             const errorText = await response.text();
             let errorMessage = `API error: ${response.status}`;
+            let isSessionExpired = false;
+
             try {
                 const errorJson = JSON.parse(errorText);
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
+                // Check if it's a session expiration error
+                if (
+                    errorMessage.toLowerCase().includes("session expired") ||
+                    errorMessage.toLowerCase().includes("session invalid")
+                ) {
+                    isSessionExpired = true;
+                }
             } catch {
                 errorMessage = errorText || errorMessage;
             }
+
+            // If 401 and we were using session token, clear it and try to refresh
+            if (response.status === 401 && sessionToken) {
+                if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                    console.warn("[BotApiService] Session token may be expired, clearing cache and refreshing");
+                }
+                localStorage.removeItem("admin_session_token");
+                localStorage.removeItem("admin_session_token_expires_at");
+
+                // If we have accessToken, try to fetch a new session token and retry
+                if (this.accessToken) {
+                    const newToken = await this.fetchSessionTokenFromAdminApi();
+                    if (newToken) {
+                        // Retry the request with new token
+                        const retryUrl = `${this.adminUrl}${endpoint}`;
+                        const retrySeparator = endpoint.includes("?") ? "&" : "?";
+                        const retryUrlWithToken = `${retryUrl}${retrySeparator}_token=${encodeURIComponent(newToken)}`;
+
+                        const retryResponse = await fetch(retryUrlWithToken, {
+                            ...options,
+                            headers,
+                        });
+
+                        if (retryResponse.ok) {
+                            return retryResponse;
+                        }
+                    }
+                }
+            }
+
+            // Create a more specific error for session expiration
+            if (isSessionExpired || response.status === 401) {
+                const authError = new Error(
+                    sessionToken
+                        ? "Your session has expired. Please re-authenticate to continue managing bots."
+                        : "Authentication failed. Please ensure you are logged in."
+                ) as AuthError;
+                authError.isAuthError = true;
+                authError.isSessionExpired = isSessionExpired;
+                throw authError;
+            }
+
             throw new Error(errorMessage);
         }
 
@@ -219,7 +416,9 @@ export class BotApiService {
             });
             return response.json();
         } catch (error) {
-            console.error("[BotApiService] Error notifying room enter:", error);
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error notifying room enter:", error);
+            }
             // Don't throw - bot spawning failure shouldn't break the game
             return { botsSpawned: 0 };
         }
@@ -241,7 +440,9 @@ export class BotApiService {
             });
             return response.json();
         } catch (error) {
-            console.error("[BotApiService] Error notifying room leave:", error);
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error notifying room leave:", error);
+            }
             // Don't throw - bot despawning failure shouldn't break the game
             return { botsActive: 0 };
         }
@@ -263,7 +464,9 @@ export class BotApiService {
             });
             return response.json();
         } catch (error) {
-            console.error("[BotApiService] Error spawning bot:", error);
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error spawning bot:", error);
+            }
             return { spawned: false, reason: String(error) };
         }
     }
@@ -281,7 +484,9 @@ export class BotApiService {
             });
             return response.json();
         } catch (error) {
-            console.error("[BotApiService] Error despawning bot:", error);
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error despawning bot:", error);
+            }
             return { despawned: false, reason: String(error) };
         }
     }
@@ -305,7 +510,9 @@ export class BotApiService {
             });
             return response.json();
         } catch (error) {
-            console.error("[BotApiService] Error updating running bot:", error);
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error updating running bot:", error);
+            }
             return { updated: false, reason: String(error) };
         }
     }

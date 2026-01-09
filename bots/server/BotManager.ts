@@ -5,6 +5,7 @@
 import { BotClient } from '../client/BotClient';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
+import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
 
 export interface BotInstance {
@@ -28,6 +29,7 @@ export class BotManager {
     private bots: Map<string, BotInstance> = new Map();
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
+    private mapDataService: MapDataService;
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
@@ -37,6 +39,7 @@ export class BotManager {
     constructor(adminApiService: AdminApiService, botRegistry: BotRegistry) {
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
+        this.mapDataService = new MapDataService();
     }
     
     /**
@@ -73,10 +76,28 @@ export class BotManager {
 
     /**
      * Spawn a bot instance
+     * If bot already exists and is connected, returns existing instance
+     * If bot exists but is disconnected, despawns it first and spawns a new one
      */
     async spawnBot(botId: string, config: BotConfiguration): Promise<BotClient> {
-        if (this.bots.has(botId)) {
-            throw new Error(`Bot ${botId} already exists`);
+        // Check if bot already exists
+        const existingInstance = this.bots.get(botId);
+        if (existingInstance) {
+            // Bot exists - check if it's connected
+            if (existingInstance.client.isConnected()) {
+                console.log(`[BotManager] Bot ${botId} already exists and is connected, returning existing instance`);
+                return existingInstance.client;
+            } else {
+                // Bot exists but is disconnected - despawn it first
+                console.log(`[BotManager] Bot ${botId} exists but is disconnected, despawning before respawn`);
+                try {
+                    await this.despawnBot(botId);
+                } catch (error) {
+                    console.warn(`[BotManager] Error despawning disconnected bot ${botId}:`, error);
+                    // Continue anyway - try to remove from map manually
+                    this.bots.delete(botId);
+                }
+            }
         }
 
         console.log(`[BotManager] Spawning bot: ${botId}`);
@@ -138,8 +159,9 @@ export class BotManager {
                 // Ensure required fields have defaults
                 if (typeof transformed.loop === 'undefined') transformed.loop = true;
                 if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
-                if (typeof transformed.speed === 'undefined') transformed.speed = 100;
-                if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
+                    if (typeof transformed.speed === 'undefined') transformed.speed = 50; // Match original bots branch default
+                // Default to true for patrol bots - they should respond to players by default
+                if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = true;
             }
             
             // Transform social config: ensure required fields
@@ -215,6 +237,12 @@ export class BotManager {
         // Connect bot
         try {
             await client.connect();
+            
+            // Initialize pathfinding after connection (non-blocking)
+            this.initializePathfinding(client, config.roomUrl).catch(error => {
+                console.warn(`[BotManager] Failed to initialize pathfinding for bot ${botId}:`, error);
+                // Continue without pathfinding - graceful degradation
+            });
             
             const instance: BotInstance = {
                 botId,
@@ -355,7 +383,7 @@ export class BotManager {
                     }
                     if (typeof transformed.loop === 'undefined') transformed.loop = true;
                     if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
-                    if (typeof transformed.speed === 'undefined') transformed.speed = 100;
+                    if (typeof transformed.speed === 'undefined') transformed.speed = 50; // Match original bots branch default
                     if (typeof transformed.respondToPlayers === 'undefined') transformed.respondToPlayers = false;
                 }
                 
@@ -662,6 +690,41 @@ export class BotManager {
     }
 
     /**
+     * Respawn bots for all rooms that have players (called on server startup after hot reload)
+     */
+    async respawnBotsForActiveRooms(): Promise<void> {
+        console.log('[BotManager] Respawning bots for active rooms after server restart...');
+        
+        const waRooms = await this.queryWorkAdventureRooms();
+        if (waRooms.size === 0) {
+            console.log('[BotManager] No active rooms found - bots will spawn when players enter');
+            return;
+        }
+
+        let respawnedCount = 0;
+        for (const [roomId, userCount] of waRooms.entries()) {
+            // Only respawn for rooms that have players (userCount > 0)
+            // Note: userCount includes bots, so we need to check if there are real players
+            if (userCount > 0) {
+                try {
+                    // Initialize room if needed
+                    await this.handlePlayerEnterRoom(roomId);
+                    respawnedCount++;
+                    console.log(`[BotManager] Respawning bots for room ${roomId} (${userCount} users)`);
+                } catch (error) {
+                    console.error(`[BotManager] Failed to respawn bots for room ${roomId}:`, error);
+                }
+            }
+        }
+
+        if (respawnedCount > 0) {
+            console.log(`[BotManager] Respawned bots for ${respawnedCount} active rooms`);
+        } else {
+            console.log('[BotManager] No rooms with players found - bots will spawn when players enter');
+        }
+    }
+
+    /**
      * Verify room occupancy by comparing WA room counts with our bot counts
      * If WA says room has N users but we have N bots, the room is empty -> despawn
      */
@@ -687,20 +750,39 @@ export class BotManager {
 
             // If WA reports exactly our bot count (or less), room is empty
             // WA user count includes bots, so if waUserCount <= ourBotCount, there are no real players
+            // Add a small buffer (1) to account for timing/connection delays
             if (waUserCount <= ourBotCount) {
-                console.log(
-                    `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${ourBotCount} bots. Despawning bots.`
-                );
+                // Double-check: are any bots actually connected?
+                let connectedBots = 0;
+                for (const botId of roomState.botIds) {
+                    const instance = this.bots.get(botId);
+                    if (instance && instance.status === 'connected') {
+                        connectedBots++;
+                    }
+                }
                 
-                // Despawn all bots for this room
-                const despawnPromises = Array.from(roomState.botIds).map(botId => 
-                    this.despawnBot(botId).catch(error => {
-                        console.error(`[BotManager] Error despawning bot ${botId} during verification:`, error);
-                    })
-                );
-                
-                await Promise.all(despawnPromises);
-                this.roomsWithBots.delete(roomId);
+                // Only despawn if WA count is significantly less than our connected bots
+                // This prevents despawning when bots are still connecting or WA count is slightly off
+                if (waUserCount < connectedBots - 1) {
+                    console.log(
+                        `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Despawning bots.`
+                    );
+                    
+                    // Despawn all bots for this room
+                    const despawnPromises = Array.from(roomState.botIds).map(botId => 
+                        this.despawnBot(botId).catch(error => {
+                            console.error(`[BotManager] Error despawning bot ${botId} during verification:`, error);
+                        })
+                    );
+                    
+                    await Promise.all(despawnPromises);
+                    this.roomsWithBots.delete(roomId);
+                } else {
+                    // WA count is close to our bot count, might be timing issue - keep bots
+                    console.log(
+                        `[BotManager] Room ${roomId} verification: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Keeping bots (possible timing issue).`
+                    );
+                }
             } else {
                 // Room has real players (waUserCount > ourBotCount)
                 const realPlayerCount = waUserCount - ourBotCount;
@@ -734,6 +816,24 @@ export class BotManager {
             clearInterval(this.verificationInterval);
             this.verificationInterval = null;
             console.log('[BotManager] Room verification stopped');
+        }
+    }
+
+    /**
+     * Initialize pathfinding for a bot
+     */
+    private async initializePathfinding(client: BotClient, roomUrl: string): Promise<void> {
+        try {
+            const mapData = await this.mapDataService.getMapData(roomUrl);
+            if (mapData && mapData.collisionGrid && mapData.tileDimensions) {
+                client.initializePathfinding(mapData.collisionGrid, mapData.tileDimensions);
+                console.log(`[BotManager] Pathfinding initialized for room ${roomUrl}`);
+            } else {
+                console.log(`[BotManager] No collision data available for room ${roomUrl}, pathfinding disabled`);
+            }
+        } catch (error) {
+            console.error(`[BotManager] Error initializing pathfinding for room ${roomUrl}:`, error);
+            throw error;
         }
     }
 

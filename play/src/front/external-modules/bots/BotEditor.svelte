@@ -64,7 +64,17 @@
                             lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
-                            // Don't show error for auto-saves, just log
+
+                            // Check if it's an authentication error - show error for auth issues
+                            const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
+                            if (isAuthError) {
+                                error = (e as Error).message;
+                                // Clear error after 5 seconds
+                                setTimeout(() => {
+                                    error = null;
+                                }, 5000);
+                            }
+                            // For other errors, just log (don't show for auto-saves)
                         }
                     })();
                 }, 1000);
@@ -291,7 +301,14 @@
             updateBotInStore(botData);
         } catch (e) {
             console.error("[BotEditor] Failed to save bot:", e);
-            error = e instanceof Error ? e.message : "Failed to save bot";
+
+            // Check if it's an authentication error
+            const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
+            if (isAuthError) {
+                error = (e as Error).message;
+            } else {
+                error = e instanceof Error ? e.message : "Failed to save bot";
+            }
         } finally {
             isLoading = false;
         }
@@ -323,7 +340,14 @@
             handleBackToList();
         } catch (e) {
             console.error("[BotEditor] Failed to delete bot:", e);
-            error = e instanceof Error ? e.message : "Failed to delete bot";
+
+            // Check if it's an authentication error
+            const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
+            if (isAuthError) {
+                error = (e as Error).message;
+            } else {
+                error = e instanceof Error ? e.message : "Failed to delete bot";
+            }
         } finally {
             isLoading = false;
         }

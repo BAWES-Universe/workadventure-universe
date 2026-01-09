@@ -47,7 +47,8 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:3001/health || exit 1
 
-# Start bot server using ts-node (runs TypeScript directly)
-# Install ts-node globally or use npx
-RUN npm install -g ts-node
-CMD ["ts-node", "--transpile-only", "server/index.ts"]
+# Install ts-node and tsx globally for running TypeScript
+RUN npm install -g ts-node tsx
+# Default to production start command (can be overridden in docker-compose)
+# Note: In dev mode, docker-compose overrides this with "npm run dev" which uses tsx watch
+CMD ["npm", "run", "start"]

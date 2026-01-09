@@ -75,13 +75,24 @@ export abstract class BaseBehavior {
             return;
         }
         
+        const behaviorType = (this.config as any).type;
+        const respondToPlayers = (this.config as any).respondToPlayers;
+        
+        // For patrol bots with respondToPlayers=false, don't track players (ghost mode)
+        if (behaviorType === 'patrol' && respondToPlayers === false) {
+            return; // Skip all player tracking for ghost mode
+        }
+        
         const botPos = this.bot.getState().getPosition();
         const dx = position.x - botPos.x;
         const dy = position.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
         const wasNearby = this.nearbyPlayers.has(playerId);
-        const enterRadius = this.PROXIMITY_RADIUS;
+        
+        // Use enter radius - 100px for patrol bots (respondToPlayers), 80px for others
+        // This matches the original behavior where patrol bots detected players at 100px
+        const enterRadius = (behaviorType === 'patrol' && respondToPlayers !== false) ? 100 : 80;
         const leaveRadius = this.DISENGAGE_RADIUS;
         
         // If already engaged with this player, use a much larger leave radius
@@ -136,15 +147,22 @@ export abstract class BaseBehavior {
         if (!this.bot) return;
         
         const wasEngaged = this.isEngaged;
-        this.isEngaged = this.nearbyPlayers.size > 0;
+        // Check both proximity-based and space-based engagement
+        this.isEngaged = this.nearbyPlayers.size > 0 || this.engagedWithUsers.size > 0;
+        
+        // For patrol bots with respondToPlayers enabled, stop when players are nearby
+        const behaviorType = (this.config as any).type;
+        const respondToPlayers = (this.config as any).respondToPlayers;
+        const shouldStopForPlayers = behaviorType === 'patrol' && respondToPlayers !== false;
         
         if (this.isEngaged) {
-            // Find closest player
+            // Find closest player (check both nearbyPlayers and engagedWithUsers)
             let closestDistance = Infinity;
             let closestId: number | null = null;
             let closestPos: PositionInterface | null = null;
             const botPos = this.bot.getState().getPosition();
             
+            // Check nearby players first (proximity-based)
             for (const [playerId, playerPos] of this.nearbyPlayers) {
                 const dx = playerPos.x - botPos.x;
                 const dy = playerPos.y - botPos.y;
@@ -157,11 +175,37 @@ export abstract class BaseBehavior {
                 }
             }
             
+            // Also check engaged users (space-based) if no nearby player found
+            if (!closestPos) {
+                for (const [userId, userData] of this.engagedWithUsers) {
+                    if (userData.position) {
+                        const dx = userData.position.x - botPos.x;
+                        const dy = userData.position.y - botPos.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (dist < closestDistance) {
+                            closestDistance = dist;
+                            closestId = userId;
+                            closestPos = userData.position;
+                        }
+                    }
+                }
+            }
+            
             // Face the closest player
             if (closestPos) {
                 if (closestId !== this.closestPlayerId) {
                     // Different player or first time
                     this.closestPlayerId = closestId;
+                    
+                    // For patrol bots with respondToPlayers, stop and face
+                    if (shouldStopForPlayers) {
+                        if (this.bot.getIsFollowingPath()) {
+                            this.bot.cancelPathfinding();
+                        }
+                        this.bot.stop();
+                    }
+                    
                     this.facePosition(closestPos);
                     if (!wasEngaged) {
                         console.log(`[Behavior] Engaged with player ${closestId} - stopped and facing`);
@@ -170,6 +214,13 @@ export abstract class BaseBehavior {
                     }
                 } else {
                     // Same player, but they might have moved - update facing
+                    // For patrol bots, ensure we're still stopped
+                    if (shouldStopForPlayers && this.bot.getState().isMoving()) {
+                        if (this.bot.getIsFollowingPath()) {
+                            this.bot.cancelPathfinding();
+                        }
+                        this.bot.stop();
+                    }
                     this.facePosition(closestPos);
                 }
             }
@@ -178,7 +229,7 @@ export abstract class BaseBehavior {
             this.closestPlayerId = null;
             
             if (wasEngaged) {
-                console.log(`[Behavior] No longer engaged - all players left proximity`);
+                console.log(`[Behavior] No longer engaged - all players left proximity/space`);
             }
         }
     }
