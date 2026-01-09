@@ -265,7 +265,10 @@ export class PatrolBehavior extends BaseBehavior {
         this.onBotPositionUpdated();
 
         // Update proximity engagement (check for nearby players and face them)
-        this.updateProximityEngagement();
+        // Only update if not in a space - if in a space, we already handled stopping above
+        if (!this.currentSpaceName && this.engagedWithUsers.size === 0) {
+            this.updateProximityEngagement();
+        }
 
         // Resume patrol
         if (!this.targetWaypoint && config.waypoints.length > 0) {
@@ -334,6 +337,114 @@ export class PatrolBehavior extends BaseBehavior {
         // Track when player last moved (for idle detection)
         this.playerLastMoveTime.set(playerId, Date.now());
         super.onPlayerMoved(playerId, position);
+    }
+
+    /**
+     * Override updateProximityEngagement to only stop for active players (not idle)
+     * This allows ghost mode: continue moving if players are idle nearby
+     */
+    protected updateProximityEngagement(): void {
+        if (!this.bot) return;
+        
+        const wasEngaged = this.isEngaged;
+        // Check both proximity-based and space-based engagement
+        this.isEngaged = this.nearbyPlayers.size > 0 || this.engagedWithUsers.size > 0;
+        
+        const config = this.config as PatrolBehaviorConfig;
+        const shouldRespond = config.respondToPlayers !== false;
+        
+        if (this.isEngaged) {
+            // Find closest player (check both nearbyPlayers and engagedWithUsers)
+            let closestDistance = Infinity;
+            let closestId: number | null = null;
+            let closestPos: PositionInterface | null = null;
+            const botPos = this.bot.getState().getPosition();
+            
+            // Check nearby players first (proximity-based)
+            for (const [playerId, playerPos] of this.nearbyPlayers) {
+                const dx = playerPos.x - botPos.x;
+                const dy = playerPos.y - botPos.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist < closestDistance) {
+                    closestDistance = dist;
+                    closestId = playerId;
+                    closestPos = playerPos;
+                }
+            }
+            
+            // Also check engaged users (space-based) if no nearby player found
+            if (!closestPos) {
+                for (const [userId, userData] of this.engagedWithUsers) {
+                    if (userData.position) {
+                        const dx = userData.position.x - botPos.x;
+                        const dy = userData.position.y - botPos.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (dist < closestDistance) {
+                            closestDistance = dist;
+                            closestId = userId;
+                            closestPos = userData.position;
+                        }
+                    }
+                }
+            }
+            
+            // Face the closest player
+            if (closestPos) {
+                // Check if player is actively moving (not idle)
+                const now = Date.now();
+                const isPlayerActive = closestId !== null && 
+                    this.playerLastMoveTime.has(closestId) &&
+                    (now - (this.playerLastMoveTime.get(closestId) || 0)) < this.IDLE_RESUME_DELAY;
+                
+                // Only stop if player is actively moving OR in a conversation space
+                const shouldStop = shouldRespond && (isPlayerActive || this.currentSpaceName || this.engagedWithUsers.size > 0);
+                
+                if (closestId !== this.closestPlayerId) {
+                    // Different player or first time
+                    this.closestPlayerId = closestId;
+                    
+                    // For patrol bots with respondToPlayers, stop and face only if player is active
+                    if (shouldStop) {
+                        if (this.bot.getIsFollowingPath()) {
+                            this.bot.cancelPathfinding();
+                        }
+                        this.bot.stop();
+                    }
+                    
+                    this.facePosition(closestPos);
+                    if (!wasEngaged) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Behavior] Engaged with player ${closestId} - ${shouldStop ? 'stopped and facing' : 'facing (player idle)'}`);
+                        }
+                    } else {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Behavior] Facing player ${closestId}`);
+                        }
+                    }
+                } else {
+                    // Same player, but they might have moved - update facing
+                    // For patrol bots, ensure we're still stopped only if player is active
+                    if (shouldStop && this.bot.getState().isMoving()) {
+                        if (this.bot.getIsFollowingPath()) {
+                            this.bot.cancelPathfinding();
+                        }
+                        this.bot.stop();
+                    }
+                    this.facePosition(closestPos);
+                }
+            }
+        } else {
+            // No longer engaged
+            this.closestPlayerId = null;
+            
+            if (wasEngaged) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] No longer engaged - all players left proximity/space`);
+                }
+            }
+        }
     }
 
     // Like social bot: always accept spaces (use default from BaseBehavior = true)

@@ -256,24 +256,28 @@ export class BotClient {
         const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
         // Default to true for patrol bots unless explicitly set to false
         const shouldRespond = behaviorType === 'patrol' && respondToPlayers !== false;
-        const isEngaged = (this.behavior as any)?.isEngaged;
+        
+        // Check if bot is in a conversation space (not just nearby players)
+        // This allows ghost mode: continue moving if players are idle nearby
+        const isInSpace = (this.behavior as any)?.currentSpaceName || (this.behavior as any)?.engagedWithUsers?.size > 0;
         
         if (this.isFollowingPath) {
             const isMoving = this.state.isMoving();
             
-            // For patrol bots that should respond, if engaged, don't call updatePathFollowing
-            if (shouldRespond && isEngaged) {
+            // For patrol bots that should respond, only stop if in a conversation space
+            // Don't stop just because players are nearby (ghost mode for idle players)
+            if (shouldRespond && isInSpace) {
                 if (isMoving) {
                     // Bot should be stopped but is still moving - force stop
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot engaged - stopping and canceling pathfinding`);
+                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot in space - stopping and canceling pathfinding`);
                     }
                     this.stop();
                     this.cancelPathfinding();
                 } else {
                     // Already stopped - just cancel pathfinding
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot engaged and stopped - canceling pathfinding`);
+                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot in space and stopped - canceling pathfinding`);
                     }
                     this.cancelPathfinding();
                 }
@@ -326,24 +330,22 @@ export class BotClient {
      * Move bot to position
      */
     moveTo(x: number, y: number, direction: PositionMessage_Direction = PositionMessage_Direction.DOWN): void {
-        // CRITICAL: For patrol bots, if engaged (player nearby), don't move
-        // This matches the old commit behavior where facePosition() stops the bot
-        // The respondToPlayers flag controls whether we check for players, but if isEngaged is true,
-        // it means a player was detected and we should stop (unless respondToPlayers is explicitly false for ghost mode)
+        // CRITICAL: For patrol bots, only block movement if in a conversation space
+        // This allows ghost mode: continue moving if players are idle nearby
         if (this.behavior) {
             const behaviorType = (this.behavior as any)?.config?.type;
             const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
             
-            // Use isInConversation() method if available, otherwise check isEngaged directly
-            const isEngaged = (this.behavior as any)?.isInConversation?.() ?? (this.behavior as any)?.isEngaged ?? false;
+            // Check if bot is in a conversation space (not just nearby players)
+            // This allows ghost mode: continue moving if players are idle nearby
+            const isInSpace = (this.behavior as any)?.currentSpaceName || (this.behavior as any)?.engagedWithUsers?.size > 0;
             
-            // For patrol bots: if engaged and respondToPlayers is not explicitly false, block movement
-            // This ensures bots stop when players are nearby (default behavior)
-            // If respondToPlayers is explicitly false, allow ghost mode (continue moving)
-            if (behaviorType === 'patrol' && isEngaged && respondToPlayers !== false) {
-                // Patrol bot is engaged - don't move
+            // For patrol bots: only block movement if in a conversation space
+            // Don't block just because players are nearby (ghost mode for idle players)
+            if (behaviorType === 'patrol' && isInSpace && respondToPlayers !== false) {
+                // Patrol bot is in a conversation space - don't move
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Bot ${this.config.botId}] 🛑 moveTo() BLOCKED - patrol bot is engaged (respondToPlayers=${respondToPlayers}, isEngaged=${isEngaged})`);
+                    console.log(`[Bot ${this.config.botId}] 🛑 moveTo() BLOCKED - patrol bot is in space (respondToPlayers=${respondToPlayers}, isInSpace=${isInSpace})`);
                 }
                 return;
             }
