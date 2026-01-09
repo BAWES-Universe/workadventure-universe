@@ -206,8 +206,14 @@ export class BotClient {
         }
         
         if (this.ws) {
-            this.ws.close();
-            this.ws = null;
+            // Send proper close frame with code 1000 (normal closure)
+            // This prevents code 1005 (No Status Received) when the connection closes
+            if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+                this.ws.close(1000, 'Normal closure');
+            } else {
+                // Already closing or closed, just clean up
+                this.ws = null;
+            }
         }
         this.connected = false;
     }
