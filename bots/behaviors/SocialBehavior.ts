@@ -79,9 +79,10 @@ export class SocialBehavior extends BaseBehavior {
             }
         }
         
-        // GHOST MODE: Only stop if actually engaged in conversation (in a space)
+        // GHOST MODE: Only stop if actually in a conversation space (engagedWithUsers)
         // Don't stop just because players are nearby - continue moving until actively engaging
-        if (this.isEngaged) {
+        // Check engagedWithUsers directly instead of isEngaged, since isEngaged is set by proximity too
+        if (this.engagedWithUsers.size > 0) {
             // Actually in a conversation space - stop and face the player
             if (this.bot.getIsFollowingPath()) {
                 this.bot.cancelPathfinding();
