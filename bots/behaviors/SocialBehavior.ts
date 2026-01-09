@@ -148,44 +148,54 @@ export class SocialBehavior extends BaseBehavior {
         }
         this.bot.stop();
 
-        // Only process conversation if we have a target player
-        if (!this.targetPlayerId) {
-            return;
-        }
-
         const config = this.config as SocialBehaviorConfig;
         const currentTime = Date.now();
         const botId = this.bot.getBotId();
 
-        // Start conversation in memory
-        this.conversationMemory.startConversation(botId, this.targetPlayerId);
+        // If we have a target player, start a formal conversation
+        if (this.targetPlayerId) {
+            // Start conversation in memory
+            this.conversationMemory.startConversation(botId, this.targetPlayerId);
 
-        // Start conversation
-        this.activeConversations.set(this.targetPlayerId, {
-            playerId: this.targetPlayerId,
-            spaceName,
-            startTime: currentTime,
-            lastMessageTime: currentTime,
-        });
+            // Start conversation
+            this.activeConversations.set(this.targetPlayerId, {
+                playerId: this.targetPlayerId,
+                spaceName,
+                startTime: currentTime,
+                lastMessageTime: currentTime,
+            });
 
-        // Get conversation context for personalized greeting
-        const memory = this.conversationMemory.getMemory(botId, this.targetPlayerId);
-        const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
+            // Get conversation context for personalized greeting
+            const memory = this.conversationMemory.getMemory(botId, this.targetPlayerId);
+            const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
 
-        if (greeting) {
-            // Wait for the space to sync the bot as a user before sending message
-            // The back service needs the bot to be in the space's users list to process the message
-            setTimeout(() => {
-                if (this.bot && this.currentSpaceName === spaceName) {
-                    this.bot.sendChatMessage(spaceName, greeting);
-                    // Record bot's message in memory
-                    this.conversationMemory.addMessage(botId, this.targetPlayerId, greeting, 'bot', spaceName);
-                }
-            }, 500);
+            if (greeting) {
+                // Wait for the space to sync the bot as a user before sending message
+                // The back service needs the bot to be in the space's users list to process the message
+                setTimeout(() => {
+                    if (this.bot && this.currentSpaceName === spaceName) {
+                        this.bot.sendChatMessage(spaceName, greeting);
+                        // Record bot's message in memory
+                        this.conversationMemory.addMessage(botId, this.targetPlayerId, greeting, 'bot', spaceName);
+                    }
+                }, 500);
+            }
+
+            // Clear target
+            this.targetPlayerId = null;
+        } else {
+            // No target player, but space was joined (player approached bot)
+            // Send a default greeting to any players in the space
+            const greeting = this.getPersonalizedGreeting(config.conversationTopics, null);
+            if (greeting) {
+                // Wait for the space to sync the bot as a user before sending message
+                setTimeout(() => {
+                    if (this.bot && this.currentSpaceName === spaceName) {
+                        this.bot.sendChatMessage(spaceName, greeting);
+                    }
+                }, 500);
+            }
         }
-
-        // Clear target
-        this.targetPlayerId = null;
     }
 
     onSpaceLeft(spaceName: string): void {
