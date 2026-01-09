@@ -29,9 +29,10 @@ export class IdleBehavior extends BaseBehavior {
         const config = this.config as IdleBehaviorConfig;
         const currentTime = Date.now();
 
-        // If engaged, ensure bot is stopped (idle bots don't move anyway)
+        // If engaged, just update facing (idle bots don't move, so no need to stop)
         if (this.isEngaged) {
-            this.bot.stop();
+            // Update engagement to ensure facing is correct
+            this.updateProximityEngagement();
             this.onBotPositionUpdated(); // Track position
             return;
         }
