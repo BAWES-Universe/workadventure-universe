@@ -86,6 +86,24 @@
             }
         } catch (e) {
             console.error("Error toggling bot:", e);
+
+            // Check if it's an authentication error
+            const errorWithAuth = e as Error & { isAuthError?: boolean; isSessionExpired?: boolean };
+            const isAuthError = errorWithAuth?.isAuthError === true;
+            const isSessionExpired = errorWithAuth?.isSessionExpired === true;
+
+            if (isAuthError) {
+                // Show user-friendly error message
+                error = isSessionExpired
+                    ? "Your session has expired. Please re-authenticate to continue managing bots."
+                    : "Authentication failed. Please ensure you are logged in.";
+
+                // Clear error after 5 seconds
+                setTimeout(() => {
+                    error = null;
+                }, 5000);
+            }
+
             // Revert on error
             bot.enabled = originalEnabled;
             bots = bots;
