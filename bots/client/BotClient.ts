@@ -526,6 +526,10 @@ export class BotClient {
         this.lastPathTarget = { x, y };
         this.lastPathRecalcTime = now;
         
+        // CRITICAL: Set bot to moving state when pathfinding starts
+        // Otherwise updatePathFollowing() will immediately stop because isMoving() is false
+        this.state.setMoving(true);
+        
         return true;
     }
 
@@ -897,25 +901,8 @@ export class BotClient {
         const botPos = this.state.getPosition();
         const result: PlayerInfo[] = [];
 
-        // Debug: log total players and bot position
-        if (Math.random() < 0.05) { // 5% chance to avoid spam
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] getNearbyPlayers: checking ${this.players.size} players within ${radius}px, bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
-        }
-            if (this.players.size > 0) {
-                for (const player of this.players.values()) {
-                    const dx = player.position.x - botPos.x;
-                    const dy = player.position.y - botPos.y;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}]   Player ${player.userId} at (${Math.round(player.position.x)}, ${Math.round(player.position.y)}) - distance: ${Math.round(distance)}px, isBot: ${BotClient.isBot(player.userId)}`);
-                    }
-                }
-            }
-        }
-
         for (const player of this.players.values()) {
-            // Skip bots - but log if we're skipping
+            // Skip bots
             if (BotClient.isBot(player.userId)) {
                 continue;
             }
@@ -929,10 +916,18 @@ export class BotClient {
             const distance = Math.sqrt(dx * dx + dy * dy);
             if (distance <= radius) {
                 result.push(player);
-                if (Math.random() < 0.1) {
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] ✅ Found nearby player ${player.userId} at distance ${Math.round(distance)}px`);
-                    }
+            }
+        }
+        
+        // Debug: log only when players are actually found within radius (reduced frequency)
+        if (result.length > 0 && Math.random() < 0.1) { // 10% chance when players found
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] getNearbyPlayers: found ${result.length} player(s) within ${radius}px (checked ${this.players.size} total), bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
+                for (const player of result) {
+                    const dx = player.position.x - botPos.x;
+                    const dy = player.position.y - botPos.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    console.log(`[Bot ${this.config.botId}]   Player ${player.userId} at (${Math.round(player.position.x)}, ${Math.round(player.position.y)}) - distance: ${Math.round(distance)}px`);
                 }
             }
         }
