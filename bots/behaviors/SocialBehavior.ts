@@ -5,6 +5,7 @@
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
+import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
 import { movementLogger } from '../utils/MovementLogger';
 
@@ -152,8 +153,16 @@ export class SocialBehavior extends BaseBehavior {
         const currentTime = Date.now();
         const botId = this.bot.getBotId();
 
-        // If we have a target player, start a formal conversation
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] onSpaceJoined: spaceName=${spaceName}, targetPlayerId=${this.targetPlayerId}, engagedWithUsers=${this.engagedWithUsers.size}`);
+        }
+
+        // If we have a target player, start a formal conversation (bot-initiated)
         if (this.targetPlayerId) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Bot-initiated conversation with player ${this.targetPlayerId}`);
+            }
+            
             // Start conversation in memory
             this.conversationMemory.startConversation(botId, this.targetPlayerId);
 
@@ -170,6 +179,9 @@ export class SocialBehavior extends BaseBehavior {
             const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
 
             if (greeting) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[SocialBehavior] Bot-initiated greeting: "${greeting}" - scheduling send`);
+                }
                 // Wait for the space to sync the bot as a user before sending message
                 // The back service needs the bot to be in the space's users list to process the message
                 setTimeout(() => {
@@ -184,16 +196,213 @@ export class SocialBehavior extends BaseBehavior {
             // Clear target
             this.targetPlayerId = null;
         } else {
-            // No target player, but space was joined (player approached bot)
-            // Send a default greeting to any players in the space
-            const greeting = this.getPersonalizedGreeting(config.conversationTopics, null);
-            if (greeting) {
-                // Wait for the space to sync the bot as a user before sending message
-                setTimeout(() => {
-                    if (this.bot && this.currentSpaceName === spaceName) {
-                        this.bot.sendChatMessage(spaceName, greeting);
+            // No target player - player-initiated conversation
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Player-initiated conversation - checking for nearby players and setting up delayed check`);
+            }
+            
+            // Immediately check for nearby players who might be in the space
+            // This handles the case where the player is nearby but addSpaceUserMessage hasn't arrived yet
+            const nearbyPlayers = this.bot.getNearbyPlayers(config.conversationRadius || 100);
+            for (const player of nearbyPlayers) {
+                if (!this.activeConversations.has(player.userId)) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[SocialBehavior] Found nearby player ${player.userId} - starting conversation immediately`);
                     }
-                }, 500);
+                    this.startConversationWithPlayer(player.userId, spaceName, config, botId);
+                    break; // Only start one conversation at a time
+                }
+            }
+            
+            // Also set up a delayed check for engaged users (in case addSpaceUserMessage arrives later)
+            setTimeout(() => {
+                if (!this.bot || this.currentSpaceName !== spaceName) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[SocialBehavior] Delayed check cancelled: bot=${!!this.bot}, currentSpaceName=${this.currentSpaceName}, spaceName=${spaceName}`);
+                    }
+                    return;
+                }
+                
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[SocialBehavior] Delayed check: engagedWithUsers=${this.engagedWithUsers.size}, activeConversations=${this.activeConversations.size}`);
+                }
+                
+                // Check if we have engaged users but no active conversations yet
+                // This handles the case where users were already in the space
+                for (const [userId, userData] of this.engagedWithUsers.entries()) {
+                    if (userData.spaceName === spaceName && !this.activeConversations.has(userId)) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[SocialBehavior] Found engaged user ${userId} without conversation - starting conversation`);
+                        }
+                        // User is engaged but we haven't started a conversation yet
+                        // This means they were already in the space when we joined
+                        this.startConversationWithPlayer(userId, spaceName, config, botId);
+                    }
+                }
+            }, 1000); // Give time for addSpaceUserMessage to arrive
+        }
+    }
+    
+    /**
+     * Send greeting message with retry mechanism (handles server sync delays)
+     */
+    private sendGreetingWithRetry(
+        spaceName: string,
+        greeting: string,
+        botId: string,
+        playerId: number,
+        attempt: number
+    ): void {
+        const MAX_ATTEMPTS = 5;
+        const DELAY_MS = 1000; // Start with 1 second delay
+        
+        if (attempt >= MAX_ATTEMPTS) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[SocialBehavior] Failed to send greeting after ${MAX_ATTEMPTS} attempts`);
+            }
+            return;
+        }
+        
+        const delay = DELAY_MS * (attempt + 1); // Exponential backoff: 1s, 2s, 3s, 4s, 5s
+        
+        setTimeout(() => {
+            if (!this.bot || this.currentSpaceName !== spaceName || !this.activeConversations.has(playerId)) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[SocialBehavior] Greeting send cancelled (attempt ${attempt + 1}): bot=${!!this.bot}, currentSpaceName=${this.currentSpaceName}, spaceName=${spaceName}, hasConversation=${this.activeConversations.has(playerId)}`);
+                }
+                return;
+            }
+            
+            // Check if bot is actually in the space
+            const spaceUserId = (this.bot as any).spaces?.get(spaceName);
+            if (!spaceUserId) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[SocialBehavior] Bot not in space yet (attempt ${attempt + 1}), retrying in ${delay}ms...`);
+                }
+                this.sendGreetingWithRetry(spaceName, greeting, botId, playerId, attempt + 1);
+                return;
+            }
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Sending greeting message (attempt ${attempt + 1}): "${greeting}" to space ${spaceName}`);
+            }
+            
+            try {
+                this.bot.sendChatMessage(spaceName, greeting);
+                // Record bot's message in memory
+                this.conversationMemory.addMessage(botId, playerId, greeting, 'bot', spaceName);
+            } catch (error) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[SocialBehavior] Error sending greeting (attempt ${attempt + 1}), will retry:`, error);
+                }
+                // Retry on error
+                this.sendGreetingWithRetry(spaceName, greeting, botId, playerId, attempt + 1);
+            }
+        }, delay);
+    }
+
+    /**
+     * Helper method to start a conversation with a player (used by both onSpaceJoined and onSpaceUserJoined)
+     */
+    private startConversationWithPlayer(
+        playerId: number,
+        spaceName: string,
+        config: SocialBehaviorConfig,
+        botId: string
+    ): void {
+        if (!this.bot || this.activeConversations.has(playerId)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] startConversationWithPlayer skipped: bot=${!!this.bot}, hasConversation=${this.activeConversations.has(playerId)}`);
+            }
+            return;
+        }
+        
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] startConversationWithPlayer: playerId=${playerId}, spaceName=${spaceName}`);
+        }
+        
+        const currentTime = Date.now();
+        
+        // Start conversation in memory (this creates memory if it doesn't exist)
+        this.conversationMemory.startConversation(botId, playerId);
+        
+        // Start conversation tracking
+        this.activeConversations.set(playerId, {
+            playerId: playerId,
+            spaceName,
+            startTime: currentTime,
+            lastMessageTime: currentTime,
+        });
+        
+        // Get conversation context for personalized greeting
+        // This will use existing memory if available, or create new memory
+        const memory = this.conversationMemory.getMemory(botId, playerId);
+        const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
+        
+        if (greeting) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Generated greeting: "${greeting}" - scheduling send`);
+            }
+            // Wait for the space to sync the bot as a user before sending message
+            // The back service needs the bot to be in the space's users list to process the message
+            setTimeout(() => {
+                if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
+                    this.bot.sendChatMessage(spaceName, greeting);
+                    // Record bot's message in memory
+                    this.conversationMemory.addMessage(botId, playerId, greeting, 'bot', spaceName);
+                }
+            }, 500);
+        } else {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] No greeting generated for player ${playerId}`);
+            }
+        }
+    }
+
+    onSpaceUserJoined(spaceName: string, user: SpaceUser): void {
+        if (!this.bot) return;
+
+        // Call base behavior first to track engagement
+        super.onSpaceUserJoined(spaceName, user);
+
+        // Get the userId from the SpaceUser (it's 'id' field, not 'userId')
+        const playerId = user.id;
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] onSpaceUserJoined: spaceName=${spaceName}, playerId=${playerId}, currentSpaceName=${this.currentSpaceName}, engagedWithUsers=${this.engagedWithUsers.size}`);
+        }
+
+        // Skip if it's the bot itself
+        if (playerId === this.bot.getUserId()) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Skipping - it's the bot itself`);
+            }
+            return;
+        }
+
+        // Skip if already in conversation with this player
+        if (this.activeConversations.has(playerId)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Skipping - already in conversation with player ${playerId}`);
+            }
+            return;
+        }
+
+        // Only handle player-initiated conversations (when bot is in space but no targetPlayerId)
+        // If we're in a space and don't have an active conversation with this player, start one
+        if (this.currentSpaceName === spaceName) {
+            const config = this.config as SocialBehaviorConfig;
+            const botId = this.bot.getBotId();
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Starting conversation with player ${playerId} via onSpaceUserJoined`);
+            }
+            
+            // Use the helper method to start conversation
+            this.startConversationWithPlayer(playerId, spaceName, config, botId);
+        } else {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Not starting conversation - currentSpaceName (${this.currentSpaceName}) !== spaceName (${spaceName})`);
             }
         }
     }
