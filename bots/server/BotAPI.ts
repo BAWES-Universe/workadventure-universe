@@ -181,6 +181,41 @@ export class BotAPI {
             }
         });
 
+        // Summon bot to player position (no auth required - public endpoint for any player/guest)
+        // This is safe because it only moves a bot to a player's position, doesn't modify configuration
+        this.app.post('/api/bots/:botId/summon', async (req: Request, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const { playerUuid, playerX, playerY } = req.body;
+
+                if (!playerUuid || playerX === undefined || playerY === undefined) {
+                    res.status(400).json({ error: 'Missing required fields: playerUuid, playerX, playerY' });
+                    return;
+                }
+
+                const bot = this.botManager.getBot(botId);
+                if (!bot) {
+                    res.status(404).json({ error: 'Bot not found or not spawned' });
+                    return;
+                }
+
+                // Summon the bot to the player's position
+                await this.botManager.summonBot(botId, {
+                    playerUuid,
+                    targetPosition: { x: playerX, y: playerY },
+                });
+
+                res.json({
+                    botId,
+                    summoned: true,
+                    targetPosition: { x: playerX, y: playerY },
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error summoning bot:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // Spawn a specific bot immediately (called when bot is created in editor)
         this.app.post('/api/bots/spawn', async (req: Request, res: Response) => {
             try {

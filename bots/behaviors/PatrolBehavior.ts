@@ -46,6 +46,26 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
+        // If bot is summoned, allow movement to player (don't stop for normal behavior logic)
+        // The bot will stop when it reaches the player position
+        if (this.isSummoned) {
+            // During summon, only stop if we've reached the target and are in a conversation space
+            // Otherwise, continue moving towards the summoned player
+            if (this.bot.getIsFollowingPath()) {
+                // Bot is moving to summoned player - allow it
+                this.onBotPositionUpdated();
+                return;
+            } else if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+                // Bot reached player and is in conversation - stop and face
+                this.bot.stop();
+                this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return;
+            }
+            // If not following path and not in space, bot might have reached target
+            // Continue with normal behavior to handle return to original position
+        }
+        
         // Check for nearby players and stop when detected (patrol bots should always respond)
         // Use respondToPlayers flag if set, otherwise default to true for patrol bots
         const shouldRespond = config.respondToPlayers !== false; // Default to true if not explicitly false
@@ -461,9 +481,12 @@ export class PatrolBehavior extends BaseBehavior {
         
         this.currentSpaceName = spaceName;
         
-        // GHOST MODE: Don't stop, don't cancel pathfinding - keep moving
-        // Only send greeting if player actively approached (nearbyPlayers.size > 0)
-        if (this.bot && this.nearbyPlayers.size > 0) {
+        // Send greeting if:
+        // 1. Player actively approached (nearbyPlayers.size > 0) - normal case
+        // 2. Bot is summoned - when summoned, bot should greet even if player not in nearbyPlayers yet
+        const shouldGreet = this.bot && (this.nearbyPlayers.size > 0 || this.isSummoned);
+        
+        if (shouldGreet) {
             // Wait for the space to sync the bot as a user before sending message
             // The back service needs the bot to be in the space's users list to process the message
             setTimeout(() => {
@@ -473,10 +496,11 @@ export class PatrolBehavior extends BaseBehavior {
                         const greetingMessages = config.greetingMessages || [];
                         const greeting = this.getRandomGreeting(greetingMessages);
                         if (greeting) {
+                            console.log(`[PatrolBehavior] Sending greeting (summoned=${this.isSummoned}, nearbyPlayers=${this.nearbyPlayers.size}): "${greeting}"`);
                             this.bot.sendChatMessage(spaceName, greeting);
                         }
                     } catch (error) {
-                        // Ignore
+                        console.error(`[PatrolBehavior] Error sending greeting:`, error);
                     }
                 }
             }, 500);

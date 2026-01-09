@@ -29,6 +29,54 @@ export class IdleBehavior extends BaseBehavior {
         const config = this.config as IdleBehaviorConfig;
         const currentTime = Date.now();
 
+        // If bot is summoned, allow movement to player (idle bots can move when summoned)
+        if (this.isSummoned) {
+            // Check if we've reached the target position (close enough to stop and initiate bubble)
+            const botPos = this.bot.getState().getPosition();
+            const targetPos = this.summonedPlayerUuid ? this.getSummonedPlayerPosition() : null;
+            
+            if (targetPos) {
+                const dx = targetPos.x - botPos.x;
+                const dy = targetPos.y - botPos.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // If we're close to the target (< 50px), stop and wait for bubble to initiate
+                // This allows the bubble to form naturally when player is nearby
+                if (distance < 50) {
+                    // Stop moving and face the target
+                    if (this.bot.getIsFollowingPath()) {
+                        this.bot.cancelPathfinding();
+                    }
+                    this.bot.stop();
+                    // Face the target position
+                    this.facePosition(targetPos);
+                    this.onBotPositionUpdated();
+                    return;
+                }
+            }
+            
+            // If we're in a conversation space, stop and engage normally (not ghost)
+            if (this.engagedWithUsers.size > 0) {
+                // Bot reached player and is in conversation - stop and face
+                if (this.bot.getIsFollowingPath()) {
+                    this.bot.cancelPathfinding();
+                }
+                this.bot.stop();
+                this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return;
+            }
+            
+            // If still following path, continue moving
+            if (this.bot.getIsFollowingPath()) {
+                this.onBotPositionUpdated();
+                return;
+            }
+            
+            // If not following path and not close to target, might have reached or path failed
+            // Continue with normal behavior
+        }
+
         // If engaged, just update facing (idle bots don't move, so no need to stop)
         if (this.isEngaged) {
             // Update engagement to ensure facing is correct

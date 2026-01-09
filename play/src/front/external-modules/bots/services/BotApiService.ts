@@ -516,6 +516,35 @@ export class BotApiService {
             return { updated: false, reason: String(error) };
         }
     }
+
+    /**
+     * Summon a bot to the player's position
+     * The bot will pathfind to the player, stop at their position, and initiate a bubble
+     * When the player leaves, the bot will return to its original position
+     */
+    async summonBot(
+        botId: string,
+        playerUuid: string,
+        playerX: number,
+        playerY: number
+    ): Promise<{ summoned: boolean; reason?: string }> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${botId}/summon`, {
+                method: "POST",
+                body: JSON.stringify({
+                    playerUuid,
+                    playerX,
+                    playerY,
+                }),
+            });
+            return response.json();
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error summoning bot:", error);
+            }
+            return { summoned: false, reason: String(error) };
+        }
+    }
 }
 
 // Export singleton instance

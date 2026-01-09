@@ -474,6 +474,34 @@ export class BotManager {
     }
 
     /**
+     * Summon a bot to a player's position
+     * The bot will pathfind to the player, stop at their position, and initiate a bubble
+     * When the player leaves, the bot will return to its assigned space center
+     */
+    async summonBot(
+        botId: string,
+        options: {
+            playerUuid: string;
+            targetPosition: { x: number; y: number };
+        }
+    ): Promise<void> {
+        const instance = this.bots.get(botId);
+        if (!instance) {
+            throw new Error(`Bot ${botId} not found or not spawned`);
+        }
+
+        const bot = instance.client;
+        if (!bot.isConnected()) {
+            throw new Error(`Bot ${botId} is not connected`);
+        }
+
+        // Call summon on the bot client
+        await bot.summonToPlayer(options.playerUuid, options.targetPosition);
+        
+        console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${options.targetPosition.x}, ${options.targetPosition.y})`);
+    }
+
+    /**
      * Handle a player entering a room
      * Initializes room if needed and ensures bots are spawned
      * Player count is tracked by verification system querying WA /rooms API

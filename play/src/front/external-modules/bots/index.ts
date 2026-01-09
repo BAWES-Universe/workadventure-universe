@@ -5,8 +5,10 @@ import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
 import { mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
+import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { botApiService } from "./services/BotApiService";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
+import { IconMapPin } from "@wa-icons";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
 let botEditorOpen = false;
@@ -686,6 +688,11 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
             .notifyRoomEnter(options.roomId)
             .then((result) => {
                 console.log(`[Bot Extension] Room enter notified, ${result.botsSpawned} bots spawned`);
+                // After bots spawn, try to register summon buttons
+                // Give it a moment for bots to appear in the game scene
+                setTimeout(() => {
+                    registerSummonButtonsForBots();
+                }, 3000);
             })
             .catch((e) => {
                 console.error("[Bot Extension] Failed to notify room enter (bots may not spawn):", e);
@@ -695,9 +702,193 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
     }
 }
 
+// Store registered actions per RemotePlayer UUID so we can add them when menu opens
+const registeredActionsByUuid = new Map<string, WokaMenuAction[]>();
+
+// Subscribe to wokaMenuStore to add our actions when menu is initialized
+let wokaMenuUnsubscriber: (() => void) | null = null;
+let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
+
+function setupWokaMenuHook() {
+    if (wokaMenuUnsubscriber) return; // Already set up
+
+    wokaMenuUnsubscriber = wokaMenuStore.subscribe((menuData: WokaMenuData | undefined) => {
+        // When menu is cleared, reset tracking
+        if (!menuData) {
+            lastProcessedMenu = null;
+            return;
+        }
+
+        // Only process if this is a fresh menu initialization
+        // Fresh menu = actions array is empty (just initialized)
+        // AND we haven't already processed this exact menu state
+        const currentState = { userUuid: menuData.userUuid, actionCount: menuData.actions.length };
+        const isNewMenu =
+            menuData.userUuid &&
+            menuData.actions.length === 0 &&
+            (!lastProcessedMenu ||
+                lastProcessedMenu.userUuid !== currentState.userUuid ||
+                lastProcessedMenu.actionCount !== 0);
+
+        if (isNewMenu) {
+            const actions = registeredActionsByUuid.get(menuData.userUuid);
+            if (actions && actions.length > 0) {
+                // Mark as processed immediately
+                lastProcessedMenu = currentState;
+
+                // Check if "Summon" action already exists (safety check)
+                const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");
+                if (!hasSummon) {
+                    // Use microtask to add actions after current execution completes
+                    // This prevents the subscription from firing again in the same tick
+                    void Promise.resolve().then(() => {
+                        actions.forEach((action: WokaMenuAction) => {
+                            // Double-check menu is still valid before adding
+                            const currentMenu = get(wokaMenuStore);
+                            if (currentMenu && currentMenu.userUuid === menuData.userUuid) {
+                                wokaMenuStore.addAction(action);
+                            }
+                        });
+                    });
+                }
+            }
+        }
+    });
+}
+
+// Function to register summon button for bots
+function registerSummonButtonsForBots() {
+    try {
+        const scene = gameManager.getCurrentGameScene();
+        if (!scene) {
+            // Retry after a delay if scene isn't ready (but don't spam logs)
+            setTimeout(registerSummonButtonsForBots, 3000);
+            return;
+        }
+
+        // Set up the woka menu hook if not already done
+        setupWokaMenuHook();
+
+        const remotePlayersRepo = scene.getRemotePlayersRepository();
+        const players = remotePlayersRepo.getPlayers();
+        const mapPlayersByKey = scene.MapPlayersByKey;
+
+        // Get current player's UUID for summon callback
+        const localUser = localUserStore.getLocalUser();
+
+        if (!localUser) {
+            // Retry if player not ready (but don't spam logs)
+            setTimeout(registerSummonButtonsForBots, 3000);
+            return;
+        }
+
+        const currentUuid = localUser.uuid;
+
+        let registeredCount = 0;
+
+        // Register summon button for each player
+        players.forEach((playerData, userId) => {
+            const remotePlayer = mapPlayersByKey.get(userId);
+            if (!remotePlayer) {
+                return;
+            }
+
+            const botUuid = playerData.userUuid;
+            if (!botUuid) {
+                return;
+            }
+
+            // Check if we already registered for this player
+            if (registeredActionsByUuid.has(botUuid)) {
+                return;
+            }
+
+            // Create the action
+            const summonAction = {
+                actionName: "Summon",
+                protected: false,
+                priority: 0, // Between "Talk To" (1) and "Block" (-1)
+                style: "bg-white/10 hover:bg-white/30",
+                actionIcon: IconMapPin,
+                callback: async () => {
+                    try {
+                        console.log(`[Bot Extension] Summon button clicked for player ${playerData.name} (${botUuid})`);
+
+                        // Get current player position at click time (not when button was registered)
+                        const currentPlayer = scene.CurrentPlayer;
+                        if (!currentPlayer) {
+                            console.warn(`[Bot Extension] Cannot summon - current player not available`);
+                            return;
+                        }
+
+                        const currentPosition = {
+                            x: currentPlayer.x,
+                            y: currentPlayer.y,
+                        };
+
+                        console.log(`[Bot Extension] Current position: (${currentPosition.x}, ${currentPosition.y})`);
+
+                        // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
+                        // Strip the "bot-" prefix to get the actual botId
+                        const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
+                        // Call summon API - it will validate if this is a bot
+                        await botApiService.summonBot(
+                            botId, // Use botId (without "bot-" prefix)
+                            currentUuid,
+                            currentPosition.x,
+                            currentPosition.y
+                        );
+                        console.log(`[Bot Extension] Summon request sent successfully`);
+                    } catch (error) {
+                        // Silently fail if it's not a bot (API will return 404)
+                        console.warn(`[Bot Extension] Summon failed for ${botUuid}:`, error);
+                    }
+                },
+            };
+
+            // Store the action by player UUID so we can add it when menu opens
+            if (!registeredActionsByUuid.has(botUuid)) {
+                registeredActionsByUuid.set(botUuid, [summonAction]);
+                registeredCount++;
+            }
+        });
+
+        // Only log if we actually did something
+        if (registeredCount > 0) {
+            console.log(
+                `[Bot Extension] ✅ Stored ${registeredCount} summon button action(s) for registration when menu opens`
+            );
+        }
+    } catch (error) {
+        console.error("[Bot Extension] Error registering summon buttons:", error);
+    }
+}
+
 // Function to initialize the bot editor integration
 function initializeBotEditor(options: ExtensionModuleOptions) {
     console.log("[Bot Extension] Initializing bot editor, waiting for user connection...");
+
+    // Start registering summon buttons immediately (don't wait for userIsConnected)
+    // This ensures buttons are available as soon as bots spawn
+    const startSummonButtonRegistration = () => {
+        // Try immediately
+        registerSummonButtonsForBots();
+        // Then retry every 3 seconds for the first 15 seconds (to catch bots as they spawn)
+        let retries = 0;
+        const maxRetries = 5;
+        const retryInterval = setInterval(() => {
+            retries++;
+            registerSummonButtonsForBots();
+            if (retries >= maxRetries) {
+                clearInterval(retryInterval);
+                // Then switch to less frequent polling (every 10 seconds)
+                setInterval(registerSummonButtonsForBots, 10000);
+            }
+        }, 3000);
+    };
+
+    // Start registration after a short delay
+    setTimeout(startSummonButtonRegistration, 2000);
 
     // Wait for user to be connected, then set up bot editor UI (for authenticated users only)
     unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
@@ -710,6 +901,9 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
                 }, 1000);
             }
 
+            // Ensure summon buttons are registered (in case they weren't already)
+            registerSummonButtonsForBots();
+
             if (unsubscribeUserConnected) {
                 unsubscribeUserConnected();
                 unsubscribeUserConnected = null;
@@ -720,11 +914,16 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
     // Also check if already connected
     const alreadyConnected = get(userIsConnected);
     console.log(`[Bot Extension] Already connected check: ${alreadyConnected}`);
-    if (alreadyConnected && localUserStore.isLogged()) {
-        console.log("[Bot Extension] User already connected, setting up bot editor");
-        setTimeout(() => {
-            setupBotEditor(options);
-        }, 1000);
+    if (alreadyConnected) {
+        if (localUserStore.isLogged()) {
+            console.log("[Bot Extension] User already connected, setting up bot editor");
+            setTimeout(() => {
+                setupBotEditor(options);
+            }, 1000);
+        }
+
+        // Ensure summon buttons are registered
+        registerSummonButtonsForBots();
     }
 }
 
@@ -743,6 +942,11 @@ const botExtensionModule: ExtensionModule = {
         // This ensures bots spawn even if userIsConnected hasn't fired yet
         console.log("[Bot Extension] Notifying room enter immediately on init");
         notifyRoomEnterForAllUsers(options);
+
+        // Also start summon button registration after bots have time to spawn
+        setTimeout(() => {
+            registerSummonButtonsForBots();
+        }, 3000);
 
         // Initialize bot editor integration (for authenticated users)
         initializeBotEditor(options);
