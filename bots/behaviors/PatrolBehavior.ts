@@ -32,6 +32,8 @@ export class PatrolBehavior extends BaseBehavior {
     private lastMoveAttemptLog: number = 0; // Rate limit move attempt logs
     private waypointAttemptStartTime: number = 0; // Track when we started trying to reach current waypoint
     private lastWaypointPosition: PositionInterface | null = null; // Track last position to detect if stuck
+    private playerLastMoveTime: Map<number, number> = new Map(); // Track when each player last moved
+    private readonly IDLE_RESUME_DELAY = 2000; // Resume if player idle for 2 seconds
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -47,6 +49,54 @@ export class PatrolBehavior extends BaseBehavior {
         // Use respondToPlayers flag if set, otherwise default to true for patrol bots
         const shouldRespond = config.respondToPlayers !== false; // Default to true if not explicitly false
         
+        // GHOST MODE: Only stop if actually in a conversation space (like social bot)
+        // Check both currentSpaceName (immediate) and engagedWithUsers (after users join)
+        // CRITICAL: Check this BEFORE path following to prevent movement in bubbles
+        if (shouldRespond && (this.currentSpaceName || this.engagedWithUsers.size > 0)) {
+            // Actually in a conversation space - stop immediately and cancel any movement
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+            this.bot.stop();
+            // Update engagement to ensure facing is correct (handles player movement)
+            this.updateProximityEngagement();
+            this.onBotPositionUpdated(); // Track position even when stopped
+            return;
+        }
+        
+        // If bot is stopped and not in a space, check if all nearby players are idle
+        // If so, resume movement (ghost through idle players) - similar to social bot pattern
+        if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowingPath() && 
+            !this.currentSpaceName && this.engagedWithUsers.size === 0) {
+            const now = Date.now();
+            let allPlayersIdle = true;
+            
+            // Check if any nearby players moved recently (active)
+            for (const [playerId] of this.nearbyPlayers) {
+                const lastMoveTime = this.playerLastMoveTime.get(playerId) || 0;
+                if (now - lastMoveTime < this.IDLE_RESUME_DELAY) {
+                    allPlayersIdle = false; // Player is active
+                    break;
+                }
+            }
+            
+            // If all players are idle and no space joined, resume (ghost mode)
+            if (allPlayersIdle && this.nearbyPlayers.size > 0) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    const firstPlayerId = Array.from(this.nearbyPlayers.keys())[0];
+                    const timeSinceMove = firstPlayerId ? Math.round((now - (this.playerLastMoveTime.get(firstPlayerId) || 0)) / 1000) : 0;
+                    console.log(`[PatrolBehavior] 👻 Resuming path - player nearby but idle (${timeSinceMove}s), no space joined (ghost mode)`);
+                }
+                // Resume by starting movement to waypoint
+                if (this.targetWaypoint) {
+                    this.moveTowardsWaypoint(config, deltaTime).catch(error => {
+                        console.error(`[PatrolBehavior] Error resuming to waypoint:`, error);
+                    });
+                }
+                return;
+            }
+        }
+        
         // ALWAYS check for players if respondToPlayers is enabled (or default true)
         if (shouldRespond) {
             // Patrol bot uses 100px detection radius (different from social bot's 80px)
@@ -57,10 +107,21 @@ export class PatrolBehavior extends BaseBehavior {
             // This catches players that might be stationary or not detected by getNearbyPlayers
             const hasNearbyPlayers = nearbyPlayers.length > 0 || this.nearbyPlayers.size > 0;
             
-            // Always log when players are found (for debugging)
-            if (hasNearbyPlayers) {
+            // Check if any nearby players are actively moving (not idle)
+            const now = Date.now();
+            let hasActivePlayers = false;
+            for (const [playerId] of this.nearbyPlayers) {
+                const lastMoveTime = this.playerLastMoveTime.get(playerId) || 0;
+                if (now - lastMoveTime < this.IDLE_RESUME_DELAY) {
+                    hasActivePlayers = true;
+                    break;
+                }
+            }
+            
+            // Only stop if players are actively moving (not idle)
+            if (hasNearbyPlayers && hasActivePlayers) {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[PatrolBehavior] 🛑 STOPPING - found players (getNearbyPlayers=${nearbyPlayers.length}, nearbyPlayersMap=${this.nearbyPlayers.size}, responseRadius=${responseRadius}, isFollowingPath=${this.bot.getIsFollowingPath()})`);
+                    console.log(`[PatrolBehavior] 🛑 STOPPING - found active players (getNearbyPlayers=${nearbyPlayers.length}, nearbyPlayersMap=${this.nearbyPlayers.size}, responseRadius=${responseRadius}, isFollowingPath=${this.bot.getIsFollowingPath()})`);
                 }
                 if (this.bot.getIsFollowingPath()) {
                     this.bot.cancelPathfinding();
@@ -269,7 +330,9 @@ export class PatrolBehavior extends BaseBehavior {
         }
     }
 
-    onPlayerMoved(playerId: number, position: { x: number; y: number }): void {
+    onPlayerMoved(playerId: number, position: PositionInterface): void {
+        // Track when player last moved (for idle detection)
+        this.playerLastMoveTime.set(playerId, Date.now());
         super.onPlayerMoved(playerId, position);
     }
 
