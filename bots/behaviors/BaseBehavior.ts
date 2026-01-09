@@ -480,6 +480,7 @@ export abstract class BaseBehavior {
 
     /**
      * Return bot to its assigned space/area
+     * Uses pathfinding to walk back (not teleport)
      */
     protected returnToAssignedSpace(): void {
         if (!this.bot || !this.config.assignedSpace) return;
@@ -490,22 +491,45 @@ export abstract class BaseBehavior {
         const dy = assignedSpace.center.y - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        // If outside assigned space, return to it
+        // If outside assigned space, return to it using pathfinding
         if (distance > assignedSpace.radius) {
-            // Move towards center of assigned space
+            // Calculate target position inside the assigned space (80% of radius from center)
             const angle = Math.atan2(dy, dx);
             const targetX = assignedSpace.center.x - Math.cos(angle) * (assignedSpace.radius * 0.8);
             const targetY = assignedSpace.center.y - Math.sin(angle) * (assignedSpace.radius * 0.8);
             
-            // Determine direction
-            let direction = PositionMessage_Direction.DOWN;
-            if (Math.abs(dx) > Math.abs(dy)) {
-                direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+            // Use pathfinding to return (walk back, don't teleport)
+            if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
+                // Reset path end time to allow immediate pathfinding
+                (this.bot as any).lastPathEndTime = 0;
+                
+                this.bot.moveToWithPathfinding(targetX, targetY).then((success) => {
+                    if (success) {
+                        console.log(`[Behavior] ✅ Return to assigned space pathfinding started`);
+                    } else {
+                        console.warn(`[Behavior] ⚠️ Return to assigned space pathfinding failed, using direct movement`);
+                        // Fallback to direct movement if pathfinding fails
+                        let direction = PositionMessage_Direction.DOWN;
+                        if (Math.abs(dx) > Math.abs(dy)) {
+                            direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+                        } else {
+                            direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                        }
+                        this.bot.moveTo(targetX, targetY, direction);
+                    }
+                }).catch((error) => {
+                    console.error(`[Behavior] Error returning to assigned space:`, error);
+                });
             } else {
-                direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                // Pathfinding not available or already following path - use direct movement as fallback
+                let direction = PositionMessage_Direction.DOWN;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+                } else {
+                    direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                }
+                this.bot.moveTo(targetX, targetY, direction);
             }
-            
-            this.bot.moveTo(targetX, targetY, direction);
         }
     }
 

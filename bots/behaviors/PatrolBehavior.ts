@@ -481,9 +481,12 @@ export class PatrolBehavior extends BaseBehavior {
         
         this.currentSpaceName = spaceName;
         
-        // GHOST MODE: Don't stop, don't cancel pathfinding - keep moving
-        // Only send greeting if player actively approached (nearbyPlayers.size > 0)
-        if (this.bot && this.nearbyPlayers.size > 0) {
+        // Send greeting if:
+        // 1. Player actively approached (nearbyPlayers.size > 0) - normal case
+        // 2. Bot is summoned - when summoned, bot should greet even if player not in nearbyPlayers yet
+        const shouldGreet = this.bot && (this.nearbyPlayers.size > 0 || this.isSummoned);
+        
+        if (shouldGreet) {
             // Wait for the space to sync the bot as a user before sending message
             // The back service needs the bot to be in the space's users list to process the message
             setTimeout(() => {
@@ -493,10 +496,11 @@ export class PatrolBehavior extends BaseBehavior {
                         const greetingMessages = config.greetingMessages || [];
                         const greeting = this.getRandomGreeting(greetingMessages);
                         if (greeting) {
+                            console.log(`[PatrolBehavior] Sending greeting (summoned=${this.isSummoned}, nearbyPlayers=${this.nearbyPlayers.size}): "${greeting}"`);
                             this.bot.sendChatMessage(spaceName, greeting);
                         }
                     } catch (error) {
-                        // Ignore
+                        console.error(`[PatrolBehavior] Error sending greeting:`, error);
                     }
                 }
             }, 500);

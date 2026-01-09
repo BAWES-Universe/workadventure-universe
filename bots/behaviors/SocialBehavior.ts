@@ -78,6 +78,18 @@ export class SocialBehavior extends BaseBehavior {
             // Continue with normal behavior to handle return to original position
         }
 
+        // If bot is returning to original position after summon, allow movement
+        if (this.isReturning) {
+            // During return, allow pathfinding to continue
+            if (this.bot.getIsFollowingPath()) {
+                // Bot is returning - allow it to continue
+                this.onBotPositionUpdated();
+                return;
+            }
+            // If not following path, might have reached original position
+            // Continue with normal behavior to resume wandering
+        }
+
         // Clean up old conversations
         this.cleanupConversations(config, currentTime);
 
@@ -444,8 +456,19 @@ export class SocialBehavior extends BaseBehavior {
             }
         }
 
-        // Return to assigned space after conversation ends
-        this.returnToAssignedSpace();
+        // If summoned and player left, return to original position using endSummon()
+        // This uses pathfinding to walk back (not teleport)
+        if (this.isSummoned && this.summonedPlayerUuid) {
+            // Check if the summoned player is still nearby
+            const playerStillNearby = this.checkSummonedPlayerStillNearby();
+            if (!playerStillNearby) {
+                console.log(`[SocialBehavior] Summoned player left, ending summon and returning to original position`);
+                this.endSummon();
+            }
+        } else {
+            // Normal conversation ended - return to assigned space using pathfinding
+            this.returnToAssignedSpace();
+        }
         
         // Clear any target
         this.targetPlayerId = null;
@@ -485,7 +508,8 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Only look for conversations if within assigned space (or no assigned space)
-        if (!this.isWithinAssignedSpace()) {
+        // BUT: Allow if bot is summoned (can leave assigned space when summoned)
+        if (!this.isSummoned && !this.isWithinAssignedSpace()) {
             return;
         }
 
@@ -621,7 +645,8 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // If bot has assigned space and is outside it, return first
-        if (!this.isWithinAssignedSpace()) {
+        // BUT: Allow if bot is summoned or returning (can leave assigned space when summoned/returning)
+        if (!this.isSummoned && !this.isReturning && !this.isWithinAssignedSpace()) {
             this.returnToAssignedSpace();
             return;
         }
