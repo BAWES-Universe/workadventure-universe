@@ -191,18 +191,6 @@ export class BotAPI {
                     return;
                 }
 
-                // Spawn the bot (verification will despawn if room is empty)
-                const roomState = this.botManager.getRoomState(roomId);
-                if (!roomState) {
-                    res.json({
-                        botId,
-                        roomId,
-                        spawned: false,
-                        reason: 'No players in room - bot will spawn when a player enters',
-                    });
-                    return;
-                }
-
                 // Check if bot is already spawned
                 if (this.botManager.getBot(botId)) {
                     res.json({
@@ -212,6 +200,27 @@ export class BotAPI {
                         reason: 'Bot already spawned',
                     });
                     return;
+                }
+
+                // Get or create room state
+                // If room state doesn't exist (e.g., last bot was despawned), create it
+                // This assumes that if someone is using the UI to spawn bots, they must be in the room
+                let roomState = this.botManager.getRoomState(roomId);
+                if (!roomState) {
+                    // Room state was deleted (likely because last bot was despawned)
+                    // Recreate it since a player is using the UI (must be in the room)
+                    console.log(`[BotAPI] Room state for ${roomId} doesn't exist, recreating it`);
+                    await this.botManager.handlePlayerEnterRoom(roomId);
+                    roomState = this.botManager.getRoomState(roomId);
+                    if (!roomState) {
+                        res.json({
+                            botId,
+                            roomId,
+                            spawned: false,
+                            reason: 'Failed to initialize room state',
+                        });
+                        return;
+                    }
                 }
 
                 // Fetch bot config from Admin API
