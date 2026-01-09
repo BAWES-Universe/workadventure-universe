@@ -18,6 +18,7 @@ export interface PatrolBehaviorConfig extends BehaviorConfig {
     speed: number;
     respondToPlayers: boolean;
     responseRadius?: number;
+    greetingMessages?: string[]; // Random greetings (optional, defaults to "Hello! How can I help you?")
 }
 
 export class PatrolBehavior extends BaseBehavior {
@@ -463,15 +464,22 @@ export class PatrolBehavior extends BaseBehavior {
         // GHOST MODE: Don't stop, don't cancel pathfinding - keep moving
         // Only send greeting if player actively approached (nearbyPlayers.size > 0)
         if (this.bot && this.nearbyPlayers.size > 0) {
+            // Wait for the space to sync the bot as a user before sending message
+            // The back service needs the bot to be in the space's users list to process the message
             setTimeout(() => {
                 if (this.bot && this.currentSpaceName === spaceName) {
                     try {
-                        this.bot.sendChatMessage(spaceName, "Hello! How can I help you?");
+                        const config = this.config as PatrolBehaviorConfig;
+                        const greetingMessages = config.greetingMessages || [];
+                        const greeting = this.getRandomGreeting(greetingMessages);
+                        if (greeting) {
+                            this.bot.sendChatMessage(spaceName, greeting);
+                        }
                     } catch (error) {
                         // Ignore
                     }
                 }
-            }, 300);
+            }, 500);
         }
     }
     
@@ -636,5 +644,13 @@ export class PatrolBehavior extends BaseBehavior {
         // Reset tracking when advancing to new waypoint
         this.waypointAttemptStartTime = 0;
         this.lastWaypointPosition = null;
+    }
+
+    private getRandomGreeting(messages: string[] | undefined): string | null {
+        if (!messages || messages.length === 0) {
+            // Default greeting if none configured
+            return "Hello! How can I help you?";
+        }
+        return messages[Math.floor(Math.random() * messages.length)];
     }
 }
