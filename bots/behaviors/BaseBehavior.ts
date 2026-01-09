@@ -36,7 +36,8 @@ export abstract class BaseBehavior {
     // Summon state - track when bot is summoned to a player
     protected isSummoned = false;
     protected summonedPlayerUuid: string | null = null;
-    protected originalPosition: PositionInterface | null = null; // Position to return to after summon
+    protected originalPosition: PositionInterface | null = null; // Position to return to after summon (set on first summon only)
+    protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -50,6 +51,17 @@ export abstract class BaseBehavior {
         // Initialize bot position tracking
         const botPos = bot.getState().getPosition();
         this.previousBotPosition = { x: botPos.x, y: botPos.y };
+        
+        // Store spawn position from assignedSpace (bot's defined location)
+        if (this.config.assignedSpace?.center) {
+            this.spawnPosition = { 
+                x: this.config.assignedSpace.center.x, 
+                y: this.config.assignedSpace.center.y 
+            };
+        } else {
+            // Fallback to current position if no assignedSpace
+            this.spawnPosition = { x: botPos.x, y: botPos.y };
+        }
     }
 
     /**
@@ -323,12 +335,20 @@ export abstract class BaseBehavior {
         this.isSummoned = true;
         this.summonedPlayerUuid = playerUuid;
         
-        // Store original position (where bot was when summoned)
-        const botPos = this.bot.getState().getPosition();
-        this.originalPosition = { x: botPos.x, y: botPos.y };
+        // Only store original position on FIRST summon (don't overwrite on subsequent summons)
+        // This ensures bot always returns to its spawn/assigned position, not the last summon position
+        if (!this.originalPosition) {
+            // Use spawn position if available, otherwise use current position
+            if (this.spawnPosition) {
+                this.originalPosition = { x: this.spawnPosition.x, y: this.spawnPosition.y };
+            } else {
+                const botPos = this.bot.getState().getPosition();
+                this.originalPosition = { x: botPos.x, y: botPos.y };
+            }
+        }
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Behavior] Bot summoned to player ${playerUuid} at (${targetPosition.x}, ${targetPosition.y}), original position: (${this.originalPosition.x}, ${this.originalPosition.y})`);
+            console.log(`[Behavior] Bot summoned to player ${playerUuid} at (${targetPosition.x}, ${targetPosition.y}), will return to: (${this.originalPosition?.x}, ${this.originalPosition?.y})`);
         }
     }
 
