@@ -773,20 +773,15 @@ function registerSummonButtonsForBots() {
         const players = remotePlayersRepo.getPlayers();
         const mapPlayersByKey = scene.MapPlayersByKey;
 
-        // Get current player's position and UUID for summon callback
+        // Get current player's UUID for summon callback
         const localUser = localUserStore.getLocalUser();
-        const currentPlayer = scene.CurrentPlayer;
 
-        if (!localUser || !currentPlayer) {
+        if (!localUser) {
             // Retry if player not ready (but don't spam logs)
             setTimeout(registerSummonButtonsForBots, 3000);
             return;
         }
 
-        const currentPosition = {
-            x: currentPlayer.x,
-            y: currentPlayer.y,
-        };
         const currentUuid = localUser.uuid;
 
         let registeredCount = 0;
@@ -818,6 +813,21 @@ function registerSummonButtonsForBots() {
                 callback: async () => {
                     try {
                         console.log(`[Bot Extension] Summon button clicked for player ${playerData.name} (${botUuid})`);
+
+                        // Get current player position at click time (not when button was registered)
+                        const currentPlayer = scene.CurrentPlayer;
+                        if (!currentPlayer) {
+                            console.warn(`[Bot Extension] Cannot summon - current player not available`);
+                            return;
+                        }
+
+                        const currentPosition = {
+                            x: currentPlayer.x,
+                            y: currentPlayer.y,
+                        };
+
+                        console.log(`[Bot Extension] Current position: (${currentPosition.x}, ${currentPosition.y})`);
+
                         // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
                         // Strip the "bot-" prefix to get the actual botId
                         const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
