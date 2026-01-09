@@ -699,6 +699,24 @@ export class BotClient {
             this.pathIndex = 0;
             this.lastPathTarget = null;
             this.lastPathEndTime = Date.now(); // Track when path ended
+            
+            // If bot is summoned and path ended, check if we're close to target
+            // If close enough, stop and let bubble initiate (not ghost)
+            const isSummoned = (this.behavior as any)?.isSummoned || false;
+            if (isSummoned && this.lastPathTarget) {
+                const botPos = this.state.getPosition();
+                const dx = this.lastPathTarget.x - botPos.x;
+                const dy = this.lastPathTarget.y - botPos.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // If we're close to target (< 80px), stop and wait for bubble
+                if (distance < 80) {
+                    console.log(`[Bot ${this.config.botId}] ✅ Reached summon target (${distance.toFixed(1)}px away), stopping to initiate bubble`);
+                    this.stop();
+                    return;
+                }
+            }
+            
             // GHOST MODE: Don't stop when path ends - let behavior handle it
             // Only stop if behavior explicitly wants to pause (and no players nearby)
             // this.stop(); // REMOVED - let behavior decide
@@ -759,9 +777,13 @@ export class BotClient {
                     const finalDy = this.lastPathTarget.y - botPos.y;
                     const finalDistance = Math.sqrt(finalDx * finalDx + finalDy * finalDy);
                     
-                    // If we're close enough to target (< 30px), consider path complete
+                    // If summoned, get closer (15px threshold), otherwise use 30px
+                    const isSummoned = (this.behavior as any)?.isSummoned || false;
+                    const stopThreshold = isSummoned ? 15 : 30;
+                    
+                    // If we're close enough to target, consider path complete
                     // Otherwise, continue with direct movement to reach exact position
-                    if (finalDistance < 30) {
+                    if (finalDistance < stopThreshold) {
                         movementLogger.log({
                             timestamp: Date.now(),
                             botId: this.config.botId,
@@ -775,6 +797,12 @@ export class BotClient {
                         this.pathIndex = 0;
                         this.lastPathTarget = null;
                         this.lastPathEndTime = Date.now();
+                        
+                        // If summoned and close to target, stop to initiate bubble (not ghost)
+                        if (isSummoned) {
+                            console.log(`[Bot ${this.config.botId}] ✅ Reached summon target (${finalDistance.toFixed(1)}px away), stopping to initiate bubble`);
+                            this.stop();
+                        }
                         // GHOST MODE: Don't stop when path ends - let behavior handle it
                         // Behavior will check for nearby players and decide whether to pause
                         // this.stop(); // REMOVED - let behavior decide
@@ -823,11 +851,19 @@ export class BotClient {
         const behaviorSpeed = (this.behavior as any)?.config?.speed || 
                             (this.behavior as any)?.config?.wanderSpeed || 50;
         
+        // Check if bot is summoned - if so, move 3x faster
+        const isSummoned = (this.behavior as any)?.isSummoned || false;
+        
         // CRITICAL FIX: Config has speed=100, but original bots branch used speed=50
         // Original: 50 * 0.016 = 0.8 pixels per frame
         // Current: 100 * 0.016 = 1.6 pixels per frame (2x faster!)
         // Solution: If speed > 75, halve it to match original behavior
-        const effectiveSpeed = behaviorSpeed > 75 ? behaviorSpeed * 0.5 : behaviorSpeed;
+        let effectiveSpeed = behaviorSpeed > 75 ? behaviorSpeed * 0.5 : behaviorSpeed;
+        
+        // If summoned, move 3x faster to get to player quickly
+        if (isSummoned) {
+            effectiveSpeed = effectiveSpeed * 3;
+        }
         
         const angle = Math.atan2(targetDy, targetDx);
         const moveDistance = effectiveSpeed * 0.016; // Adjusted for higher config speeds

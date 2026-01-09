@@ -80,6 +80,29 @@ export abstract class BaseBehavior {
             return;
         }
         
+        // If summoned, check if the summoned player moved far away (> 200px)
+        if (this.isSummoned) {
+            const playerPos = this.getSummonedPlayerPosition();
+            if (!playerPos) {
+                // Player not found - they likely left, end summon
+                console.log(`[Behavior] Summoned player not found, ending summon and returning`);
+                this.endSummon();
+                return;
+            }
+            
+            const botPos = this.bot.getState().getPosition();
+            const dx = playerPos.x - botPos.x;
+            const dy = playerPos.y - botPos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // If player moved far away (> 200px) and we're not in a conversation, return
+            if (distance > 200 && this.engagedWithUsers.size === 0) {
+                console.log(`[Behavior] Summoned player moved far away (${Math.round(distance)}px), ending summon and returning`);
+                this.endSummon();
+                return;
+            }
+        }
+        
         const behaviorType = (this.config as any).type;
         const respondToPlayers = (this.config as any).respondToPlayers;
         
@@ -310,25 +333,52 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Get the position of the summoned player (if available)
+     */
+    protected getSummonedPlayerPosition(): PositionInterface | null {
+        if (!this.bot || !this.summonedPlayerUuid) return null;
+        
+        // Try to find the player by checking all players
+        // Since we don't have UUID in PlayerInfo, we'll use the first nearby player
+        // or check engaged users
+        const allPlayers = this.bot.getAllPlayers();
+        for (const player of allPlayers) {
+            // Check if this player is nearby (within reasonable range)
+            const botPos = this.bot.getState().getPosition();
+            const dx = player.position.x - botPos.x;
+            const dy = player.position.y - botPos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // If player is within 200px, assume it might be the summoned player
+            if (distance < 200) {
+                return player.position;
+            }
+        }
+        
+        // If no nearby player found, return null (player might have left)
+        return null;
+    }
+
+    /**
      * Check if summoned player is still nearby
      * Returns true if player is still in proximity, false if they left
      */
     protected checkSummonedPlayerStillNearby(): boolean {
         if (!this.bot || !this.summonedPlayerUuid) return false;
 
-        // Check if player is in nearbyPlayers or engagedWithUsers
-        // We need to find the player by UUID - this requires checking all players
-        const allPlayers = this.bot.getAllPlayers();
-        for (const player of allPlayers) {
-            // Note: We don't have UUID in PlayerInfo, so we'll check by proximity
-            // If no players are nearby and we're not engaged, player likely left
-            if (this.nearbyPlayers.size === 0 && this.engagedWithUsers.size === 0) {
-                return false;
-            }
+        // Check if we can find the player position
+        const playerPos = this.getSummonedPlayerPosition();
+        if (!playerPos) {
+            return false; // Player not found, they likely left
         }
 
-        // If we have nearby players or engaged users, assume summoned player might still be there
-        return this.nearbyPlayers.size > 0 || this.engagedWithUsers.size > 0;
+        // Check if player is still within reasonable range (200px)
+        const botPos = this.bot.getState().getPosition();
+        const dx = playerPos.x - botPos.x;
+        const dy = playerPos.y - botPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        return distance < 200; // Player is still nearby
     }
 
     /**
@@ -337,38 +387,44 @@ export abstract class BaseBehavior {
     endSummon(): void {
         if (!this.bot || !this.isSummoned) return;
 
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Behavior] Ending summon, returning to original position: (${this.originalPosition?.x}, ${this.originalPosition?.y})`);
-        }
+        console.log(`[Behavior] Ending summon, returning to original position: (${this.originalPosition?.x}, ${this.originalPosition?.y})`);
 
-        // Return to original position if we have one
-        if (this.originalPosition) {
-            const botPos = this.bot.getState().getPosition();
-            const dx = this.originalPosition.x - botPos.x;
-            const dy = this.originalPosition.y - botPos.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-
-            // If not at original position, move back
-            if (distance > 50) {
-                // Determine direction
-                let direction = PositionMessage_Direction.DOWN;
-                if (Math.abs(dx) > Math.abs(dy)) {
-                    direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
-                } else {
-                    direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
-                }
-
-                // Use pathfinding to return
-                this.bot.moveToWithPathfinding(this.originalPosition.x, this.originalPosition.y, direction).catch((error) => {
-                    console.error(`[Behavior] Error returning to original position:`, error);
-                });
-            }
-        }
-
-        // Clear summon state
+        // Clear summon state FIRST so bot can be resummoned
+        const originalPos = this.originalPosition;
         this.isSummoned = false;
         this.summonedPlayerUuid = null;
         this.originalPosition = null;
+
+        // Return to original position if we have one
+        if (originalPos) {
+            const botPos = this.bot.getState().getPosition();
+            const dx = originalPos.x - botPos.x;
+            const dy = originalPos.y - botPos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // If not at original position, move back using pathfinding
+            if (distance > 50) {
+                console.log(`[Behavior] Bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)}), returning to (${Math.round(originalPos.x)}, ${Math.round(originalPos.y)}), distance: ${Math.round(distance)}px`);
+                
+                // Reset path end time so we can immediately start return path
+                (this.bot as any).lastPathEndTime = 0;
+                
+                // Use pathfinding to return
+                this.bot.moveToWithPathfinding(originalPos.x, originalPos.y).then((success) => {
+                    if (success) {
+                        console.log(`[Behavior] ✅ Return pathfinding started to original position`);
+                    } else {
+                        console.error(`[Behavior] ❌ Return pathfinding failed, bot will stay at current position`);
+                    }
+                }).catch((error) => {
+                    console.error(`[Behavior] Error returning to original position:`, error);
+                });
+            } else {
+                console.log(`[Behavior] Bot already at original position, no need to move`);
+            }
+        } else {
+            console.log(`[Behavior] No original position stored, bot will stay at current position`);
+        }
     }
 
     /**
@@ -468,6 +524,7 @@ export abstract class BaseBehavior {
 
         // If summoned and no players left, end summon and return
         if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
+            console.log(`[Behavior] Summoned player left space, ending summon and returning`);
             this.endSummon();
             return;
         }
