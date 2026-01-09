@@ -94,6 +94,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
 
         // Main square (32x32 tile)
         this.square = scene.add.rectangle(0, 0, TILE_SIZE, TILE_SIZE, colors.fill);
+        this.square.setFillStyle(colors.fill, 0.6); // Add opacity to see bots underneath
         this.square.setStrokeStyle(3, colors.stroke);
         this.add(this.square);
 
@@ -300,7 +301,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
 
         // Update colors based on behavior type
         const colors = this.getColors();
-        this.square.setFillStyle(colors.fill);
+        this.square.setFillStyle(colors.fill, 0.6); // Add opacity to see bots underneath
         if (!this.isSelected) {
             this.square.setStrokeStyle(3, colors.stroke);
         }
