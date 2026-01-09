@@ -818,9 +818,12 @@ function registerSummonButtonsForBots() {
                 callback: async () => {
                     try {
                         console.log(`[Bot Extension] Summon button clicked for player ${playerData.name} (${botUuid})`);
+                        // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
+                        // Strip the "bot-" prefix to get the actual botId
+                        const botId = botUuid.startsWith("bot-") ? botUuid.substring(4) : botUuid;
                         // Call summon API - it will validate if this is a bot
                         await botApiService.summonBot(
-                            botUuid, // Bot UUID (which is also the botId)
+                            botId, // Use botId (without "bot-" prefix)
                             currentUuid,
                             currentPosition.x,
                             currentPosition.y
