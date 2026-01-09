@@ -59,28 +59,6 @@ export class SocialBehavior extends BaseBehavior {
         // Clean up old conversations
         this.cleanupConversations(config, currentTime);
 
-        // Check for nearby players first - stop immediately if player is nearby, even if following a path
-        const nearbyPlayers = this.bot.getNearbyPlayers(config.conversationRadius);
-        if (nearbyPlayers.length > 0) {
-            // Player nearby - stop immediately and face them
-            if (this.bot.getIsFollowingPath()) {
-                this.bot.cancelPathfinding();
-            }
-            this.bot.stop();
-            // Face the closest player
-            if (nearbyPlayers.length > 0) {
-                this.facePosition(nearbyPlayers[0].position);
-            }
-            // Update engagement state to ensure proper facing
-            this.updateProximityEngagement();
-            this.onBotPositionUpdated();
-            return;
-        }
-
-        // CRITICAL: Check for nearby players FIRST - stop immediately if any found
-        // The nearbyPlayers map is populated by onPlayerMoved() when players move within PROXIMITY_RADIUS (64px)
-        // This is the PRIMARY source of truth - it's updated in real-time as players move
-        
         // Update nearbyPlayers map from getNearbyPlayers() if available
         const nearbyPlayersList = this.bot.getNearbyPlayers(config.conversationRadius || 100);
         for (const player of nearbyPlayersList) {
@@ -101,34 +79,10 @@ export class SocialBehavior extends BaseBehavior {
             }
         }
         
-        // STOP immediately if players are nearby
-        // PRIMARY: Check nearbyPlayers map (populated by onPlayerMoved in real-time)
-        const hasNearbyPlayers = this.nearbyPlayers.size > 0 || nearbyPlayersList.length > 0;
-        if (hasNearbyPlayers && !this.targetPlayerId) {
-            console.log(`[SocialBehavior] 🛑 STOPPING - nearbyPlayersMap=${this.nearbyPlayers.size}, nearbyPlayersList=${nearbyPlayersList.length}`);
-            // Player nearby and we're not already approaching someone - stop immediately
-            if (this.bot.getIsFollowingPath()) {
-                this.bot.cancelPathfinding();
-            }
-            this.bot.stop();
-            // Face closest player
-            const nearbyPlayers = this.bot.getNearbyPlayers(1000);
-            if (nearbyPlayers.length > 0) {
-                this.facePosition(nearbyPlayers[0].position);
-            } else {
-                const firstPlayer = this.nearbyPlayers.values().next().value;
-                if (firstPlayer) {
-                    this.facePosition(firstPlayer);
-                }
-            }
-            this.updateProximityEngagement();
-            this.onBotPositionUpdated();
-            return; // Don't continue movement
-        }
-        
-        // If engaged in conversation, stop moving and face the player
+        // GHOST MODE: Only stop if actually engaged in conversation (in a space)
+        // Don't stop just because players are nearby - continue moving until actively engaging
         if (this.isEngaged) {
-            // Cancel any active pathfinding
+            // Actually in a conversation space - stop and face the player
             if (this.bot.getIsFollowingPath()) {
                 this.bot.cancelPathfinding();
             }
