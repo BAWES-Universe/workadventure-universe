@@ -61,9 +61,14 @@ export class PatrolBehavior extends BaseBehavior {
                 this.updateProximityEngagement();
                 this.onBotPositionUpdated();
                 return;
+            } else {
+                // Path ended but not in space yet - bot reached target, stop and wait for bubble
+                // Don't continue with normal behavior - wait for player to get close enough for bubble
+                this.bot.stop();
+                this.updateProximityEngagement(); // Face the player if nearby
+                this.onBotPositionUpdated();
+                return;
             }
-            // If not following path and not in space, bot might have reached target
-            // Continue with normal behavior to handle return to original position
         }
         
         // Check for nearby players and stop when detected (patrol bots should always respond)

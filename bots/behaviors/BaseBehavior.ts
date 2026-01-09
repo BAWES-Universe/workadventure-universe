@@ -240,34 +240,39 @@ export abstract class BaseBehavior {
                     this.closestPlayerId = closestId;
                     
                     // For patrol bots with respondToPlayers, stop and face
-                    // BUT: Don't stop if bot is summoned (needs to reach player first)
-                    if (shouldStopForPlayers && !this.isSummoned) {
+                    // BUT: Don't stop if bot is summoned AND still moving (needs to reach player first)
+                    // If summoned but not moving, bot has reached target - allow stopping
+                    const isSummonedAndMoving = this.isSummoned && this.bot.getState().isMoving();
+                    if (shouldStopForPlayers && !isSummonedAndMoving) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
                         }
                         this.bot.stop();
                     }
                     
-                    // Face the player (but don't stop if summoned)
-                    if (!this.isSummoned) {
+                    // Face the player
+                    // If summoned but not moving, bot has reached target - allow facing
+                    // If not summoned, always face
+                    if (!isSummonedAndMoving) {
                         this.facePosition(closestPos);
                     }
                     if (!wasEngaged) {
-                        console.log(`[Behavior] Engaged with player ${closestId} - ${this.isSummoned ? 'summoned, continuing' : 'stopped and facing'}`);
+                        console.log(`[Behavior] Engaged with player ${closestId} - ${isSummonedAndMoving ? 'summoned, continuing' : 'stopped and facing'}`);
                     } else {
                         console.log(`[Behavior] Facing player ${closestId}`);
                     }
                 } else {
                     // Same player, but they might have moved - update facing
-                    // For patrol bots, ensure we're still stopped (unless summoned)
-                    if (shouldStopForPlayers && !this.isSummoned && this.bot.getState().isMoving()) {
+                    // For patrol bots, ensure we're still stopped (unless summoned and moving)
+                    const isSummonedAndMoving = this.isSummoned && this.bot.getState().isMoving();
+                    if (shouldStopForPlayers && !isSummonedAndMoving && this.bot.getState().isMoving()) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
                         }
                         this.bot.stop();
                     }
-                    // Face the player (but don't stop if summoned)
-                    if (!this.isSummoned) {
+                    // Face the player (always face, unless summoned and still moving)
+                    if (!isSummonedAndMoving) {
                         this.facePosition(closestPos);
                     }
                 }

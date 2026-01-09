@@ -490,15 +490,22 @@ export class BotClient {
         }
 
         const now = Date.now();
+        
+        // CRITICAL: If bot is summoned, bypass ALL cooldown checks to allow immediate pathfinding
+        const isSummoned = (this.behavior as any)?.isSummoned || false;
+        const isReturning = (this.behavior as any)?.isReturning || false;
+        const bypassCooldowns = isSummoned || isReturning; // Allow immediate pathfinding when summoned or returning
 
         // Cooldown check - don't recalculate too frequently
-        if (now - this.lastPathRecalcTime < this.PATH_RECALC_COOLDOWN && this.isFollowingPath) {
+        // BUT: Skip this check if bot is summoned (needs immediate response)
+        if (!bypassCooldowns && now - this.lastPathRecalcTime < this.PATH_RECALC_COOLDOWN && this.isFollowingPath) {
             console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Cooldown active (${now - this.lastPathRecalcTime}ms < ${this.PATH_RECALC_COOLDOWN}ms), keeping current path`);
             return true; // Keep following current path
         }
         
         // Don't create new path too soon after previous path ended/canceled (prevents glitching)
-        if (!this.isFollowingPath && this.lastPathEndTime > 0) {
+        // BUT: Skip this check if bot is summoned (needs immediate response)
+        if (!bypassCooldowns && !this.isFollowingPath && this.lastPathEndTime > 0) {
             const timeSincePathEnd = now - this.lastPathEndTime;
             if (timeSincePathEnd < this.PATH_END_COOLDOWN) {
                 // Too soon after path ended, skip pathfinding - let behavior use direct movement
@@ -508,7 +515,8 @@ export class BotClient {
         }
 
         // Don't recalculate if we're already following a path to a similar target
-        if (this.isFollowingPath && this.lastPathTarget) {
+        // BUT: If summoned, always recalculate to new target (even if similar)
+        if (!isSummoned && this.isFollowingPath && this.lastPathTarget) {
             const targetDx = x - this.lastPathTarget.x;
             const targetDy = y - this.lastPathTarget.y;
             const targetDistance = Math.sqrt(targetDx * targetDx + targetDy * targetDy);
@@ -527,10 +535,16 @@ export class BotClient {
         const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
         
         // For very close targets (< 50px), skip pathfinding to avoid tiny paths that cause glitching
-        if (distanceToTarget < 50) {
+        // BUT: If summoned, always use pathfinding even for close targets (player might have moved)
+        if (!isSummoned && distanceToTarget < 50) {
             // Already close enough, no need for pathfinding - use direct movement instead
             console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Target too close (${distanceToTarget.toFixed(1)}px < 50px), skipping pathfinding`);
             return false;
+        }
+        
+        // If summoned and target is close, log but still use pathfinding
+        if (isSummoned && distanceToTarget < 50) {
+            console.log(`[Bot ${this.config.botId}] 🎯 moveToWithPathfinding: Target close (${distanceToTarget.toFixed(1)}px) but summoned - using pathfinding anyway`);
         }
 
         console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Finding path from (${Math.round(botPos.x)}, ${Math.round(botPos.y)}) to (${Math.round(x)}, ${Math.round(y)})...`);
@@ -1157,10 +1171,11 @@ export class BotClient {
 
         // Cancel any existing pathfinding
         this.cancelPathfinding();
-        // CRITICAL: Reset path end time so we can immediately start new pathfinding for summon
-        // Otherwise the cooldown check in moveToWithPathfinding() will block us
+        // CRITICAL: Reset ALL pathfinding cooldowns so we can immediately start new pathfinding for summon
+        // Otherwise the cooldown checks in moveToWithPathfinding() will block us
         this.lastPathEndTime = 0;
-        console.log(`[Bot ${this.config.botId}] ✅ Canceled existing pathfinding and reset cooldown`);
+        this.lastPathRecalcTime = 0; // Reset recalculation cooldown too
+        console.log(`[Bot ${this.config.botId}] ✅ Canceled existing pathfinding and reset all cooldowns`);
 
         // Check if pathfinding is available
         if (!this.hasPathfinding()) {

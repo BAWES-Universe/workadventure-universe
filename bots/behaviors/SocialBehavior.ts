@@ -73,9 +73,14 @@ export class SocialBehavior extends BaseBehavior {
                 this.updateProximityEngagement();
                 this.onBotPositionUpdated();
                 return;
+            } else {
+                // Path ended but not in space yet - bot reached target, stop and wait for bubble
+                // Don't continue with normal behavior - wait for player to get close enough for bubble
+                this.bot.stop();
+                this.updateProximityEngagement(); // Face the player if nearby
+                this.onBotPositionUpdated();
+                return;
             }
-            // If not following path and not in space, bot might have reached target
-            // Continue with normal behavior to handle return to original position
         }
 
         // If bot is returning to original position after summon, allow movement

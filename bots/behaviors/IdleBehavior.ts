@@ -73,8 +73,12 @@ export class IdleBehavior extends BaseBehavior {
                 return;
             }
             
-            // If not following path and not close to target, might have reached or path failed
-            // Continue with normal behavior
+            // Path ended but not close to target and not in space - bot reached target, stop and wait for bubble
+            // Don't continue with normal behavior - wait for player to get close enough for bubble
+            this.bot.stop();
+            this.updateProximityEngagement(); // Face the player if nearby
+            this.onBotPositionUpdated();
+            return;
         }
 
         // If engaged, just update facing (idle bots don't move, so no need to stop)
