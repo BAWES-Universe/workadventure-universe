@@ -108,7 +108,10 @@ export class IdleBehavior extends BaseBehavior {
     }
 
     private getRandomGreeting(messages: string[] | undefined): string | null {
-        if (!messages || messages.length === 0) return null;
+        if (!messages || messages.length === 0) {
+            // Default greeting if none configured
+            return "Hello! How can I help you?";
+        }
         return messages[Math.floor(Math.random() * messages.length)];
     }
 }
