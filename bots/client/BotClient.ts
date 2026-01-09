@@ -1056,6 +1056,38 @@ export class BotClient {
     }
 
     /**
+     * Summon bot to a player's position
+     * The bot will pathfind to the player, stop at their position, and initiate a bubble
+     * When the player leaves, the bot will return to its original position
+     * @param playerUuid Player UUID being summoned to
+     * @param targetPosition Target position to move to
+     */
+    async summonToPlayer(playerUuid: string, targetPosition: PositionInterface): Promise<void> {
+        if (!this.behavior) {
+            throw new Error('Bot has no behavior assigned');
+        }
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 🎯 Summoning to player ${playerUuid} at (${targetPosition.x}, ${targetPosition.y})`);
+        }
+
+        // Start summon in behavior (tracks original position)
+        this.behavior.startSummon(playerUuid, targetPosition);
+
+        // Cancel any existing pathfinding
+        this.cancelPathfinding();
+
+        // Use pathfinding to move to target position
+        // The bot will stop automatically when it reaches the position (within threshold)
+        // The bubble will initiate automatically when the bot gets close enough
+        await this.moveToWithPathfinding(targetPosition.x, targetPosition.y);
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] ✅ Summon pathfinding started to (${targetPosition.x}, ${targetPosition.y})`);
+        }
+    }
+
+    /**
      * Get user ID (assigned by server)
      */
     getUserId(): number | null {

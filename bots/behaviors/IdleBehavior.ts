@@ -29,6 +29,25 @@ export class IdleBehavior extends BaseBehavior {
         const config = this.config as IdleBehaviorConfig;
         const currentTime = Date.now();
 
+        // If bot is summoned, allow movement to player (idle bots can move when summoned)
+        if (this.isSummoned) {
+            // During summon, only stop if we've reached the target and are in a conversation space
+            // Otherwise, continue moving towards the summoned player
+            if (this.bot.getIsFollowingPath()) {
+                // Bot is moving to summoned player - allow it
+                this.onBotPositionUpdated();
+                return;
+            } else if (this.engagedWithUsers.size > 0) {
+                // Bot reached player and is in conversation - stop and face
+                this.bot.stop();
+                this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return;
+            }
+            // If not following path and not in space, bot might have reached target
+            // Continue with normal behavior to handle return to original position
+        }
+
         // If engaged, just update facing (idle bots don't move, so no need to stop)
         if (this.isEngaged) {
             // Update engagement to ensure facing is correct

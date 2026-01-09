@@ -46,6 +46,26 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
+        // If bot is summoned, allow movement to player (don't stop for normal behavior logic)
+        // The bot will stop when it reaches the player position
+        if (this.isSummoned) {
+            // During summon, only stop if we've reached the target and are in a conversation space
+            // Otherwise, continue moving towards the summoned player
+            if (this.bot.getIsFollowingPath()) {
+                // Bot is moving to summoned player - allow it
+                this.onBotPositionUpdated();
+                return;
+            } else if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+                // Bot reached player and is in conversation - stop and face
+                this.bot.stop();
+                this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return;
+            }
+            // If not following path and not in space, bot might have reached target
+            // Continue with normal behavior to handle return to original position
+        }
+        
         // Check for nearby players and stop when detected (patrol bots should always respond)
         // Use respondToPlayers flag if set, otherwise default to true for patrol bots
         const shouldRespond = config.respondToPlayers !== false; // Default to true if not explicitly false

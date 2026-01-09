@@ -541,6 +541,40 @@ export class BotAPI {
                 res.status(500).json({ error: error.message });
             }
         });
+
+        // Summon bot to player position
+        this.app.post('/api/bots/:botId/summon', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const { playerUuid, playerX, playerY } = req.body;
+
+                if (!playerUuid || playerX === undefined || playerY === undefined) {
+                    res.status(400).json({ error: 'Missing required fields: playerUuid, playerX, playerY' });
+                    return;
+                }
+
+                const bot = this.botManager.getBot(botId);
+                if (!bot) {
+                    res.status(404).json({ error: 'Bot not found or not spawned' });
+                    return;
+                }
+
+                // Summon the bot to the player's position
+                await this.botManager.summonBot(botId, {
+                    playerUuid,
+                    targetPosition: { x: playerX, y: playerY },
+                });
+
+                res.json({
+                    botId,
+                    summoned: true,
+                    targetPosition: { x: playerX, y: playerY },
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error summoning bot:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
     }
 
     /**

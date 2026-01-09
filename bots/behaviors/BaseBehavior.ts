@@ -33,6 +33,11 @@ export abstract class BaseBehavior {
     // Track previous bot position (for position updates)
     private previousBotPosition: PositionInterface | null = null;
 
+    // Summon state - track when bot is summoned to a player
+    protected isSummoned = false;
+    protected summonedPlayerUuid: string | null = null;
+    protected originalPosition: PositionInterface | null = null; // Position to return to after summon
+
     constructor(config: BehaviorConfig) {
         this.config = config;
     }
@@ -256,8 +261,99 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      */
     onSpaceLeft(spaceName: string): void {
-        // Default: return to assigned space if configured
-        this.returnToAssignedSpace();
+        // If summoned and player left, return to original position
+        if (this.isSummoned && this.summonedPlayerUuid) {
+            // Check if the summoned player is still nearby
+            const playerStillNearby = this.checkSummonedPlayerStillNearby();
+            if (!playerStillNearby) {
+                this.endSummon();
+            }
+        } else {
+            // Default: return to assigned space if configured
+            this.returnToAssignedSpace();
+        }
+    }
+
+    /**
+     * Start summon - bot is being summoned to a player
+     * @param playerUuid Player UUID being summoned to
+     * @param targetPosition Target position to move to
+     */
+    startSummon(playerUuid: string, targetPosition: PositionInterface): void {
+        if (!this.bot) return;
+
+        this.isSummoned = true;
+        this.summonedPlayerUuid = playerUuid;
+        
+        // Store original position (where bot was when summoned)
+        const botPos = this.bot.getState().getPosition();
+        this.originalPosition = { x: botPos.x, y: botPos.y };
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Behavior] Bot summoned to player ${playerUuid} at (${targetPosition.x}, ${targetPosition.y}), original position: (${this.originalPosition.x}, ${this.originalPosition.y})`);
+        }
+    }
+
+    /**
+     * Check if summoned player is still nearby
+     * Returns true if player is still in proximity, false if they left
+     */
+    protected checkSummonedPlayerStillNearby(): boolean {
+        if (!this.bot || !this.summonedPlayerUuid) return false;
+
+        // Check if player is in nearbyPlayers or engagedWithUsers
+        // We need to find the player by UUID - this requires checking all players
+        const allPlayers = this.bot.getAllPlayers();
+        for (const player of allPlayers) {
+            // Note: We don't have UUID in PlayerInfo, so we'll check by proximity
+            // If no players are nearby and we're not engaged, player likely left
+            if (this.nearbyPlayers.size === 0 && this.engagedWithUsers.size === 0) {
+                return false;
+            }
+        }
+
+        // If we have nearby players or engaged users, assume summoned player might still be there
+        return this.nearbyPlayers.size > 0 || this.engagedWithUsers.size > 0;
+    }
+
+    /**
+     * End summon - return bot to original position
+     */
+    endSummon(): void {
+        if (!this.bot || !this.isSummoned) return;
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Behavior] Ending summon, returning to original position: (${this.originalPosition?.x}, ${this.originalPosition?.y})`);
+        }
+
+        // Return to original position if we have one
+        if (this.originalPosition) {
+            const botPos = this.bot.getState().getPosition();
+            const dx = this.originalPosition.x - botPos.x;
+            const dy = this.originalPosition.y - botPos.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // If not at original position, move back
+            if (distance > 50) {
+                // Determine direction
+                let direction = PositionMessage_Direction.DOWN;
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+                } else {
+                    direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                }
+
+                // Use pathfinding to return
+                this.bot.moveToWithPathfinding(this.originalPosition.x, this.originalPosition.y, direction).catch((error) => {
+                    console.error(`[Behavior] Error returning to original position:`, error);
+                });
+            }
+        }
+
+        // Clear summon state
+        this.isSummoned = false;
+        this.summonedPlayerUuid = null;
+        this.originalPosition = null;
     }
 
     /**
@@ -354,6 +450,12 @@ export abstract class BaseBehavior {
         // Remove from engaged users
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
+
+        // If summoned and no players left, end summon and return
+        if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {
+            this.endSummon();
+            return;
+        }
 
         // If still engaged with others, face the first remaining user
         if (this.isEngaged) {
