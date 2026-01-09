@@ -1103,6 +1103,27 @@ export class BotClient {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[Bot ${this.config.botId}] Joined room, userId: ${this.userId}`);
                 }
+                
+                // Automatically join the world space (allWorldUser) so bots appear in user list
+                // This matches what regular users do in GameScene.ts
+                const worldSpaceName = "allWorldUser";
+                this.emitJoinSpace(worldSpaceName, FilterType.ALL_USERS, ["availabilityStatus", "chatID"])
+                    .then((spaceUserId) => {
+                        this.spaces.set(worldSpaceName, spaceUserId);
+                        // Send initial user state update with availabilityStatus = ONLINE (1)
+                        this.sendSpaceUserUpdate(worldSpaceName, {
+                            cameraState: false,
+                            microphoneState: false,
+                            screenSharingState: false,
+                            availabilityStatus: 1, // ONLINE
+                        });
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Bot ${this.config.botId}] Joined world space: ${worldSpaceName}`);
+                        }
+                    })
+                    .catch((error) => {
+                        console.error(`[Bot ${this.config.botId}] Failed to join world space:`, error);
+                    });
                 break;
 
             case 'userJoinedMessage':
@@ -1349,6 +1370,7 @@ export class BotClient {
         microphoneState: boolean;
         screenSharingState: boolean;
         megaphoneState: boolean;
+        availabilityStatus: number;
     }>): void {
         // Build the updateMask paths based on what we're updating
         const paths: string[] = [];
@@ -1356,6 +1378,7 @@ export class BotClient {
         if ('microphoneState' in updates) paths.push('microphoneState');
         if ('screenSharingState' in updates) paths.push('screenSharingState');
         if ('megaphoneState' in updates) paths.push('megaphoneState');
+        if ('availabilityStatus' in updates) paths.push('availabilityStatus');
         
         // Get our spaceUserId for this space
         const spaceUserId = this.spaces.get(spaceName);
@@ -1378,7 +1401,7 @@ export class BotClient {
                         color: '',
                         characterTextures: [],
                         isLogged: false,
-                        availabilityStatus: 0,
+                        availabilityStatus: updates.availabilityStatus ?? 1, // Default to ONLINE (1) instead of UNCHANGED (0)
                         roomName: undefined,
                         visitCardUrl: undefined,
                         tags: ['bot'],
