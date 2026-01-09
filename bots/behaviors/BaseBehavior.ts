@@ -38,6 +38,7 @@ export abstract class BaseBehavior {
     protected summonedPlayerUuid: string | null = null;
     protected originalPosition: PositionInterface | null = null; // Position to return to after summon (set on first summon only)
     protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
+    protected isReturning = false; // Track if bot is returning to original position (for speed matching)
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -332,6 +333,16 @@ export abstract class BaseBehavior {
             throw new Error('Bot is currently engaged with another player and cannot be summoned');
         }
 
+        // If bot was returning, cancel the return and start new summon
+        if (this.isReturning) {
+            console.log(`[Behavior] Bot was returning, canceling return and starting new summon`);
+            this.isReturning = false;
+            // Cancel any ongoing return pathfinding
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+        }
+        
         this.isSummoned = true;
         this.summonedPlayerUuid = playerUuid;
         
@@ -409,11 +420,13 @@ export abstract class BaseBehavior {
 
         console.log(`[Behavior] Ending summon, returning to original position: (${this.originalPosition?.x}, ${this.originalPosition?.y})`);
 
-        // Clear summon state FIRST so bot can be resummoned
+        // Clear summon state but keep track of return position
         const originalPos = this.originalPosition;
         this.isSummoned = false;
         this.summonedPlayerUuid = null;
-        this.originalPosition = null;
+        // Don't clear originalPosition yet - we need it to check when we've reached it
+        // Set returning flag so bot moves at 3x speed (matching summon speed)
+        this.isReturning = true;
 
         // Return to original position if we have one
         if (originalPos) {
@@ -429,21 +442,28 @@ export abstract class BaseBehavior {
                 // Reset path end time so we can immediately start return path
                 (this.bot as any).lastPathEndTime = 0;
                 
-                // Use pathfinding to return
+                // Use pathfinding to return (will use 3x speed because isReturning is true)
                 this.bot.moveToWithPathfinding(originalPos.x, originalPos.y).then((success) => {
                     if (success) {
-                        console.log(`[Behavior] ✅ Return pathfinding started to original position`);
+                        console.log(`[Behavior] ✅ Return pathfinding started to original position (3x speed)`);
                     } else {
                         console.error(`[Behavior] ❌ Return pathfinding failed, bot will stay at current position`);
+                        this.isReturning = false;
+                        this.originalPosition = null;
                     }
                 }).catch((error) => {
                     console.error(`[Behavior] Error returning to original position:`, error);
+                    this.isReturning = false;
+                    this.originalPosition = null;
                 });
             } else {
                 console.log(`[Behavior] Bot already at original position, no need to move`);
+                this.isReturning = false;
+                this.originalPosition = null;
             }
         } else {
             console.log(`[Behavior] No original position stored, bot will stay at current position`);
+            this.isReturning = false;
         }
     }
 

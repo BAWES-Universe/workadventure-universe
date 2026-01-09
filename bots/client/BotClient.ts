@@ -779,6 +779,7 @@ export class BotClient {
                     
                     // If summoned, get closer (15px threshold), otherwise use 30px
                     const isSummoned = (this.behavior as any)?.isSummoned || false;
+                    const isReturning = (this.behavior as any)?.isReturning || false;
                     const stopThreshold = isSummoned ? 15 : 30;
                     
                     // If we're close enough to target, consider path complete
@@ -797,6 +798,17 @@ export class BotClient {
                         this.pathIndex = 0;
                         this.lastPathTarget = null;
                         this.lastPathEndTime = Date.now();
+                        
+                        // If returning and reached original position, clear returning flag
+                        if (isReturning) {
+                            console.log(`[Bot ${this.config.botId}] ✅ Reached original position (${finalDistance.toFixed(1)}px away), clearing returning flag`);
+                            if (this.behavior) {
+                                (this.behavior as any).isReturning = false;
+                                (this.behavior as any).originalPosition = null;
+                            }
+                            this.stop();
+                            return;
+                        }
                         
                         // If summoned and close to target, stop to initiate bubble (not ghost)
                         if (isSummoned) {
@@ -851,8 +863,9 @@ export class BotClient {
         const behaviorSpeed = (this.behavior as any)?.config?.speed || 
                             (this.behavior as any)?.config?.wanderSpeed || 50;
         
-        // Check if bot is summoned - if so, move 3x faster
+        // Check if bot is summoned or returning - apply different speed multipliers
         const isSummoned = (this.behavior as any)?.isSummoned || false;
+        const isReturning = (this.behavior as any)?.isReturning || false;
         
         // CRITICAL FIX: Config has speed=100, but original bots branch used speed=50
         // Original: 50 * 0.016 = 0.8 pixels per frame
@@ -860,9 +873,11 @@ export class BotClient {
         // Solution: If speed > 75, halve it to match original behavior
         let effectiveSpeed = behaviorSpeed > 75 ? behaviorSpeed * 0.5 : behaviorSpeed;
         
-        // If summoned, move 3x faster to get to player quickly
+        // Apply speed multipliers: summon = 3x, return = 2x
         if (isSummoned) {
-            effectiveSpeed = effectiveSpeed * 3;
+            effectiveSpeed = effectiveSpeed * 3; // Fast when summoned
+        } else if (isReturning) {
+            effectiveSpeed = effectiveSpeed * 2; // Medium speed when returning
         }
         
         const angle = Math.atan2(targetDy, targetDx);
