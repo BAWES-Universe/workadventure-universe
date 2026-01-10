@@ -63,7 +63,7 @@ interface IdleBehaviorConfig extends BehaviorConfig {
     radius: number;  // For idle bots, radius=0 means they won't move
   };
   responseRadius: number;  // Distance to respond to players
-  greetingMessages: string[];  // Random greetings
+  greetingMessages?: string[];  // Random greetings (optional, has default fallback)
   idleAnimations?: string[];  // Idle animations to play
   animationInterval?: number;  // Milliseconds between animations
 }
@@ -81,6 +81,13 @@ interface IdleBehaviorConfig extends BehaviorConfig {
 - Uses base behavior's proximity detection
 - Engages when players move into proximity
 - Sends greeting when space is joined
+- Can be summoned to player location (uses pathfinding)
+
+**Summon Behavior:**
+- When summoned, bot uses pathfinding to reach player (3x speed)
+- Stops and faces player when close enough (< 50px)
+- Initiates conversation bubble when reaching target
+- Returns to original position after player leaves (2x speed)
 
 ### 2. PatrolBehavior
 
@@ -98,8 +105,9 @@ interface PatrolBehaviorConfig extends BehaviorConfig {
   loop: boolean;  // Loop back to start
   pauseAtWaypoints: number;  // Seconds to pause
   speed: number;  // Movement speed
-  respondToPlayers: boolean;  // Pause to chat?
+  respondToPlayers?: boolean;  // Pause to chat? (default: true)
   responseRadius?: number;  // Distance to respond
+  greetingMessages?: string[];  // Random greetings (optional, has default fallback)
 }
 ```
 
@@ -113,11 +121,21 @@ interface PatrolBehaviorConfig extends BehaviorConfig {
 
 **Engagement Logic:**
 - **Always accepts spaces** (uses default `shouldJoinProximitySpace = true`)
-- **In `onSpaceJoined`**: Only engages if `nearbyPlayers.size > 0`
-  - If empty → bot walked into idle player → return early, keep walking
-  - If populated → player approached bot → engage normally
-- **Stops and faces** when `nearbyPlayers.size > 0` (player actively moved into proximity)
+- **In `onSpaceJoined`**: Only engages if `nearbyPlayers.size > 0` OR `isSummoned`
+  - If empty and not summoned → bot walked into idle player → return early, keep walking
+  - If populated or summoned → player approached bot or bot was summoned → engage normally
+- **Stops and faces** when `nearbyPlayers.size > 0` (player actively moved into proximity) AND `respondToPlayers !== false`
+- **Ghost Mode**: If player becomes idle after stopping, bot resumes patrol (walks through idle player)
 - **Resumes patrol** after conversation ends (500ms delay to prevent flickering)
+- **Sends greeting** when space is joined (if `nearbyPlayers.size > 0` OR `isSummoned`)
+
+**Summon Behavior:**
+- When summoned, bot uses pathfinding to reach player (3x speed)
+- Stops and faces player when reaching target
+- Initiates conversation bubble when reaching target
+- Sends greeting when space is joined (if configured)
+- Returns to original position after player leaves (2x speed)
+- Cannot be summoned if engaged with another player
 
 **Key Implementation Details:**
 ```typescript
@@ -164,8 +182,8 @@ interface SocialBehaviorConfig extends BehaviorConfig {
     center: { x: number; y: number };
     radius: number;  // How far the bot can wander from center
   };
-  conversationRadius: number;  // Distance to detect players
-  minTimeBetweenConversations: number;  // Cooldown (milliseconds)
+  conversationRadius: number;  // Distance to detect players (default: 100px)
+  minTimeBetweenConversations: number;  // Cooldown (milliseconds, default: 60000)
   maxConversationDuration: number;  // Max chat time
   conversationHistorySize: number;  // Remember last N players
   respectPlayerStatus: boolean;  // Check player availability
@@ -175,6 +193,7 @@ interface SocialBehaviorConfig extends BehaviorConfig {
   wanderCenter: { x: number; y: number };
   wanderSpeed: number;  // Movement speed
   approachDistance: number;  // How close to get before starting conversation
+  greetingMessages?: string[];  // Random greetings (optional, has default fallback)
 }
 ```
 
@@ -191,11 +210,21 @@ interface SocialBehaviorConfig extends BehaviorConfig {
 
 **Engagement Logic:**
 - **Always accepts spaces** (uses default `shouldJoinProximitySpace = true`)
-- **In `onSpaceJoined`**: Only engages if `targetPlayerId` is set
-  - If no target → bot walked into idle player → return early, keep wandering
-  - If target set → player was actively being approached → engage normally
+- **In `onSpaceJoined`**: Only engages if `targetPlayerId` is set OR `isSummoned`
+  - If no target and not summoned → bot walked into idle player → return early, keep wandering
+  - If target set or summoned → player was actively being approached or bot was summoned → engage normally
 - **Wandering**: Picks random targets, never stops on top of players
 - **Ghost Mode**: Walks through idle players without engaging
+- **Sends greeting** when space is joined (if `targetPlayerId` is set OR `isSummoned`)
+
+**Summon Behavior:**
+- When summoned, bot uses pathfinding to reach player (3x speed)
+- Stops and faces player when reaching target
+- Initiates conversation bubble when reaching target
+- Sends greeting when space is joined (if configured)
+- Returns to original position after player leaves (2x speed, uses pathfinding)
+- Resumes normal wandering behavior after returning
+- Cannot be summoned if engaged with another player
 
 **Key Implementation Details:**
 ```typescript
@@ -377,6 +406,36 @@ The bot editor allows users to configure behaviors visually:
 - **Social**: Set wander area, conversation settings, topics
 - **Custom**: JSON editor for advanced configuration
 
+## Summon Functionality
+
+All behaviors support summon functionality, allowing players to call bots to their location:
+
+### How It Works
+
+1. **Frontend**: Player clicks "Summon" button in user card popup (WokaMenu)
+2. **Backend**: `POST /api/bots/:botId/summon` endpoint receives request
+3. **Behavior**: `startSummon()` is called, storing original position
+4. **Movement**: Bot uses pathfinding to reach player (3x speed multiplier)
+5. **Arrival**: Bot stops and faces player, initiates conversation bubble
+6. **Return**: When player leaves, bot returns to original position (2x speed multiplier)
+
+### Protection
+
+- Bots cannot be summoned if `isEngaged` is true or `engagedWithUsers.size > 0`
+- This prevents bots from abandoning active conversations
+
+### State Management
+
+- `isSummoned`: Boolean flag indicating if bot is currently summoned
+- `isReturning`: Boolean flag indicating if bot is returning to original position
+- `originalPosition`: Original spawn/assigned position (only set on first summon)
+- `summonedPlayerUuid`: UUID of player who summoned the bot
+
+### Speed Multipliers
+
+- **Summon**: 3x normal speed when moving to summoned player
+- **Return**: 2x normal speed when returning to original position
+
 ## Best Practices
 
 1. **Always check `nearbyPlayers.size`** in `onSpaceJoined` to determine if player approached bot
@@ -386,6 +445,9 @@ The bot editor allows users to configure behaviors visually:
 5. **Face players continuously** during engagement using `facePosition()`
 6. **Respect assigned spaces** - return to assigned space after conversations
 7. **Clean up state** in `onSpaceLeft` to ensure proper resumption
+8. **Handle summon state** - check `isSummoned` and `isReturning` in `update()` methods
+9. **Use pathfinding** for all movement (summon, return, patrol, social wandering)
+10. **Send greetings** when space is joined, especially when summoned
 
 ## Technical Details
 

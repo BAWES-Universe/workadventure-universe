@@ -3,6 +3,36 @@
 ## [Unreleased]
 
 ### Added
+- **Summon Functionality**: Players can summon bots to their location via "Summon" button in user card
+  - `POST /api/bots/:botId/summon` endpoint (public, no auth required)
+  - Frontend integration via WokaMenu dynamic actions
+  - Pathfinding-based movement with 3x speed multiplier
+  - Automatic return to original position with 2x speed
+  - Protection: Cannot summon if bot is engaged with another player
+  - Interrupt handling: New summon requests cancel ongoing returns
+- **Greeting Messages**: Configurable greeting messages for all bot types
+  - `greetingMessages` array in behavior configs
+  - Default fallback messages if none configured
+  - Sent when players join conversation spaces
+  - Sent when bots are summoned
+- **Conversation Memory System**: Per-bot, per-player memory system
+  - `ConversationMemory` class tracks conversations, emotions, personal info
+  - Extracts personal information (birthday, name, preferences)
+  - Tracks emotional state (bot and player)
+  - Relationship context (first met, conversation stats, important events)
+- **Pathfinding System**: Full pathfinding implementation using EasyStar.js
+  - `BotPathfindingManager` for path calculation
+  - `MapDataService` for collision grid caching
+  - Integrated into all movement (patrol, social, summon, return)
+  - Stuck detection and path recalculation
+- **User List Integration**: Bots appear in sidebar user list
+  - Bots join "allWorldUser" space automatically
+  - Proper availability status (ONLINE)
+  - Visible in sidebar with other users
+- **Production Logging**: Environment-aware logging
+  - Logging levels based on NODE_ENV
+  - `ENABLE_BOT_DEBUG` flag for verbose logging in development
+  - Reduced logging in production builds
 - **Viewport System**: Dynamic viewport centered on bot position (2000px radius) for accurate player detection
 - **Bot Identification**: Static bot user ID tracking to distinguish bots from players
 - **Smart Engagement Logic**: Bots only engage when players actively move into proximity
@@ -11,13 +41,39 @@
 - **Smart Waypoint Pausing**: Patrol bots skip pauses if players are nearby to avoid triggering bubbles
 
 ### Changed
-- **PatrolBehavior**: Now matches SocialBehavior engagement pattern - walks through idle players like ghosts
-- **BaseBehavior**: Improved proximity detection with hysteresis to prevent flickering
-- **BotClient**: Dynamic viewport system ensures players remain in bot's knowledge
+- **PatrolBehavior**: Refined engagement pattern - stops when players actively move into proximity, resumes if player becomes idle
+  - `respondToPlayers` setting (default: true) controls stopping behavior
+  - Ghost mode: Walks through idle players without triggering bubbles
+  - Stops for active players, resumes if they become idle
+- **BaseBehavior**: 
+  - Improved proximity detection with hysteresis to prevent flickering
+  - Enhanced facing logic for summoned bots (face when stopped, not when moving)
+  - Summon state management with original position tracking
+- **BotClient**: 
+  - Dynamic viewport system ensures players remain in bot's knowledge
+  - Pathfinding integration for all movement
+  - Summon and return speed multipliers (3x summon, 2x return)
+  - Bypass cooldowns when summoned or returning
 - **Player Detection**: Filters out bots and invalid positions (0,0) from player lists
 - **Facing System**: Only sends direction updates when direction actually changes
+- **SocialBehavior**: 
+  - Improved greeting message sending with retry mechanism
+  - Memory integration for personalized greetings
+  - Proper return behavior after summon
+- **IdleBehavior**: 
+  - Configurable greeting messages
+  - Summon functionality support
+  - Proper stop and face behavior when summoned
 
 ### Fixed
+- **Summon Bubble Initiation**: Fixed summoned bots not stopping and initiating bubbles when reaching target
+- **Summon Facing**: Fixed facing behavior for summoned bots (now faces when stopped, not when moving)
+- **Return Behavior**: Fixed social bot teleporting back after summon (now uses pathfinding)
+- **Return Resume**: Fixed social bot not resuming behavior after returning from summon
+- **Summon Interrupt**: Fixed bots ignoring new summon requests while returning
+- **Greeting Messages**: Fixed social bot not sending greeting messages (retry mechanism and proper space sync)
+- **User List Visibility**: Fixed bots not appearing in sidebar user list (now join "allWorldUser" space)
+- **Availability Status**: Fixed bots appearing as "not connected" (now send proper ONLINE status)
 - **Player Disappearing**: Fixed issue where players would disappear from bot's knowledge when bot moved
 - **Bubble Triggering**: Fixed patrol bots triggering bubbles when walking over idle players
 - **Inconsistent Facing**: Fixed bots not facing players consistently during conversations

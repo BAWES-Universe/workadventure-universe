@@ -1,11 +1,34 @@
-# Next Steps: Bot Editor UX Improvements
+# Next Steps: Bot System Roadmap
 
-## Current Issues
+## Current Status (January 2025)
 
-1. **Poor UX**: Current tab-based interface doesn't scale for managing multiple bots
-2. **AI Config Confusion**: API configuration and provider selection shouldn't be in user-facing editor
-3. **No List View**: Can't see all bots at once or easily create new ones
-4. **Positioning**: No easy way to set bot position on map
+### ✅ Completed Features
+- **Core Bot System**: Full WebSocket client with state management
+- **Pathfinding System**: Full implementation using EasyStar.js
+- **Behavior System**: Idle, Patrol, and Social behaviors fully implemented
+- **Summon Functionality**: Players can summon bots to their location
+- **Greeting Messages**: Configurable greeting messages for all bot types
+- **Conversation Memory**: Per-bot, per-player memory system
+- **User List Integration**: Bots appear in sidebar user list
+- **Production Logging**: Environment-aware logging
+- **Bot Editor UI**: Complete visual editor integrated into map editor
+- **Bot List View**: List/grid view of all bots on the map
+- **Bot Toggle**: Enable/disable bots individually
+
+### 🚧 Current Priorities
+
+1. **AI Integration** (High Priority)
+   - Implement `AIProvider` interface
+   - Create `LMStudioProvider` for local LLM
+   - Integrate with conversation memory
+   - Add response generation
+   - Test AI responses with conversation context
+
+2. **Bot Editor UX Improvements** (Medium Priority)
+   - Better list/detail view pattern
+   - Move AI configuration to admin side
+   - Visual position picker on map
+   - Improved waypoint editor for patrol bots
 
 ## Proposed Solution
 
@@ -226,4 +249,24 @@ This is done in Admin API's admin panel, not in WorkAdventure.
 3. **Simpler**: Users don't need to understand AI providers
 4. **Secure**: API keys never in user-facing UI
 5. **Flexible**: Admin configures AI backend, users write instructions
+
+## Future Enhancements
+
+### Short Term
+- **AI Provider Integration**: Connect to LMStudio, OpenAI, Anthropic, etc.
+- **Voice AI**: Ultravox and GPT Voice integration
+- **Enhanced Memory**: Persistent storage to Admin API
+- **Bot Analytics**: Usage metrics and performance tracking
+
+### Medium Term
+- **Custom Behaviors**: User-defined behavior scripts
+- **Bot Marketplace**: Share bot configurations
+- **Multi-language Support**: Internationalization
+- **Advanced Pathfinding**: Dynamic obstacle avoidance
+
+### Long Term
+- **Bot Learning**: Machine learning for behavior adaptation
+- **Emotional AI**: Advanced emotional state modeling
+- **Group Behaviors**: Bots working together
+- **Procedural Generation**: Auto-generate bot personalities
 

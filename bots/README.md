@@ -71,17 +71,28 @@ bots/
 
 ### 3. Behavior System
 - **Idle**: Stand in place, respond to interactions
+  - Configurable greeting messages
+  - Summon functionality
 - **Patrol**: Follow predefined routes with smart engagement
-  - Only engages when players actively move into proximity
+  - Stops when players actively move into proximity
+  - Resumes patrol if player becomes idle (ghost mode)
   - Walks through idle players without triggering bubbles
   - Skips waypoint pauses if players nearby
+  - Configurable `respondToPlayers` setting (default: true)
+  - Configurable greeting messages
+  - Summon functionality
 - **Social**: Actively seek conversations with users
   - Smart conversation management with memory
   - Respects player status and cooldowns
+  - Configurable detection range (`conversationRadius`)
+  - Configurable cooldown (`minTimeBetweenConversations`)
   - Wanders without stopping on idle players
+  - Configurable greeting messages
+  - Summon functionality
 - **Custom**: Extensible behavior system
 - **Assigned Spaces**: Bots can be assigned to specific areas and will return after conversations
 - **Ghost Mode**: All bots can walk through idle players without engaging
+- **Pathfinding**: All bots use pathfinding to navigate around obstacles naturally
 
 ### 4. Smart Conversation Management
 - **Status Awareness**: Respect player availability status
@@ -91,18 +102,51 @@ bots/
 - **Auto-Return**: Bots automatically return to assigned space after conversations end
 - **Idle Player Detection**: Bots only engage when players actively move into proximity
 - **Ghost Mode**: Bots walk through idle players without triggering UI changes
+- **Conversation Memory**: Per-bot, per-player memory system
+  - Remembers past conversations
+  - Tracks emotional state (bot and player)
+  - Extracts and remembers personal information (birthday, name, preferences)
+  - Relationship context (first met, conversation stats, important events)
+- **Greeting Messages**: Configurable greeting messages for all bot types with default fallbacks
 
-### 5. AI Integration
-- **LMStudio**: Initial support for local LLM
+### 5. Pathfinding & Movement
+- **EasyStar.js Integration**: Full pathfinding system using A* algorithm
+- **Collision Grid**: Loads collision data from map WAM files
+- **Obstacle Avoidance**: Bots navigate around walls and colliders naturally
+- **Path Smoothing**: Natural movement along calculated paths
+- **Stuck Detection**: Detects when bots are stuck and recalculates paths
+- **Summon Movement**: Uses pathfinding with 3x speed multiplier
+- **Return Movement**: Uses pathfinding with 2x speed multiplier
+
+### 6. Summon Functionality
+- **Summon Button**: "Summon" button in user card popup (WokaMenu)
+- **Pathfinding Movement**: Bots use pathfinding to reach summoned player
+- **Speed Multiplier**: 3x speed when summoned, 2x speed when returning
+- **Engagement Protection**: Bots cannot be summoned if engaged with another player
+- **Return Logic**: Bots automatically return to original spawn position after summon
+- **Interrupt Handling**: New summon requests cancel ongoing return journeys
+- **Bubble Initiation**: Bots stop and initiate conversation bubble when reaching summoned player
+
+### 7. AI Integration
+- **LMStudio**: Initial support for local LLM (planned)
 - **Ultravox**: Voice AI integration (planned)
 - **GPT Voice**: Alternative voice AI (planned)
 - **Extensible**: Easy to add new AI providers
+- **Memory Integration**: Conversation memory system ready for AI integration
 
-### 6. Admin API Integration
+### 8. Admin API Integration
 - **Configuration Tracking**: Track bot configurations per room/world/universe/user
 - **Usage Metrics**: Monitor bot conversations, messages, and active time
 - **Analytics**: Get insights into bot performance and usage patterns
 - **Centralized Management**: Manage bots across your WorkAdventure instance
+
+### 9. User Interface Integration
+- **User List Sidebar**: Bots appear in sidebar user list
+- **Availability Status**: Proper availability status (ONLINE) for bots
+- **World Space**: Bots automatically join "allWorldUser" space for visibility
+- **User Card Actions**: Bots have "Summon" button in user card popup
+- **Bot List View**: List/grid view of all bots on the map
+- **Bot Toggle**: Enable/disable bots individually for easier debugging
 
 ## Scalability
 
@@ -131,24 +175,32 @@ See [docs/README.md](./docs/README.md) for organized documentation.
 ### ✅ Production Ready Features
 - **Core Bot System**: Full WebSocket client with state management
 - **Behavior System**: Idle, Patrol, and Social behaviors fully implemented
+- **Pathfinding System**: Full pathfinding implementation using EasyStar.js
+- **Summon Functionality**: Players can summon bots to their location
+- **Greeting Messages**: Configurable greeting messages for all bot types
+- **Conversation Memory**: Per-bot, per-player memory system
 - **Bot Editor UI**: Complete visual editor integrated into map editor
 - **Engagement System**: Smart proximity detection and engagement logic
 - **Viewport System**: Dynamic viewport for accurate player detection
 - **Room Management**: On-demand spawning and automatic cleanup
 - **Admin API Integration**: Configuration tracking and usage metrics
+- **User List Integration**: Bots appear in sidebar user list
+- **Production Logging**: Environment-aware logging for production builds
 
 ### 🚧 Next Major Milestone: AI Integration
 The bot system is ready for AI provider integration. Infrastructure is in place:
-- Conversation memory system
-- Chat message handling
-- Context management
-- Provider interface ready
+- ✅ Conversation memory system (implemented)
+- ✅ Chat message handling (implemented)
+- ✅ Context management (implemented)
+- ✅ Greeting messages (implemented)
+- 🚧 Provider interface (needs implementation)
 
 **Next Steps:**
 1. Implement `AIProvider` interface
 2. Create `LMStudioProvider` for local LLM
 3. Integrate with conversation memory
 4. Add response generation
+5. Test AI responses with conversation context
 
 See [STATUS.md](./STATUS.md) for detailed status and roadmap.
 

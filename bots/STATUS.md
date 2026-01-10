@@ -23,29 +23,36 @@
 ### Behavior System
 - ✅ **IdleBehavior**: Bot stands in place and responds to interactions
   - Configurable response radius
-  - Greeting messages
+  - Configurable greeting messages (with default fallback)
   - Idle animations support
+  - Summon functionality (can be summoned to player location)
   
 - ✅ **PatrolBehavior**: Bot follows predefined waypoints
   - Loop or back-and-forth routing
   - Pause at waypoints (skips pause if players nearby to avoid triggering bubbles)
-  - **Smart Engagement**: Only engages when players actively move into proximity
+  - **Smart Engagement**: Stops when players actively move into proximity, resumes if player becomes idle
   - **Ghost Mode**: Walks through idle players without triggering bubbles
   - **Continuous Facing**: Faces players in real-time during conversations
   - **Resume Logic**: Automatically resumes patrol after conversations end
+  - Configurable greeting messages (with default fallback)
+  - Summon functionality (can be summoned to player location)
+  - Configurable `respondToPlayers` setting (default: true)
   
 - ✅ **SocialBehavior**: Bot actively seeks conversations
   - Smart conversation management
   - Respects player status (busy, away, etc.)
   - Conversation history tracking
-  - Cooldown system
-  - Wandering behavior
+  - Cooldown system (configurable `minTimeBetweenConversations`)
+  - Wandering behavior within assigned space
   - Prevents multiple bots targeting same player
   - **Conversation Memory**: Per-bot, per-player memory system
     - Remembers past conversations
     - Tracks emotional state (bot and player)
     - Extracts and remembers personal information (birthday, name, preferences)
     - Relationship context (first met, conversation stats, important events)
+  - Configurable detection range (`conversationRadius`)
+  - Configurable greeting messages (with default fallback)
+  - Summon functionality (can be summoned to player location)
 
 ### Engagement System
 - ✅ **Proximity Detection**: Distance-based player detection with hysteresis (PROXIMITY_RADIUS / DISENGAGE_RADIUS)
@@ -56,12 +63,17 @@
 
 ### Extension Module (UI)
 - ✅ **Bot Editor Sidebar**: Full-featured bot editor integrated into map editor
+- ✅ **Bot List View**: List/grid view of all bots on the map
+- ✅ **Bot Detail View**: Detailed configuration view for individual bots
 - ✅ **Visual Bot Placement**: Drag-and-drop bot placement on map
 - ✅ **Behavior Configuration**: UI for configuring all behavior types
 - ✅ **Waypoint Editor**: Visual waypoint placement for patrol bots
 - ✅ **Live Updates**: Real-time bot updates without respawning
 - ✅ **Metadata Display**: Shows created/updated timestamps and user info
 - ✅ **Room Notifications**: Notifies bot-server when players enter/leave rooms
+- ✅ **Bot Toggle**: Enable/disable bots individually for easier debugging
+- ✅ **Summon Button**: "Summon" button on user cards (WokaMenu) to summon bots to player location
+- ✅ **User List Integration**: Bots appear in sidebar user list with proper availability status
 
 ### Admin API Integration
 - ✅ **Configuration Tracking**: Track bot configurations per room/world/universe/user
@@ -85,6 +97,48 @@
 - ✅ BotRegistry with Redis support for multi-server coordination
 - ✅ BotServerCoordinator for bot distribution across servers
 
+### Pathfinding System
+- ✅ **BotPathfindingManager**: Full pathfinding implementation using EasyStar.js
+- ✅ **Collision Grid Integration**: Loads collision data from map WAM files
+- ✅ **Path Calculation**: A* pathfinding algorithm for optimal routes
+- ✅ **Path Following**: Smooth path following with waypoint advancement
+- ✅ **Obstacle Avoidance**: Bots navigate around walls and colliders
+- ✅ **Path Smoothing**: Natural movement along calculated paths
+- ✅ **Stuck Detection**: Detects when bots are stuck and recalculates paths
+- ✅ **Summon Pathfinding**: Uses pathfinding for summon movement (3x speed)
+- ✅ **Return Pathfinding**: Uses pathfinding for returning to original position (2x speed)
+- ✅ **MapDataService**: Caches collision grids per room for performance
+
+### Summon Functionality
+- ✅ **Summon API**: `POST /api/bots/:botId/summon` endpoint
+- ✅ **Frontend Integration**: "Summon" button in WokaMenu (user card popup)
+- ✅ **Pathfinding Movement**: Bots use pathfinding to reach summoned player
+- ✅ **Speed Multiplier**: 3x speed when summoned, 2x speed when returning
+- ✅ **Engagement Protection**: Bots cannot be summoned if engaged with another player
+- ✅ **Return Logic**: Bots automatically return to original spawn position after summon
+- ✅ **Interrupt Handling**: New summon requests cancel ongoing return journeys
+- ✅ **Bubble Initiation**: Bots stop and initiate conversation bubble when reaching summoned player
+- ✅ **Facing Behavior**: Bots face the player when summoned and close
+
+### Greeting Messages
+- ✅ **Configurable Greetings**: All bot types support configurable greeting messages
+- ✅ **Default Fallbacks**: Default greeting messages if none configured
+- ✅ **Per-Behavior Greetings**: Different greeting messages per behavior type
+- ✅ **Summon Greetings**: Bots send greetings when summoned (if configured)
+- ✅ **Space Join Greetings**: Bots send greetings when players join conversation spaces
+- ✅ **Memory Integration**: Greetings can be personalized based on conversation memory
+
+### User List Integration
+- ✅ **Sidebar Visibility**: Bots appear in the user list sidebar
+- ✅ **Availability Status**: Proper availability status (ONLINE) for bots
+- ✅ **World Space**: Bots automatically join "allWorldUser" space for visibility
+- ✅ **User Card Actions**: Bots have "Summon" button in user card popup
+
+### Production Logging
+- ✅ **Environment-Aware Logging**: Logging levels based on NODE_ENV
+- ✅ **Debug Mode**: `ENABLE_BOT_DEBUG` flag for verbose logging in development
+- ✅ **Production Optimization**: Reduced logging in production builds
+
 ## 🚧 In Progress / Next Steps
 
 ### 1. AI Integration (High Priority)
@@ -105,19 +159,6 @@
 - `bots/ai/LMStudioProvider.ts`
 - `bots/ai/UltravoxProvider.ts` (future)
 - `bots/ai/GPTVoiceProvider.ts` (future)
-
-### 2. Pathfinding (Medium Priority)
-**Goal**: Bots navigate around obstacles intelligently
-
-**Status**: Architecture documented, needs implementation
-
-**Tasks:**
-- [ ] Implement pathfinding algorithm (A* or similar)
-- [ ] Integrate with map collision data
-- [ ] Add obstacle avoidance
-- [ ] Optimize for performance
-
-**See**: [PATHFINDING.md](./docs/architecture/PATHFINDING.md) for detailed plan
 
 ### 3. Enhanced Conversation System (Medium Priority)
 **Goal**: Improve conversation quality and context
@@ -151,28 +192,77 @@
 
 ## Recent Improvements
 
+### Summon Functionality (Latest)
+- **Feature**: Players can summon bots to their location via "Summon" button
+- **Implementation**: 
+  - Frontend: WokaMenu action registration in extension module
+  - Backend: `/api/bots/:botId/summon` endpoint
+  - Movement: Uses pathfinding with 3x speed multiplier
+  - Return: Automatically returns to original position with 2x speed
+  - Protection: Cannot summon if bot is engaged with another player
+- **Impact**: Bots can be called on-demand, enhancing player interaction
+
+### Greeting Messages System
+- **Feature**: Configurable greeting messages for all bot types
+- **Implementation**:
+  - `greetingMessages` array in behavior configs
+  - Default fallback messages if none configured
+  - Sent when players join conversation spaces
+  - Sent when bots are summoned
+- **Impact**: More natural bot interactions with personalized greetings
+
+### Conversation Memory System
+- **Feature**: Per-bot, per-player memory system
+- **Implementation**:
+  - `ConversationMemory` class tracks conversations, emotions, personal info
+  - Extracts personal information (birthday, name, preferences)
+  - Tracks emotional state (bot and player)
+  - Relationship context (first met, conversation stats)
+- **Impact**: Bots can remember players and personalize interactions
+
+### Pathfinding Implementation
+- **Feature**: Full pathfinding system using EasyStar.js
+- **Implementation**:
+  - `BotPathfindingManager` for path calculation
+  - `MapDataService` for collision grid caching
+  - Integrated into all movement (patrol, social, summon, return)
+  - Stuck detection and path recalculation
+- **Impact**: Bots navigate naturally around obstacles, no longer walk through walls
+
+### User List Integration
+- **Feature**: Bots appear in sidebar user list
+- **Implementation**:
+  - Bots join "allWorldUser" space automatically
+  - Proper availability status (ONLINE)
+  - Visible in sidebar with other users
+- **Impact**: Better visibility and management of active bots
+
 ### Viewport System Fix
 - **Problem**: Bots had static viewport (0,0)-(1000,1000), causing players to disappear from bot's knowledge
 - **Solution**: Dynamic viewport centered on bot position with 2000px radius
 - **Impact**: Bots now reliably detect and track players, enabling consistent engagement
 
-### Patrol Bot Engagement Logic
+### Patrol Bot Engagement Logic (Refined)
 - **Problem**: Patrol bot would trigger bubbles when walking over idle players
 - **Solution**: 
-  - Only engage when `nearbyPlayers.size > 0` (player actively moved into proximity)
+  - Stops when players actively move into proximity (`respondToPlayers: true` by default)
+  - Resumes patrol if player becomes idle (ghost behavior)
   - Skip waypoint pauses if players nearby (prevents stopping on top of idle players)
   - Always accept spaces but only engage if player approached bot
-- **Impact**: Patrol bots now behave like social bots - walk through idle players like ghosts
+- **Impact**: Patrol bots stop for active players but ghost through idle ones
 
 ### Player Detection Improvements
 - **Problem**: Bots were detecting other bots as players
 - **Solution**: Static `BotClient.botUserIds` set tracks all bot IDs, filters them from player lists
 - **Impact**: Bots no longer try to engage with each other
 
-### Real-time Facing
-- **Problem**: Bots wouldn't face players consistently during conversations
-- **Solution**: Continuous facing updates using `getNearbyPlayers()` and direction change detection
-- **Impact**: Bots now face players smoothly and consistently
+### Real-time Facing (Enhanced)
+- **Problem**: Bots wouldn't face players consistently during conversations, especially when summoned
+- **Solution**: 
+  - Continuous facing updates using `getNearbyPlayers()` and direction change detection
+  - Fixed facing logic for summoned bots (face when stopped, not when moving)
+  - Proper facing during summon and return states
+- **Impact**: Bots now face players smoothly and consistently in all scenarios
 
 ## Architecture Highlights
 
