@@ -90,6 +90,45 @@ const markupPerRequest = 0.0005; // $0.0005 per request
 const cost = providerCost + markupPerRequest;
 ```
 
+### 3. Ultravox Voice AI (Third-Party)
+
+**Software:** Paid (per minute)  
+**Infrastructure:** Included in API cost  
+**Pricing:** Per-minute (e.g., $0.05 per minute)
+
+#### Pricing Model
+
+**Per-Minute Pricing:**
+```typescript
+// Ultravox charges $0.05 per minute
+const costPerMinute = 0.05; // $0.05 per minute
+const durationMinutes = durationSeconds / 60;
+const cost = durationMinutes * costPerMinute;
+
+// Example: 2.5 minutes = $0.125
+const cost = (150 / 60) * 0.05; // 2.5 minutes * $0.05 = $0.125
+```
+
+**Rounded Up (Common Practice):**
+```typescript
+// Many voice AI providers round up to the nearest minute
+const durationMinutes = Math.ceil(durationSeconds / 60);
+const cost = durationMinutes * costPerMinute;
+
+// Example: 90 seconds = 2 minutes (rounded up) = $0.10
+const cost = Math.ceil(90 / 60) * 0.05; // 2 * $0.05 = $0.10
+```
+
+**Minimum Charge:**
+```typescript
+// Some providers have a minimum charge (e.g., 1 minute minimum)
+const durationMinutes = Math.max(1, Math.ceil(durationSeconds / 60));
+const cost = durationMinutes * costPerMinute;
+
+// Example: 30 seconds = 1 minute minimum = $0.05
+const cost = Math.max(1, Math.ceil(30 / 60)) * 0.05; // 1 * $0.05 = $0.05
+```
+
 ## Implementation
 
 ### Provider Configuration
@@ -99,16 +138,21 @@ Add pricing configuration to provider config in Admin API:
 ```typescript
 interface AIProviderConfig {
     providerId: string;
-    type: 'lmstudio' | 'openai' | 'anthropic';
+    type: 'lmstudio' | 'openai' | 'anthropic' | 'ultravox' | 'gpt-voice';
     
     // Pricing configuration
-    pricingModel: 'per-token' | 'per-request' | 'hybrid' | 'compute-time' | 'tiered';
+    pricingModel: 'per-token' | 'per-request' | 'per-minute' | 'hybrid' | 'compute-time' | 'tiered';
     
     // Per-token pricing
     costPerToken?: number;
     
     // Per-request pricing
     costPerRequest?: number;
+    
+    // Per-minute pricing (for voice AI)
+    costPerMinute?: number;
+    roundUpMinutes?: boolean; // Round up to nearest minute (default: true)
+    minimumMinutes?: number; // Minimum charge (default: 1)
     
     // Hybrid pricing
     baseCost?: number;
@@ -136,7 +180,8 @@ private calculateCost(
     providerId: string,
     tokensUsed: number,
     latency: number,
-    apiCalls: number
+    apiCalls: number,
+    durationSeconds?: number // For voice AI (duration in seconds)
 ): number {
     const providerConfig = this.getProviderConfig(providerId);
     
@@ -146,6 +191,27 @@ private calculateCost(
             
         case 'per-request':
             return apiCalls * (providerConfig.costPerRequest || 0);
+            
+        case 'per-minute':
+            if (!durationSeconds) {
+                console.warn(`[AIService] Per-minute pricing requires durationSeconds`);
+                return 0;
+            }
+            const costPerMinute = providerConfig.costPerMinute || 0;
+            const roundUp = providerConfig.roundUpMinutes !== false; // Default: true
+            const minimumMinutes = providerConfig.minimumMinutes || 1; // Default: 1 minute
+            
+            let durationMinutes: number;
+            if (roundUp) {
+                durationMinutes = Math.ceil(durationSeconds / 60);
+            } else {
+                durationMinutes = durationSeconds / 60;
+            }
+            
+            // Apply minimum charge
+            durationMinutes = Math.max(minimumMinutes, durationMinutes);
+            
+            return durationMinutes * costPerMinute;
             
         case 'hybrid':
             const base = (providerConfig.baseCost || 0) * apiCalls;
@@ -167,13 +233,28 @@ private calculateCost(
 
 ### Usage Tracking
 
+**For Text AI (LMStudio, OpenAI, Anthropic):**
 ```typescript
 // Track usage with calculated cost
 await this.trackUsage(botId, providerId, {
     tokensUsed: 150,
     apiCalls: 1,
     latency: 1250,
+    durationSeconds: undefined, // Not applicable for text AI
     cost: this.calculateCost(providerId, 150, 1250, 1),
+});
+```
+
+**For Voice AI (Ultravox, GPT Voice):**
+```typescript
+// Track usage with duration and calculated cost
+const durationSeconds = 150; // 2.5 minutes
+await this.trackUsage(botId, providerId, {
+    tokensUsed: 0, // Not applicable for voice AI
+    apiCalls: 1,
+    latency: 1250,
+    durationSeconds: durationSeconds, // Duration in seconds
+    cost: this.calculateCost(providerId, 0, 1250, 1, durationSeconds),
 });
 ```
 
@@ -200,6 +281,8 @@ SELECT
     provider_id,
     SUM(cost) as total_cost,
     SUM(tokens_used) as total_tokens,
+    SUM(duration_seconds) as total_duration_seconds,
+    SUM(duration_seconds) / 60.0 as total_duration_minutes,
     COUNT(*) as total_requests
 FROM bots_ai_usage
 WHERE timestamp >= DATE_TRUNC('month', CURRENT_DATE)
@@ -271,6 +354,36 @@ function calculateFreemiumCost(tokensUsed: number, monthlyTokensUsed: number): n
     const paidTokens = Math.max(0, monthlyTokensUsed - freeTier);
     return paidTokens * 0.00001;
 }
+```
+
+### Example 5: Ultravox Voice AI
+
+**Goal:** Charge per minute as Ultravox does ($0.05 per minute)
+
+```typescript
+// Ultravox configuration
+const ultravoxConfig: AIProviderConfig = {
+    providerId: 'ultravox-production',
+    type: 'ultravox',
+    pricingModel: 'per-minute',
+    costPerMinute: 0.05, // $0.05 per minute
+    roundUpMinutes: true, // Round up to nearest minute
+    minimumMinutes: 1, // Minimum 1 minute charge
+};
+
+// Cost calculation
+function calculateUltravoxCost(durationSeconds: number): number {
+    const durationMinutes = Math.ceil(durationSeconds / 60); // Round up
+    const minimumMinutes = 1; // Minimum charge
+    const actualMinutes = Math.max(minimumMinutes, durationMinutes);
+    return actualMinutes * 0.05; // $0.05 per minute
+}
+
+// Examples:
+// 30 seconds = 1 minute (minimum) = $0.05
+// 90 seconds = 2 minutes (rounded up) = $0.10
+// 150 seconds = 3 minutes (rounded up) = $0.15
+// 60 seconds = 1 minute = $0.05
 ```
 
 ## Billing Integration

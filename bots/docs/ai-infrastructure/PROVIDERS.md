@@ -209,6 +209,8 @@ interface AnthropicConfig extends AIProviderConfig {
 | LMStudio | ✅ | ❌ | Free (OSS) | Your servers | **You set price** | ✅ | OpenAI-compatible | Can share with OpenAI |
 | OpenAI | ✅ | ✅ | Paid (per token) | Included | Pass-through/markup | ❌ | OpenAI | Can share with LMStudio |
 | Anthropic | ✅ | ✅ | Paid (per token) | Included | Pass-through/markup | ❌ | Custom | **Separate implementation** |
+| Ultravox | ✅ | ✅ | Paid ($0.05/min) | Included | Pass-through/markup | ❌ | Voice API | **Separate implementation** |
+| GPT Voice | ✅ | ✅ | Paid (per minute) | Included | Pass-through/markup | ❌ | Voice API | **Separate implementation** |
 
 ### Cost Models
 
@@ -222,6 +224,12 @@ interface AnthropicConfig extends AIProviderConfig {
 - 💰 Provider charges per token
 - 📊 You can pass-through costs or add markup
 - 📈 Costs scale with usage
+
+**Ultravox/GPT Voice:**
+- 💰 Provider charges per minute (e.g., Ultravox: $0.05 per minute)
+- 📊 You can pass-through costs or add markup
+- ⏱️ Duration is tracked in seconds, rounded up to nearest minute
+- 💵 Minimum charge typically applies (e.g., 1 minute minimum)
 
 ## Implementation Strategy
 

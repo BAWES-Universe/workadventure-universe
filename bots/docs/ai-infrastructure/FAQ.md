@@ -427,3 +427,48 @@ GROUP BY botId, providerId;
    - Usage-based overage charges
    - Best of both worlds
 
+### Q: Ultravox charges $0.05 per minute. Does the model account for this?
+
+**A:** Yes! The billing model now supports per-minute pricing for voice AI providers like Ultravox.
+
+**Configuration:**
+```typescript
+const ultravoxConfig: AIProviderConfig = {
+    providerId: 'ultravox-production',
+    type: 'ultravox',
+    pricingModel: 'per-minute',
+    costPerMinute: 0.05, // $0.05 per minute
+    roundUpMinutes: true, // Round up to nearest minute (default)
+    minimumMinutes: 1, // Minimum 1 minute charge (default)
+};
+```
+
+**Cost Calculation:**
+- Duration is tracked in seconds
+- Rounded up to nearest minute (default behavior)
+- Minimum charge applies (e.g., 1 minute minimum)
+- Example: 90 seconds = 2 minutes (rounded up) = $0.10
+
+**Usage Tracking:**
+```typescript
+// Track voice AI usage with duration
+await this.trackUsage(botId, 'ultravox-production', {
+    tokensUsed: 0, // Not applicable for voice AI
+    apiCalls: 1,
+    latency: 1250,
+    durationSeconds: 150, // 2.5 minutes
+    cost: 0.15, // 3 minutes (rounded up) * $0.05 = $0.15
+});
+```
+
+**Database:**
+- `duration_seconds` field stores the actual duration
+- `cost` field stores the calculated per-minute cost
+- Admin API can aggregate costs by duration for billing
+
+**Examples:**
+- 30 seconds = 1 minute (minimum) = $0.05
+- 90 seconds = 2 minutes (rounded up) = $0.10
+- 150 seconds = 3 minutes (rounded up) = $0.15
+- 60 seconds = 1 minute = $0.05
+

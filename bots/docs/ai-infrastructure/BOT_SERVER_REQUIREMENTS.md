@@ -366,10 +366,21 @@ private getFallbackMessage(): string {
 private async trackUsage(
     botId: string,
     providerId: string,
-    metadata: { tokensUsed?: number; latency?: number; error?: boolean }
+    metadata: { 
+        tokensUsed?: number; 
+        latency?: number; 
+        durationSeconds?: number; // For voice AI
+        error?: boolean 
+    }
 ): Promise<void> {
     // Calculate cost based on provider pricing model
-    const cost = this.calculateCost(providerId, metadata.tokensUsed || 0, metadata.latency || 0);
+    const cost = this.calculateCost(
+        providerId, 
+        metadata.tokensUsed || 0, 
+        metadata.latency || 0, 
+        1, // apiCalls
+        metadata.durationSeconds // For voice AI
+    );
     
     // Fire and forget
     fetch(`${this.adminApiUrl}/api/bots/ai-usage`, {
@@ -384,7 +395,11 @@ private async trackUsage(
             tokensUsed: metadata.tokensUsed || 0,
             apiCalls: 1,
             latency: metadata.latency,
-            cost, // Calculated cost (for LMStudio: your pricing, for OpenAI/Anthropic: API cost or markup)
+            durationSeconds: metadata.durationSeconds || null, // For voice AI
+            cost, // Calculated cost
+            // For LMStudio: your pricing
+            // For OpenAI/Anthropic: API cost or markup
+            // For Ultravox/GPT Voice: per-minute cost (e.g., $0.05 per minute)
             error: metadata.error || false,
             timestamp: new Date().toISOString(),
         }),
@@ -398,10 +413,41 @@ private async trackUsage(
  * Calculate cost based on provider pricing model
  * For LMStudio: Use your pricing (per-token, per-request, hybrid, etc.)
  * For OpenAI/Anthropic: Use actual API cost or your markup
+ * For Ultravox/GPT Voice: Use per-minute pricing (e.g., $0.05 per minute)
  */
-private calculateCost(providerId: string, tokensUsed: number, latency: number): number {
+private calculateCost(
+    providerId: string, 
+    tokensUsed: number, 
+    latency: number, 
+    apiCalls: number,
+    durationSeconds?: number // For voice AI
+): number {
     const providerConfig = this.getProviderConfig(providerId);
     if (!providerConfig) return 0;
+
+    // Handle per-minute pricing (for voice AI)
+    if (providerConfig.pricingModel === 'per-minute') {
+        if (!durationSeconds) {
+            console.warn(`[AIService] Per-minute pricing requires durationSeconds`);
+            return 0;
+        }
+        
+        const costPerMinute = providerConfig.costPerMinute || 0.05; // Default: $0.05 per minute
+        const roundUp = providerConfig.roundUpMinutes !== false; // Default: true
+        const minimumMinutes = providerConfig.minimumMinutes || 1; // Default: 1 minute
+        
+        let durationMinutes: number;
+        if (roundUp) {
+            durationMinutes = Math.ceil(durationSeconds / 60);
+        } else {
+            durationMinutes = durationSeconds / 60;
+        }
+        
+        // Apply minimum charge
+        durationMinutes = Math.max(minimumMinutes, durationMinutes);
+        
+        return durationMinutes * costPerMinute;
+    }
 
     // LMStudio: Your pricing model
     if (providerConfig.type === 'lmstudio') {
@@ -419,6 +465,21 @@ private calculateCost(providerId: string, tokensUsed: number, latency: number): 
         const costPerToken = providerConfig.costPerToken || 0.00003;
         const markup = providerConfig.markup || 1.0; // No markup by default
         return (tokensUsed * costPerToken) * markup;
+    }
+
+    // Ultravox/GPT Voice: Per-minute pricing
+    if (providerConfig.type === 'ultravox' || providerConfig.type === 'gpt-voice') {
+        if (!durationSeconds) {
+            console.warn(`[AIService] Voice AI requires durationSeconds`);
+            return 0;
+        }
+        
+        const costPerMinute = providerConfig.costPerMinute || 0.05; // Default: $0.05 per minute
+        const durationMinutes = Math.ceil(durationSeconds / 60); // Round up
+        const minimumMinutes = providerConfig.minimumMinutes || 1; // Minimum 1 minute
+        const actualMinutes = Math.max(minimumMinutes, durationMinutes);
+        
+        return actualMinutes * costPerMinute;
     }
 
     return 0;

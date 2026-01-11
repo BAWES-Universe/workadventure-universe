@@ -106,7 +106,7 @@ Authorization: Bearer bot-service-readonly-token
 
 **Authentication:** `Bearer BOT_SERVICE_TOKEN`
 
-**Request:**
+**Request (Text AI - LMStudio, OpenAI, Anthropic):**
 ```http
 POST /api/bots/ai-usage
 Authorization: Bearer bot-service-readonly-token
@@ -118,7 +118,27 @@ Content-Type: application/json
   "tokensUsed": 150,
   "apiCalls": 1,
   "latency": 1250,
+  "durationSeconds": null,  // Not applicable for text AI
   "cost": 0.0015,  // Calculated cost (for LMStudio, this is your pricing)
+  "error": false,
+  "timestamp": "2025-01-09T12:00:00Z"
+}
+```
+
+**Request (Voice AI - Ultravox, GPT Voice):**
+```http
+POST /api/bots/ai-usage
+Authorization: Bearer bot-service-readonly-token
+Content-Type: application/json
+
+{
+  "botId": "bot-123",
+  "providerId": "ultravox-production",
+  "tokensUsed": 0,  // Not applicable for voice AI
+  "apiCalls": 1,
+  "latency": 1250,
+  "durationSeconds": 150,  // 2.5 minutes (150 seconds)
+  "cost": 0.15,  // Calculated cost: 3 minutes (rounded up) * $0.05 = $0.15
   "error": false,
   "timestamp": "2025-01-09T12:00:00Z"
 }
@@ -127,7 +147,13 @@ Content-Type: application/json
 **Note on Cost:**
 - For **LMStudio**: Bot server calculates cost based on your pricing model (per token, per request, etc.)
 - For **OpenAI/Anthropic**: Cost is the actual API cost (or your markup)
+- For **Ultravox/GPT Voice**: Cost is calculated per minute (e.g., $0.05 per minute, rounded up)
 - Admin API stores cost for billing/analytics
+
+**Note on Duration:**
+- For **Text AI** (LMStudio, OpenAI, Anthropic): `durationSeconds` is `null` (not applicable)
+- For **Voice AI** (Ultravox, GPT Voice): `durationSeconds` is the actual duration of the voice call in seconds
+- Duration is used to calculate per-minute costs (rounded up to nearest minute, with minimum charge)
 
 **Response:**
 ```json
@@ -180,9 +206,11 @@ CREATE TABLE bots_ai_usage (
     provider_id VARCHAR(50) NOT NULL,
     tokens_used INTEGER DEFAULT 0,
     api_calls INTEGER DEFAULT 1,
+    duration_seconds INTEGER, -- For voice AI (duration in seconds)
     cost DECIMAL(10,4), -- Cost in USD or credits
     -- For LMStudio: Your calculated cost (based on your pricing)
     -- For OpenAI/Anthropic: Actual API cost or your markup
+    -- For Ultravox/GPT Voice: Per-minute cost (e.g., $0.05 per minute)
     latency INTEGER, -- Milliseconds
     error BOOLEAN DEFAULT false,
     timestamp TIMESTAMP DEFAULT NOW(),
