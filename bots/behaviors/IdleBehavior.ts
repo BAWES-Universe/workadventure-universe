@@ -4,6 +4,7 @@
 
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction } from '@workadventure/messages';
+import { ConversationMemory } from '../memory/ConversationMemory';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
@@ -13,14 +14,20 @@ export interface IdleBehaviorConfig extends BehaviorConfig {
     greetingMessages: string[]; // Random greetings
     idleAnimations?: string[]; // Idle animations to play
     animationInterval?: number; // Milliseconds between animations
+    conversationHistorySize?: number; // Size of conversation history to keep
 }
 
 export class IdleBehavior extends BaseBehavior {
     private lastAnimationTime: number = 0;
     private greetedPlayers: Set<number> = new Set();
+    private conversationMemory: ConversationMemory;
 
     constructor(config: IdleBehaviorConfig) {
         super(config);
+        this.conversationMemory = new ConversationMemory(
+            config.conversationHistorySize || 50,
+            1000 // Max 1000 player memories per bot
+        );
     }
 
     update(deltaTime: number): void {
@@ -138,17 +145,17 @@ export class IdleBehavior extends BaseBehavior {
         // Bot joined a conversation, greet everyone
         if (!this.bot) return;
 
-        const config = this.config as IdleBehaviorConfig;
-        const greetingMessages = config.greetingMessages || [];
-        const greeting = this.getRandomGreeting(greetingMessages);
-        if (greeting) {
-            // Wait a bit for the space to sync the bot as a user before sending message
-            // The back service needs the bot to be in the space's users list to process the message
-            setTimeout(() => {
-                if (this.bot) {
-                    this.bot.sendChatMessage(spaceName, greeting);
-                }
-            }, 500);
+        // Find the player who triggered the space join (first nearby player)
+        const nearbyPlayers = this.bot.getNearbyPlayers(100); // Use reasonable radius
+        if (nearbyPlayers.length > 0) {
+            const playerId = nearbyPlayers[0].userId;
+            const botId = this.bot.getBotId();
+            
+            // Generate AI greeting instead of preset
+            this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
+                console.error(`[IdleBehavior] Error generating AI greeting:`, error);
+                // Fallback: don't send anything if AI fails (no preset greeting)
+            });
         }
     }
 
@@ -162,6 +169,15 @@ export class IdleBehavior extends BaseBehavior {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[IdleBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
         }
+
+        // Start conversation in memory if needed
+        this.conversationMemory.startConversation(botId, senderId);
+        
+        // Store player's message in memory
+        this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
+        
+        // Extract personal information from message
+        this.conversationMemory.extractPersonalInfo(botId, senderId, message);
 
         // Generate AI response
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
@@ -213,9 +229,8 @@ export class IdleBehavior extends BaseBehavior {
             console.log(`[IdleBehavior] Using AI provider: ${botConfig.aiProviderRef}`);
         }
 
-        // Get conversation context (if ConversationMemory is available)
-        // For now, use empty context - can be enhanced later
-        const context = '';
+        // Get conversation context (includes memory, emotions, relationship history)
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
 
         // Generate streaming response
         let fullMessage = '';
@@ -239,6 +254,8 @@ export class IdleBehavior extends BaseBehavior {
                     // Send complete message
                     if (fullMessage.trim()) {
                         this.bot.sendChatMessage(spaceName, fullMessage);
+                        // Store bot's message in memory
+                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
                     }
                     break;
                 }
@@ -254,12 +271,69 @@ export class IdleBehavior extends BaseBehavior {
         // The greeting will be sent in onSpaceJoined
     }
 
-    private getRandomGreeting(messages: string[] | undefined): string | null {
-        if (!messages || messages.length === 0) {
-            // Default greeting if none configured
-            return "Hello! How can I help you?";
+    /**
+     * Generate AI greeting for a player
+     */
+    private async generateAIGreeting(
+        spaceName: string,
+        playerId: number,
+        botId: string
+    ): Promise<void> {
+        if (!this.bot || !this.aiService || !this.adminApiService) {
+            return;
         }
-        return messages[Math.floor(Math.random() * messages.length)];
+
+        // Get bot configuration
+        const botConfig = await this.adminApiService.getBotConfiguration(botId);
+        if (!botConfig?.aiProviderRef) {
+            // No AI provider configured - don't send greeting
+            return;
+        }
+
+        // Get conversation context (includes memory, emotions, relationship history)
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
+
+        // Generate natural response using AI - not a greeting, just respond naturally
+        let fullMessage = '';
+        
+        try {
+            // Simple prompt: player approached, respond naturally
+            // The AI will use the conversation context (memory, emotions, relationship) from chatInstructions
+            const playerMessage = 'A player just approached you.';
+            
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                playerMessage,
+                botConfig.chatInstructions || 'You are a friendly bot.',
+                botConfig.movementInstructions,
+                botConfig.aiProviderRef,
+                spaceName,
+                context
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    // Send response
+                    if (fullMessage.trim()) {
+                        // Wait a bit for the space to sync
+                        setTimeout(() => {
+                            if (this.bot) {
+                                this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                                // Store bot's message in memory
+                                this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            }
+                        }, 500);
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[IdleBehavior] AI greeting error:`, error);
+            // Don't send fallback - just fail silently
+        }
     }
 }
 

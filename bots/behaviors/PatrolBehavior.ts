@@ -9,6 +9,7 @@ import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
+import { ConversationMemory } from '../memory/ConversationMemory';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
     type: 'patrol';
@@ -19,6 +20,7 @@ export interface PatrolBehaviorConfig extends BehaviorConfig {
     respondToPlayers: boolean;
     responseRadius?: number;
     greetingMessages?: string[]; // Random greetings (optional, defaults to "Hello! How can I help you?")
+    conversationHistorySize?: number; // Size of conversation history to keep
 }
 
 export class PatrolBehavior extends BaseBehavior {
@@ -28,6 +30,7 @@ export class PatrolBehavior extends BaseBehavior {
     private targetWaypoint: PositionInterface | null = null;
     private currentSpaceName: string | null = null;
     private spaceLeftTime: number = 0;
+    private conversationMemory: ConversationMemory;
     private readonly RESUME_DELAY = 500;
     private lastPathfindingLog: number = 0; // Rate limit pathfinding logs
     private lastMoveAttemptLog: number = 0; // Rate limit move attempt logs
@@ -492,23 +495,21 @@ export class PatrolBehavior extends BaseBehavior {
         const shouldGreet = this.bot && (this.nearbyPlayers.size > 0 || this.isSummoned);
         
         if (shouldGreet) {
-            // Wait for the space to sync the bot as a user before sending message
-            // The back service needs the bot to be in the space's users list to process the message
-            setTimeout(() => {
-                if (this.bot && this.currentSpaceName === spaceName) {
-                    try {
-                        const config = this.config as PatrolBehaviorConfig;
-                        const greetingMessages = config.greetingMessages || [];
-                        const greeting = this.getRandomGreeting(greetingMessages);
-                        if (greeting) {
-                            console.log(`[PatrolBehavior] Sending greeting (summoned=${this.isSummoned}, nearbyPlayers=${this.nearbyPlayers.size}): "${greeting}"`);
-                            this.bot.sendChatMessage(spaceName, greeting);
-                        }
-                    } catch (error) {
-                        console.error(`[PatrolBehavior] Error sending greeting:`, error);
-                    }
-                }
-            }, 500);
+            // Find the player to greet (first nearby player)
+            let playerId: number | null = null;
+            const nearbyPlayers = this.bot?.getNearbyPlayers(100);
+            if (nearbyPlayers && nearbyPlayers.length > 0) {
+                playerId = nearbyPlayers[0].userId;
+            }
+            
+            if (playerId && this.bot) {
+                const botId = this.bot.getBotId();
+                // Generate AI greeting instead of preset
+                this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
+                    console.error(`[PatrolBehavior] Error generating AI greeting:`, error);
+                    // Fallback: don't send anything if AI fails (no preset greeting)
+                });
+            }
         }
     }
     
@@ -675,12 +676,69 @@ export class PatrolBehavior extends BaseBehavior {
         this.lastWaypointPosition = null;
     }
 
-    private getRandomGreeting(messages: string[] | undefined): string | null {
-        if (!messages || messages.length === 0) {
-            // Default greeting if none configured
-            return "Hello! How can I help you?";
+    /**
+     * Generate AI greeting for a player
+     */
+    private async generateAIGreeting(
+        spaceName: string,
+        playerId: number,
+        botId: string
+    ): Promise<void> {
+        if (!this.bot || !this.aiService || !this.adminApiService) {
+            return;
         }
-        return messages[Math.floor(Math.random() * messages.length)];
+
+        // Get bot configuration
+        const botConfig = await this.adminApiService.getBotConfiguration(botId);
+        if (!botConfig?.aiProviderRef) {
+            // No AI provider configured - don't send greeting
+            return;
+        }
+
+        // Get conversation context (includes memory, emotions, relationship history)
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
+
+        // Generate natural response using AI - not a greeting, just respond naturally
+        let fullMessage = '';
+        
+        try {
+            // Simple prompt: player approached, respond naturally
+            // The AI will use the conversation context (memory, emotions, relationship) from chatInstructions
+            const playerMessage = 'A player just approached you.';
+            
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                playerMessage,
+                botConfig.chatInstructions || 'You are a friendly bot.',
+                botConfig.movementInstructions,
+                botConfig.aiProviderRef,
+                spaceName,
+                context
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    // Send response
+                    if (fullMessage.trim()) {
+                        // Wait a bit for the space to sync
+                        setTimeout(() => {
+                            if (this.bot && this.currentSpaceName === spaceName) {
+                                this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                                // Store bot's message in memory
+                                this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            }
+                        }, 500);
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[PatrolBehavior] AI greeting error:`, error);
+            // Don't send fallback - just fail silently
+        }
     }
 
     /**
@@ -728,9 +786,8 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
-        // Get conversation context (if ConversationMemory is available)
-        // For now, use empty context - can be enhanced later
-        const context = '';
+        // Get conversation context (includes memory, emotions, relationship history)
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
 
         // Generate streaming response
         let fullMessage = '';
@@ -754,6 +811,8 @@ export class PatrolBehavior extends BaseBehavior {
                     // Send complete message
                     if (fullMessage.trim()) {
                         this.bot.sendChatMessage(spaceName, fullMessage);
+                        // Store bot's message in memory
+                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
                     }
                     break;
                 }

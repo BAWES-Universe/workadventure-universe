@@ -211,24 +211,11 @@ export class SocialBehavior extends BaseBehavior {
                 lastMessageTime: currentTime,
             });
 
-            // Get conversation context for personalized greeting
-            const memory = this.conversationMemory.getMemory(botId, this.targetPlayerId);
-            const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
-
-            if (greeting) {
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[SocialBehavior] Bot-initiated greeting: "${greeting}" - scheduling send`);
-                }
-                // Wait for the space to sync the bot as a user before sending message
-                // The back service needs the bot to be in the space's users list to process the message
-                setTimeout(() => {
-                    if (this.bot && this.currentSpaceName === spaceName) {
-                        this.bot.sendChatMessage(spaceName, greeting);
-                        // Record bot's message in memory
-                        this.conversationMemory.addMessage(botId, this.targetPlayerId, greeting, 'bot', spaceName);
-                    }
-                }, 500);
-            }
+            // Generate AI greeting instead of preset
+            this.generateAIGreeting(spaceName, this.targetPlayerId, botId).catch(error => {
+                console.error(`[SocialBehavior] Error generating AI greeting:`, error);
+                // Fallback: don't send anything if AI fails (no preset greeting)
+            });
 
             // Clear target
             this.targetPlayerId = null;
@@ -371,29 +358,11 @@ export class SocialBehavior extends BaseBehavior {
             lastMessageTime: currentTime,
         });
         
-        // Get conversation context for personalized greeting
-        // This will use existing memory if available, or create new memory
-        const memory = this.conversationMemory.getMemory(botId, playerId);
-        const greeting = this.getPersonalizedGreeting(config.conversationTopics, memory);
-        
-        if (greeting) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[SocialBehavior] Generated greeting: "${greeting}" - scheduling send`);
-            }
-            // Wait for the space to sync the bot as a user before sending message
-            // The back service needs the bot to be in the space's users list to process the message
-            setTimeout(() => {
-                if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                    this.bot.sendChatMessage(spaceName, greeting);
-                    // Record bot's message in memory
-                    this.conversationMemory.addMessage(botId, playerId, greeting, 'bot', spaceName);
-                }
-            }, 500);
-        } else {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[SocialBehavior] No greeting generated for player ${playerId}`);
-            }
-        }
+        // Generate AI greeting instead of preset
+        this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
+            console.error(`[SocialBehavior] Error generating AI greeting:`, error);
+            // Fallback: don't send anything if AI fails (no preset greeting)
+        });
     }
 
     onSpaceUserJoined(spaceName: string, user: SpaceUser): void {
@@ -604,6 +573,75 @@ export class SocialBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[SocialBehavior] AI error:`, error);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+        }
+    }
+
+    /**
+     * Generate AI greeting for a player
+     */
+    private async generateAIGreeting(
+        spaceName: string,
+        playerId: number,
+        botId: string
+    ): Promise<void> {
+        if (!this.bot || !this.aiService || !this.adminApiService) {
+            return;
+        }
+
+        // Get bot configuration
+        const botConfig = await this.adminApiService.getBotConfiguration(botId);
+        if (!botConfig?.aiProviderRef) {
+            // No AI provider configured - don't send greeting
+            return;
+        }
+
+        // Get conversation context (includes memory, emotions, relationship history)
+        // This context includes previous conversations, emotional state, and relationship history
+        // The AI will use this to remember bad interactions and respond appropriately
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
+
+        // Generate natural response using AI - not a greeting, just respond naturally
+        // The context will inform the AI about previous interactions, emotions, and relationship state
+        let fullMessage = '';
+        
+        try {
+            // Simple prompt: player approached, respond naturally
+            // The AI will use the conversation context (memory, emotions, relationship) to respond appropriately
+            // If there was a bad interaction, the context will include that and the AI will remember
+            const playerMessage = 'A player just approached you.';
+            
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                playerMessage,
+                botConfig.chatInstructions || 'You are a friendly bot.',
+                botConfig.movementInstructions,
+                botConfig.aiProviderRef,
+                spaceName,
+                context
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    // Send response
+                    if (fullMessage.trim()) {
+                        // Wait a bit for the space to sync
+                        setTimeout(() => {
+                            if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
+                                this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                                // Record bot's message in memory
+                                this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            }
+                        }, 500);
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[SocialBehavior] AI greeting error:`, error);
+            // Don't send fallback - just fail silently
         }
     }
 
