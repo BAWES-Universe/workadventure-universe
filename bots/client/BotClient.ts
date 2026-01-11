@@ -1402,11 +1402,63 @@ export class BotClient {
                 if (message.updateSpaceUserMessage.message) {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
+                        console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
                         this.behavior.onChatMessage(
                             message.updateSpaceUserMessage.spaceName,
                             chatMessage,
                             message.updateSpaceUserMessage.userId ?? 0
                         );
+                    }
+                }
+                break;
+
+            case 'publicEvent':
+                // Handle incoming chat messages from players (sent via publicEvent with spaceMessage)
+                if (message.publicEvent.spaceEvent?.event?.$case === 'spaceMessage') {
+                    const spaceMessage = message.publicEvent.spaceEvent.event.spaceMessage;
+                    const spaceName = message.publicEvent.spaceName;
+                    const senderName = spaceMessage.name;
+                    
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage: "${spaceMessage.message}" from ${senderName}, players map size: ${this.players.size}`);
+                    }
+                    
+                    // Find the player by name to get their userId
+                    let senderId = 0;
+                    for (const [userId, player] of this.players.entries()) {
+                        if (player.name === senderName) {
+                            senderId = userId;
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[Bot ${this.config.botId}] Found player ${senderName} with userId ${userId}`);
+                            }
+                            break;
+                        }
+                    }
+                    
+                    if (senderId === 0) {
+                        console.warn(`[Bot ${this.config.botId}] Could not find userId for player "${senderName}". Available players:`, Array.from(this.players.entries()).map(([id, p]) => `${p.name} (${id})`));
+                    }
+                    
+                    // Ignore messages from bots (including ourselves)
+                    if (senderId > 0 && !BotClient.isBot(senderId)) {
+                        if (!this.behavior) {
+                            console.warn(`[Bot ${this.config.botId}] Behavior is null, cannot handle chat message`);
+                            break;
+                        }
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
+                        }
+                        this.behavior.onChatMessage(
+                            spaceName,
+                            spaceMessage.message,
+                            senderId
+                        );
+                    } else {
+                        if (senderId === 0) {
+                            console.warn(`[Bot ${this.config.botId}] Skipping chat message: senderId is 0`);
+                        } else if (BotClient.isBot(senderId) && (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true')) {
+                            console.log(`[Bot ${this.config.botId}] Skipping chat message: sender is a bot (userId: ${senderId})`);
+                        }
                     }
                 }
                 break;

@@ -101,13 +101,26 @@ export class AdminApiService {
         }
 
         try {
+            const payload = {
+                ...config,
+                createdAt: config.createdAt.toISOString(),
+                updatedAt: config.updatedAt.toISOString(),
+            };
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Saving bot config for ${config.botId}:`, {
+                    botId: payload.botId,
+                    name: payload.name,
+                    hasAiProviderRef: !!payload.aiProviderRef,
+                    aiProviderRef: payload.aiProviderRef,
+                    hasChatInstructions: !!payload.chatInstructions,
+                    hasMovementInstructions: !!payload.movementInstructions,
+                });
+            }
+            
             await axios.post(
                 `${this.adminApiUrl}/api/bots/configuration`,
-                {
-                    ...config,
-                    createdAt: config.createdAt.toISOString(),
-                    updatedAt: config.updatedAt.toISOString(),
-                },
+                payload,
                 {
                     headers: {
                         Authorization: `Bearer ${this.adminApiToken}`,
@@ -115,8 +128,16 @@ export class AdminApiService {
                     },
                 }
             );
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Successfully saved bot config for ${config.botId}`);
+            }
         } catch (error) {
             console.error('[AdminApiService] Error saving bot configuration:', error);
+            if ((process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') && axios.isAxiosError(error) && error.response) {
+                console.error('[AdminApiService] Response status:', error.response.status);
+                console.error('[AdminApiService] Response data:', error.response.data);
+            }
             captureException(error);
             throw error;
         }
@@ -139,6 +160,17 @@ export class AdminApiService {
                     },
                 }
             );
+
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Fetched bot config for ${botId}:`, {
+                    botId: response.data.botId,
+                    name: response.data.name,
+                    hasAiProviderRef: !!response.data.aiProviderRef,
+                    aiProviderRef: response.data.aiProviderRef,
+                    hasChatInstructions: !!response.data.chatInstructions,
+                    hasMovementInstructions: !!response.data.movementInstructions,
+                });
+            }
 
             return {
                 ...response.data,

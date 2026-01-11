@@ -480,27 +480,55 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     onChatMessage(spaceName: string, message: string, senderId: number): void {
-        if (!this.bot) return;
+        if (!this.bot) {
+            console.warn(`[SocialBehavior] onChatMessage: bot is null`);
+            return;
+        }
 
         const botId = this.bot.getBotId();
-        const conversation = this.activeConversations.get(senderId);
-        
-        if (conversation) {
-            conversation.lastMessageTime = Date.now();
-            
-            // Store player's message in memory
-            this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
-            
-            // Extract personal information from message
-            this.conversationMemory.extractPersonalInfo(botId, senderId, message);
-            
-            // Generate AI response
-            this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
-                console.error(`[SocialBehavior] Error generating AI response:`, error);
-                // Send fallback message
-                this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
-            });
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
         }
+        
+        let conversation = this.activeConversations.get(senderId);
+        
+        // If no active conversation exists, create one (player initiated chat)
+        if (!conversation) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] No active conversation found for player ${senderId}, creating one...`);
+            }
+            const config = this.config as SocialBehaviorConfig;
+            this.startConversationWithPlayer(senderId, spaceName, config, botId);
+            conversation = this.activeConversations.get(senderId);
+            
+            // If still no conversation (startConversationWithPlayer might have failed), return
+            if (!conversation) {
+                console.warn(`[SocialBehavior] Failed to create conversation for player ${senderId}`);
+                return;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Created conversation for player ${senderId}`);
+            }
+        }
+        
+        conversation.lastMessageTime = Date.now();
+        
+        // Store player's message in memory
+        this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
+        
+        // Extract personal information from message
+        this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+        
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);
+        }
+        
+        // Generate AI response
+        this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
+            console.error(`[SocialBehavior] Error generating AI response:`, error);
+            // Send fallback message
+            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+        });
     }
 
     /**
@@ -517,13 +545,28 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] Fetching bot configuration for ${botId}...`);
+        }
+        
         // Get bot configuration
         const botConfig = await this.adminApiService.getBotConfiguration(botId);
-        if (!botConfig?.aiProviderRef) {
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn(`[SocialBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing)`);
-            }
+        if (!botConfig) {
+            console.error(`[SocialBehavior] Bot configuration not found for ${botId}`);
             return;
+        }
+        
+        if (!botConfig.aiProviderRef) {
+            console.warn(`[SocialBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing). Bot config:`, {
+                botId: botConfig.botId,
+                name: botConfig.name,
+                hasAiProviderRef: !!botConfig.aiProviderRef,
+            });
+            return;
+        }
+        
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] Using AI provider: ${botConfig.aiProviderRef}`);
         }
 
         // Get conversation context

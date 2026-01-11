@@ -153,9 +153,15 @@ export class IdleBehavior extends BaseBehavior {
     }
 
     onChatMessage(spaceName: string, message: string, senderId: number): void {
-        if (!this.bot) return;
+        if (!this.bot) {
+            console.warn(`[IdleBehavior] onChatMessage: bot is null`);
+            return;
+        }
 
         const botId = this.bot.getBotId();
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
+        }
 
         // Generate AI response
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
@@ -174,18 +180,37 @@ export class IdleBehavior extends BaseBehavior {
         playerMessage: string,
         botId: string
     ): Promise<void> {
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] generateAIResponseStream called for bot ${botId}`);
+        }
+        
         if (!this.bot || !this.aiService || !this.adminApiService) {
-            console.warn(`[IdleBehavior] Missing required services for AI response`);
+            console.warn(`[IdleBehavior] Missing required services for AI response: bot=${!!this.bot}, aiService=${!!this.aiService}, adminApiService=${!!this.adminApiService}`);
             return;
         }
 
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] Fetching bot configuration for ${botId}...`);
+        }
+        
         // Get bot configuration
         const botConfig = await this.adminApiService.getBotConfiguration(botId);
-        if (!botConfig?.aiProviderRef) {
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn(`[IdleBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing)`);
-            }
+        if (!botConfig) {
+            console.error(`[IdleBehavior] Bot configuration not found for ${botId}`);
             return;
+        }
+        
+        if (!botConfig.aiProviderRef) {
+            console.warn(`[IdleBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing). Bot config:`, {
+                botId: botConfig.botId,
+                name: botConfig.name,
+                hasAiProviderRef: !!botConfig.aiProviderRef,
+            });
+            return;
+        }
+        
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] Using AI provider: ${botConfig.aiProviderRef}`);
         }
 
         // Get conversation context (if ConversationMemory is available)
