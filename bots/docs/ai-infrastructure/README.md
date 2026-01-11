@@ -11,6 +11,8 @@ This folder contains documentation for the AI provider infrastructure, including
 - **[STREAMING.md](./STREAMING.md)** - Streaming implementation details
 - **[SECURITY.md](./SECURITY.md)** - Security considerations and best practices
 - **[PROVIDERS.md](./PROVIDERS.md)** - AI provider implementations (LMStudio, OpenAI, etc.)
+- **[FAQ.md](./FAQ.md)** - Frequently asked questions and answers
+- **[BILLING.md](./BILLING.md)** - Billing and cost management for AI usage
 
 ## Current Status
 

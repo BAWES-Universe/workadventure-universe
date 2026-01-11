@@ -79,14 +79,20 @@ We've chosen **direct mode** where the bot server makes AI provider calls direct
 
 **Responsibilities:**
 - Store AI provider configurations (credentials, endpoints, models)
+- Store bot `aiProviderRef` (string reference to provider)
 - Issue credentials to bot server (via service token)
 - Track AI usage (tokens, API calls, costs)
 - Manage provider enable/disable state
 
 **Endpoints Needed:**
-- `GET /api/bots/ai-providers/:providerId/credentials` - Get provider credentials
+- `GET /api/bots/ai-providers/:providerId/credentials` - Get provider credentials (using `aiProviderRef` from bot config)
 - `GET /api/bots/ai-providers?enabled=true` - List available providers
 - `POST /api/bots/ai-usage` - Track usage metrics
+
+**Existing Schema:**
+- Bot model already has `aiProviderRef String?` field
+- This is the reference string (e.g., "lmstudio-local", "openai-gpt4")
+- Bot server uses this to fetch full provider config from Admin API
 
 ### 2. Bot Server (AIService)
 
@@ -121,20 +127,23 @@ We've chosen **direct mode** where the bot server makes AI provider calls direct
 
 ```
 1. Player sends message → Behavior.onChatMessage()
-2. Behavior calls AIService.generateBotResponseStream()
-3. AIService fetches provider credentials (cached if available)
-4. AIService streams from AI provider:
+2. Behavior gets bot config (includes aiProviderRef: "lmstudio-local")
+3. Behavior calls AIService.generateBotResponseStream(..., aiProviderRef)
+4. AIService fetches provider credentials using aiProviderRef (cached if available)
+5. AIService streams from AI provider:
    - Chunk 1: "Hello"
    - Chunk 2: " there"
    - Chunk 3: "!"
    - Done: { tokensUsed: 3 }
-5. Behavior processes chunks:
-   - Accumulates full message
-   - Could send incremental updates (future)
-6. Behavior sends complete message via WebSocket
-7. Behavior stores in ConversationMemory
-8. Behavior tracks usage to Admin API
+6. Behavior processes chunks:
+   - Accumulates full message (WorkAdventure chat requires complete messages)
+   - Handles thinking tokens (logs for debugging)
+7. Behavior sends complete message via WebSocket (sendChatMessage)
+8. Behavior stores in ConversationMemory
+9. Behavior tracks usage to Admin API
 ```
+
+**Note:** WorkAdventure's chat system doesn't support incremental updates, so we accumulate chunks and send the complete message when done. This still benefits from streaming (lower memory, faster processing).
 
 ## Security Model
 

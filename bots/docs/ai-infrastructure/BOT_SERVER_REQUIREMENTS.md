@@ -138,7 +138,10 @@ private async generateAIResponseStream(
     const aiService = this.getAIService();
     const botConfig = await adminApiService.getBotConfiguration(botId);
     
-    if (!botConfig?.aiProvider) {
+    // Note: Bot config uses aiProviderRef (string reference to provider)
+    // This is the existing field in the Admin API bot model
+    if (!botConfig?.aiProviderRef) {
+        console.warn(`[SocialBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing)`);
         return;
     }
 
@@ -153,7 +156,7 @@ private async generateAIResponseStream(
             playerMessage,
             botConfig.chatInstructions || 'You are a friendly bot.',
             botConfig.movementInstructions,
-            botConfig.aiProvider,
+            botConfig.aiProviderRef, // This is the reference string (e.g., "lmstudio-local")
             spaceName,
             context
         )) {
@@ -162,7 +165,7 @@ private async generateAIResponseStream(
             }
             
             if (chunk.done) {
-                // Send complete message
+                // Send complete message (WorkAdventure chat requires complete messages)
                 this.bot.sendChatMessage(spaceName, fullMessage);
                 
                 // Store in memory
@@ -170,7 +173,7 @@ private async generateAIResponseStream(
                 
                 // Track usage
                 if (chunk.metadata?.tokensUsed) {
-                    await this.trackAIUsage(botId, botConfig.aiProvider, {
+                    await this.trackAIUsage(botId, botConfig.aiProviderRef, {
                         tokensUsed: chunk.metadata.tokensUsed,
                     });
                 }
@@ -365,6 +368,9 @@ private async trackUsage(
     providerId: string,
     metadata: { tokensUsed?: number; latency?: number; error?: boolean }
 ): Promise<void> {
+    // Calculate cost based on provider pricing model
+    const cost = this.calculateCost(providerId, metadata.tokensUsed || 0, metadata.latency || 0);
+    
     // Fire and forget
     fetch(`${this.adminApiUrl}/api/bots/ai-usage`, {
         method: 'POST',
@@ -378,6 +384,7 @@ private async trackUsage(
             tokensUsed: metadata.tokensUsed || 0,
             apiCalls: 1,
             latency: metadata.latency,
+            cost, // Calculated cost (for LMStudio: your pricing, for OpenAI/Anthropic: API cost or markup)
             error: metadata.error || false,
             timestamp: new Date().toISOString(),
         }),
@@ -385,6 +392,36 @@ private async trackUsage(
         // Don't throw - tracking shouldn't break bot functionality
         console.error(`[AIService] Failed to track usage:`, err);
     });
+}
+
+/**
+ * Calculate cost based on provider pricing model
+ * For LMStudio: Use your pricing (per-token, per-request, hybrid, etc.)
+ * For OpenAI/Anthropic: Use actual API cost or your markup
+ */
+private calculateCost(providerId: string, tokensUsed: number, latency: number): number {
+    const providerConfig = this.getProviderConfig(providerId);
+    if (!providerConfig) return 0;
+
+    // LMStudio: Your pricing model
+    if (providerConfig.type === 'lmstudio') {
+        // Per-token pricing (default)
+        const costPerToken = providerConfig.costPerToken || 0.00001;
+        return tokensUsed * costPerToken;
+        
+        // Or per-request + per-token (hybrid)
+        // const baseCost = providerConfig.costPerRequest || 0.001;
+        // return baseCost + (tokensUsed * costPerToken);
+    }
+
+    // OpenAI/Anthropic: Provider cost or markup
+    if (providerConfig.type === 'openai' || providerConfig.type === 'anthropic') {
+        const costPerToken = providerConfig.costPerToken || 0.00003;
+        const markup = providerConfig.markup || 1.0; // No markup by default
+        return (tokensUsed * costPerToken) * markup;
+    }
+
+    return 0;
 }
 ```
 

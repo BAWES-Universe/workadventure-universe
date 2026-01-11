@@ -8,7 +8,12 @@ This document outlines what needs to be implemented in the Admin API to support 
 
 **Endpoint:** `GET /api/bots/ai-providers/:providerId/credentials`
 
-**Purpose:** Bot server fetches provider credentials to make AI calls.
+**Purpose:** Bot server fetches provider credentials using the `aiProviderRef` from bot configuration.
+
+**How It Works:**
+1. Bot config has `aiProviderRef: "lmstudio-local"` (string reference)
+2. Bot server calls this endpoint with the reference
+3. Admin API returns full provider config with credentials
 
 **Authentication:** `Bearer BOT_SERVICE_TOKEN` (service token, not admin token)
 
@@ -109,14 +114,20 @@ Content-Type: application/json
 
 {
   "botId": "bot-123",
-  "providerId": "lmstudio",
+  "providerId": "lmstudio-local",
   "tokensUsed": 150,
   "apiCalls": 1,
   "latency": 1250,
+  "cost": 0.0015,  // Calculated cost (for LMStudio, this is your pricing)
   "error": false,
   "timestamp": "2025-01-09T12:00:00Z"
 }
 ```
+
+**Note on Cost:**
+- For **LMStudio**: Bot server calculates cost based on your pricing model (per token, per request, etc.)
+- For **OpenAI/Anthropic**: Cost is the actual API cost (or your markup)
+- Admin API stores cost for billing/analytics
 
 **Response:**
 ```json
@@ -170,6 +181,8 @@ CREATE TABLE bots_ai_usage (
     tokens_used INTEGER DEFAULT 0,
     api_calls INTEGER DEFAULT 1,
     cost DECIMAL(10,4), -- Cost in USD or credits
+    -- For LMStudio: Your calculated cost (based on your pricing)
+    -- For OpenAI/Anthropic: Actual API cost or your markup
     latency INTEGER, -- Milliseconds
     error BOOLEAN DEFAULT false,
     timestamp TIMESTAMP DEFAULT NOW(),
@@ -181,6 +194,13 @@ CREATE TABLE bots_ai_usage (
     INDEX idx_bot_provider_timestamp (bot_id, provider_id, timestamp)
 );
 ```
+
+**Cost Calculation:**
+- **LMStudio**: Bot server calculates cost based on your pricing model
+  - Per-token: `cost = tokensUsed * costPerToken`
+  - Per-request: `cost = apiCalls * costPerRequest`
+  - Hybrid: `cost = baseCost + (tokensUsed * costPerToken)`
+- **OpenAI/Anthropic**: Cost is actual API cost (from provider) or your markup
 
 ## Service Token Permissions
 

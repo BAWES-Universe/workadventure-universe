@@ -60,6 +60,8 @@ interface AIStreamChunk {
 
 **Current approach:** Accumulate chunks, send complete message when done.
 
+**Why?** WorkAdventure's chat system (`spaceMessage`) only accepts complete message strings. There's no native support for incremental updates.
+
 ```typescript
 let fullMessage = '';
 
@@ -76,13 +78,20 @@ for await (const chunk of stream) {
 ```
 
 **Pros:**
-- Simple implementation
-- Works with current WorkAdventure chat system
-- No UI changes needed
+- ✅ Simple implementation
+- ✅ Works with current WorkAdventure chat system
+- ✅ No upstream changes needed
+- ✅ Still benefits from streaming (lower memory, faster processing)
+- ✅ Handles thinking tokens (can log/store them)
 
 **Cons:**
-- User doesn't see streaming effect
-- Still waits for full response
+- ❌ User doesn't see tokens appearing in real-time
+- ❌ Still waits for full response before seeing message
+
+**Note:** Even though users don't see streaming, we still benefit:
+- Lower memory usage (process chunks, don't buffer full response)
+- Faster processing (can start sending as soon as done)
+- Better error handling (can detect issues mid-stream)
 
 ### Future: Incremental Updates
 

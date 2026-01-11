@@ -204,11 +204,74 @@ interface AnthropicConfig extends AIProviderConfig {
 
 ## Provider Comparison
 
-| Provider | Streaming | API Key | Cost | Local | Format |
-|----------|----------|---------|------|-------|--------|
-| LMStudio | ✅ | ❌ | Free | ✅ | OpenAI-compatible |
-| OpenAI | ✅ | ✅ | Paid | ❌ | OpenAI |
-| Anthropic | ✅ | ✅ | Paid | ❌ | Custom |
+| Provider | Streaming | API Key | Software Cost | Infrastructure | Your Pricing | Local | Format | Code Sharing |
+|----------|----------|---------|---------------|---------------|--------------|-------|--------|--------------|
+| LMStudio | ✅ | ❌ | Free (OSS) | Your servers | **You set price** | ✅ | OpenAI-compatible | Can share with OpenAI |
+| OpenAI | ✅ | ✅ | Paid (per token) | Included | Pass-through/markup | ❌ | OpenAI | Can share with LMStudio |
+| Anthropic | ✅ | ✅ | Paid (per token) | Included | Pass-through/markup | ❌ | Custom | **Separate implementation** |
+
+### Cost Models
+
+**LMStudio:**
+- ✅ Software is free (open source)
+- ⚠️ Infrastructure costs (servers, compute, GPU)
+- 💰 **You control pricing** - can charge per token, per request, or flat rate
+- 📊 Track usage and calculate costs based on your infrastructure
+
+**OpenAI/Anthropic:**
+- 💰 Provider charges per token
+- 📊 You can pass-through costs or add markup
+- 📈 Costs scale with usage
+
+## Implementation Strategy
+
+### Code Sharing
+
+**LMStudio and OpenAI:**
+- ✅ Same API format (OpenAI-compatible)
+- ✅ Same endpoint structure (`/v1/chat/completions`)
+- ✅ Same streaming format (SSE)
+- ✅ Can share 90% of code
+- ⚠️ Only difference: API key handling
+
+**Anthropic:**
+- ❌ Different API format
+- ❌ Different endpoint (`/v1/messages`)
+- ❌ Different request structure (system is separate field)
+- ❌ Different response format
+- ⚠️ Needs separate implementation (can share base utilities)
+
+### Recommended Approach
+
+1. **Create Base Provider Class:**
+   ```typescript
+   abstract class BaseAIProvider implements AIProvider {
+       // Common functionality: streaming parsing, error handling, retry logic
+   }
+   ```
+
+2. **LMStudio Provider:**
+   ```typescript
+   class LMStudioProvider extends BaseAIProvider {
+       // Extends base, no API key needed
+   }
+   ```
+
+3. **OpenAI Provider:**
+   ```typescript
+   class OpenAIProvider extends BaseAIProvider {
+       // Extends base, adds API key to headers
+       // Reuses all streaming logic from base
+   }
+   ```
+
+4. **Anthropic Provider:**
+   ```typescript
+   class AnthropicProvider implements AIProvider {
+       // Separate implementation (different API format)
+       // Can still use base utilities for error handling, etc.
+   }
+   ```
 
 ## Testing Providers
 
