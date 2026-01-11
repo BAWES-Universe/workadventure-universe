@@ -13,7 +13,9 @@ This folder contains documentation for the AI provider infrastructure, including
 - **[PROVIDERS.md](./PROVIDERS.md)** - AI provider implementations (LMStudio, OpenAI, etc.)
 - **[FAQ.md](./FAQ.md)** - Frequently asked questions and answers
 - **[BILLING.md](./BILLING.md)** - Billing and cost management for AI usage
-- **[FUTURE_PLANS.md](./FUTURE_PLANS.md)** - Advanced AI collaboration and autonomous systems roadmap
+- **[GETTING_STARTED.md](./GETTING_STARTED.md)** - **START HERE** - Step-by-step implementation guide
+- **[IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)** - Detailed implementation phases
+- **[FUTURE_PLANS.md](./FUTURE_PLANS.md)** - Future enhancements (NOT current work)
 
 ## Current Status
 

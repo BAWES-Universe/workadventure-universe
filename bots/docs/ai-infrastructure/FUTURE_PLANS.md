@@ -1,8 +1,16 @@
 # Future Plans: Advanced AI Collaboration & Autonomous Systems
 
+> **⚠️ NOTE: This document describes FUTURE enhancements, NOT current work.**
+> 
+> **Current Priority:** AI Integration (see `IMPLEMENTATION_PLAN.md`)
+> 
+> These plans are for AFTER the core AI integration is complete. Do not start these features until AI integration is working.
+
 ## Overview
 
 This document outlines potential future enhancements to enable advanced AI collaboration, autonomous orchestration, and external integrations. These capabilities would transform the bot system from individual agents into coordinated teams capable of complex tasks.
+
+**Status:** Planning/Reference Only - Not in Active Development
 
 ## Current Foundation
 
