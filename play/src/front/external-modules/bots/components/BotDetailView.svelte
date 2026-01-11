@@ -7,6 +7,7 @@
     import type { WokaData } from "../../../Components/Woka/WokaTypes";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
     import { selectedBotStore, upsertBot } from "../stores/BotEditorStore";
+    import { botApiService } from "../services/BotApiService";
     import BotTexturePicker from "./BotTexturePicker.svelte";
     import BotBehaviorEditor from "./BotBehaviorEditor.svelte";
     import BotInstructionsEditor from "./BotInstructionsEditor.svelte";
@@ -154,11 +155,46 @@
         }
     }
 
-    function handleTextureSelect(textureId: string) {
+    async function handleTextureSelect(textureId: string) {
         currentBot.characterTexture = textureId;
         currentBot.characterTextureIds = [textureId];
         editingTexture = false;
-        autoSave();
+
+        // Update store immediately for UI reactivity
+        upsertBot(currentBot);
+
+        // Save to API immediately (no debounce for texture changes)
+        if (currentBot?.id && botApiService.isInitialized()) {
+            try {
+                // Save to Admin API
+                await botApiService.updateBot(currentBot.id, {
+                    characterTextureId: textureId,
+                });
+
+                // Despawn and respawn bot to apply texture change
+                // Texture is set during spawn, so we need to respawn for it to take effect
+                const despawnResult = await botApiService.despawnBot(currentBot.id);
+                if (despawnResult.despawned) {
+                    // Wait a brief moment before respawning
+                    await new Promise<void>((resolve) => {
+                        setTimeout(() => {
+                            resolve();
+                        }, 100);
+                    });
+                    const spawnResult = await botApiService.spawnBot(currentBot.id);
+                    if (!spawnResult.spawned) {
+                        console.warn("[BotDetailView] Failed to respawn bot after texture change:", spawnResult.reason);
+                    }
+                } else {
+                    console.warn("[BotDetailView] Failed to despawn bot for texture change:", despawnResult.reason);
+                }
+            } catch (e) {
+                console.error("[BotDetailView] Failed to save texture change:", e);
+            }
+        }
+
+        // Also trigger the onSave callback for consistency
+        onSave();
     }
 
     onMount(() => {
