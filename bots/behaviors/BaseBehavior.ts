@@ -6,6 +6,8 @@ import type { BotClient } from '../client/BotClient';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
+import type { AIService } from '../ai/AIService';
+import type { AdminApiService } from '../server/AdminApiService';
 
 export interface BehaviorConfig {
     type: string;
@@ -19,6 +21,8 @@ export interface BehaviorConfig {
 export abstract class BaseBehavior {
     protected bot: BotClient | null = null;
     protected config: BehaviorConfig;
+    protected aiService: AIService | null = null;
+    protected adminApiService: AdminApiService | null = null;
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
@@ -63,6 +67,14 @@ export abstract class BaseBehavior {
             // Fallback to current position if no assignedSpace
             this.spawnPosition = { x: botPos.x, y: botPos.y };
         }
+    }
+
+    /**
+     * Set AI service and Admin API service (called by BotManager)
+     */
+    setServices(aiService: AIService, adminApiService: AdminApiService): void {
+        this.aiService = aiService;
+        this.adminApiService = adminApiService;
     }
 
     /**

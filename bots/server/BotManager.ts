@@ -7,6 +7,8 @@ import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
+import { ConversationMemory } from '../memory/ConversationMemory';
+import { AIService } from '../ai/AIService';
 
 export interface BotInstance {
     botId: string;
@@ -30,6 +32,8 @@ export class BotManager {
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
     private mapDataService: MapDataService;
+    private conversationMemory: ConversationMemory;
+    private aiService: AIService;
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
@@ -40,6 +44,17 @@ export class BotManager {
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
         this.mapDataService = new MapDataService();
+        
+        // Initialize conversation memory
+        this.conversationMemory = new ConversationMemory(50, 1000);
+        
+        // Initialize AI service
+        const adminApiUrl = process.env.ADMIN_API_URL || '';
+        this.aiService = new AIService(
+            this.conversationMemory,
+            this.adminApiService,
+            adminApiUrl
+        );
     }
     
     /**
@@ -231,6 +246,9 @@ export class BotManager {
         };
         
         behavior = createBehavior(config.behaviorType, behaviorConfig);
+        
+        // Set services for behavior
+        behavior.setServices(this.aiService, this.adminApiService);
 
         client.setBehavior(behavior);
 
@@ -325,6 +343,20 @@ export class BotManager {
      */
     getAllBotInstances(): BotInstance[] {
         return Array.from(this.bots.values());
+    }
+
+    /**
+     * Get AIService instance
+     */
+    getAIService(): AIService {
+        return this.aiService;
+    }
+
+    /**
+     * Get ConversationMemory instance
+     */
+    getConversationMemory(): ConversationMemory {
+        return this.conversationMemory;
     }
 
     /**

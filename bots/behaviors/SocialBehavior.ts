@@ -494,8 +494,73 @@ export class SocialBehavior extends BaseBehavior {
             // Extract personal information from message
             this.conversationMemory.extractPersonalInfo(botId, senderId, message);
             
-            // TODO: Process message with AI and respond
-            // AI will use conversationMemory.getConversationContext() to get full context
+            // Generate AI response
+            this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
+                console.error(`[SocialBehavior] Error generating AI response:`, error);
+                // Send fallback message
+                this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            });
+        }
+    }
+
+    /**
+     * Generate AI response stream and send to player
+     */
+    private async generateAIResponseStream(
+        spaceName: string,
+        playerId: number,
+        playerMessage: string,
+        botId: string
+    ): Promise<void> {
+        if (!this.bot || !this.aiService || !this.adminApiService) {
+            console.warn(`[SocialBehavior] Missing required services for AI response`);
+            return;
+        }
+
+        // Get bot configuration
+        const botConfig = await this.adminApiService.getBotConfiguration(botId);
+        if (!botConfig?.aiProviderRef) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[SocialBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing)`);
+            }
+            return;
+        }
+
+        // Get conversation context
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
+
+        // Generate streaming response
+        let fullMessage = '';
+        
+        try {
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                playerMessage,
+                botConfig.chatInstructions || 'You are a friendly bot.',
+                botConfig.movementInstructions,
+                botConfig.aiProviderRef,
+                spaceName,
+                context
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    // Send complete message (WorkAdventure chat requires complete messages)
+                    if (fullMessage.trim()) {
+                        this.bot.sendChatMessage(spaceName, fullMessage);
+                        
+                        // Store in memory
+                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[SocialBehavior] AI error:`, error);
+            this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }
 

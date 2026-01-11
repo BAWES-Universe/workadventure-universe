@@ -27,6 +27,8 @@ export interface BotConfiguration {
     behaviorConfig: Record<string, any>;
     
     // AI Configuration (Sensitive - stored in Admin API only)
+    aiProviderRef?: string; // Reference to AI provider (e.g., "lmstudio-local")
+    // Deprecated fields (keep for backward compatibility):
     aiProvider?: 'lmstudio' | 'ultravox' | 'gpt-voice';
     aiConfig?: {
         // Sensitive credentials (never in WAM files)
@@ -349,6 +351,150 @@ export class AdminApiService {
         } catch (error) {
             console.error('[AdminApiService] Error tracking message:', error);
             // Don't throw
+        }
+    }
+
+    /**
+     * Get AI provider credentials from Admin API
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     */
+    async getAIProviderCredentials(providerId: string): Promise<{
+        providerId: string;
+        name: string;
+        type: string;
+        enabled: boolean;
+        endpoint: string;
+        apiKeyEncrypted: string | null;
+        model: string;
+        temperature: number;
+        maxTokens: number;
+        supportsStreaming: boolean;
+        settings?: Record<string, any>;
+    } | null> {
+        if (!this.isConfigured()) {
+            return null;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+
+        try {
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/ai-providers/${providerId}/credentials`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                    },
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                return null;
+            }
+            console.error('[AdminApiService] Error getting AI provider credentials:', error);
+            captureException(error as Error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get available AI providers
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     */
+    async getAvailableAIProviders(enabled?: boolean): Promise<Array<{
+        providerId: string;
+        name: string;
+        type: string;
+        enabled: boolean;
+        supportsStreaming: boolean;
+    }>> {
+        if (!this.isConfigured()) {
+            return [];
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            throw new Error('BOT_SERVICE_TOKEN environment variable is not set');
+        }
+
+        try {
+            const params: Record<string, any> = {};
+            if (enabled !== undefined) {
+                params.enabled = enabled;
+            }
+
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/ai-providers`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                    },
+                    params,
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            console.error('[AdminApiService] Error getting available AI providers:', error);
+            captureException(error as Error);
+            return [];
+        }
+    }
+
+    /**
+     * Track AI usage
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     * Fire-and-forget (doesn't throw errors)
+     */
+    async trackAIUsage(usage: {
+        botId: string;
+        providerId: string;
+        tokensUsed?: number;
+        apiCalls?: number;
+        durationSeconds?: number | null;
+        cost?: number;
+        latency?: number;
+        error?: boolean;
+        timestamp?: string;
+    }): Promise<void> {
+        if (!this.isConfigured()) {
+            return;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, skipping AI usage tracking');
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/ai-usage`,
+                {
+                    botId: usage.botId,
+                    providerId: usage.providerId,
+                    tokensUsed: usage.tokensUsed || 0,
+                    apiCalls: usage.apiCalls || 1,
+                    durationSeconds: usage.durationSeconds ?? null,
+                    cost: usage.cost ?? null,
+                    latency: usage.latency ?? null,
+                    error: usage.error || false,
+                    timestamp: usage.timestamp || new Date().toISOString(),
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+        } catch (error) {
+            // Fire-and-forget: don't throw, just log
+            console.error('[AdminApiService] Error tracking AI usage:', error);
         }
     }
 }

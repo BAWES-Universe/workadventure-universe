@@ -11,6 +11,8 @@ services:
       PUSHER_URL: ${PUSHER_URL:-http://play.workadventure.localhost}
       ADMIN_API_URL: ${ADMIN_API_URL:-}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       WORKADVENTURE_URL: ws://pusher:8080
       REDIS_HOST: redis
       REDIS_PORT: 6379

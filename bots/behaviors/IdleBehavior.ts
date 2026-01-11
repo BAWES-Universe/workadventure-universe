@@ -153,11 +153,75 @@ export class IdleBehavior extends BaseBehavior {
     }
 
     onChatMessage(spaceName: string, message: string, senderId: number): void {
-        // Respond to chat messages
-        // This will be handled by AI provider (LMStudio, etc.)
-        // For now, just acknowledge
         if (!this.bot) return;
-        // TODO: Integrate with AI provider
+
+        const botId = this.bot.getBotId();
+
+        // Generate AI response
+        this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
+            console.error(`[IdleBehavior] Error generating AI response:`, error);
+            // Send fallback message
+            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+        });
+    }
+
+    /**
+     * Generate AI response stream and send to player
+     */
+    private async generateAIResponseStream(
+        spaceName: string,
+        playerId: number,
+        playerMessage: string,
+        botId: string
+    ): Promise<void> {
+        if (!this.bot || !this.aiService || !this.adminApiService) {
+            console.warn(`[IdleBehavior] Missing required services for AI response`);
+            return;
+        }
+
+        // Get bot configuration
+        const botConfig = await this.adminApiService.getBotConfiguration(botId);
+        if (!botConfig?.aiProviderRef) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[IdleBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing)`);
+            }
+            return;
+        }
+
+        // Get conversation context (if ConversationMemory is available)
+        // For now, use empty context - can be enhanced later
+        const context = '';
+
+        // Generate streaming response
+        let fullMessage = '';
+        
+        try {
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                playerMessage,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.movementInstructions,
+                botConfig.aiProviderRef,
+                spaceName,
+                context
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    // Send complete message
+                    if (fullMessage.trim()) {
+                        this.bot.sendChatMessage(spaceName, fullMessage);
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[IdleBehavior] AI error:`, error);
+            this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+        }
     }
 
     private greetPlayer(playerId: number): void {
