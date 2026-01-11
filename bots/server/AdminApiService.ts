@@ -28,19 +28,6 @@ export interface BotConfiguration {
     
     // AI Configuration (Sensitive - stored in Admin API only)
     aiProviderRef?: string; // Reference to AI provider (e.g., "lmstudio-local")
-    // Deprecated fields (keep for backward compatibility):
-    aiProvider?: 'lmstudio' | 'ultravox' | 'gpt-voice';
-    aiConfig?: {
-        // Sensitive credentials (never in WAM files)
-        apiKey?: string;
-        endpoint?: string;
-        token?: string;
-        // Public config
-        model?: string;
-        temperature?: number;
-        maxTokens?: number;
-        [key: string]: any;
-    };
     
     // Chat Instructions (Sensitive - stored in Admin API only)
     chatInstructions?: string; // System prompt/instructions for AI behavior

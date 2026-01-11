@@ -545,6 +545,31 @@ export class BotApiService {
             return { summoned: false, reason: String(error) };
         }
     }
+
+    /**
+     * Get available AI providers (for bot editor UI)
+     */
+    async getAvailableAIProviders(enabled: boolean = true): Promise<
+        Array<{
+            providerId: string;
+            name: string;
+            type: string;
+            enabled: boolean;
+            supportsStreaming: boolean;
+        }>
+    > {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/ai-providers?enabled=${enabled}`, {
+                method: "GET",
+            });
+            return response.json();
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error getting AI providers:", error);
+            }
+            return [];
+        }
+    }
 }
 
 // Export singleton instance

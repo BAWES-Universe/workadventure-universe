@@ -364,6 +364,18 @@ export class BotAPI {
             }
         });
 
+        // Get available AI providers (for bot editor UI) - Public endpoint (only returns metadata, no credentials)
+        this.app.get('/api/bots/ai-providers', async (req: Request, res: Response) => {
+            try {
+                const enabled = req.query.enabled === 'true' || req.query.enabled === undefined;
+                const providers = await this.adminApiService.getAvailableAIProviders(enabled);
+                res.json(providers);
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting AI providers:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // Apply authentication ONLY to /api/bots routes (NOT /api/debug, /dev/movement, etc.)
         // Movement endpoints are registered at /dev/movement/* to bypass any /api/* middleware
         this.app.use('/api/bots', authenticateToken);
@@ -434,8 +446,7 @@ export class BotAPI {
                     userId: req.userIdentifier,
                     behaviorType: config.behaviorType,
                     behaviorConfig: config.behaviorConfig || { type: config.behaviorType },
-                    aiProvider: config.aiProvider,
-                    aiConfig: config.aiConfig,
+                    aiProviderRef: config.aiProviderRef,
                     chatInstructions: config.chatInstructions,
                     movementInstructions: config.movementInstructions,
                     assignedSpace: config.assignedSpace,

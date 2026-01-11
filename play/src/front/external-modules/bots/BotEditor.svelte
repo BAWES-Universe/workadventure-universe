@@ -39,6 +39,7 @@
     // Debounced auto-save for position/radius changes
     let saveTimeout: ReturnType<typeof setTimeout> | null = null;
     let lastSavedBotConfig: string | null = null;
+    let lastSavedAIConfig: string | null = null;
 
     const unsubscribeSelectedBot = selectedBotStore.subscribe((bot) => {
         selectedBot = bot || null;
@@ -46,6 +47,11 @@
         // Auto-save when bot's config changes (position, radius, etc.) - debounced
         if (bot && botApiService.isInitialized()) {
             const currentConfig = JSON.stringify(bot.behaviorConfig);
+            const currentAIConfig = JSON.stringify({
+                aiProviderRef: bot.aiProviderRef,
+                chatInstructions: bot.chatInstructions,
+                movementInstructions: bot.movementInstructions,
+            });
 
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
@@ -79,9 +85,45 @@
                     })();
                 }, 1000);
             }
+
+            // Auto-save when AI config changes (provider, instructions) - debounced
+            if (currentAIConfig !== lastSavedAIConfig) {
+                // Clear any pending save
+                if (saveTimeout) {
+                    clearTimeout(saveTimeout);
+                }
+
+                // Debounce saves (wait 1 second after last change)
+                saveTimeout = setTimeout(() => {
+                    void (async () => {
+                        try {
+                            await botApiService.updateBot(bot.id, {
+                                aiProviderRef: bot.aiProviderRef,
+                                chatInstructions: bot.chatInstructions,
+                                movementInstructions: bot.movementInstructions,
+                            });
+                            lastSavedAIConfig = currentAIConfig;
+                        } catch (e) {
+                            console.error("[BotEditor] Failed to auto-save bot AI config:", e);
+
+                            // Check if it's an authentication error - show error for auth issues
+                            const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;
+                            if (isAuthError) {
+                                error = (e as Error).message;
+                                // Clear error after 5 seconds
+                                setTimeout(() => {
+                                    error = null;
+                                }, 5000);
+                            }
+                            // For other errors, just log (don't show for auto-saves)
+                        }
+                    })();
+                }, 1000);
+            }
         } else {
             // Reset when no bot selected
             lastSavedBotConfig = null;
+            lastSavedAIConfig = null;
         }
     });
 
@@ -268,6 +310,7 @@
                 enabled: selectedBot.enabled,
                 behaviorType: selectedBot.behaviorType,
                 behaviorConfig: selectedBot.behaviorConfig,
+                aiProviderRef: selectedBot.aiProviderRef,
                 chatInstructions: selectedBot.chatInstructions,
                 movementInstructions: selectedBot.movementInstructions,
             };
@@ -289,6 +332,7 @@
                     behaviorType: updatedBot.behaviorType as "idle" | "patrol" | "social",
                     assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
                 },
+                aiProviderRef: updatedBot.aiProviderRef,
                 chatInstructions: updatedBot.chatInstructions || "",
                 movementInstructions: updatedBot.movementInstructions || "",
                 createdAt: updatedBot.createdAt || new Date().toISOString(),
