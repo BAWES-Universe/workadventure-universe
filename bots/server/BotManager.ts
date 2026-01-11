@@ -250,6 +250,9 @@ export class BotManager {
         // Set services for behavior
         behavior.setServices(this.aiService, this.adminApiService);
 
+        // Store full config in client so behaviors can access it without HTTP requests
+        client.setFullConfig(config);
+
         client.setBehavior(behavior);
 
         // Connect bot
@@ -364,11 +367,7 @@ export class BotManager {
      */
     async updateBot(
         botId: string,
-        updates: {
-            position?: { x: number; y: number };
-            behaviorConfig?: Record<string, unknown>;
-            behaviorType?: string;
-        }
+        updates: Partial<BotConfiguration>
     ): Promise<{ updated: boolean; reason?: string; changes?: string[] }> {
         const instance = this.bots.get(botId);
         if (!instance) {
@@ -490,6 +489,37 @@ export class BotManager {
             }
             if (updates.behaviorConfig) {
                 changes.push('behaviorConfig');
+            }
+        }
+
+        // Handle AI configuration updates (aiProviderRef, chatInstructions, movementInstructions)
+        // Check if any AI config fields are present in the updates (including empty strings)
+        const aiConfigUpdated = 'aiProviderRef' in updates || 
+                               'chatInstructions' in updates || 
+                               'movementInstructions' in updates;
+        
+        if (aiConfigUpdated) {
+            // Update stored config (allow empty strings to clear values)
+            if ('aiProviderRef' in updates) {
+                instance.config.aiProviderRef = updates.aiProviderRef;
+            }
+            if ('chatInstructions' in updates) {
+                instance.config.chatInstructions = updates.chatInstructions;
+            }
+            if ('movementInstructions' in updates) {
+                instance.config.movementInstructions = updates.movementInstructions;
+            }
+            
+            // Update BotClient's fullConfig so behaviors get the new config immediately
+            instance.client.setFullConfig(instance.config);
+            
+            changes.push('aiConfig');
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Updated AI config for bot ${botId}:`, {
+                    aiProviderRef: instance.config.aiProviderRef,
+                    chatInstructions: instance.config.chatInstructions?.substring(0, 50) + (instance.config.chatInstructions && instance.config.chatInstructions.length > 50 ? '...' : ''),
+                    hasMovementInstructions: !!instance.config.movementInstructions,
+                });
             }
         }
 

@@ -26,6 +26,7 @@ import type { BaseBehavior } from '../behaviors/BaseBehavior';
 import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
+import type { BotConfiguration } from '../server/AdminApiService';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -79,6 +80,9 @@ export class BotClient {
     private readonly STUCK_THRESHOLD = 10; // Pixels - increased to account for slow movement
     private readonly STUCK_TIME = 4000; // 4 seconds - give bots more time to start moving
     private debugFrameCount: number = 0; // For debug logging
+    
+    // Full bot configuration (stored at spawn to avoid HTTP requests)
+    private fullConfig: BotConfiguration | null = null;
 
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
@@ -1141,6 +1145,22 @@ export class BotClient {
      */
     getBotId(): string {
         return this.config.botId;
+    }
+
+    /**
+     * Set full bot configuration (called by BotManager on spawn)
+     * This avoids HTTP requests to fetch config during conversations
+     */
+    setFullConfig(config: BotConfiguration): void {
+        this.fullConfig = config;
+    }
+
+    /**
+     * Get full bot configuration
+     * Returns null if not set (should only happen if bot wasn't spawned via BotManager)
+     */
+    getFullConfig(): BotConfiguration | null {
+        return this.fullConfig;
     }
 
     /**

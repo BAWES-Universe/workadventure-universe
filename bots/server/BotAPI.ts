@@ -492,6 +492,14 @@ export class BotAPI {
 
                 // Update running bot if it exists
                 if (this.botManager.getBot(botId)) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotAPI] Updating running bot ${botId} with:`, {
+                            hasAiProviderRef: 'aiProviderRef' in updates,
+                            hasChatInstructions: 'chatInstructions' in updates,
+                            hasMovementInstructions: 'movementInstructions' in updates,
+                            chatInstructions: updates.chatInstructions,
+                        });
+                    }
                     await this.botManager.updateBot(botId, updates);
                 }
 

@@ -684,12 +684,12 @@ export class PatrolBehavior extends BaseBehavior {
         playerId: number,
         botId: string
     ): Promise<void> {
-        if (!this.bot || !this.aiService || !this.adminApiService) {
+        if (!this.bot || !this.aiService) {
             return;
         }
 
-        // Get bot configuration
-        const botConfig = await this.adminApiService.getBotConfiguration(botId);
+        // Get bot configuration from client (stored at spawn, no HTTP request needed)
+        const botConfig = this.bot.getFullConfig();
         if (!botConfig?.aiProviderRef) {
             // No AI provider configured - don't send greeting
             return;
@@ -723,14 +723,11 @@ export class PatrolBehavior extends BaseBehavior {
                 if (chunk.done) {
                     // Send response
                     if (fullMessage.trim()) {
-                        // Wait a bit for the space to sync
-                        setTimeout(() => {
-                            if (this.bot && this.currentSpaceName === spaceName) {
-                                this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                                // Store bot's message in memory
-                                this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
-                            }
-                        }, 500);
+                        if (this.bot && this.currentSpaceName === spaceName) {
+                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            // Store bot's message in memory
+                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                        }
                     }
                     break;
                 }
@@ -772,13 +769,13 @@ export class PatrolBehavior extends BaseBehavior {
         playerMessage: string,
         botId: string
     ): Promise<void> {
-        if (!this.bot || !this.aiService || !this.adminApiService) {
+        if (!this.bot || !this.aiService) {
             console.warn(`[PatrolBehavior] Missing required services for AI response`);
             return;
         }
 
-        // Get bot configuration
-        const botConfig = await this.adminApiService.getBotConfiguration(botId);
+        // Get bot configuration from client (stored at spawn, no HTTP request needed)
+        const botConfig = this.bot.getFullConfig();
         if (!botConfig?.aiProviderRef) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[PatrolBehavior] Bot ${botId} has no AI provider configured (aiProviderRef missing)`);
