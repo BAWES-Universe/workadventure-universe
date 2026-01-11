@@ -24,6 +24,7 @@
     let saveError: string | null = null;
     let wokaData: WokaData | null = null;
     let assetsDirection: number = 0;
+    let availableProviders: Array<{ providerId: string; name: string; enabled: boolean }> = [];
 
     // Editing states
     let editingName = false;
@@ -54,6 +55,7 @@
     $: if (bot && bot.id !== currentBot?.id) {
         currentBot = {
             ...bot,
+            aiProviderRef: bot.aiProviderRef,
             behaviorConfig: bot.behaviorConfig || {
                 assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
             },
@@ -61,6 +63,8 @@
         if (!currentBot.behaviorConfig.assignedSpace) {
             currentBot.behaviorConfig.assignedSpace = { center: { x: 0, y: 0 }, radius: 0 };
         }
+        // Reload providers when bot changes to ensure we have the latest list
+        void loadProviders();
     }
 
     // Auto-save when currentBot changes
@@ -199,7 +203,43 @@
 
     onMount(() => {
         void loadWokaData();
+        void loadProviders();
     });
+
+    async function loadProviders() {
+        if (botApiService.isInitialized()) {
+            try {
+                const providers = await botApiService.getAvailableAIProviders(true);
+                availableProviders = providers.map((p) => ({
+                    providerId: p.providerId,
+                    name: p.name,
+                    enabled: p.enabled,
+                }));
+            } catch (e) {
+                console.error("[BotDetailView] Failed to load AI providers:", e);
+            }
+        }
+    }
+
+    // Reactive computed value for provider display name
+    // Updates automatically when availableProviders or currentBot.aiProviderRef changes
+    $: providerDisplayName = (() => {
+        const providerId = currentBot?.aiProviderRef;
+        if (!providerId) return "Not set";
+        // Try to find provider (case-insensitive match)
+        const provider = availableProviders.find((p) => p.providerId.toLowerCase() === providerId.toLowerCase());
+        if (!provider) {
+            // If provider not found and we have providers loaded, it might not exist
+            // If providers aren't loaded yet, show ID temporarily
+            if (availableProviders.length === 0) {
+                return providerId; // Show ID while loading
+            }
+            // Provider not found in list - return ID
+            return providerId;
+        }
+        // Match the same format as the dropdown: "Name (Disabled)" if disabled
+        return provider.enabled ? provider.name : `${provider.name} (Disabled)`;
+    })();
 </script>
 
 <div class="bot-detail-view flex flex-col h-full min-h-0">
@@ -428,6 +468,12 @@
                     </div>
                 {:else}
                     <div class="space-y-4">
+                        <div>
+                            <p class="text-sm text-white/80 font-semibold mb-2">AI Provider</p>
+                            <p class="text-sm text-white/70">
+                                {providerDisplayName}
+                            </p>
+                        </div>
                         <div>
                             <p class="text-sm text-white/80 font-semibold mb-2">Chat instructions</p>
                             <p class="text-sm text-white/70 whitespace-pre-wrap">

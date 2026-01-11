@@ -621,6 +621,7 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
                     radius: 0,
                 },
             },
+            aiProviderRef: (apiBot.aiProviderRef as string) || undefined,
             chatInstructions: (apiBot.chatInstructions as string) || "",
             movementInstructions: (apiBot.movementInstructions as string) || "",
             createdAt: (apiBot.createdAt as string) || new Date().toISOString(),
