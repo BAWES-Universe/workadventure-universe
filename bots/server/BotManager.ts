@@ -482,6 +482,8 @@ export class BotManager {
             };
             
             const behavior = createBehavior(newBehaviorType, newBehaviorConfig);
+            // Set services for behavior (required for AI responses)
+            behavior.setServices(this.aiService, this.adminApiService);
             instance.client.setBehavior(behavior);
             
             if (updates.behaviorType) {
