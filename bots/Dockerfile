@@ -33,6 +33,11 @@ COPY libs ./libs
 # The proto files are generated in ../libs/messages/src/ts-proto-generated (relative to /usr/src)
 COPY --from=proto-builder /usr/libs/messages/src/ts-proto-generated ./libs/messages/src/ts-proto-generated
 
+# IMPORTANT: Override ApiVersion.ts with the generated one from proto-builder
+# This ensures bot-server uses the same hash that was generated during build
+# The proto-builder runs 'npm run tag-version' which generates the hash
+COPY --from=proto-builder /usr/libs/messages/src/JsonMessages/ApiVersion.ts ./libs/messages/src/JsonMessages/ApiVersion.ts
+
 # Install all workspace dependencies (this resolves workspace:* protocol)
 # We install with dev dependencies to get ts-node for running TypeScript
 RUN npm ci
