@@ -10,6 +10,9 @@ RUN npm run tag-version && npm run ts-proto
 # main stage
 FROM node:20.18-bullseye-slim
 
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /usr/src/app
 
 # Copy root package files
