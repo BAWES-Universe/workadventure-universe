@@ -36,7 +36,7 @@ env:
 
 jobs:
   build-play:
-    if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'play' || github.event_name == 'push' }}
+    if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'play' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -245,6 +245,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-bot-server:
+    needs: build-play
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
