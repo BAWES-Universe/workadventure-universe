@@ -235,6 +235,10 @@
         isLoading = true;
         error = null;
 
+        // Clear bot store immediately to prevent showing old bots from previous room
+        botPreviewsStore.set(new Map());
+        selectedBotStore.set(undefined);
+
         try {
             const loadedBots = await botApiService.listBots();
             // Update store with loaded bots

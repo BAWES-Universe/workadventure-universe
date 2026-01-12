@@ -150,6 +150,13 @@
             <p class="text-sm text-white/60 mt-1">
                 {bots.length}
                 {bots.length === 1 ? "bot" : "bots"} on this map
+                {#if bots.length > 0}
+                    {@const activeCount = bots.filter((b) => b.enabled !== false).length}
+                    {@const inactiveCount = bots.filter((b) => b.enabled === false).length}
+                    {#if activeCount > 0 && inactiveCount > 0}
+                        <span class="text-white/40"> • {activeCount} active, {inactiveCount} inactive</span>
+                    {/if}
+                {/if}
             </p>
         </div>
         <button
@@ -193,23 +200,62 @@
                 </button>
             </div>
         {:else}
-            <div class="grid grid-cols-1 gap-3">
-                {#each bots as bot (bot.id)}
-                    {#if process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true"}
-                        {@const duplicateCheck = bots.filter((b) => b.id === bot.id).length}
-                        {#if duplicateCheck > 1}
-                            <!-- DEBUG: Duplicate detected -->
-                        {/if}
-                    {/if}
-                    <BotCard
-                        {bot}
-                        onSelect={() => onSelectBot(bot)}
-                        onToggle={handleToggleBot}
-                        onHover={handleHoverBot}
-                        onLocate={() => handleLocate(bot)}
-                        showLocateButton={!!onLocateBot}
-                    />
-                {/each}
+            {@const activeBots = bots.filter((bot) => bot.enabled !== false)}
+            {@const inactiveBots = bots.filter((bot) => bot.enabled === false)}
+            <div class="space-y-6">
+                <!-- Active Bots Section -->
+                {#if activeBots.length > 0}
+                    <div>
+                        <h3 class="text-sm font-semibold text-white/80 mb-3 uppercase tracking-wide">
+                            Active ({activeBots.length})
+                        </h3>
+                        <div class="grid grid-cols-1 gap-3">
+                            {#each activeBots as bot (bot.id)}
+                                {#if process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true"}
+                                    {@const duplicateCheck = bots.filter((b) => b.id === bot.id).length}
+                                    {#if duplicateCheck > 1}
+                                        <!-- DEBUG: Duplicate detected -->
+                                    {/if}
+                                {/if}
+                                <BotCard
+                                    {bot}
+                                    onSelect={() => onSelectBot(bot)}
+                                    onToggle={handleToggleBot}
+                                    onHover={handleHoverBot}
+                                    onLocate={() => handleLocate(bot)}
+                                    showLocateButton={!!onLocateBot}
+                                />
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
+
+                <!-- Inactive Bots Section -->
+                {#if inactiveBots.length > 0}
+                    <div>
+                        <h3 class="text-sm font-semibold text-white/60 mb-3 uppercase tracking-wide">
+                            Inactive ({inactiveBots.length})
+                        </h3>
+                        <div class="grid grid-cols-1 gap-3">
+                            {#each inactiveBots as bot (bot.id)}
+                                {#if process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true"}
+                                    {@const duplicateCheck = bots.filter((b) => b.id === bot.id).length}
+                                    {#if duplicateCheck > 1}
+                                        <!-- DEBUG: Duplicate detected -->
+                                    {/if}
+                                {/if}
+                                <BotCard
+                                    {bot}
+                                    onSelect={() => onSelectBot(bot)}
+                                    onToggle={handleToggleBot}
+                                    onHover={handleHoverBot}
+                                    onLocate={() => handleLocate(bot)}
+                                    showLocateButton={!!onLocateBot}
+                                />
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
             </div>
         {/if}
     </div>
