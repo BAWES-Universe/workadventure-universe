@@ -41,6 +41,10 @@ export class PatrolBehavior extends BaseBehavior {
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
+        this.conversationMemory = new ConversationMemory(
+            config.conversationHistorySize || 50,
+            1000 // Max 1000 player memories per bot
+        );
         this.updateTargetWaypoint();
     }
 
