@@ -1,0 +1,35 @@
+{
+  "name": "@workadventure/bots",
+  "version": "0.1.0",
+  "description": "WorkAdventure Bot System",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "npx tsx watch --clear-screen=false server/index.ts",
+    "start": "ts-node --transpile-only server/index.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@workadventure/messages": "workspace:*",
+    "ws": "^8.16.0",
+    "redis": "^4.3.1",
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^9.0.0",
+    "easystarjs": "^0.4.4"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.10",
+    "@types/node": "^20.11.0",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/uuid": "^9.0.8",
+    "@types/easystarjs": "^0.0.5",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  },
+  "peerDependencies": {
+    "@workadventure/map-editor": "workspace:*"
+  }
+}
+

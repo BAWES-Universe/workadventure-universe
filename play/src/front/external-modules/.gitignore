@@ -4,3 +4,5 @@
 !admin-api/**
 !teleport/
 !teleport/**
+!bots/
+!bots/**
