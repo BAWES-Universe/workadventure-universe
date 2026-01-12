@@ -524,6 +524,31 @@ export class BotManager {
             });
         }
 
+        // Handle other configuration updates (name, description, enabled, etc.)
+        // These don't require respawn but should update the stored config
+        if ('name' in updates) {
+            instance.config.name = updates.name || instance.config.name;
+            changes.push('name');
+        }
+        if ('description' in updates) {
+            // Note: description might not be in BotConfiguration interface, but we'll store it if provided
+            (instance.config as any).description = updates.description;
+            changes.push('description');
+        }
+        if ('enabled' in updates) {
+            instance.config.enabled = updates.enabled;
+            changes.push('enabled');
+        }
+        if ('characterTextureIds' in updates) {
+            instance.config.characterTextureIds = updates.characterTextureIds;
+            changes.push('characterTextureIds');
+        }
+
+        // Update BotClient's fullConfig if any config fields changed
+        if (changes.length > 0 && (aiConfigUpdated || 'name' in updates || 'description' in updates || 'enabled' in updates || 'characterTextureIds' in updates)) {
+            instance.client.setFullConfig(instance.config);
+        }
+
         console.log(`[BotManager] Bot ${botId} updated: ${changes.join(', ')}`);
         return { updated: true, changes };
     }
