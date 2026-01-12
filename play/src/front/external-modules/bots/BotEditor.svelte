@@ -238,6 +238,8 @@
         // Clear bot store immediately to prevent showing old bots from previous room
         botPreviewsStore.set(new Map());
         selectedBotStore.set(undefined);
+        // Reset mode to list when clearing bots (e.g., when navigating to different map)
+        botEditorModeStore.set("list");
 
         try {
             const loadedBots = await botApiService.listBots();
