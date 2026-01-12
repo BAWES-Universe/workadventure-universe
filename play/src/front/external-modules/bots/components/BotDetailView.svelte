@@ -49,6 +49,10 @@
 
     onDestroy(() => {
         unsubscribe();
+        // Clear any pending auto-save timeout
+        if (autoSaveTimeout) {
+            clearTimeout(autoSaveTimeout);
+        }
     });
 
     // Initialize from prop
@@ -67,11 +71,35 @@
         void loadProviders();
     }
 
-    // Auto-save when currentBot changes
+    // Debounced auto-save to prevent API calls on every keystroke
+    let autoSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    // Auto-save when currentBot changes (debounced)
     function autoSave() {
         if (currentBot?.id) {
-            upsertBot(currentBot);
-            onSave();
+            // Clear any pending auto-save
+            if (autoSaveTimeout) {
+                clearTimeout(autoSaveTimeout);
+            }
+
+            // Debounce store update (wait 500ms after last change)
+            // This prevents triggering the subscription in BotEditor.svelte on every keystroke
+            autoSaveTimeout = setTimeout(() => {
+                if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                    console.log("[BotDetailView] autoSave debounced, updating store");
+                    console.log(
+                        "[BotDetailView] currentBot.chatInstructions:",
+                        currentBot.chatInstructions?.substring(0, 50)
+                    );
+                    console.log("[BotDetailView] currentBot.aiProviderRef:", currentBot.aiProviderRef);
+                }
+                // Update the store to trigger subscription in BotEditor.svelte
+                upsertBot({ ...currentBot }); // Create a new object to ensure reactivity
+                // Don't call onSave() here - let the subscription in BotEditor handle the API call
+                // onSave() is for manual saves and might interfere with auto-save
+            }, 500);
+        } else {
+            console.warn("[BotDetailView] autoSave called but currentBot is null or has no id");
         }
     }
 

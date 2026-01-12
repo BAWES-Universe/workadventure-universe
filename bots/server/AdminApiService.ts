@@ -465,6 +465,56 @@ export class AdminApiService {
     }
 
     /**
+     * Validate Admin API session token
+     * Session tokens are base64-encoded JSON with userId, uuid, email, name, tags, createdAt, expiresAt
+     * Validates by decoding and checking expiration
+     * Returns user info if token is valid, null otherwise
+     */
+    async validateSessionToken(sessionToken: string): Promise<{
+        userId: string;
+        uuid: string;
+        email: string | null;
+        name: string | null;
+        tags: string[];
+    } | null> {
+        if (!this.isConfigured()) {
+            return null;
+        }
+
+        try {
+            // Decode base64 session token
+            const decoded = Buffer.from(sessionToken, 'base64').toString('utf-8');
+            const sessionData = JSON.parse(decoded);
+
+            // Check if token has required fields
+            if (!sessionData.userId || !sessionData.uuid || !sessionData.expiresAt) {
+                return null;
+            }
+
+            // Check if token is expired
+            const now = Date.now();
+            if (sessionData.expiresAt <= now) {
+                return null;
+            }
+
+            // Return user info from session token
+            return {
+                userId: sessionData.userId,
+                uuid: sessionData.uuid,
+                email: sessionData.email || null,
+                name: sessionData.name || null,
+                tags: sessionData.tags || [],
+            };
+        } catch (error) {
+            // Invalid token format (not base64, not JSON, missing fields, etc.)
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[AdminApiService] Error validating session token:', error);
+            }
+            return null;
+        }
+    }
+
+    /**
      * Track AI usage
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      * Fire-and-forget (doesn't throw errors)

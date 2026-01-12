@@ -514,13 +514,12 @@ export class BotManager {
             instance.client.setFullConfig(instance.config);
             
             changes.push('aiConfig');
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[BotManager] Updated AI config for bot ${botId}:`, {
-                    aiProviderRef: instance.config.aiProviderRef,
-                    chatInstructions: instance.config.chatInstructions?.substring(0, 50) + (instance.config.chatInstructions && instance.config.chatInstructions.length > 50 ? '...' : ''),
-                    hasMovementInstructions: !!instance.config.movementInstructions,
-                });
-            }
+            console.log(`[BotManager] Updated AI config for bot ${botId}:`, {
+                aiProviderRef: instance.config.aiProviderRef,
+                chatInstructions: instance.config.chatInstructions?.substring(0, 100) || '(none)',
+                chatInstructionsLength: instance.config.chatInstructions?.length || 0,
+                hasMovementInstructions: !!instance.config.movementInstructions,
+            });
         }
 
         console.log(`[BotManager] Bot ${botId} updated: ${changes.join(', ')}`);

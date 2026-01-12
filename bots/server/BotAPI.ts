@@ -15,9 +15,15 @@ export interface BotAPIRequest extends Request {
 }
 
 /**
- * Middleware to verify JWT token
+ * Middleware to verify authentication token
+ * Accepts Admin API session tokens (preferred) or WorkAdventure JWTs (fallback)
  */
-function authenticateToken(req: BotAPIRequest, res: Response, next: NextFunction): void {
+async function authenticateToken(
+    req: BotAPIRequest,
+    res: Response,
+    next: NextFunction,
+    adminApiService: AdminApiService
+): Promise<void> {
     const path = req.path || req.originalUrl?.split('?')[0] || '';
     
     // Skip auth for movement endpoints (dev only) - safety check
@@ -29,52 +35,82 @@ function authenticateToken(req: BotAPIRequest, res: Response, next: NextFunction
         }
     }
     
+    // Try to get session token from query parameter (Admin API style)
+    const sessionToken = req.query._token as string | undefined;
+    
+    // Try to get token from Authorization header
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+    const bearerToken = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
-    if (!token) {
-        console.log(`[authenticateToken] ❌ No token found for path: ${path} - RETURNING 401`);
-        res.status(401).json({ error: 'Missing authorization token' });
-        return;
-    }
-
-    // If token doesn't look like a JWT (no dots), reject it
-    if (!token.includes('.')) {
-        res.status(401).json({ error: 'Invalid token' });
-        return;
-    }
-
-    try {
-        // TODO: Verify JWT token using WorkAdventure's JWT verification
-        // For now, we'll extract user identifier from token
-        // In production, use proper JWT verification
-        const base64Url = token.split('.')[1];
-        if (!base64Url) {
-            res.status(401).json({ error: 'Invalid token' });
-            return;
-        }
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(
-            atob(base64)
-                .split('')
-                .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-                .join('')
-        );
-        const payload = JSON.parse(jsonPayload);
-        
-        req.userIdentifier = payload.identifier;
-        req.isLogged = !!payload.accessToken;
-        
-        if (!req.isLogged) {
-            res.status(401).json({ error: 'User not authenticated' });
+    // Priority 1: Admin API session token (from query param or Authorization header)
+    if (sessionToken || (bearerToken && !bearerToken.includes('.'))) {
+        const token = sessionToken || bearerToken;
+        if (!token) {
+            res.status(401).json({ error: 'Missing session token' });
             return;
         }
 
-        next();
-    } catch (error) {
-        console.error('[BotAPI] Token verification error:', error);
-        res.status(401).json({ error: 'Invalid token' });
+        try {
+            // Validate session token with Admin API
+            const userInfo = await adminApiService.validateSessionToken(token);
+            if (!userInfo) {
+                res.status(401).json({ error: 'Invalid or expired session token' });
+                return;
+            }
+
+            req.userIdentifier = userInfo.email || userInfo.uuid;
+            req.isLogged = true;
+            next();
+            return;
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[BotAPI] Session token validation error:', error);
+            }
+            res.status(401).json({ error: 'Session token validation failed' });
+            return;
+        }
     }
+
+    // Priority 2: WorkAdventure JWT (fallback for backward compatibility)
+    if (bearerToken && bearerToken.includes('.')) {
+        try {
+            // Extract user identifier from JWT (no signature verification for now)
+            // This is a fallback - session tokens are preferred
+            const base64Url = bearerToken.split('.')[1];
+            if (!base64Url) {
+                res.status(401).json({ error: 'Invalid JWT token' });
+                return;
+            }
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const jsonPayload = decodeURIComponent(
+                atob(base64)
+                    .split('')
+                    .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+                    .join('')
+            );
+            const payload = JSON.parse(jsonPayload);
+            
+            req.userIdentifier = payload.identifier;
+            req.isLogged = !!(payload.accessToken || payload.identifier);
+            
+            if (!req.isLogged) {
+                res.status(401).json({ error: 'User not authenticated' });
+                return;
+            }
+
+            next();
+            return;
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[BotAPI] JWT token verification error:', error);
+            }
+            res.status(401).json({ error: 'Invalid JWT token' });
+            return;
+        }
+    }
+
+    // No valid token found
+    res.status(401).json({ error: 'Missing authorization token' });
 }
 
 export class BotAPI {
@@ -378,7 +414,10 @@ export class BotAPI {
 
         // Apply authentication ONLY to /api/bots routes (NOT /api/debug, /dev/movement, etc.)
         // Movement endpoints are registered at /dev/movement/* to bypass any /api/* middleware
-        this.app.use('/api/bots', authenticateToken);
+        // Use async wrapper since authenticateToken is now async and needs adminApiService
+        this.app.use('/api/bots', async (req: BotAPIRequest, res: Response, next: NextFunction) => {
+            await authenticateToken(req, res, next, this.adminApiService);
+        });
 
         // List all bots for a room/world
         this.app.get('/api/bots', async (req: BotAPIRequest, res: Response) => {
@@ -492,15 +531,16 @@ export class BotAPI {
 
                 // Update running bot if it exists
                 if (this.botManager.getBot(botId)) {
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[BotAPI] Updating running bot ${botId} with:`, {
-                            hasAiProviderRef: 'aiProviderRef' in updates,
-                            hasChatInstructions: 'chatInstructions' in updates,
-                            hasMovementInstructions: 'movementInstructions' in updates,
-                            chatInstructions: updates.chatInstructions,
-                        });
-                    }
+                    console.log(`[BotAPI] Updating running bot ${botId} with:`, {
+                        hasAiProviderRef: 'aiProviderRef' in updates,
+                        hasChatInstructions: 'chatInstructions' in updates,
+                        hasMovementInstructions: 'movementInstructions' in updates,
+                        chatInstructions: updates.chatInstructions?.substring(0, 100) || '(none)',
+                        chatInstructionsLength: updates.chatInstructions?.length || 0,
+                    });
                     await this.botManager.updateBot(botId, updates);
+                } else {
+                    console.log(`[BotAPI] Bot ${botId} is not running, skipping live update`);
                 }
 
                 res.json(updatedConfig);

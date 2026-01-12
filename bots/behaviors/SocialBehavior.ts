@@ -532,9 +532,13 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
         
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[SocialBehavior] Using AI provider: ${botConfig.aiProviderRef}`);
-        }
+        const chatInstructions = botConfig.chatInstructions || 'You are a friendly bot.';
+        console.log(`[SocialBehavior] Generating AI response for bot ${botId}:`, {
+            aiProviderRef: botConfig.aiProviderRef,
+            chatInstructions: chatInstructions.substring(0, 100) + (chatInstructions.length > 100 ? '...' : ''),
+            chatInstructionsLength: chatInstructions.length,
+            playerMessage: playerMessage.substring(0, 50),
+        });
 
         // Get conversation context
         const context = this.conversationMemory.getConversationContext(botId, playerId);
@@ -547,7 +551,7 @@ export class SocialBehavior extends BaseBehavior {
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot.',
+                chatInstructions,
                 botConfig.movementInstructions,
                 botConfig.aiProviderRef,
                 spaceName,

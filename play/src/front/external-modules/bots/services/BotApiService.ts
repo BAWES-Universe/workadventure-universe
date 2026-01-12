@@ -24,6 +24,7 @@ export interface UpdateBotDto extends Partial<CreateBotDto> {
 
 export class BotApiService {
     private accessToken: string | null = null;
+    private jwtToken: string | null = null; // Store original JWT for bot server auth
     private adminUrl: string | null = null;
     private roomId: string | null = null;
     private botServerUrl: string | null = null;
@@ -39,6 +40,7 @@ export class BotApiService {
         botServerUrl?: string
     ): void {
         this.accessToken = this.getAccessTokenFromJwt(userAccessToken);
+        this.jwtToken = userAccessToken; // Store original JWT for bot server authentication
         this.adminUrl = adminUrl || null;
         this.roomId = roomId;
         // Default to bot-server.workadventure.localhost if not provided
@@ -341,9 +343,11 @@ export class BotApiService {
 
     /**
      * Update an existing bot
+     * Calls bot server API which handles both saving to Admin API and updating running bot
      */
     async updateBot(id: string, botData: Partial<CreateBotDto>): Promise<BotData> {
-        const response = await this.fetch(`/api/bots/${id}`, {
+        // Call bot server API - it handles saving to Admin API AND updating running bot
+        const response = await this.fetchBotServer(`/api/bots/${id}`, {
             method: "PUT",
             body: JSON.stringify(botData),
         });
@@ -363,20 +367,32 @@ export class BotApiService {
     /**
      * Call bot-server API (for spawning/despawning bots)
      * Note: room-enter/leave endpoints don't require authentication
+     * Uses Admin API session tokens (same as Admin API) for authenticated endpoints
      */
     private async fetchBotServer(endpoint: string, options: RequestInit = {}): Promise<Response> {
         if (!this.botServerUrl) {
             throw new Error("BotApiService not initialized. Missing botServerUrl.");
         }
 
-        const url = `${this.botServerUrl}${endpoint}`;
+        // Try to get Admin API session token first (preferred method)
+        const sessionToken = await this.getAdminApiSessionToken();
+
+        // Build URL - add session token as query parameter if available (same as Admin API)
+        let url = `${this.botServerUrl}${endpoint}`;
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
 
-        // Only add Authorization header if we have a token (for authenticated users)
-        if (this.accessToken) {
+        // PRIMARY METHOD: Use Admin API session token (same as Admin API authentication)
+        if (sessionToken) {
+            const separator = endpoint.includes("?") ? "&" : "?";
+            url = `${url}${separator}_token=${encodeURIComponent(sessionToken)}`;
+        } else if (this.jwtToken) {
+            // FALLBACK METHOD: Use JWT token (for backward compatibility or initial auth)
+            headers.Authorization = `Bearer ${this.jwtToken}`;
+        } else if (this.accessToken) {
+            // FALLBACK METHOD: Use accessToken if JWT not available
             headers.Authorization = `Bearer ${this.accessToken}`;
         }
 
@@ -388,12 +404,66 @@ export class BotApiService {
         if (!response.ok) {
             const errorText = await response.text();
             let errorMessage = `Bot-server API error: ${response.status}`;
+            let isSessionExpired = false;
+
             try {
                 const errorJson = JSON.parse(errorText);
                 errorMessage = errorJson.message || errorJson.error || errorMessage;
+                // Check if it's a session expiration error
+                if (
+                    errorMessage.toLowerCase().includes("session expired") ||
+                    errorMessage.toLowerCase().includes("session invalid") ||
+                    errorMessage.toLowerCase().includes("invalid or expired session token")
+                ) {
+                    isSessionExpired = true;
+                }
             } catch {
                 errorMessage = errorText || errorMessage;
             }
+
+            // If 401 and we were using session token, clear it and try to refresh
+            if (response.status === 401 && sessionToken) {
+                if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                    console.warn(
+                        "[BotApiService] Bot server session token may be expired, clearing cache and refreshing"
+                    );
+                }
+                localStorage.removeItem("admin_session_token");
+                localStorage.removeItem("admin_session_token_expires_at");
+
+                // If we have accessToken, try to fetch a new session token and retry
+                if (this.accessToken) {
+                    const newToken = await this.fetchSessionTokenFromAdminApi();
+                    if (newToken) {
+                        // Retry the request with new token
+                        const retryUrl = `${this.botServerUrl}${endpoint}`;
+                        const retrySeparator = endpoint.includes("?") ? "&" : "?";
+                        const retryUrlWithToken = `${retryUrl}${retrySeparator}_token=${encodeURIComponent(newToken)}`;
+
+                        const retryResponse = await fetch(retryUrlWithToken, {
+                            ...options,
+                            headers,
+                        });
+
+                        if (retryResponse.ok) {
+                            return retryResponse;
+                        }
+                    }
+                }
+            }
+
+            // Create a more specific error for session expiration
+            if (isSessionExpired || response.status === 401) {
+                const authError = new Error(
+                    sessionToken
+                        ? "Your session has expired. Please re-authenticate to continue managing bots."
+                        : "Authentication failed. Please ensure you are logged in."
+                ) as AuthError;
+                authError.isAuthError = true;
+                authError.isSessionExpired = isSessionExpired;
+                throw authError;
+            }
+
             throw new Error(errorMessage);
         }
 

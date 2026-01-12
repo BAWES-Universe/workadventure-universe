@@ -42,7 +42,27 @@
     let lastSavedAIConfig: string | null = null;
 
     const unsubscribeSelectedBot = selectedBotStore.subscribe((bot) => {
+        console.log(
+            "[BotEditor] selectedBotStore subscription fired, bot:",
+            bot?.id,
+            "chatInstructions:",
+            bot?.chatInstructions?.substring(0, 50)
+        );
+        const previousBot = selectedBot;
         selectedBot = bot || null;
+
+        // Initialize lastSaved values when bot first selected or changes
+        if (bot && (!previousBot || previousBot.id !== bot.id)) {
+            console.log("[BotEditor] Bot changed or first selected, initializing lastSaved values");
+            lastSavedBotConfig = JSON.stringify(bot.behaviorConfig);
+            lastSavedAIConfig = JSON.stringify({
+                aiProviderRef: bot.aiProviderRef,
+                chatInstructions: bot.chatInstructions,
+                movementInstructions: bot.movementInstructions,
+            });
+            console.log("[BotEditor] Initialized lastSavedAIConfig:", lastSavedAIConfig.substring(0, 100));
+            // Don't return - continue to check for changes
+        }
 
         // Auto-save when bot's config changes (position, radius, etc.) - debounced
         if (bot && botApiService.isInitialized()) {
@@ -51,6 +71,12 @@
                 aiProviderRef: bot.aiProviderRef,
                 chatInstructions: bot.chatInstructions,
                 movementInstructions: bot.movementInstructions,
+            });
+
+            console.log("[BotEditor] Comparing AI configs:", {
+                current: currentAIConfig.substring(0, 100),
+                lastSaved: lastSavedAIConfig?.substring(0, 100),
+                areEqual: currentAIConfig === lastSavedAIConfig,
             });
 
             // Only save if config actually changed
@@ -88,6 +114,10 @@
 
             // Auto-save when AI config changes (provider, instructions) - debounced
             if (currentAIConfig !== lastSavedAIConfig) {
+                console.log("[BotEditor] AI config changed, triggering auto-save:", {
+                    chatInstructions: bot.chatInstructions?.substring(0, 50),
+                    aiProviderRef: bot.aiProviderRef,
+                });
                 // Clear any pending save
                 if (saveTimeout) {
                     clearTimeout(saveTimeout);
@@ -97,11 +127,16 @@
                 saveTimeout = setTimeout(() => {
                     void (async () => {
                         try {
+                            console.log("[BotEditor] Sending AI config update to API:", {
+                                botId: bot.id,
+                                chatInstructions: bot.chatInstructions?.substring(0, 50),
+                            });
                             await botApiService.updateBot(bot.id, {
                                 aiProviderRef: bot.aiProviderRef,
                                 chatInstructions: bot.chatInstructions,
                                 movementInstructions: bot.movementInstructions,
                             });
+                            console.log("[BotEditor] AI config update successful");
                             lastSavedAIConfig = currentAIConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot AI config:", e);

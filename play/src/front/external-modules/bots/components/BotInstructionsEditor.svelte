@@ -25,12 +25,26 @@
     // Load available providers on mount
     onMount(async () => {
         if (bot) {
+            console.log(
+                "[BotInstructionsEditor] onMount, bot.chatInstructions:",
+                bot.chatInstructions?.substring(0, 50)
+            );
             aiProviderRef = bot.aiProviderRef || "";
             chatInstructions = bot.chatInstructions || "";
             movementInstructions = bot.movementInstructions || "";
         }
         await loadProviders();
     });
+
+    // Watch for bot ID changes (only sync when bot changes, not on every prop update)
+    let lastBotId: string | undefined = undefined;
+    $: if (bot && bot.id !== lastBotId) {
+        console.log("[BotInstructionsEditor] Bot ID changed, syncing all fields");
+        lastBotId = bot.id;
+        aiProviderRef = bot.aiProviderRef || "";
+        chatInstructions = bot.chatInstructions || "";
+        movementInstructions = bot.movementInstructions || "";
+    }
 
     async function loadProviders() {
         if (!botApiService.isInitialized()) {
@@ -57,20 +71,36 @@
     // Update bot when values change
     function updateAIProviderRef() {
         if (bot) {
+            console.log("[BotInstructionsEditor] updateAIProviderRef called, new value:", aiProviderRef);
             bot.aiProviderRef = aiProviderRef || undefined;
+            console.log("[BotInstructionsEditor] bot.aiProviderRef after update:", bot.aiProviderRef);
             dispatch("change");
         }
     }
 
     function updateChatInstructions() {
         if (bot) {
+            console.log(
+                "[BotInstructionsEditor] updateChatInstructions called, new value:",
+                chatInstructions.substring(0, 50)
+            );
             bot.chatInstructions = chatInstructions;
+            console.log(
+                "[BotInstructionsEditor] bot.chatInstructions after update:",
+                bot.chatInstructions?.substring(0, 50)
+            );
             dispatch("change");
+        } else {
+            console.warn("[BotInstructionsEditor] updateChatInstructions called but bot is null");
         }
     }
 
     function updateMovementInstructions() {
         if (bot) {
+            console.log(
+                "[BotInstructionsEditor] updateMovementInstructions called, new value:",
+                movementInstructions.substring(0, 50)
+            );
             bot.movementInstructions = movementInstructions;
             dispatch("change");
         }
