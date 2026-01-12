@@ -163,7 +163,31 @@
     });
 
     const unsubscribeBots = botPreviewsStore.subscribe((botsMap) => {
-        bots = Array.from(botsMap.values());
+        // Convert Map to array and deduplicate by id to prevent any duplicates
+        const botsArray = Array.from(botsMap.values());
+
+        // Check for duplicates in the Map (shouldn't happen, but debug)
+        if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+            const idCounts = new Map<string, number>();
+            for (const bot of botsArray) {
+                idCounts.set(bot.id, (idCounts.get(bot.id) || 0) + 1);
+            }
+            for (const [id, count] of idCounts.entries()) {
+                if (count > 1) {
+                    console.warn(`[BotEditor] Duplicate bot ID detected in Map: ${id} (${count} times)`);
+                }
+            }
+        }
+
+        // Deduplicate by id (shouldn't be necessary since Map keys are unique, but safety check)
+        const uniqueBots = new Map<string, BotData>();
+        for (const bot of botsArray) {
+            if (bot.id) {
+                // Always use the latest bot if there are duplicates (last one wins)
+                uniqueBots.set(bot.id, bot);
+            }
+        }
+        bots = Array.from(uniqueBots.values());
     });
 
     let previousPlacingBot: BotData | undefined = undefined;

@@ -80,9 +80,23 @@ export const botsArrayStore = derived(botPreviewsStore, ($botsMap) => {
  * Add or update a bot in the previews store
  */
 export function upsertBot(bot: BotData): void {
+    if (!bot.id) {
+        console.warn("[BotEditorStore] upsertBot called with bot missing id:", bot);
+        return;
+    }
+
     botPreviewsStore.update((bots) => {
         const newMap = new Map(bots);
+        // Ensure we're using the correct key (bot.id)
         newMap.set(bot.id, bot);
+        // Safety check: ensure no duplicates exist
+        if (newMap.size !== bots.size + (bots.has(bot.id) ? 0 : 1)) {
+            console.warn("[BotEditorStore] Potential duplicate detected after upsertBot:", {
+                botId: bot.id,
+                oldSize: bots.size,
+                newSize: newMap.size,
+            });
+        }
         return newMap;
     });
 

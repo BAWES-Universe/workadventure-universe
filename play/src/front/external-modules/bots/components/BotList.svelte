@@ -34,35 +34,42 @@
 
     async function handleToggleBot(bot: BotData, enabled: boolean) {
         const originalEnabled = bot.enabled;
-        // Optimistically update UI
-        bot.enabled = enabled;
-        bots = bots; // Trigger reactivity
-        // Also update store immediately for optimistic UI
-        upsertBot({ ...bot, enabled });
+
+        // Don't do optimistic update - wait for API response to prevent duplicate updates
+        // The UI will update once when the store updates after API call
 
         try {
             // Update bot via Admin API
             const updatedBot = await botApiService.updateBot(bot.id, { enabled });
 
-            // Update store with API response to ensure consistency
+            // Update store with API response - single update prevents duplicates
+            // Ensure we always have a valid ID (fallback to original bot.id if API doesn't return it)
+            const botId = updatedBot.id || bot.id;
+            if (!botId) {
+                console.error("[BotList] Cannot update bot: missing ID in both API response and original bot");
+                throw new Error("Bot ID is missing");
+            }
+
             const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
             const botData: BotData = {
-                id: updatedBot.id,
-                botId: updatedBot.id,
-                name: updatedBot.name,
-                description: typeof updatedBot.description === "string" ? updatedBot.description : undefined,
-                characterTexture: textureId,
-                characterTextureIds: textureId ? [textureId] : [],
-                behaviorType: updatedBot.behaviorType as "idle" | "patrol" | "social",
+                id: botId,
+                botId: botId,
+                name: updatedBot.name || bot.name,
+                description: typeof updatedBot.description === "string" ? updatedBot.description : bot.description,
+                characterTexture: textureId || bot.characterTexture,
+                characterTextureIds: textureId ? [textureId] : bot.characterTextureIds || [],
+                behaviorType: (updatedBot.behaviorType as "idle" | "patrol" | "social") || bot.behaviorType,
                 enabled: updatedBot.enabled ?? enabled, // Use API response, fallback to requested state
                 behaviorConfig: updatedBot.behaviorConfig || bot.behaviorConfig,
-                chatInstructions: updatedBot.chatInstructions || "",
-                movementInstructions: updatedBot.movementInstructions || "",
+                chatInstructions: updatedBot.chatInstructions || bot.chatInstructions || "",
+                movementInstructions: updatedBot.movementInstructions || bot.movementInstructions || "",
+                aiProviderRef: updatedBot.aiProviderRef || bot.aiProviderRef || undefined,
                 createdAt: updatedBot.createdAt || bot.createdAt || new Date().toISOString(),
                 updatedAt: updatedBot.updatedAt || new Date().toISOString(),
                 createdBy: updatedBot.createdBy || bot.createdBy || null,
                 updatedBy: updatedBot.updatedBy || bot.updatedBy || null,
             };
+            // Single upsert call - this will update the store once
             upsertBot(botData);
 
             // If disabling, despawn the bot immediately
@@ -105,8 +112,6 @@
             }
 
             // Revert on error
-            bot.enabled = originalEnabled;
-            bots = bots;
             upsertBot({ ...bot, enabled: originalEnabled });
         }
     }
@@ -190,6 +195,12 @@
         {:else}
             <div class="grid grid-cols-1 gap-3">
                 {#each bots as bot (bot.id)}
+                    {#if process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true"}
+                        {@const duplicateCheck = bots.filter((b) => b.id === bot.id).length}
+                        {#if duplicateCheck > 1}
+                            <!-- DEBUG: Duplicate detected -->
+                        {/if}
+                    {/if}
                     <BotCard
                         {bot}
                         onSelect={() => onSelectBot(bot)}
