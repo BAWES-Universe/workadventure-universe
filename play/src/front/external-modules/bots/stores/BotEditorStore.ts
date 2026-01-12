@@ -17,6 +17,12 @@ export type BotEditorMode = "list" | "detail" | "placing" | "waypoint-edit";
 export const botEditorModeStore = writable<BotEditorMode>("list");
 
 /**
+ * Room change trigger - incrementing this value signals that the room has changed
+ * BotEditor should reload bots when this value changes
+ */
+export const roomChangeTriggerStore = writable<number>(0);
+
+/**
  * Currently selected bot for editing
  */
 export const selectedBotStore = writable<BotData | undefined>(undefined);

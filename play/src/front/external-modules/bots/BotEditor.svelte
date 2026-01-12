@@ -10,6 +10,7 @@
         selectedBotStore,
         botPreviewsStore,
         placingBotStore,
+        roomChangeTriggerStore,
         upsertBot,
         removeBot,
         selectBot,
@@ -218,12 +219,27 @@
         }
     });
 
+    // Subscribe to room changes and reload bots when room changes
+    let roomChangeUnsubscribe: (() => void) | null = null;
+
     onMount(async () => {
         // Activate the Phaser tool
         botEditorTool.activate();
 
         // Load bots from API
         await loadBots();
+
+        // Subscribe to room changes - reload bots when room changes
+        // Skip the first emission (initial value) - we already loaded bots above
+        let isFirstEmission = true;
+        roomChangeUnsubscribe = roomChangeTriggerStore.subscribe(() => {
+            if (isFirstEmission) {
+                isFirstEmission = false;
+                return; // Skip initial value
+            }
+            // Room changed - reload bots for the new room
+            void loadBots();
+        });
     });
 
     async function loadBots() {
@@ -254,6 +270,12 @@
     }
 
     onDestroy(() => {
+        // Unsubscribe from room changes
+        if (roomChangeUnsubscribe) {
+            roomChangeUnsubscribe();
+            roomChangeUnsubscribe = null;
+        }
+
         // Clear any pending saves
         if (saveTimeout) {
             clearTimeout(saveTimeout);

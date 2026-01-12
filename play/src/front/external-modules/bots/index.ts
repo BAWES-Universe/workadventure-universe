@@ -540,7 +540,20 @@ function setupBotEditor(options: ExtensionModuleOptions) {
         // Derive bot-server URL from current location (same domain, different subdomain)
         // Replace 'play' with 'bot-server' in the hostname, or use current origin if no subdomain
         const botServerUrl = getBotServerUrl();
-        botApiService.initialize(options.userAccessToken, options.adminUrl, options.roomId, botServerUrl);
+        const roomIdChanged = botApiService.initialize(
+            options.userAccessToken,
+            options.adminUrl,
+            options.roomId,
+            botServerUrl
+        );
+
+        // If room changed and bot editor is open, trigger a reload
+        if (roomIdChanged && botEditorOpen) {
+            // Import dynamically to avoid circular dependency
+            void import("./stores/BotEditorStore").then(({ roomChangeTriggerStore }) => {
+                roomChangeTriggerStore.update((n) => n + 1);
+            });
+        }
     } catch (e) {
         console.warn("[Bot Editor] Failed to initialize API service:", e);
     }

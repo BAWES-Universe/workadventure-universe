@@ -32,19 +32,29 @@ export class BotApiService {
 
     /**
      * Initialize the API service with extension options
+     * @returns true if roomId changed (useful for detecting room navigation)
      */
     initialize(
         userAccessToken: string | null,
         adminUrl: string | undefined,
         roomId: string,
         botServerUrl?: string
-    ): void {
+    ): boolean {
+        const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
         this.accessToken = this.getAccessTokenFromJwt(userAccessToken);
         this.jwtToken = userAccessToken; // Store original JWT for bot server authentication
         this.adminUrl = adminUrl || null;
         this.roomId = roomId;
         // Default to bot-server.workadventure.localhost if not provided
         this.botServerUrl = botServerUrl || "http://bot-server.workadventure.localhost";
+        return roomIdChanged;
+    }
+
+    /**
+     * Get the current roomId
+     */
+    getRoomId(): string | null {
+        return this.roomId;
     }
 
     /**
