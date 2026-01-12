@@ -523,13 +523,19 @@
     {:else if currentMode === "list" || currentMode === "placing"}
         <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} onLocateBot={handleLocateBot} />
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
-        <BotDetailView
-            bot={selectedBot}
-            onBack={handleBackToList}
-            onSave={handleSave}
-            onDelete={handleDelete}
-            onLocate={() => selectedBot && handleLocateBot(selectedBot.id)}
-        />
+        {#if selectedBot}
+            <BotDetailView
+                bot={selectedBot}
+                onBack={handleBackToList}
+                onSave={handleSave}
+                onDelete={handleDelete}
+                onLocate={() => selectedBot && handleLocateBot(selectedBot.id)}
+            />
+        {:else}
+            <div class="flex items-center justify-center h-full text-white/60">
+                <p>No bot selected</p>
+            </div>
+        {/if}
     {/if}
 
     <CreateBotModal isOpen={showCreateModal} onClose={handleCloseCreateModal} onCreate={handleCreateBotSubmit} />

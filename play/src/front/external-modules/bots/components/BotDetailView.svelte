@@ -19,7 +19,7 @@
     export let onDelete: () => void;
     export let onLocate: (() => void) | undefined = undefined;
 
-    let currentBot: BotData;
+    let currentBot: BotData | null = null;
     let isSaving = false;
     let saveError: string | null = null;
     let wokaData: WokaData | null = null;
@@ -35,7 +35,7 @@
 
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
-        if (storeBot && storeBot.id === currentBot?.id) {
+        if (storeBot && currentBot && storeBot.id === currentBot.id) {
             // Update position and radius from store (map changes)
             if (storeBot.behaviorConfig?.assignedSpace) {
                 if (!currentBot.behaviorConfig) {
@@ -55,20 +55,25 @@
         }
     });
 
-    // Initialize from prop
-    $: if (bot && bot.id !== currentBot?.id) {
-        currentBot = {
-            ...bot,
-            aiProviderRef: bot.aiProviderRef,
-            behaviorConfig: bot.behaviorConfig || {
-                assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
-            },
-        };
-        if (!currentBot.behaviorConfig.assignedSpace) {
-            currentBot.behaviorConfig.assignedSpace = { center: { x: 0, y: 0 }, radius: 0 };
+    // Initialize from prop - handle both bot changes and bot becoming null
+    $: if (bot) {
+        if (bot.id !== currentBot?.id) {
+            currentBot = {
+                ...bot,
+                aiProviderRef: bot.aiProviderRef,
+                behaviorConfig: bot.behaviorConfig || {
+                    assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
+                },
+            };
+            if (!currentBot.behaviorConfig.assignedSpace) {
+                currentBot.behaviorConfig.assignedSpace = { center: { x: 0, y: 0 }, radius: 0 };
+            }
+            // Reload providers when bot changes to ensure we have the latest list
+            void loadProviders();
         }
-        // Reload providers when bot changes to ensure we have the latest list
-        void loadProviders();
+    } else {
+        // Bot prop became null - clear currentBot to prevent errors
+        currentBot = null;
     }
 
     // Debounced auto-save to prevent API calls on every keystroke
@@ -76,31 +81,37 @@
 
     // Auto-save when currentBot changes (debounced)
     function autoSave() {
-        if (currentBot?.id) {
-            // Clear any pending auto-save
-            if (autoSaveTimeout) {
-                clearTimeout(autoSaveTimeout);
+        if (!currentBot || !currentBot.id) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.warn("[BotDetailView] autoSave called but currentBot is null or has no id");
             }
-
-            // Debounce store update (wait 500ms after last change)
-            // This prevents triggering the subscription in BotEditor.svelte on every keystroke
-            autoSaveTimeout = setTimeout(() => {
-                if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
-                    console.log("[BotDetailView] autoSave debounced, updating store");
-                    console.log(
-                        "[BotDetailView] currentBot.chatInstructions:",
-                        currentBot.chatInstructions?.substring(0, 50)
-                    );
-                    console.log("[BotDetailView] currentBot.aiProviderRef:", currentBot.aiProviderRef);
-                }
-                // Update the store to trigger subscription in BotEditor.svelte
-                upsertBot({ ...currentBot }); // Create a new object to ensure reactivity
-                // Don't call onSave() here - let the subscription in BotEditor handle the API call
-                // onSave() is for manual saves and might interfere with auto-save
-            }, 500);
-        } else {
-            console.warn("[BotDetailView] autoSave called but currentBot is null or has no id");
+            return;
         }
+
+        // Clear any pending auto-save
+        if (autoSaveTimeout) {
+            clearTimeout(autoSaveTimeout);
+        }
+
+        // Debounce store update (wait 500ms after last change)
+        // This prevents triggering the subscription in BotEditor.svelte on every keystroke
+        autoSaveTimeout = setTimeout(() => {
+            if (!currentBot || !currentBot.id) {
+                return; // currentBot became null during debounce
+            }
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.log("[BotDetailView] autoSave debounced, updating store");
+                console.log(
+                    "[BotDetailView] currentBot.chatInstructions:",
+                    currentBot.chatInstructions?.substring(0, 50)
+                );
+                console.log("[BotDetailView] currentBot.aiProviderRef:", currentBot.aiProviderRef);
+            }
+            // Update the store to trigger subscription in BotEditor.svelte
+            upsertBot({ ...currentBot }); // Create a new object to ensure reactivity
+            // Don't call onSave() here - let the subscription in BotEditor handle the API call
+            // onSave() is for manual saves and might interfere with auto-save
+        }, 500);
     }
 
     function getTextureUrl(relativeUrl: string): string {
@@ -137,7 +148,7 @@
     }
 
     function handleDelete() {
-        if (!currentBot.botId) {
+        if (!currentBot || !currentBot.botId) {
             onBack();
             return;
         }
@@ -188,6 +199,11 @@
     }
 
     async function handleTextureSelect(textureId: string) {
+        if (!currentBot) {
+            console.warn("[BotDetailView] Cannot select texture: currentBot is null");
+            return;
+        }
+
         currentBot.characterTexture = textureId;
         currentBot.characterTextureIds = [textureId];
         editingTexture = false;
@@ -196,7 +212,7 @@
         upsertBot(currentBot);
 
         // Save to API immediately (no debounce for texture changes)
-        if (currentBot?.id && botApiService.isInitialized()) {
+        if (currentBot.id && botApiService.isInitialized()) {
             try {
                 // Save to Admin API
                 await botApiService.updateBot(currentBot.id, {
@@ -311,243 +327,247 @@
     </div>
 
     <!-- Content -->
-    <div class="scrollable-content">
-        <div class="space-y-4 pb-4">
-            <!-- Woka and Name Section -->
-            <div class="flex items-start gap-6 pb-4 border-b border-white/10">
-                <div class="flex-shrink-0">
-                    <div
-                        class="w-32 h-32 bg-white/5 rounded-lg border border-white/20 flex items-center justify-center overflow-hidden"
-                    >
-                        {#if currentBot.characterTexture && wokaData}
-                            <WokaImage
-                                selectedTextures={{ woka: currentBot.characterTexture }}
-                                {wokaData}
-                                {getTextureUrl}
-                                canvasSize={96}
-                                direction={assetsDirection}
-                            />
-                        {:else}
-                            <div class="text-white/40 text-xs">No texture</div>
-                        {/if}
+    {#if currentBot}
+        <div class="scrollable-content">
+            <div class="space-y-4 pb-4">
+                <!-- Woka and Name Section -->
+                <div class="flex items-start gap-6 pb-4 border-b border-white/10">
+                    <div class="flex-shrink-0">
+                        <div
+                            class="w-32 h-32 bg-white/5 rounded-lg border border-white/20 flex items-center justify-center overflow-hidden"
+                        >
+                            {#if currentBot.characterTexture && wokaData}
+                                <WokaImage
+                                    selectedTextures={{ woka: currentBot.characterTexture }}
+                                    {wokaData}
+                                    {getTextureUrl}
+                                    canvasSize={96}
+                                    direction={assetsDirection}
+                                />
+                            {:else}
+                                <div class="text-white/40 text-xs">No texture</div>
+                            {/if}
+                        </div>
+                        <button
+                            class="w-32 mt-2 px-3 py-2 text-sm bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
+                            on:click={() => (editingTexture = true)}
+                        >
+                            Change Woka
+                        </button>
                     </div>
-                    <button
-                        class="w-32 mt-2 px-3 py-2 text-sm bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
-                        on:click={() => (editingTexture = true)}
-                    >
-                        Change Woka
-                    </button>
-                </div>
-                <div class="flex-1">
-                    {#if editingName}
-                        <div class="space-y-2">
-                            <input
-                                type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-2xl font-semibold"
-                                bind:value={currentBot.name}
-                                placeholder="Enter bot name"
-                                autofocus
-                                on:input={() => autoSave()}
-                                on:keydown={(e) => {
-                                    if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        editingName = false;
-                                    }
-                                }}
-                            />
-                            <button
-                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                on:click={() => (editingName = false)}
-                            >
-                                Close
-                            </button>
-                        </div>
-                    {:else}
-                        <div class="flex items-center gap-2 mb-3">
-                            <h1 class="text-2xl font-semibold text-white">{currentBot.name || "Unnamed Bot"}</h1>
-                            <button
-                                class="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                                on:click={() => (editingName = true)}
-                            >
-                                Edit
-                            </button>
-                        </div>
-                    {/if}
-
-                    <!-- Description -->
-                    <div class="mb-4">
-                        {#if editingDescription}
+                    <div class="flex-1">
+                        {#if editingName}
                             <div class="space-y-2">
-                                <textarea
-                                    class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    bind:value={currentBot.description}
-                                    placeholder="Enter bot description"
-                                    rows="3"
+                                <input
+                                    type="text"
+                                    class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-2xl font-semibold"
+                                    bind:value={currentBot.name}
+                                    placeholder="Enter bot name"
+                                    autofocus
                                     on:input={() => autoSave()}
+                                    on:keydown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            editingName = false;
+                                        }
+                                    }}
                                 />
                                 <button
                                     class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                    on:click={() => (editingDescription = false)}
+                                    on:click={() => (editingName = false)}
                                 >
                                     Close
                                 </button>
                             </div>
                         {:else}
-                            <div class="flex items-center gap-2">
-                                <p class="text-sm text-white/70 flex-1">{currentBot.description || "No description"}</p>
+                            <div class="flex items-center gap-2 mb-3">
+                                <h1 class="text-2xl font-semibold text-white">{currentBot.name || "Unnamed Bot"}</h1>
                                 <button
-                                    class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                                    on:click={() => (editingDescription = true)}
+                                    class="text-sm text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                                    on:click={() => (editingName = true)}
                                 >
                                     Edit
                                 </button>
                             </div>
                         {/if}
-                    </div>
-                </div>
-            </div>
 
-            <!-- Behavior -->
-            <div class="border-b border-white/10">
-                <div class="flex items-center gap-2 mb-3">
-                    <h3 class="text-base text-white/80 normal-case">Behavior</h3>
-                    <button
-                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                        on:click={() => (editingBehavior = true)}
-                    >
-                        Edit
-                    </button>
-                </div>
-                {#if editingBehavior}
-                    <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                        <BotBehaviorEditor
-                            bind:bot={currentBot}
-                            on:locate={() => {
-                                if (onLocate) onLocate();
-                            }}
-                            on:editWaypoints={() => {
-                                if (onLocate) onLocate();
-                            }}
-                            on:change={() => {
-                                autoSave();
-                            }}
-                        />
-                        <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
-                            <button
-                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                on:click={() => {
-                                    editingBehavior = false;
-                                }}
-                            >
-                                Close
-                            </button>
+                        <!-- Description -->
+                        <div class="mb-4">
+                            {#if editingDescription}
+                                <div class="space-y-2">
+                                    <textarea
+                                        class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        bind:value={currentBot.description}
+                                        placeholder="Enter bot description"
+                                        rows="3"
+                                        on:input={() => autoSave()}
+                                    />
+                                    <button
+                                        class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                        on:click={() => (editingDescription = false)}
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            {:else}
+                                <div class="flex items-center gap-2">
+                                    <p class="text-sm text-white/70 flex-1">
+                                        {currentBot.description || "No description"}
+                                    </p>
+                                    <button
+                                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                                        on:click={() => (editingDescription = true)}
+                                    >
+                                        Edit
+                                    </button>
+                                </div>
+                            {/if}
                         </div>
                     </div>
-                {:else}
-                    <div class="space-y-2">
-                        <p class="text-sm text-white/70">{getBehaviorLabel(currentBot.behaviorType)}</p>
-                        {#if currentBot.behaviorConfig?.assignedSpace}
-                            <p class="text-xs text-white/50">
-                                Location: ({currentBot.behaviorConfig.assignedSpace.center?.x || 0}, {currentBot
-                                    .behaviorConfig.assignedSpace.center?.y || 0})
-                                {#if currentBot.behaviorType === "idle" && currentBot.behaviorConfig.assignedSpace.radius === 0}
-                                    (stationary)
-                                {:else}
-                                    radius {currentBot.behaviorConfig.assignedSpace.radius || 0}
-                                {/if}
-                            </p>
-                        {/if}
-                        {#if currentBot.behaviorType === "patrol" && currentBot.behaviorConfig?.patrolWaypoints && Array.isArray(currentBot.behaviorConfig.patrolWaypoints)}
-                            <p class="text-xs text-white/50">
-                                {currentBot.behaviorConfig.patrolWaypoints.length} waypoint{currentBot.behaviorConfig
-                                    .patrolWaypoints.length !== 1
-                                    ? "s"
-                                    : ""}
-                            </p>
-                        {/if}
+                </div>
+
+                <!-- Behavior -->
+                <div class="border-b border-white/10">
+                    <div class="flex items-center gap-2 mb-3">
+                        <h3 class="text-base text-white/80 normal-case">Behavior</h3>
+                        <button
+                            class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                            on:click={() => (editingBehavior = true)}
+                        >
+                            Edit
+                        </button>
+                    </div>
+                    {#if editingBehavior}
+                        <div class="p-4 bg-white/5 rounded-lg border border-white/20">
+                            <BotBehaviorEditor
+                                bind:bot={currentBot}
+                                on:locate={() => {
+                                    if (onLocate) onLocate();
+                                }}
+                                on:editWaypoints={() => {
+                                    if (onLocate) onLocate();
+                                }}
+                                on:change={() => {
+                                    autoSave();
+                                }}
+                            />
+                            <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
+                                <button
+                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                    on:click={() => {
+                                        editingBehavior = false;
+                                    }}
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    {:else}
+                        <div class="space-y-2">
+                            <p class="text-sm text-white/70">{getBehaviorLabel(currentBot.behaviorType)}</p>
+                            {#if currentBot.behaviorConfig?.assignedSpace}
+                                <p class="text-xs text-white/50">
+                                    Location: ({currentBot.behaviorConfig.assignedSpace.center?.x || 0}, {currentBot
+                                        .behaviorConfig.assignedSpace.center?.y || 0})
+                                    {#if currentBot.behaviorType === "idle" && currentBot.behaviorConfig.assignedSpace.radius === 0}
+                                        (stationary)
+                                    {:else}
+                                        radius {currentBot.behaviorConfig.assignedSpace.radius || 0}
+                                    {/if}
+                                </p>
+                            {/if}
+                            {#if currentBot.behaviorType === "patrol" && currentBot.behaviorConfig?.patrolWaypoints && Array.isArray(currentBot.behaviorConfig.patrolWaypoints)}
+                                <p class="text-xs text-white/50">
+                                    {currentBot.behaviorConfig.patrolWaypoints.length} waypoint{currentBot
+                                        .behaviorConfig.patrolWaypoints.length !== 1
+                                        ? "s"
+                                        : ""}
+                                </p>
+                            {/if}
+                        </div>
+                    {/if}
+                </div>
+
+                <!-- Instructions -->
+                <div>
+                    <div class="flex items-center gap-2 mb-3">
+                        <h3 class="text-base text-white/80 normal-case">Instructions</h3>
+                        <button
+                            class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                            on:click={() => (editingInstructions = true)}
+                        >
+                            Edit
+                        </button>
+                    </div>
+                    {#if editingInstructions}
+                        <div class="p-4 bg-white/5 rounded-lg border border-white/20">
+                            <BotInstructionsEditor bind:bot={currentBot} on:change={() => autoSave()} />
+                            <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
+                                <button
+                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
+                                    on:click={() => {
+                                        editingInstructions = false;
+                                    }}
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    {:else}
+                        <div class="space-y-4">
+                            <div>
+                                <p class="text-sm text-white/80 font-semibold mb-2">AI Provider</p>
+                                <p class="text-sm text-white/70">
+                                    {providerDisplayName}
+                                </p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-white/80 font-semibold mb-2">Chat instructions</p>
+                                <p class="text-sm text-white/70 whitespace-pre-wrap">
+                                    {currentBot.chatInstructions || "No chat instructions set"}
+                                </p>
+                            </div>
+                            <div>
+                                <p class="text-sm text-white/80 font-semibold mb-2">Movement instructions</p>
+                                <p class="text-sm text-white/70 whitespace-pre-wrap">
+                                    {currentBot.movementInstructions || "No movement instructions set"}
+                                </p>
+                            </div>
+                        </div>
+                    {/if}
+                </div>
+
+                <!-- Metadata (Audit Trail) -->
+                {#if currentBot.createdAt || currentBot.updatedAt}
+                    <div class="mt-6 pt-6 border-t border-white/10">
+                        <h3 class="text-base text-white/80 normal-case mb-3">Metadata</h3>
+                        <div class="space-y-2 text-sm text-white/60">
+                            {#if currentBot.createdAt}
+                                <div class="flex items-center gap-2">
+                                    <span class="text-white/40">Created:</span>
+                                    <span>{formatDate(currentBot.createdAt)}</span>
+                                    {#if currentBot.createdBy?.name}
+                                        <span class="text-white/40">by</span>
+                                        <span class="text-white/70">{currentBot.createdBy.name}</span>
+                                    {/if}
+                                </div>
+                            {/if}
+                            {#if currentBot.updatedAt}
+                                <div class="flex items-center gap-2">
+                                    <span class="text-white/40">Last updated:</span>
+                                    <span>{formatDate(currentBot.updatedAt)}</span>
+                                    {#if currentBot.updatedBy?.name && currentBot.updatedBy.id !== currentBot.createdBy?.id}
+                                        <span class="text-white/40">by</span>
+                                        <span class="text-white/70">{currentBot.updatedBy.name}</span>
+                                    {/if}
+                                </div>
+                            {/if}
+                        </div>
                     </div>
                 {/if}
             </div>
-
-            <!-- Instructions -->
-            <div>
-                <div class="flex items-center gap-2 mb-3">
-                    <h3 class="text-base text-white/80 normal-case">Instructions</h3>
-                    <button
-                        class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                        on:click={() => (editingInstructions = true)}
-                    >
-                        Edit
-                    </button>
-                </div>
-                {#if editingInstructions}
-                    <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                        <BotInstructionsEditor bind:bot={currentBot} on:change={() => autoSave()} />
-                        <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
-                            <button
-                                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                on:click={() => {
-                                    editingInstructions = false;
-                                }}
-                            >
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                {:else}
-                    <div class="space-y-4">
-                        <div>
-                            <p class="text-sm text-white/80 font-semibold mb-2">AI Provider</p>
-                            <p class="text-sm text-white/70">
-                                {providerDisplayName}
-                            </p>
-                        </div>
-                        <div>
-                            <p class="text-sm text-white/80 font-semibold mb-2">Chat instructions</p>
-                            <p class="text-sm text-white/70 whitespace-pre-wrap">
-                                {currentBot.chatInstructions || "No chat instructions set"}
-                            </p>
-                        </div>
-                        <div>
-                            <p class="text-sm text-white/80 font-semibold mb-2">Movement instructions</p>
-                            <p class="text-sm text-white/70 whitespace-pre-wrap">
-                                {currentBot.movementInstructions || "No movement instructions set"}
-                            </p>
-                        </div>
-                    </div>
-                {/if}
-            </div>
-
-            <!-- Metadata (Audit Trail) -->
-            {#if currentBot.createdAt || currentBot.updatedAt}
-                <div class="mt-6 pt-6 border-t border-white/10">
-                    <h3 class="text-base text-white/80 normal-case mb-3">Metadata</h3>
-                    <div class="space-y-2 text-sm text-white/60">
-                        {#if currentBot.createdAt}
-                            <div class="flex items-center gap-2">
-                                <span class="text-white/40">Created:</span>
-                                <span>{formatDate(currentBot.createdAt)}</span>
-                                {#if currentBot.createdBy?.name}
-                                    <span class="text-white/40">by</span>
-                                    <span class="text-white/70">{currentBot.createdBy.name}</span>
-                                {/if}
-                            </div>
-                        {/if}
-                        {#if currentBot.updatedAt}
-                            <div class="flex items-center gap-2">
-                                <span class="text-white/40">Last updated:</span>
-                                <span>{formatDate(currentBot.updatedAt)}</span>
-                                {#if currentBot.updatedBy?.name && currentBot.updatedBy.id !== currentBot.createdBy?.id}
-                                    <span class="text-white/40">by</span>
-                                    <span class="text-white/70">{currentBot.updatedBy.name}</span>
-                                {/if}
-                            </div>
-                        {/if}
-                    </div>
-                </div>
-            {/if}
         </div>
-    </div>
+    {/if}
 
     {#if saveError}
         <div class="mt-4 text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded p-2">
@@ -557,7 +577,7 @@
 </div>
 
 <!-- Texture Picker Modal -->
-{#if editingTexture && wokaData}
+{#if editingTexture && wokaData && currentBot}
     <div
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         on:click={() => (editingTexture = false)}
