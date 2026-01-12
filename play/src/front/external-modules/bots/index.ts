@@ -970,6 +970,7 @@ const botExtensionModule: ExtensionModule = {
             console.log("[Bot Extension] Room changed and bot editor is open, triggering reload");
             // Import dynamically to avoid circular dependency
             void import("./stores/BotEditorStore").then(({ roomChangeTriggerStore }) => {
+                console.log("[Bot Extension] Updating roomChangeTriggerStore");
                 roomChangeTriggerStore.update((n) => n + 1);
             });
         }
@@ -980,7 +981,20 @@ const botExtensionModule: ExtensionModule = {
         }, 3000);
 
         // Initialize bot editor integration (for authenticated users)
+        // This will call setupBotEditor if user is already connected
         initializeBotEditor(options);
+
+        // Also ensure setupBotEditor is called if user is already connected and authenticated
+        // This ensures the API service is updated with the new roomId
+        if (localUserStore.isLogged()) {
+            const alreadyConnected = get(userIsConnected);
+            if (alreadyConnected) {
+                console.log("[Bot Extension] User already connected, ensuring bot editor is set up for new room");
+                setTimeout(() => {
+                    setupBotEditor(options);
+                }, 500);
+            }
+        }
     },
 
     destroy() {
