@@ -232,12 +232,15 @@
         // Subscribe to room changes - reload bots when room changes
         // Skip the first emission (initial value) - we already loaded bots above
         let isFirstEmission = true;
-        roomChangeUnsubscribe = roomChangeTriggerStore.subscribe(() => {
+        roomChangeUnsubscribe = roomChangeTriggerStore.subscribe((triggerValue) => {
             if (isFirstEmission) {
                 isFirstEmission = false;
                 return; // Skip initial value
             }
             // Room changed - reload bots for the new room
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.log(`[BotEditor] Room change detected (trigger: ${triggerValue}), reloading bots...`);
+            }
             void loadBots();
         });
     });

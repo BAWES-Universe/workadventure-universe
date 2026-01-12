@@ -948,6 +948,15 @@ const botExtensionModule: ExtensionModule = {
     init(roomMetadata: unknown, options: ExtensionModuleOptions) {
         console.log("Bot Extension Module initialized");
 
+        // Check if room changed (before storing new options or initializing service)
+        // Compare with current roomId in BotApiService if it's already initialized
+        const previousRoomId = _extensionOptions?.roomId || botApiService.getRoomId();
+        const roomIdChanged = previousRoomId !== null && previousRoomId !== options.roomId;
+
+        if (roomIdChanged) {
+            console.log(`[Bot Extension] Room changed from ${previousRoomId} to ${options.roomId}`);
+        }
+
         // Store options for later use
         _extensionOptions = options;
 
@@ -955,6 +964,15 @@ const botExtensionModule: ExtensionModule = {
         // This ensures bots spawn even if userIsConnected hasn't fired yet
         console.log("[Bot Extension] Notifying room enter immediately on init");
         notifyRoomEnterForAllUsers(options);
+
+        // If room changed and bot editor is open, trigger a reload
+        if (roomIdChanged && botEditorOpen) {
+            console.log("[Bot Extension] Room changed and bot editor is open, triggering reload");
+            // Import dynamically to avoid circular dependency
+            void import("./stores/BotEditorStore").then(({ roomChangeTriggerStore }) => {
+                roomChangeTriggerStore.update((n) => n + 1);
+            });
+        }
 
         // Also start summon button registration after bots have time to spawn
         setTimeout(() => {
