@@ -525,7 +525,11 @@ export class BotManager {
         }
 
         // Handle other configuration updates (name, description, enabled, etc.)
-        // These don't require respawn but should update the stored config
+        // Name and characterTextureIds require respawn (part of WebSocket connection)
+        const needsRespawn = ('name' in updates && updates.name !== instance.config.name) ||
+                            ('characterTextureIds' in updates && 
+                             JSON.stringify(updates.characterTextureIds) !== JSON.stringify(instance.config.characterTextureIds));
+        
         if ('name' in updates) {
             instance.config.name = updates.name || instance.config.name;
             changes.push('name');
@@ -547,6 +551,15 @@ export class BotManager {
         // Update BotClient's fullConfig if any config fields changed
         if (changes.length > 0 && (aiConfigUpdated || 'name' in updates || 'description' in updates || 'enabled' in updates || 'characterTextureIds' in updates)) {
             instance.client.setFullConfig(instance.config);
+        }
+
+        // If name or texture changed, we need to respawn (these are part of WebSocket connection)
+        // Note: We can't respawn here directly because we're in updateBot, but ensureBotsForRoom will handle it
+        // when the bot is toggled or when the room syncs. For immediate effect, the caller should trigger respawn.
+        if (needsRespawn) {
+            console.log(`[BotManager] Bot ${botId} name or texture changed - respawn required for changes to take effect`);
+            // Mark that respawn is needed - the next ensureBotsForRoom will handle it
+            changes.push('respawnRequired');
         }
 
         console.log(`[BotManager] Bot ${botId} updated: ${changes.join(', ')}`);
@@ -695,16 +708,39 @@ export class BotManager {
                 }
             }
 
-            // Spawn new bots that aren't already running
+            // Spawn new bots that aren't already running, or respawn if config changed
             let newBotsSpawned = 0;
             for (const bot of enabledBots) {
                 try {
+                    const existingInstance = this.bots.get(bot.botId);
+                    
                     // Check if bot is already spawned
-                    if (this.bots.has(bot.botId)) {
-                        targetRoom.botIds.add(bot.botId);
+                    if (existingInstance) {
+                        // Check if critical config fields have changed (require respawn)
+                        const configChanged = 
+                            existingInstance.config.name !== bot.name ||
+                            existingInstance.config.behaviorType !== bot.behaviorType ||
+                            JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
+                            JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
+                        
+                        if (configChanged) {
+                            console.log(`[BotManager] Bot ${bot.botId} config changed, respawning with new config`);
+                            // Despawn old bot
+                            await this.despawnBot(bot.botId);
+                            // Spawn with new config
+                            await this.spawnBot(bot.botId, bot);
+                            targetRoom.botIds.add(bot.botId);
+                            newBotsSpawned++;
+                        } else {
+                            // Config unchanged, just update the stored config in case other fields changed
+                            existingInstance.config = { ...existingInstance.config, ...bot };
+                            existingInstance.client.setFullConfig(existingInstance.config);
+                            targetRoom.botIds.add(bot.botId);
+                        }
                         continue;
                     }
 
+                    // Bot not spawned yet, spawn it
                     await this.spawnBot(bot.botId, bot);
                     targetRoom.botIds.add(bot.botId);
                     newBotsSpawned++;
