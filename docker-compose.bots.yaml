@@ -22,6 +22,7 @@ services:
       BOT_SERVER_ID: ${BOT_SERVER_ID:-server-1}
       SECRET_KEY: ${SECRET_KEY}
       ENABLE_MOVEMENT_LOGGING: "true"
+      ENABLE_BOT_DEBUG: "true"
       NODE_ENV: development
     depends_on:
       - redis

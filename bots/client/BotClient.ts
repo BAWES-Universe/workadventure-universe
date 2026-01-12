@@ -180,8 +180,11 @@ export class BotClient {
 
             this.ws.on('close', (code: number, reason: Buffer) => {
                 const reasonStr = reason ? reason.toString() : 'No reason provided';
-                // Only log disconnections in dev or if it's an error code (not normal close)
-                if (code !== 1000 && (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true')) {
+                // Always log disconnections in debug mode, or if it's an error code
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[Bot ${this.config.botId}] 🔌 WebSocket closed - Code: ${code}, Reason: ${reasonStr}, wasConnected: ${this.connected}`);
+                } else if (code !== 1000) {
+                    // In production, only log non-normal closes
                     console.warn(`[Bot ${this.config.botId}] Disconnected - Code: ${code}, Reason: ${reasonStr}`);
                 }
                 this.connected = false;
@@ -1243,13 +1246,29 @@ export class BotClient {
      * Handle incoming WebSocket message
      */
     private handleMessage(data: ArrayBuffer): void {
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 📨 Received message, size: ${data.byteLength} bytes`);
+        }
+        
         try {
             const message = ServerToClientMessage.decode(new Uint8Array(data));
             const msg = message.message;
-            if (!msg) return;
+            if (!msg) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[Bot ${this.config.botId}] ⚠️ Message has no content`);
+                }
+                return;
+            }
+
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 📬 Message type: ${msg.$case}`);
+            }
 
             switch (msg.$case) {
                 case 'batchMessage':
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 📦 Batch message with ${msg.batchMessage.payload.length} sub-messages`);
+                    }
                     for (const subMessage of msg.batchMessage.payload) {
                         this.handleSubMessage(subMessage.message);
                     }
@@ -1258,12 +1277,21 @@ export class BotClient {
                     this.handleSubMessage(msg);
             }
         } catch (error) {
-            console.error(`[Bot ${this.config.botId}] Error handling message:`, error);
+            console.error(`[Bot ${this.config.botId}] ❌ Error handling message:`, error);
         }
     }
 
     private handleSubMessage(message: ServerToClientMessage['message']): void {
-        if (!message) return;
+        if (!message) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] ⚠️ handleSubMessage called with null/undefined message`);
+            }
+            return;
+        }
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 🔍 Processing sub-message type: ${message.$case}`);
+        }
 
         switch (message.$case) {
             case 'roomJoinedMessage':
@@ -1271,7 +1299,7 @@ export class BotClient {
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Bot ${this.config.botId}] Joined room, userId: ${this.userId}`);
+                    console.log(`[Bot ${this.config.botId}] ✅ Joined room, userId: ${this.userId}`);
                 }
                 
                 // Automatically join the world space (allWorldUser) so bots appear in user list
