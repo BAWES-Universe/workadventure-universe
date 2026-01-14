@@ -494,11 +494,10 @@ export class BotManager {
             }
         }
 
-        // Handle AI configuration updates (aiProviderRef, chatInstructions, movementInstructions)
+        // Handle AI configuration updates (aiProviderRef, chatInstructions)
         // Check if any AI config fields are present in the updates (including empty strings)
         const aiConfigUpdated = 'aiProviderRef' in updates || 
-                               'chatInstructions' in updates || 
-                               'movementInstructions' in updates;
+                               'chatInstructions' in updates;
         
         if (aiConfigUpdated) {
             // Update stored config (allow empty strings to clear values)
@@ -507,9 +506,6 @@ export class BotManager {
             }
             if ('chatInstructions' in updates) {
                 instance.config.chatInstructions = updates.chatInstructions;
-            }
-            if ('movementInstructions' in updates) {
-                instance.config.movementInstructions = updates.movementInstructions;
             }
             
             // Update BotClient's fullConfig so behaviors get the new config immediately
@@ -520,7 +516,6 @@ export class BotManager {
                 aiProviderRef: instance.config.aiProviderRef,
                 chatInstructions: instance.config.chatInstructions?.substring(0, 100) || '(none)',
                 chatInstructionsLength: instance.config.chatInstructions?.length || 0,
-                hasMovementInstructions: !!instance.config.movementInstructions,
             });
         }
 

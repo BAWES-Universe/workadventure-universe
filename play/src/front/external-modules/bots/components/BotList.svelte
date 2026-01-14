@@ -62,7 +62,6 @@
                 enabled: updatedBot.enabled ?? enabled, // Use API response, fallback to requested state
                 behaviorConfig: updatedBot.behaviorConfig || bot.behaviorConfig,
                 chatInstructions: updatedBot.chatInstructions || bot.chatInstructions || "",
-                movementInstructions: updatedBot.movementInstructions || bot.movementInstructions || "",
                 aiProviderRef: updatedBot.aiProviderRef || bot.aiProviderRef || undefined,
                 createdAt: updatedBot.createdAt || bot.createdAt || new Date().toISOString(),
                 updatedAt: updatedBot.updatedAt || new Date().toISOString(),

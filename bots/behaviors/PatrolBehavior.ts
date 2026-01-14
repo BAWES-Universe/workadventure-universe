@@ -715,7 +715,6 @@ export class PatrolBehavior extends BaseBehavior {
                 playerId,
                 playerMessage,
                 botConfig.chatInstructions || 'You are a friendly bot.',
-                botConfig.movementInstructions,
                 botConfig.aiProviderRef,
                 spaceName,
                 context
@@ -799,7 +798,6 @@ export class PatrolBehavior extends BaseBehavior {
                 playerId,
                 playerMessage,
                 botConfig.chatInstructions || 'You are a helpful patrol bot.',
-                botConfig.movementInstructions,
                 botConfig.aiProviderRef,
                 spaceName,
                 context

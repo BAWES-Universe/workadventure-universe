@@ -476,9 +476,9 @@
                         <h3 class="text-base text-white/80 normal-case">Behavior</h3>
                         <button
                             class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                            on:click={() => (editingBehavior = true)}
+                            on:click={() => (editingBehavior = !editingBehavior)}
                         >
-                            Edit
+                            {editingBehavior ? "Close" : "Edit"}
                         </button>
                     </div>
                     {#if editingBehavior}
@@ -495,16 +495,6 @@
                                     autoSave();
                                 }}
                             />
-                            <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
-                                <button
-                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                    on:click={() => {
-                                        editingBehavior = false;
-                                    }}
-                                >
-                                    Close
-                                </button>
-                            </div>
                         </div>
                     {:else}
                         <div class="space-y-2">
@@ -538,24 +528,14 @@
                         <h3 class="text-base text-white/80 normal-case">Instructions</h3>
                         <button
                             class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                            on:click={() => (editingInstructions = true)}
+                            on:click={() => (editingInstructions = !editingInstructions)}
                         >
-                            Edit
+                            {editingInstructions ? "Close" : "Edit"}
                         </button>
                     </div>
                     {#if editingInstructions}
                         <div class="p-4 bg-white/5 rounded-lg border border-white/20">
                             <BotInstructionsEditor bind:bot={currentBot} on:change={() => autoSave()} />
-                            <div class="flex gap-2 mt-4 pt-4 border-t border-white/10">
-                                <button
-                                    class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors text-sm"
-                                    on:click={() => {
-                                        editingInstructions = false;
-                                    }}
-                                >
-                                    Close
-                                </button>
-                            </div>
                         </div>
                     {:else}
                         <div class="space-y-4">
@@ -569,12 +549,6 @@
                                 <p class="text-sm text-white/80 font-semibold mb-2">Chat instructions</p>
                                 <p class="text-sm text-white/70 whitespace-pre-wrap">
                                     {currentBot.chatInstructions || "No chat instructions set"}
-                                </p>
-                            </div>
-                            <div>
-                                <p class="text-sm text-white/80 font-semibold mb-2">Movement instructions</p>
-                                <p class="text-sm text-white/70 whitespace-pre-wrap">
-                                    {currentBot.movementInstructions || "No movement instructions set"}
                                 </p>
                             </div>
                         </div>

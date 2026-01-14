@@ -63,7 +63,6 @@
             lastSavedAIConfig = JSON.stringify({
                 aiProviderRef: bot.aiProviderRef,
                 chatInstructions: bot.chatInstructions,
-                movementInstructions: bot.movementInstructions,
             });
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotEditor] Initialized lastSavedAIConfig:", lastSavedAIConfig.substring(0, 100));
@@ -78,8 +77,7 @@
             previousBot.name !== bot.name &&
             JSON.stringify(previousBot.behaviorConfig) === JSON.stringify(bot.behaviorConfig) &&
             previousBot.aiProviderRef === bot.aiProviderRef &&
-            previousBot.chatInstructions === bot.chatInstructions &&
-            previousBot.movementInstructions === bot.movementInstructions;
+            previousBot.chatInstructions === bot.chatInstructions;
 
         // Auto-save when bot's config changes (position, radius, etc.) - debounced
         // Skip if only name changed (handled separately)
@@ -88,7 +86,6 @@
             const currentAIConfig = JSON.stringify({
                 aiProviderRef: bot.aiProviderRef,
                 chatInstructions: bot.chatInstructions,
-                movementInstructions: bot.movementInstructions,
             });
 
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -158,7 +155,6 @@
                             await botApiService.updateBot(bot.id, {
                                 aiProviderRef: bot.aiProviderRef,
                                 chatInstructions: bot.chatInstructions,
-                                movementInstructions: bot.movementInstructions,
                             });
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
@@ -376,7 +372,6 @@
                     },
                 },
                 chatInstructions: "",
-                movementInstructions: "",
                 aiProviderRef,
             });
 
@@ -400,7 +395,6 @@
                 },
                 aiProviderRef: createdBot.aiProviderRef || aiProviderRef,
                 chatInstructions: createdBot.chatInstructions || "",
-                movementInstructions: createdBot.movementInstructions || "",
                 createdAt: createdBot.createdAt || new Date().toISOString(),
                 updatedAt: createdBot.updatedAt || new Date().toISOString(),
                 createdBy: createdBot.createdBy || null,
@@ -448,7 +442,6 @@
                 behaviorConfig: selectedBot.behaviorConfig,
                 aiProviderRef: selectedBot.aiProviderRef,
                 chatInstructions: selectedBot.chatInstructions,
-                movementInstructions: selectedBot.movementInstructions,
             };
 
             const updatedBot = await botApiService.updateBot(selectedBot.id, updateData);
@@ -470,7 +463,6 @@
                 },
                 aiProviderRef: updatedBot.aiProviderRef,
                 chatInstructions: updatedBot.chatInstructions || "",
-                movementInstructions: updatedBot.movementInstructions || "",
                 createdAt: updatedBot.createdAt || new Date().toISOString(),
                 updatedAt: updatedBot.updatedAt || new Date().toISOString(),
                 createdBy: updatedBot.createdBy || null,

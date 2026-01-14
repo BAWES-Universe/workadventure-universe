@@ -487,7 +487,6 @@ export class BotAPI {
                     behaviorConfig: config.behaviorConfig || { type: config.behaviorType },
                     aiProviderRef: config.aiProviderRef,
                     chatInstructions: config.chatInstructions,
-                    movementInstructions: config.movementInstructions,
                     assignedSpace: config.assignedSpace,
                     createdAt: now,
                     updatedAt: now,
@@ -548,7 +547,6 @@ export class BotAPI {
                     console.log(`[BotAPI] Updating running bot ${botId} with:`, {
                         hasAiProviderRef: 'aiProviderRef' in updates,
                         hasChatInstructions: 'chatInstructions' in updates,
-                        hasMovementInstructions: 'movementInstructions' in updates,
                         chatInstructions: updates.chatInstructions?.substring(0, 100) || '(none)',
                         chatInstructionsLength: updates.chatInstructions?.length || 0,
                     });

@@ -14,7 +14,6 @@ export interface CreateBotDto {
     behaviorType: "idle" | "patrol" | "social";
     behaviorConfig: BotData["behaviorConfig"];
     chatInstructions?: string;
-    movementInstructions?: string;
     aiProviderRef?: string;
 }
 

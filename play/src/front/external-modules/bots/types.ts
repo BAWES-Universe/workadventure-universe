@@ -31,7 +31,6 @@ export interface BotData {
         [key: string]: unknown;
     };
     chatInstructions?: string;
-    movementInstructions?: string;
     aiProviderRef?: string; // Reference to AI provider config in Admin API
     enabled?: boolean; // Whether bot is active
     createdAt?: string;

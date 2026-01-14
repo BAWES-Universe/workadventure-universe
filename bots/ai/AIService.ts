@@ -105,7 +105,6 @@ export class AIService {
         playerId: number,
         message: string,
         chatInstructions: string,
-        movementInstructions: string | undefined,
         providerId: string,
         spaceName: string | undefined,
         conversationContext: string
@@ -118,9 +117,6 @@ export class AIService {
 
             // Build system prompt
             let systemPrompt = chatInstructions || 'You are a friendly bot.';
-            if (movementInstructions) {
-                systemPrompt += `\n\nMovement Instructions: ${movementInstructions}`;
-            }
             if (conversationContext) {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
             }

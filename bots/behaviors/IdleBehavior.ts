@@ -239,7 +239,6 @@ export class IdleBehavior extends BaseBehavior {
                 playerId,
                 playerMessage,
                 botConfig.chatInstructions || 'You are a helpful bot.',
-                botConfig.movementInstructions,
                 botConfig.aiProviderRef,
                 spaceName,
                 context
@@ -304,7 +303,6 @@ export class IdleBehavior extends BaseBehavior {
                 playerId,
                 playerMessage,
                 botConfig.chatInstructions || 'You are a friendly bot.',
-                botConfig.movementInstructions,
                 botConfig.aiProviderRef,
                 spaceName,
                 context
