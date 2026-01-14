@@ -7,6 +7,7 @@
 import type { AIProvider } from './AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from './types';
 import { LMStudioProvider } from './providers/LMStudioProvider';
+import { OpenAIProvider } from './providers/OpenAIProvider';
 
 export class AIProviderRegistry {
     private providers: Map<string, AIProvider> = new Map();
@@ -43,8 +44,8 @@ export class AIProviderRegistry {
                 provider = new LMStudioProvider();
                 break;
             case 'openai':
-                // TODO: Implement OpenAIProvider
-                throw new Error(`Provider type 'openai' not yet implemented`);
+                provider = new OpenAIProvider();
+                break;
             case 'anthropic':
                 // TODO: Implement AnthropicProvider
                 throw new Error(`Provider type 'anthropic' not yet implemented`);
