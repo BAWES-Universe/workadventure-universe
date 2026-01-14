@@ -128,32 +128,54 @@ export class AIService {
             // Generate stream
             let tokensUsed = 0;
             let error = false;
+            let streamCompleted = false;
 
-            for await (const chunk of this.providerRegistry.generateStream(
-                providerId,
-                systemPrompt,
-                message,
-                config
-            )) {
-                if (chunk.metadata?.tokensUsed) {
-                    tokensUsed = chunk.metadata.tokensUsed;
-                }
-                if (chunk.metadata?.error) {
-                    error = true;
-                }
+            try {
+                for await (const chunk of this.providerRegistry.generateStream(
+                    providerId,
+                    systemPrompt,
+                    message,
+                    config
+                )) {
+                    if (chunk.metadata?.tokensUsed) {
+                        tokensUsed = chunk.metadata.tokensUsed;
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Received chunk with tokensUsed: ${tokensUsed}`);
+                        }
+                    }
+                    if (chunk.metadata?.error) {
+                        error = true;
+                    }
+                    if (chunk.done) {
+                        streamCompleted = true;
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Received done chunk, stream completing`);
+                        }
+                    }
 
-                yield chunk;
+                    yield chunk;
+                }
+            } finally {
+                // Always track usage, even if stream doesn't complete normally
+                const latency = Date.now() - startTime;
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] Stream loop ended. streamCompleted=${streamCompleted}, tokensUsed=${tokensUsed}, latency=${latency}ms, error=${error}`);
+                    console.log(`[AIService] Tracking usage: botId=${botId}, providerId=${providerId}`);
+                }
+                
+                // Always track usage - fire and forget
+                this.trackUsage(botId, providerId, {
+                    tokensUsed,
+                    latency,
+                    error,
+                }).catch(err => {
+                    // Always log errors, even without debug mode
+                    console.error('[AIService] Failed to track usage:', err);
+                    if (err instanceof Error) {
+                        console.error('[AIService] Error details:', err.message);
+                    }
+                });
             }
-
-            // Track usage after stream completes
-            const latency = Date.now() - startTime;
-            this.trackUsage(botId, providerId, {
-                tokensUsed,
-                latency,
-                error,
-            }).catch(err => {
-                console.error('[AIService] Failed to track usage:', err);
-            });
         } catch (error: any) {
             const latency = Date.now() - startTime;
             
@@ -193,6 +215,10 @@ export class AIService {
             // Calculate cost
             const cost = this.calculateCost(providerId, metadata);
 
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AIService] trackUsage called: botId=${botId}, providerId=${providerId}, tokensUsed=${metadata.tokensUsed}, cost=${cost}`);
+            }
+
             // Track via Admin API
             await this.adminApiService.trackAIUsage({
                 botId,
@@ -205,10 +231,16 @@ export class AIService {
                 error: metadata.error || false,
                 timestamp: new Date().toISOString(),
             });
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AIService] Usage tracked successfully for ${providerId}`);
+            }
         } catch (error) {
             // Fire-and-forget: don't throw
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[AIService] Error tracking usage:', error);
+            console.error('[AIService] Error tracking usage:', error);
+            if (process.env.ENABLE_BOT_DEBUG === 'true' && error instanceof Error) {
+                console.error('[AIService] Error message:', error.message);
+                console.error('[AIService] Error stack:', error.stack);
             }
         }
     }

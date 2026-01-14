@@ -91,6 +91,9 @@ export class LMStudioProvider implements AIProvider {
                         
                         if (data === '[DONE]') {
                             const latency = Date.now() - startTime;
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[LMStudioProvider] Received [DONE], yielding final chunk with tokensUsed=${tokensUsed}`);
+                            }
                             yield {
                                 content: '',
                                 done: true,
@@ -107,22 +110,33 @@ export class LMStudioProvider implements AIProvider {
                             const json = JSON.parse(data);
                             const delta = json.choices?.[0]?.delta;
 
+                            // Extract token usage - can come in usage chunks when include_usage is true
+                            // Check usage FIRST, as it might come in chunks without delta.content
+                            if (json.usage) {
+                                if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
+                                    // Sum prompt and completion tokens
+                                    const newTokens = (json.usage.prompt_tokens || 0) + (json.usage.completion_tokens || 0);
+                                    if (newTokens > 0) {
+                                        tokensUsed = newTokens;
+                                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.log(`[LMStudioProvider] Token usage updated: ${tokensUsed} (prompt: ${json.usage.prompt_tokens || 0}, completion: ${json.usage.completion_tokens || 0})`);
+                                        }
+                                    }
+                                } else if (json.usage.total_tokens) {
+                                    // Fallback to total_tokens if available
+                                    tokensUsed = json.usage.total_tokens;
+                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.log(`[LMStudioProvider] Token usage from total_tokens: ${tokensUsed}`);
+                                    }
+                                }
+                            }
+
+                            // Yield content chunks
                             if (delta?.content) {
                                 yield {
                                     content: delta.content,
                                     done: false,
                                 };
-                            }
-
-                            // Extract token usage - can come in usage chunks when include_usage is true
-                            if (json.usage) {
-                                if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
-                                    // Sum prompt and completion tokens
-                                    tokensUsed = (json.usage.prompt_tokens || 0) + (json.usage.completion_tokens || 0);
-                                } else if (json.usage.total_tokens) {
-                                    // Fallback to total_tokens if available
-                                    tokensUsed = json.usage.total_tokens;
-                                }
                             }
                         } catch (e) {
                             // Skip invalid JSON lines
@@ -136,6 +150,9 @@ export class LMStudioProvider implements AIProvider {
 
             // Final chunk
             const latency = Date.now() - startTime;
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[LMStudioProvider] Final chunk: tokensUsed=${tokensUsed}, latency=${latency}ms`);
+            }
             yield {
                 content: '',
                 done: true,

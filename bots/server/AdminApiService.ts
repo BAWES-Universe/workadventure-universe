@@ -531,6 +531,9 @@ export class AdminApiService {
         timestamp?: string;
     }): Promise<void> {
         if (!this.isConfigured()) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] Admin API not configured, skipping AI usage tracking');
+            }
             return;
         }
 
@@ -541,19 +544,25 @@ export class AdminApiService {
         }
 
         try {
-            await axios.post(
+            const payload = {
+                botId: usage.botId,
+                providerId: usage.providerId,
+                tokensUsed: usage.tokensUsed || 0,
+                apiCalls: usage.apiCalls || 1,
+                durationSeconds: usage.durationSeconds ?? null,
+                cost: usage.cost ?? null,
+                latency: usage.latency ?? null,
+                error: usage.error || false,
+                timestamp: usage.timestamp || new Date().toISOString(),
+            };
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Sending usage tracking:`, JSON.stringify(payload, null, 2));
+            }
+
+            const response = await axios.post(
                 `${this.adminApiUrl}/api/bots/ai-usage`,
-                {
-                    botId: usage.botId,
-                    providerId: usage.providerId,
-                    tokensUsed: usage.tokensUsed || 0,
-                    apiCalls: usage.apiCalls || 1,
-                    durationSeconds: usage.durationSeconds ?? null,
-                    cost: usage.cost ?? null,
-                    latency: usage.latency ?? null,
-                    error: usage.error || false,
-                    timestamp: usage.timestamp || new Date().toISOString(),
-                },
+                payload,
                 {
                     headers: {
                         Authorization: `Bearer ${botServiceToken}`,
@@ -561,9 +570,19 @@ export class AdminApiService {
                     },
                 }
             );
-        } catch (error) {
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Usage tracking response:`, response.status, JSON.stringify(response.data, null, 2));
+            }
+        } catch (error: any) {
             // Fire-and-forget: don't throw, just log
             console.error('[AdminApiService] Error tracking AI usage:', error);
+            if (error.response) {
+                console.error('[AdminApiService] Error response status:', error.response.status);
+                console.error('[AdminApiService] Error response data:', error.response.data);
+            } else if (error.message) {
+                console.error('[AdminApiService] Error message:', error.message);
+            }
         }
     }
 }
