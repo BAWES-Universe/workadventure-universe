@@ -296,18 +296,21 @@ export class IdleBehavior extends BaseBehavior {
         let fullMessage = '';
         
         try {
-            // Simple prompt: person approached, respond naturally
-            // The AI will use the conversation context (memory, emotions, relationship) from chatInstructions
+            // Natural prompt: person approached, respond naturally based on context
+            // The AI has access to memory (if they've met before), map context, and can assess the situation
+            // It should respond naturally, not ask meta questions
             const playerMessage = 'Someone just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot.',
+                botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.',
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;

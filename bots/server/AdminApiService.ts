@@ -74,6 +74,9 @@ export interface BotUsageQuery {
 
 export class AdminApiService {
     private adminApiUrl: string;
+    // Cache for room metadata (room URL -> metadata, cached for 5 minutes)
+    private roomMetadataCache: Map<string, { data: { universeName: string; worldName: string; roomName: string }; cachedAt: number }> = new Map();
+    private readonly ROOM_METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     private adminApiToken: string;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
@@ -584,8 +587,17 @@ export class AdminApiService {
     /**
      * Get room metadata (universe, world, room names)
      * Calls the play server's /api/room/info endpoint or extracts from URL
+     * Results are cached for 5 minutes to improve performance
      */
     async getRoomMetadata(roomUrl: string): Promise<{ universeName: string; worldName: string; roomName: string } | null> {
+        // Check cache first
+        const cached = this.roomMetadataCache.get(roomUrl);
+        if (cached && Date.now() - cached.cachedAt < this.ROOM_METADATA_CACHE_TTL) {
+            return cached.data;
+        }
+
+        let result: { universeName: string; worldName: string; roomName: string } | null = null;
+
         try {
             // Try to call the play server's room info endpoint
             const playServerUrl = process.env.PLAY_URL || roomUrl.split('/@/')[0];
@@ -596,7 +608,7 @@ export class AdminApiService {
             });
 
             if (response.data) {
-                return {
+                result = {
                     universeName: response.data.universeName || '',
                     worldName: response.data.worldName || '',
                     roomName: response.data.roomName || '',
@@ -607,25 +619,35 @@ export class AdminApiService {
             console.warn(`[AdminApiService] Failed to get room metadata for ${roomUrl}, using URL fallback:`, error);
         }
 
-        // Fallback: extract from URL
-        try {
-            const urlObj = new URL(roomUrl);
-            const pathMatch = /^\/@\/(.+)/.exec(urlObj.pathname);
-            if (pathMatch) {
-                const parts = pathMatch[1].split('/').filter(p => p);
-                if (parts.length >= 3) {
-                    return {
-                        universeName: parts[0] || '',
-                        worldName: parts[1] || '',
-                        roomName: parts[2] || '',
-                    };
+        // Fallback: extract from URL if API call failed
+        if (!result) {
+            try {
+                const urlObj = new URL(roomUrl);
+                const pathMatch = /^\/@\/(.+)/.exec(urlObj.pathname);
+                if (pathMatch) {
+                    const parts = pathMatch[1].split('/').filter(p => p);
+                    if (parts.length >= 3) {
+                        result = {
+                            universeName: parts[0] || '',
+                            worldName: parts[1] || '',
+                            roomName: parts[2] || '',
+                        };
+                    }
                 }
+            } catch (error) {
+                console.error(`[AdminApiService] Failed to parse room URL: ${roomUrl}`, error);
             }
-        } catch (error) {
-            console.error(`[AdminApiService] Failed to parse room URL: ${roomUrl}`, error);
         }
 
-        return null;
+        // Cache the result (even if null, to avoid repeated failed lookups)
+        if (result) {
+            this.roomMetadataCache.set(roomUrl, {
+                data: result,
+                cachedAt: Date.now(),
+            });
+        }
+
+        return result;
     }
 }
 

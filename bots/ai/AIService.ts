@@ -127,6 +127,36 @@ export class AIService {
             if (conversationContext) {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
             }
+            
+            // Add guidance for natural responses and tool usage
+            systemPrompt += `\n\nWhen someone approaches you, respond naturally and conversationally. If you've met this person before, use your memory to respond appropriately. Don't ask meta questions about what kind of person they are - just respond naturally based on the situation.
+
+CRITICAL RULES:
+1. You MUST use tools to get information. Never guess or use placeholders like "[Room Name]" or "[World Name]".
+2. NEVER ask the user to call tools - YOU call them yourself when needed.
+3. NEVER respond with vague answers like "common area" or "large building" - always call get_map_context to get the actual location names.
+4. Answer questions directly - don't ask the user questions back unless it's a natural conversation flow.
+5. After getting location from tools, provide CONTEXTUAL answers based on the question type - don't just repeat the location.
+
+When someone asks about:
+- WHERE you are: "where are we", "what room", "what world", "what universe", "where is this" → Call get_map_context and respond with the actual universe/world/room names
+- WHAT is this place: "what is this place", "what is this" → Call get_map_context to get location, then provide a brief description of what kind of place it is based on the room name (e.g., "This is the test room in the test world - it appears to be a testing or development space")
+- WHAT the place is LIKE (description/atmosphere): "what is this place like", "describe this place", "what's this place like" → Call get_map_context, then provide a meaningful description of the place's character, atmosphere, or purpose based on the room name
+- WHAT TO DO here: "what do we do here", "what can we do", "what happens here" → Call get_map_context to understand the location, then suggest activities or purposes based on the room name and context. Be creative but reasonable.
+- Who's on the map: "who's here", "who's online", "whos online here" → Call get_people_on_map tool and list the people
+- Map areas, sections → Use get_map_areas tool
+- Your position: "where are you" → Use get_bot_position tool
+
+Remember: 
+- YOU call the tools, not the user
+- After getting location, provide CONTEXTUAL answers - don't just repeat location for every question
+- Different questions need different types of responses (location vs description vs activities)
+- When asked "tell me more", "what else", or similar follow-ups, provide ADDITIONAL information you haven't mentioned yet:
+  * Use get_map_areas to describe areas/sections on the map
+  * Use get_people_on_map to mention who's currently here
+  * Provide more creative details about the place based on the room name
+  * Don't repeat what you just said - expand with new information
+- Vary your responses - don't use the same format for every answer`;
 
             // Define tools for function calling
             const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
@@ -146,28 +176,42 @@ export class AIService {
                     config,
                     tools.length > 0 ? tools : undefined
                 )) {
-                    // Accumulate content
-                    if (chunk.content) {
-                        accumulatedContent += chunk.content;
-                    }
-
-                    // Collect tool calls
+                    // Collect tool calls first (before yielding content)
                     if (chunk.toolCalls && chunk.toolCalls.length > 0) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Received tool calls:`, chunk.toolCalls);
+                        }
                         pendingToolCalls.push(...chunk.toolCalls);
                     }
 
-                    // If chunk is done and we have tool calls, execute them
+                    // If we have tool calls and chunk is done, execute them BEFORE yielding any content
                     if (chunk.done && pendingToolCalls.length > 0) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Executing ${pendingToolCalls.length} tool calls`);
+                        }
                         // Execute tool calls and continue conversation
                         const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
                         pendingToolCalls = [];
 
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Tool results:`, toolResults);
+                        }
+
                         // Continue conversation with tool results
                         const toolResultsMessage = this.formatToolResults(toolResults);
+                        // Include explicit instruction to use tool results - be very direct
+                        // Format as a clear instruction to the AI
+                        const followUpMessage = `User asked: "${message}"
+
+You called tools and received these results:
+${toolResultsMessage}
+
+IMPORTANT: Answer the user's question using the EXACT VALUES shown in the tool results above. Copy the actual names/values directly from the results. Do NOT use placeholders like "[Room Name]", "[World Name]", "[Place]", or "[Universe]". Use the real values that appear in the tool results.`;
+                        
                         for await (const resultChunk of this.providerRegistry.generateStream(
                             providerId,
                             systemPrompt,
-                            `${message}\n\nTool results:\n${toolResultsMessage}`,
+                            followUpMessage,
                             config,
                             tools.length > 0 ? tools : undefined
                         )) {
@@ -177,6 +221,11 @@ export class AIService {
                             yield resultChunk;
                         }
                         continue;
+                    }
+
+                    // Accumulate content (only if no tool calls pending)
+                    if (chunk.content && pendingToolCalls.length === 0) {
+                        accumulatedContent += chunk.content;
                     }
 
                     // Track metadata from chunk
@@ -196,8 +245,13 @@ export class AIService {
                         }
                     }
 
-                    // Yield original chunk
-                    yield chunk;
+                    // Only yield chunk if no tool calls are pending
+                    // (If tool calls are coming, wait for them to complete first)
+                    if (pendingToolCalls.length === 0) {
+                        yield chunk;
+                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[AIService] Skipping chunk yield - waiting for tool calls to complete`);
+                    }
                 }
             } finally {
                 // Always track usage, even if stream doesn't complete normally
@@ -386,7 +440,7 @@ export class AIService {
                 type: 'function',
                 function: {
                     name: 'get_map_context',
-                    description: 'Get the current map context including universe name, world name, and room name.',
+                    description: 'Get the current location context including universe name, world name, and room name. Use this ONLY for questions about WHERE you are (location), such as "where are we", "what room", "what world", "what universe". Do NOT use this for questions about what the place is LIKE (description/character).',
                     parameters: {
                         type: 'object',
                         properties: {},
@@ -417,15 +471,15 @@ export class AIService {
 
     /**
      * Execute tool calls requested by AI
+     * Executes all tool calls in parallel for better performance
      */
     private async executeToolCalls(
         toolCalls: ToolCall[],
         botClient?: BotClient,
         adminApiService?: AdminApiService
     ): Promise<Array<{ id: string; name: string; result: any }>> {
-        const results: Array<{ id: string; name: string; result: any }> = [];
-
-        for (const toolCall of toolCalls) {
+        // Execute all tool calls in parallel for better performance
+        const toolPromises = toolCalls.map(async (toolCall) => {
             try {
                 let result: any;
 
@@ -478,24 +532,56 @@ export class AIService {
                         result = { error: `Unknown tool: ${toolCall.name}` };
                 }
 
-                results.push({ id: toolCall.id, name: toolCall.name, result });
+                return { id: toolCall.id, name: toolCall.name, result };
             } catch (error: any) {
-                results.push({
+                return {
                     id: toolCall.id,
                     name: toolCall.name,
                     result: { error: error.message || 'Tool execution failed' },
-                });
+                };
             }
-        }
+        });
 
-        return results;
+        // Wait for all tool calls to complete in parallel
+        return Promise.all(toolPromises);
     }
 
     /**
      * Format tool results for AI
      */
     private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {
-        return results.map(r => `${r.name}: ${JSON.stringify(r.result)}`).join('\n');
+        return results.map(r => {
+            // Format results in a more readable way for the AI
+            if (r.name === 'get_map_context' && r.result && !r.result.error) {
+                const { universeName, worldName, roomName } = r.result;
+                // Format in a way that makes it very clear what values to use
+                return `get_map_context result:
+- Universe: ${universeName}
+- World: ${worldName}
+- Room: ${roomName}
+
+Use these EXACT values: ${universeName}, ${worldName}, ${roomName}`;
+            }
+            if (r.name === 'get_people_on_map' && Array.isArray(r.result)) {
+                if (r.result.length === 0) {
+                    return `get_people_on_map: There are no other people on the map currently.`;
+                }
+                const peopleList = r.result.map((p: any) => `${p.name} (at position ${p.position.x}, ${p.position.y})`).join(', ');
+                return `get_people_on_map: People currently on the map: ${peopleList}`;
+            }
+            if (r.name === 'get_bot_position' && r.result && !r.result.error) {
+                return `get_bot_position: Your current position is x: ${r.result.x}, y: ${r.result.y}`;
+            }
+            if (r.name === 'get_map_areas' && Array.isArray(r.result)) {
+                if (r.result.length === 0) {
+                    return `get_map_areas: There are no defined areas on this map.`;
+                }
+                const areasList = r.result.map((a: any) => `"${a.name}"`).join(', ');
+                return `get_map_areas: Defined areas on this map: ${areasList}`;
+            }
+            // Fallback to JSON for other results or errors
+            return `${r.name}: ${JSON.stringify(r.result)}`;
+        }).join('\n');
     }
 }
 
