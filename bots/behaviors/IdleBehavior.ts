@@ -174,14 +174,19 @@ export class IdleBehavior extends BaseBehavior {
         this.conversationMemory.startConversation(botId, senderId);
         
         // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
+        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
         
         // Extract personal information from message
         this.conversationMemory.extractPersonalInfo(botId, senderId, message);
 
+        // Start typing indicator
+        this.bot?.startTyping(spaceName);
+
         // Generate AI response
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
             console.error(`[IdleBehavior] Error generating AI response:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Send fallback message
             this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         });
@@ -241,13 +246,18 @@ export class IdleBehavior extends BaseBehavior {
                 botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
                     // Send complete message
                     if (fullMessage.trim()) {
                         this.bot.sendChatMessage(spaceName, fullMessage);
@@ -259,6 +269,8 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] AI error:`, error);
+            // Stop typing indicator on error
+            this.bot.stopTyping(spaceName);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }
@@ -269,7 +281,7 @@ export class IdleBehavior extends BaseBehavior {
     }
 
     /**
-     * Generate AI greeting for a player
+     * Generate AI greeting for a person
      */
     private async generateAIGreeting(
         spaceName: string,
@@ -294,18 +306,22 @@ export class IdleBehavior extends BaseBehavior {
         let fullMessage = '';
         
         try {
-            // Simple prompt: player approached, respond naturally
-            // The AI will use the conversation context (memory, emotions, relationship) from chatInstructions
-            const playerMessage = 'A player just approached you.';
+            // Natural prompt: person approached, respond naturally based on context
+            // The AI has access to memory (if they've met before), map context, and can assess the situation
+            // It should respond naturally, not ask meta questions
+            // Use a more direct prompt that encourages a greeting, not a meta-response
+            const playerMessage = 'Greet this person who just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot.',
+                botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.',
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;

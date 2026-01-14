@@ -326,7 +326,7 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     /**
-     * Helper method to start a conversation with a player (used by both onSpaceJoined and onSpaceUserJoined)
+     * Helper method to start a conversation with a person (used by both onSpaceJoined and onSpaceUserJoined)
      */
     private startConversationWithPlayer(
         playerId: number,
@@ -461,6 +461,9 @@ export class SocialBehavior extends BaseBehavior {
         
         let conversation = this.activeConversations.get(senderId);
         
+        // Start typing indicator
+        this.bot?.startTyping(spaceName);
+
         // If no active conversation exists, create one (player initiated chat)
         if (!conversation) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -483,7 +486,7 @@ export class SocialBehavior extends BaseBehavior {
         conversation.lastMessageTime = Date.now();
         
         // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
+        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
         
         // Extract personal information from message
         this.conversationMemory.extractPersonalInfo(botId, senderId, message);
@@ -495,6 +498,8 @@ export class SocialBehavior extends BaseBehavior {
         // Generate AI response
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
             console.error(`[SocialBehavior] Error generating AI response:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Send fallback message
             this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         });
@@ -554,13 +559,18 @@ export class SocialBehavior extends BaseBehavior {
                 chatInstructions,
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
                     // Send complete message (WorkAdventure chat requires complete messages)
                     if (fullMessage.trim()) {
                         this.bot.sendChatMessage(spaceName, fullMessage);
@@ -573,12 +583,14 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI error:`, error);
+            // Stop typing indicator on error
+            this.bot.stopTyping(spaceName);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }
 
     /**
-     * Generate AI greeting for a player
+     * Generate AI greeting for a person
      */
     private async generateAIGreeting(
         spaceName: string,
@@ -606,25 +618,30 @@ export class SocialBehavior extends BaseBehavior {
         let fullMessage = '';
         
         try {
-            // Simple prompt: player approached, respond naturally
-            // The AI will use the conversation context (memory, emotions, relationship) to respond appropriately
-            // If there was a bad interaction, the context will include that and the AI will remember
-            const playerMessage = 'A player just approached you.';
+            // Natural prompt: person approached, respond naturally based on context
+            // The AI has access to memory (if they've met before), map context, and can assess the situation
+            // It should respond naturally, not ask meta questions
+            const playerMessage = 'Greet this person who just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot.',
+                botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.',
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
                     // Send response
                     if (fullMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
@@ -962,7 +979,7 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Check if player is angry at bot
-        if (emotions.playerEmotion.anger > 60) {
+        if (emotions.personEmotion.anger > 60) {
             return `I can see you're still upset. I'm sorry about that.`;
         }
 

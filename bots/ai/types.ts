@@ -20,11 +20,21 @@ export interface AIProviderConfig {
 }
 
 /**
+ * Tool call from AI
+ */
+export interface ToolCall {
+    id: string;
+    name: string;
+    arguments: string; // JSON string
+}
+
+/**
  * Streaming response chunk
  */
 export interface AIStreamChunk {
     content: string; // Token content (empty string if done)
     done: boolean; // Whether this is the final chunk
+    toolCalls?: ToolCall[]; // Tool calls requested by AI
     metadata?: {
         tokensUsed?: number;
         latency?: number;

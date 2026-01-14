@@ -53,7 +53,8 @@ export class BotManager {
         this.aiService = new AIService(
             this.conversationMemory,
             this.adminApiService,
-            adminApiUrl
+            adminApiUrl,
+            this.mapDataService
         );
     }
     

@@ -31,12 +31,14 @@ export interface AIProvider {
      * @param systemPrompt - System prompt/instructions
      * @param userMessage - User message
      * @param config - Provider configuration
+     * @param tools - Optional array of tool definitions for function calling
      * @returns Async generator yielding stream chunks
      */
     generateStream(
         systemPrompt: string,
         userMessage: string,
-        config: AIProviderConfig
+        config: AIProviderConfig,
+        tools?: any[]
     ): AsyncGenerator<AIStreamChunk>;
 
     /**
@@ -45,12 +47,14 @@ export interface AIProvider {
      * @param systemPrompt - System prompt/instructions
      * @param userMessage - User message
      * @param config - Provider configuration
+     * @param tools - Optional array of tool definitions for function calling
      * @returns Complete response
      */
     generate(
         systemPrompt: string,
         userMessage: string,
-        config: AIProviderConfig
+        config: AIProviderConfig,
+        tools?: any[]
     ): Promise<AIResponse>;
 }
 

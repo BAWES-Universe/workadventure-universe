@@ -4,9 +4,19 @@
 
 import { PathTileType } from '../utils/BotPathfindingManager';
 
+export interface MapArea {
+    name: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    properties?: Record<string, any>;
+}
+
 interface MapData {
     collisionGrid: number[][];
     tileDimensions: { width: number; height: number };
+    areas: MapArea[];
 }
 
 interface CachedMapData extends MapData {
@@ -32,6 +42,7 @@ export class MapDataService {
             return {
                 collisionGrid: cached.collisionGrid,
                 tileDimensions: cached.tileDimensions,
+                areas: cached.areas || [],
             };
         }
         
@@ -304,10 +315,142 @@ export class MapDataService {
             console.warn(`[MapDataService] WARNING: No walkable tiles found in grid! Bots cannot move.`);
         }
         
+        // Extract areas from WAM file (not TMJ)
+        // Areas are defined in the WAM file's "areas" array
+        const areas = this.extractAreasFromWam(wamData);
+
         return {
             collisionGrid,
             tileDimensions: { width: tileWidth, height: tileHeight },
+            areas,
         };
+    }
+
+    /**
+     * Extract areas from WAM file
+     * Areas are defined in the WAM file's "areas" array
+     * Only include areas that have names AND are marked as searchable
+     */
+    private extractAreasFromWam(wamData: any): MapArea[] {
+        const areas: MapArea[] = [];
+        
+        if (!wamData.areas || !Array.isArray(wamData.areas)) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[MapDataService] No areas array in WAM file`);
+            }
+            return areas;
+        }
+        
+        for (const area of wamData.areas) {
+            // Only include areas that have names (named areas)
+            if (!area.name || area.name.trim() === '') {
+                continue;
+            }
+            
+            // Check if area is searchable
+            // Searchable property is in areaDescriptionProperties with type "areaDescriptionProperties"
+            const isSearchable = this.isAreaSearchable(area.properties || []);
+            
+            if (!isSearchable) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[MapDataService] Skipping area "${area.name}" - not searchable`);
+                }
+                continue;
+            }
+            
+            const properties = this.parseWamProperties(area.properties || []);
+            areas.push({
+                name: area.name.trim(),
+                x: area.x || 0,
+                y: area.y || 0,
+                width: area.width || 0,
+                height: area.height || 0,
+                properties,
+            });
+        }
+        
+        // Always log area extraction for debugging
+        console.log(`[MapDataService] Extracted ${areas.length} searchable named areas from WAM file (out of ${wamData.areas.length} total areas)`);
+        if (areas.length > 0) {
+            console.log(`[MapDataService] Searchable areas found:`, areas.map(a => `${a.name} (${a.width}x${a.height} at ${a.x},${a.y})`).join(', '));
+        } else {
+            console.log(`[MapDataService] No searchable named areas found. Checked ${wamData.areas.length} areas.`);
+            // Log details about why areas were filtered out
+            if (wamData.areas.length > 0) {
+                console.log(`[MapDataService] Area details:`);
+                for (const area of wamData.areas) {
+                    const hasName = area.name && area.name.trim() !== '';
+                    const isSearchable = this.isAreaSearchable(area.properties || []);
+                    console.log(`  - "${area.name || '(no name)'}": hasName=${hasName}, isSearchable=${isSearchable}, properties=`, area.properties?.map((p: any) => `${p.type || 'unknown'}:${p.searchable || 'N/A'}`).join(', ') || 'none');
+                }
+            }
+        }
+        
+        return areas;
+    }
+
+    /**
+     * Check if an area is marked as searchable
+     * Searchable property is in areaDescriptionProperties with type "areaDescriptionProperties"
+     */
+    private isAreaSearchable(properties: any[]): boolean {
+        for (const prop of properties) {
+            // Look for areaDescriptionProperties with searchable: true
+            if (prop.type === 'areaDescriptionProperties' && prop.searchable === true) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Parse WAM properties array into key-value object
+     * WAM properties have a different structure than TMJ properties
+     */
+    private parseWamProperties(properties: any[]): Record<string, any> {
+        const result: Record<string, any> = {};
+        for (const prop of properties) {
+            // WAM properties can have different structures
+            // Some have name/value, others have type/data
+            if (prop.type && prop.data) {
+                result[prop.type] = prop.data;
+            } else if (prop.name && prop.value !== undefined) {
+                result[prop.name] = prop.value;
+            } else if (prop.id && prop.type) {
+                result[prop.type] = prop;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Parse Tiled properties array into key-value object
+     */
+    private parseProperties(properties: any[]): Record<string, any> {
+        const result: Record<string, any> = {};
+        for (const prop of properties) {
+            if (prop.name && prop.value !== undefined) {
+                result[prop.name] = prop.value;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Get areas for a room (cached)
+     */
+    async getAreas(roomUrl: string): Promise<MapArea[]> {
+        const mapData = await this.getMapData(roomUrl);
+        const areas = mapData?.areas || [];
+        
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[MapDataService] getAreas called for ${roomUrl}, returning ${areas.length} areas`);
+            if (areas.length > 0) {
+                console.log(`[MapDataService] Areas:`, areas.map(a => a.name).join(', '));
+            }
+        }
+        
+        return areas;
     }
 
     /**

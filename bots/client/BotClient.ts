@@ -1053,6 +1053,72 @@ export class BotClient {
     }
 
     /**
+     * Start typing indicator in space (shows bot is typing)
+     */
+    startTyping(spaceName: string): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            return;
+        }
+
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Starting typing indicator in space ${spaceName}`);
+        }
+
+        // Send typing indicator via PublicEvent with SpaceIsTyping
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceIsTyping',
+                            spaceIsTyping: {
+                                isTyping: true,
+                                characterTextures: [],
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
+     * Stop typing indicator in space
+     */
+    stopTyping(spaceName: string): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            return;
+        }
+
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Stopping typing indicator in space ${spaceName}`);
+        }
+
+        // Send stop typing indicator via PublicEvent with SpaceIsTyping
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceIsTyping',
+                            spaceIsTyping: {
+                                isTyping: false,
+                                characterTextures: [],
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
      * Get player information
      */
     getPlayerInfo(playerId: number): PlayerInfo | undefined {
@@ -1102,9 +1168,24 @@ export class BotClient {
     
     /**
      * Get all players in the room (for debugging)
+     * @deprecated Use getAllPeople() instead
      */
     getAllPlayers(): PlayerInfo[] {
         return Array.from(this.players.values());
+    }
+
+    /**
+     * Get all people on the map (includes both players and bots)
+     */
+    getAllPeople(): PlayerInfo[] {
+        return Array.from(this.players.values());
+    }
+
+    /**
+     * Get the room URL this bot is connected to
+     */
+    getRoomUrl(): string {
+        return this.config.roomUrl;
     }
 
     /**
