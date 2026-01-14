@@ -49,9 +49,12 @@
 
     onDestroy(() => {
         unsubscribe();
-        // Clear any pending auto-save timeout
+        // Clear any pending auto-save timeouts
         if (autoSaveTimeout) {
             clearTimeout(autoSaveTimeout);
+        }
+        if (nameSaveTimeout) {
+            clearTimeout(nameSaveTimeout);
         }
     });
 
@@ -68,18 +71,23 @@
             if (!currentBot.behaviorConfig.assignedSpace) {
                 currentBot.behaviorConfig.assignedSpace = { center: { x: 0, y: 0 }, radius: 0 };
             }
+            // Reset last saved name when bot changes
+            lastSavedName = bot.name || null;
             // Reload providers when bot changes to ensure we have the latest list
             void loadProviders();
         }
     } else {
         // Bot prop became null - clear currentBot to prevent errors
         currentBot = null;
+        lastSavedName = null;
     }
 
     // Debounced auto-save to prevent API calls on every keystroke
     let autoSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+    let nameSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+    let lastSavedName: string | null = null;
 
-    // Auto-save when currentBot changes (debounced)
+    // Auto-save when currentBot changes (debounced) - for AI config and behavior config only
     function autoSave() {
         if (!currentBot || !currentBot.id) {
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -112,6 +120,53 @@
             // Don't call onSave() here - let the subscription in BotEditor handle the API call
             // onSave() is for manual saves and might interfere with auto-save
         }, 500);
+    }
+
+    // Handle name changes separately - direct API call with immediate respawn
+    function handleNameChange() {
+        if (!currentBot || !currentBot.id || !botApiService.isInitialized()) {
+            return;
+        }
+
+        const newName = currentBot.name?.trim() || "";
+        if (newName === lastSavedName) {
+            return; // No change
+        }
+
+        // Clear any pending name save
+        if (nameSaveTimeout) {
+            clearTimeout(nameSaveTimeout);
+        }
+
+        // Debounce name save (wait 1 second after last keystroke)
+        nameSaveTimeout = setTimeout(() => {
+            void (async () => {
+                if (!currentBot || !currentBot.id || currentBot.name?.trim() !== newName) {
+                    return; // Name changed again during debounce
+                }
+
+                try {
+                    // Save name to API - this will trigger respawn on the server
+                    await botApiService.updateBot(currentBot.id, {
+                        name: newName,
+                    });
+
+                    // Update last saved name
+                    lastSavedName = newName;
+
+                    // Update store with the saved name (from API response)
+                    // The server will have respawned the bot with the new name
+                    upsertBot({ ...currentBot, name: newName });
+                } catch (error) {
+                    console.error("[BotDetailView] Failed to save bot name:", error);
+                    // Revert name on error
+                    if (currentBot) {
+                        currentBot.name = lastSavedName || "";
+                        currentBot = currentBot; // Trigger reactivity
+                    }
+                }
+            })();
+        }, 1000);
     }
 
     function getTextureUrl(relativeUrl: string): string {
@@ -364,7 +419,7 @@
                                     bind:value={currentBot.name}
                                     placeholder="Enter bot name"
                                     autofocus
-                                    on:input={() => autoSave()}
+                                    on:input={() => handleNameChange()}
                                     on:keydown={(e) => {
                                         if (e.key === "Enter") {
                                             e.preventDefault();

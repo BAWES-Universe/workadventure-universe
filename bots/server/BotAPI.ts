@@ -529,8 +529,22 @@ export class BotAPI {
                 // Save to Admin API
                 await this.adminApiService.saveBotConfiguration(updatedConfig);
 
-                // Update running bot if it exists
-                if (this.botManager.getBot(botId)) {
+                // Check if name or texture changed (require respawn)
+                const nameChanged = 'name' in updates && updates.name !== existingConfig.name;
+                const textureChanged = 'characterTextureIds' in updates && 
+                    JSON.stringify(updates.characterTextureIds) !== JSON.stringify(existingConfig.characterTextureIds);
+
+                // If name or texture changed and bot is running, despawn and respawn immediately
+                if ((nameChanged || textureChanged) && this.botManager.getBot(botId)) {
+                    console.log(`[BotAPI] Bot ${botId} name or texture changed, respawning with new config`);
+                    // Despawn first
+                    await this.botManager.despawnBot(botId);
+                    // Wait a brief moment
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    // Respawn with updated config
+                    await this.botManager.spawnBot(botId, updatedConfig);
+                } else if (this.botManager.getBot(botId)) {
+                    // Update running bot for other changes (AI config, behavior, etc.)
                     console.log(`[BotAPI] Updating running bot ${botId} with:`, {
                         hasAiProviderRef: 'aiProviderRef' in updates,
                         hasChatInstructions: 'chatInstructions' in updates,
