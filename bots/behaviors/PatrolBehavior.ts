@@ -681,7 +681,7 @@ export class PatrolBehavior extends BaseBehavior {
     }
 
     /**
-     * Generate AI greeting for a player
+     * Generate AI greeting for a person
      */
     private async generateAIGreeting(
         spaceName: string,
@@ -706,9 +706,9 @@ export class PatrolBehavior extends BaseBehavior {
         let fullMessage = '';
         
         try {
-            // Simple prompt: player approached, respond naturally
+            // Simple prompt: person approached, respond naturally
             // The AI will use the conversation context (memory, emotions, relationship) from chatInstructions
-            const playerMessage = 'A player just approached you.';
+            const playerMessage = 'Someone just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -717,7 +717,9 @@ export class PatrolBehavior extends BaseBehavior {
                 botConfig.chatInstructions || 'You are a friendly bot.',
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;

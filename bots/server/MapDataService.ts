@@ -4,9 +4,19 @@
 
 import { PathTileType } from '../utils/BotPathfindingManager';
 
+export interface MapArea {
+    name: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    properties?: Record<string, any>;
+}
+
 interface MapData {
     collisionGrid: number[][];
     tileDimensions: { width: number; height: number };
+    areas: MapArea[];
 }
 
 interface CachedMapData extends MapData {
@@ -304,10 +314,67 @@ export class MapDataService {
             console.warn(`[MapDataService] WARNING: No walkable tiles found in grid! Bots cannot move.`);
         }
         
+        // Extract areas from object layers
+        const areas = this.extractAreas(tmjData.layers || []);
+
         return {
             collisionGrid,
             tileDimensions: { width: tileWidth, height: tileHeight },
+            areas,
         };
+    }
+
+    /**
+     * Extract areas from object layers in TMJ data
+     * Areas are defined as objects in object layers with names
+     */
+    private extractAreas(layers: any[]): MapArea[] {
+        const areas: MapArea[] = [];
+        
+        // Recursively extract all layers
+        const allLayers = this.extractAllLayers(layers);
+        
+        for (const layer of allLayers) {
+            if (layer.type === 'objectgroup' && layer.objects) {
+                for (const obj of layer.objects) {
+                    // Only include objects with names (these are areas)
+                    if (obj.name && (obj.width > 0 || obj.height > 0)) {
+                        const properties = this.parseProperties(obj.properties || []);
+                        areas.push({
+                            name: obj.name,
+                            x: obj.x || 0,
+                            y: obj.y || 0,
+                            width: obj.width || 0,
+                            height: obj.height || 0,
+                            properties,
+                        });
+                    }
+                }
+            }
+        }
+        
+        return areas;
+    }
+
+    /**
+     * Parse Tiled properties array into key-value object
+     */
+    private parseProperties(properties: any[]): Record<string, any> {
+        const result: Record<string, any> = {};
+        for (const prop of properties) {
+            if (prop.name && prop.value !== undefined) {
+                result[prop.name] = prop.value;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Get areas for a room (cached)
+     */
+    async getAreas(roomUrl: string): Promise<MapArea[]> {
+        const mapData = await this.getMapData(roomUrl);
+        return mapData?.areas || [];
     }
 
     /**

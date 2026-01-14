@@ -580,6 +580,53 @@ export class AdminApiService {
             }
         }
     }
+
+    /**
+     * Get room metadata (universe, world, room names)
+     * Calls the play server's /api/room/info endpoint or extracts from URL
+     */
+    async getRoomMetadata(roomUrl: string): Promise<{ universeName: string; worldName: string; roomName: string } | null> {
+        try {
+            // Try to call the play server's room info endpoint
+            const playServerUrl = process.env.PLAY_URL || roomUrl.split('/@/')[0];
+            const infoUrl = `${playServerUrl}/api/room/info?roomUrl=${encodeURIComponent(roomUrl)}`;
+
+            const response = await axios.get(infoUrl, {
+                timeout: 5000,
+            });
+
+            if (response.data) {
+                return {
+                    universeName: response.data.universeName || '',
+                    worldName: response.data.worldName || '',
+                    roomName: response.data.roomName || '',
+                };
+            }
+        } catch (error) {
+            // Fallback: extract from URL
+            console.warn(`[AdminApiService] Failed to get room metadata for ${roomUrl}, using URL fallback:`, error);
+        }
+
+        // Fallback: extract from URL
+        try {
+            const urlObj = new URL(roomUrl);
+            const pathMatch = /^\/@\/(.+)/.exec(urlObj.pathname);
+            if (pathMatch) {
+                const parts = pathMatch[1].split('/').filter(p => p);
+                if (parts.length >= 3) {
+                    return {
+                        universeName: parts[0] || '',
+                        worldName: parts[1] || '',
+                        roomName: parts[2] || '',
+                    };
+                }
+            }
+        } catch (error) {
+            console.error(`[AdminApiService] Failed to parse room URL: ${roomUrl}`, error);
+        }
+
+        return null;
+    }
 }
 
 // Singleton instance

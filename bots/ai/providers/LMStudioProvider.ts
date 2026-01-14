@@ -26,7 +26,8 @@ export class LMStudioProvider implements AIProvider {
     async *generateStream(
         systemPrompt: string,
         userMessage: string,
-        config: AIProviderConfig
+        config: AIProviderConfig,
+        tools?: any[]
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -56,6 +57,7 @@ export class LMStudioProvider implements AIProvider {
                     },
                     temperature: config.temperature,
                     max_tokens: config.maxTokens,
+                    ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
                 }),
                 signal: controller.signal,
             });
@@ -131,6 +133,20 @@ export class LMStudioProvider implements AIProvider {
                                 }
                             }
 
+                            // Handle tool calls
+                            if (delta?.tool_calls) {
+                                const toolCalls = delta.tool_calls.map((tc: any) => ({
+                                    id: tc.id,
+                                    name: tc.function?.name || '',
+                                    arguments: tc.function?.arguments || '{}',
+                                }));
+                                yield {
+                                    content: '',
+                                    done: false,
+                                    toolCalls,
+                                };
+                            }
+
                             // Yield content chunks
                             if (delta?.content) {
                                 yield {
@@ -188,7 +204,8 @@ export class LMStudioProvider implements AIProvider {
     async generate(
         systemPrompt: string,
         userMessage: string,
-        config: AIProviderConfig
+        config: AIProviderConfig,
+        tools?: any[]
     ): Promise<AIResponse> {
         const startTime = Date.now();
 
@@ -216,6 +233,7 @@ export class LMStudioProvider implements AIProvider {
                     },
                     temperature: config.temperature,
                     max_tokens: config.maxTokens,
+                    ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
                 }),
                 signal: controller.signal,
             });

@@ -86,7 +86,8 @@ export class OpenAIProvider implements AIProvider {
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        stream: boolean
+        stream: boolean,
+        tools?: any[]
     ): Record<string, any> {
         const body: Record<string, any> = {
             model: config.model,
@@ -96,6 +97,11 @@ export class OpenAIProvider implements AIProvider {
             ],
             stream,
         };
+
+        if (tools && tools.length > 0) {
+            body.tools = tools;
+            body.tool_choice = 'auto';
+        }
 
         // Handle temperature: some models only support default (1)
         const requiresDefaultTemp = this.requiresDefaultTemperature(config.model);
@@ -131,7 +137,8 @@ export class OpenAIProvider implements AIProvider {
     async *generateStream(
         systemPrompt: string,
         userMessage: string,
-        config: AIProviderConfig
+        config: AIProviderConfig,
+        tools?: any[]
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -145,7 +152,7 @@ export class OpenAIProvider implements AIProvider {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true);
+            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
 
             const response = await fetch(endpoint, {
                 method: 'POST',
@@ -282,6 +289,20 @@ export class OpenAIProvider implements AIProvider {
                             const json = JSON.parse(data);
                             const delta = json.choices?.[0]?.delta;
 
+                            // Handle tool calls
+                            if (delta?.tool_calls) {
+                                const toolCalls = delta.tool_calls.map((tc: any) => ({
+                                    id: tc.id,
+                                    name: tc.function?.name || '',
+                                    arguments: tc.function?.arguments || '{}',
+                                }));
+                                yield {
+                                    content: '',
+                                    done: false,
+                                    toolCalls,
+                                };
+                            }
+
                             if (delta?.content) {
                                 yield {
                                     content: delta.content,
@@ -340,7 +361,8 @@ export class OpenAIProvider implements AIProvider {
     async generate(
         systemPrompt: string,
         userMessage: string,
-        config: AIProviderConfig
+        config: AIProviderConfig,
+        tools?: any[]
     ): Promise<AIResponse> {
         const startTime = Date.now();
 
@@ -352,7 +374,7 @@ export class OpenAIProvider implements AIProvider {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false);
+            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false, tools);
 
             const response = await fetch(endpoint, {
                 method: 'POST',

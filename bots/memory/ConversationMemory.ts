@@ -1,41 +1,41 @@
 /**
- * ConversationMemory - Maintains conversation history and context per bot-player pair
+ * ConversationMemory - Maintains conversation history and context per bot-person pair
  * 
  * Stores:
  * - Conversation history (messages)
- * - Emotional state (bot's feelings toward player, player's feelings toward bot)
+ * - Emotional state (bot's feelings toward person, person's feelings toward bot)
  * - Personal information (birthday, preferences, etc.)
  * - Relationship context (how they met, important events)
  */
 
 export interface ConversationMessage {
     message: string;
-    sender: 'bot' | 'player';
+    sender: 'bot' | 'person';
     timestamp: number;
     spaceName?: string;
 }
 
 export interface EmotionalState {
-    // Bot's emotional state toward this player
+    // Bot's emotional state toward this person
     botEmotion: {
-        anger: number;      // 0-100, how angry bot is at player
-        happiness: number;  // 0-100, how happy bot is with player
-        trust: number;      // 0-100, how much bot trusts player
-        familiarity: number; // 0-100, how familiar bot is with player
+        anger: number;      // 0-100, how angry bot is at person
+        happiness: number;  // 0-100, how happy bot is with person
+        trust: number;      // 0-100, how much bot trusts person
+        familiarity: number; // 0-100, how familiar bot is with person
     };
-    // Player's emotional state toward bot (inferred from messages)
-    playerEmotion: {
-        anger: number;      // 0-100, inferred from player messages
-        happiness: number;  // 0-100, inferred from player messages
-        trust: number;      // 0-100, inferred from player messages
+    // Person's emotional state toward bot (inferred from messages)
+    personEmotion: {
+        anger: number;      // 0-100, inferred from person messages
+        happiness: number;  // 0-100, inferred from person messages
+        trust: number;      // 0-100, inferred from person messages
     };
     lastEmotionUpdate: number;
 }
 
 export interface PersonalInfo {
-    // Personal information mentioned by player
+    // Personal information mentioned by person
     birthday?: string;           // "2024-01-15" or "January 15"
-    name?: string;              // Player's preferred name
+    name?: string;              // Person's preferred name
     preferences?: string[];     // Likes, dislikes, interests
     facts: Map<string, string>; // Key-value facts (e.g., "favorite_color" -> "blue")
     lastInfoUpdate: number;
@@ -54,8 +54,8 @@ export interface RelationshipContext {
 }
 
 export interface BotPlayerMemory {
-    playerId: number;
-    playerName?: string;
+    playerId: number; // Keep playerId for backward compatibility, but refers to person
+    playerName?: string; // Keep playerName for backward compatibility, but refers to person
     
     // Conversation history (last N messages)
     conversationHistory: ConversationMessage[];
@@ -93,10 +93,14 @@ export class ConversationMemory {
         botId: string,
         playerId: number,
         message: string,
-        sender: 'bot' | 'player',
+        sender: 'bot' | 'person',
         spaceName?: string
     ): void {
         const memory = this.getOrCreateMemory(botId, playerId);
+        
+        // Migrate old structure if needed (before accessing emotions)
+        this.migrateMemoryStructure(memory);
+        
         const now = Date.now();
 
         // Add message to history
@@ -113,15 +117,35 @@ export class ConversationMemory {
         }
 
         // Update relationship stats
-        if (sender === 'player') {
+        if (sender === 'person') {
             memory.relationship.totalMessages++;
         }
         memory.relationship.lastMet = now;
         memory.lastUpdated = now;
 
         // Update emotions based on message content
-        if (sender === 'player') {
+        if (sender === 'person') {
             this.updateEmotionsFromMessage(memory, message);
+        }
+    }
+
+    /**
+     * Migrate old memory structure to new structure (playerEmotion -> personEmotion)
+     */
+    private migrateMemoryStructure(memory: BotPlayerMemory): void {
+        // Migrate old playerEmotion to personEmotion if needed
+        if ((memory.emotions as any).playerEmotion && !memory.emotions.personEmotion) {
+            memory.emotions.personEmotion = (memory.emotions as any).playerEmotion;
+            delete (memory.emotions as any).playerEmotion;
+        }
+        
+        // Ensure personEmotion exists
+        if (!memory.emotions.personEmotion) {
+            memory.emotions.personEmotion = {
+                anger: 0,
+                happiness: 50,
+                trust: 50,
+            };
         }
     }
 
@@ -129,6 +153,9 @@ export class ConversationMemory {
      * Update emotional state based on message content
      */
     private updateEmotionsFromMessage(memory: BotPlayerMemory, message: string): void {
+        // Migrate old structure if needed
+        this.migrateMemoryStructure(memory);
+        
         const lowerMessage = message.toLowerCase();
         const emotions = memory.emotions;
         const now = Date.now();
@@ -137,13 +164,13 @@ export class ConversationMemory {
         const angerKeywords = ['angry', 'mad', 'hate', 'annoyed', 'frustrated', 'upset'];
         const angerLevel = angerKeywords.filter(keyword => lowerMessage.includes(keyword)).length;
         if (angerLevel > 0) {
-            emotions.playerEmotion.anger = Math.min(100, emotions.playerEmotion.anger + (angerLevel * 10));
+            emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + (angerLevel * 10));
             emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + (angerLevel * 5));
         } else {
             // Decay anger over time
             const timeSinceUpdate = now - emotions.lastEmotionUpdate;
             const decayRate = timeSinceUpdate / (1000 * 60 * 60); // Decay per hour
-            emotions.playerEmotion.anger = Math.max(0, emotions.playerEmotion.anger - (decayRate * 5));
+            emotions.personEmotion.anger = Math.max(0, emotions.personEmotion.anger - (decayRate * 5));
             emotions.botEmotion.anger = Math.max(0, emotions.botEmotion.anger - (decayRate * 2));
         }
 
@@ -151,13 +178,13 @@ export class ConversationMemory {
         const happyKeywords = ['happy', 'glad', 'love', 'great', 'awesome', 'thanks', 'thank you'];
         const happyLevel = happyKeywords.filter(keyword => lowerMessage.includes(keyword)).length;
         if (happyLevel > 0) {
-            emotions.playerEmotion.happiness = Math.min(100, emotions.playerEmotion.happiness + (happyLevel * 10));
+            emotions.personEmotion.happiness = Math.min(100, emotions.personEmotion.happiness + (happyLevel * 10));
             emotions.botEmotion.happiness = Math.min(100, emotions.botEmotion.happiness + (happyLevel * 5));
         } else {
             // Decay happiness slightly
             const timeSinceUpdate = now - emotions.lastEmotionUpdate;
             const decayRate = timeSinceUpdate / (1000 * 60 * 60 * 24); // Decay per day
-            emotions.playerEmotion.happiness = Math.max(0, emotions.playerEmotion.happiness - (decayRate * 1));
+            emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - (decayRate * 1));
             emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - (decayRate * 1));
         }
 
@@ -259,7 +286,12 @@ export class ConversationMemory {
      */
     getEmotionalState(botId: string, playerId: number): EmotionalState | null {
         const memory = this.getMemory(botId, playerId);
-        return memory?.emotions || null;
+        if (!memory) {
+            return null;
+        }
+        // Migrate old structure if needed
+        this.migrateMemoryStructure(memory);
+        return memory.emotions;
     }
 
     /**
@@ -310,7 +342,7 @@ export class ConversationMemory {
                         trust: 50,
                         familiarity: 0,
                     },
-                    playerEmotion: {
+                    personEmotion: {
                         anger: 0,
                         happiness: 50,
                         trust: 50,
@@ -380,10 +412,13 @@ export class ConversationMemory {
             return '';
         }
 
+        // Migrate old structure if needed
+        this.migrateMemoryStructure(memory);
+
         const context: string[] = [];
 
         // Relationship info
-        context.push(`Relationship with ${memory.playerName || `player ${playerId}`}:`);
+        context.push(`Relationship with ${memory.playerName || `person ${playerId}`}:`);
         context.push(`- First met: ${new Date(memory.relationship.firstMet).toLocaleDateString()}`);
         context.push(`- Total conversations: ${memory.relationship.totalConversations}`);
         context.push(`- Total messages: ${memory.relationship.totalMessages}`);
@@ -392,7 +427,7 @@ export class ConversationMemory {
         const emotions = memory.emotions;
         context.push(`\nEmotional State:`);
         context.push(`- Bot's feelings: ${this.describeEmotion(emotions.botEmotion)}`);
-        context.push(`- Player's feelings (inferred): ${this.describeEmotion(emotions.playerEmotion)}`);
+        context.push(`- Person's feelings (inferred): ${this.describeEmotion(emotions.personEmotion)}`);
 
         // Personal information
         if (memory.personalInfo.birthday) {
@@ -411,7 +446,7 @@ export class ConversationMemory {
         if (recentHistory.length > 0) {
             context.push(`\nRecent Conversation:`);
             recentHistory.forEach(msg => {
-                const sender = msg.sender === 'bot' ? 'Bot' : 'Player';
+                const sender = msg.sender === 'bot' ? 'Bot' : 'Person';
                 context.push(`${sender}: ${msg.message}`);
             });
         }
@@ -430,7 +465,7 @@ export class ConversationMemory {
     /**
      * Describe emotional state in natural language
      */
-    private describeEmotion(emotion: EmotionalState['botEmotion'] | EmotionalState['playerEmotion']): string {
+    private describeEmotion(emotion: EmotionalState['botEmotion'] | EmotionalState['personEmotion']): string {
         const parts: string[] = [];
 
         if (emotion.anger > 50) {

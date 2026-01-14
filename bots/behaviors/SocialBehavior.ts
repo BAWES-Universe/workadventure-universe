@@ -326,7 +326,7 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     /**
-     * Helper method to start a conversation with a player (used by both onSpaceJoined and onSpaceUserJoined)
+     * Helper method to start a conversation with a person (used by both onSpaceJoined and onSpaceUserJoined)
      */
     private startConversationWithPlayer(
         playerId: number,
@@ -483,7 +483,7 @@ export class SocialBehavior extends BaseBehavior {
         conversation.lastMessageTime = Date.now();
         
         // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
+        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
         
         // Extract personal information from message
         this.conversationMemory.extractPersonalInfo(botId, senderId, message);
@@ -554,7 +554,9 @@ export class SocialBehavior extends BaseBehavior {
                 chatInstructions,
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;
@@ -578,7 +580,7 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     /**
-     * Generate AI greeting for a player
+     * Generate AI greeting for a person
      */
     private async generateAIGreeting(
         spaceName: string,
@@ -606,10 +608,10 @@ export class SocialBehavior extends BaseBehavior {
         let fullMessage = '';
         
         try {
-            // Simple prompt: player approached, respond naturally
+            // Simple prompt: person approached, respond naturally
             // The AI will use the conversation context (memory, emotions, relationship) to respond appropriately
             // If there was a bad interaction, the context will include that and the AI will remember
-            const playerMessage = 'A player just approached you.';
+            const playerMessage = 'Someone just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -962,7 +964,7 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Check if player is angry at bot
-        if (emotions.playerEmotion.anger > 60) {
+        if (emotions.personEmotion.anger > 60) {
             return `I can see you're still upset. I'm sorry about that.`;
         }
 

@@ -174,7 +174,7 @@ export class IdleBehavior extends BaseBehavior {
         this.conversationMemory.startConversation(botId, senderId);
         
         // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'player', spaceName);
+        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
         
         // Extract personal information from message
         this.conversationMemory.extractPersonalInfo(botId, senderId, message);
@@ -241,7 +241,9 @@ export class IdleBehavior extends BaseBehavior {
                 botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;
@@ -269,7 +271,7 @@ export class IdleBehavior extends BaseBehavior {
     }
 
     /**
-     * Generate AI greeting for a player
+     * Generate AI greeting for a person
      */
     private async generateAIGreeting(
         spaceName: string,
@@ -294,9 +296,9 @@ export class IdleBehavior extends BaseBehavior {
         let fullMessage = '';
         
         try {
-            // Simple prompt: player approached, respond naturally
+            // Simple prompt: person approached, respond naturally
             // The AI will use the conversation context (memory, emotions, relationship) from chatInstructions
-            const playerMessage = 'A player just approached you.';
+            const playerMessage = 'Someone just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,

@@ -1102,9 +1102,24 @@ export class BotClient {
     
     /**
      * Get all players in the room (for debugging)
+     * @deprecated Use getAllPeople() instead
      */
     getAllPlayers(): PlayerInfo[] {
         return Array.from(this.players.values());
+    }
+
+    /**
+     * Get all people on the map (includes both players and bots)
+     */
+    getAllPeople(): PlayerInfo[] {
+        return Array.from(this.players.values());
+    }
+
+    /**
+     * Get the room URL this bot is connected to
+     */
+    getRoomUrl(): string {
+        return this.config.roomUrl;
     }
 
     /**

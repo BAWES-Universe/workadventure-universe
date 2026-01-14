@@ -10,9 +10,11 @@
 
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService } from '../server/AdminApiService';
-import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata } from './types';
+import { BotClient } from '../client/BotClient';
+import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, ToolCall } from './types';
 import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
+import type { MapDataService } from '../server/MapDataService';
 
 interface CachedCredentials {
     credentials: AIProviderConfig;
@@ -26,16 +28,19 @@ export class AIService {
     private credentialCache: Map<string, CachedCredentials> = new Map();
     private readonly CREDENTIAL_TTL = 60 * 60 * 1000; // 1 hour
     private providerRegistry: AIProviderRegistry;
+    private mapDataService?: MapDataService;
 
     constructor(
         conversationMemory: ConversationMemory,
         adminApiService: AdminApiService,
-        adminApiUrl: string
+        adminApiUrl: string,
+        mapDataService?: MapDataService
     ) {
         this.conversationMemory = conversationMemory;
         this.adminApiService = adminApiService;
         this.adminApiUrl = adminApiUrl;
         this.providerRegistry = new AIProviderRegistry();
+        this.mapDataService = mapDataService;
     }
 
     /**
@@ -98,7 +103,7 @@ export class AIService {
     }
 
     /**
-     * Generate streaming bot response
+     * Generate streaming bot response with function calling support
      */
     async *generateBotResponseStream(
         botId: string,
@@ -107,7 +112,9 @@ export class AIService {
         chatInstructions: string,
         providerId: string,
         spaceName: string | undefined,
-        conversationContext: string
+        conversationContext: string,
+        botClient?: BotClient,
+        adminApiService?: AdminApiService
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
 
@@ -121,18 +128,58 @@ export class AIService {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
             }
 
-            // Generate stream
+            // Define tools for function calling
+            const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
+
+            // Generate stream with tools
             let tokensUsed = 0;
             let error = false;
             let streamCompleted = false;
+            let accumulatedContent = '';
+            let pendingToolCalls: ToolCall[] = [];
 
             try {
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
                     systemPrompt,
                     message,
-                    config
+                    config,
+                    tools.length > 0 ? tools : undefined
                 )) {
+                    // Accumulate content
+                    if (chunk.content) {
+                        accumulatedContent += chunk.content;
+                    }
+
+                    // Collect tool calls
+                    if (chunk.toolCalls && chunk.toolCalls.length > 0) {
+                        pendingToolCalls.push(...chunk.toolCalls);
+                    }
+
+                    // If chunk is done and we have tool calls, execute them
+                    if (chunk.done && pendingToolCalls.length > 0) {
+                        // Execute tool calls and continue conversation
+                        const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
+                        pendingToolCalls = [];
+
+                        // Continue conversation with tool results
+                        const toolResultsMessage = this.formatToolResults(toolResults);
+                        for await (const resultChunk of this.providerRegistry.generateStream(
+                            providerId,
+                            systemPrompt,
+                            `${message}\n\nTool results:\n${toolResultsMessage}`,
+                            config,
+                            tools.length > 0 ? tools : undefined
+                        )) {
+                            if (resultChunk.content) {
+                                accumulatedContent += resultChunk.content;
+                            }
+                            yield resultChunk;
+                        }
+                        continue;
+                    }
+
+                    // Track metadata from chunk
                     if (chunk.metadata?.tokensUsed) {
                         tokensUsed = chunk.metadata.tokensUsed;
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -149,6 +196,7 @@ export class AIService {
                         }
                     }
 
+                    // Yield original chunk
                     yield chunk;
                 }
             } finally {
@@ -294,6 +342,160 @@ export class AIService {
      */
     clearCache(): void {
         this.credentialCache.clear();
+    }
+
+    /**
+     * Build tool definitions for function calling
+     */
+    private buildTools(botClient?: BotClient, adminApiService?: AdminApiService): any[] {
+        const tools: any[] = [];
+
+        if (botClient) {
+            // Tool: Get people on the map
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'get_people_on_map',
+                    description: 'Get a list of all people currently on the map with their positions. Excludes bots.',
+                    parameters: {
+                        type: 'object',
+                        properties: {},
+                        required: [],
+                    },
+                },
+            });
+
+            // Tool: Get bot's current position
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'get_bot_position',
+                    description: 'Get the bot\'s current position on the map.',
+                    parameters: {
+                        type: 'object',
+                        properties: {},
+                        required: [],
+                    },
+                },
+            });
+        }
+
+        if (adminApiService && botClient) {
+            // Tool: Get map context (universe, world, room names)
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'get_map_context',
+                    description: 'Get the current map context including universe name, world name, and room name.',
+                    parameters: {
+                        type: 'object',
+                        properties: {},
+                        required: [],
+                    },
+                },
+            });
+
+            // Tool: Get map areas
+            if (this.mapDataService) {
+                tools.push({
+                    type: 'function',
+                    function: {
+                        name: 'get_map_areas',
+                        description: 'Get a list of all areas defined on the map (from map editor).',
+                        parameters: {
+                            type: 'object',
+                            properties: {},
+                            required: [],
+                        },
+                    },
+                });
+            }
+        }
+
+        return tools;
+    }
+
+    /**
+     * Execute tool calls requested by AI
+     */
+    private async executeToolCalls(
+        toolCalls: ToolCall[],
+        botClient?: BotClient,
+        adminApiService?: AdminApiService
+    ): Promise<Array<{ id: string; name: string; result: any }>> {
+        const results: Array<{ id: string; name: string; result: any }> = [];
+
+        for (const toolCall of toolCalls) {
+            try {
+                let result: any;
+
+                switch (toolCall.name) {
+                    case 'get_people_on_map':
+                        if (botClient) {
+                            const people = botClient.getAllPeople();
+                            result = people
+                                .filter(p => !BotClient.isBot(p.userId))
+                                .map(p => ({
+                                    userId: p.userId,
+                                    name: p.name || `User ${p.userId}`,
+                                    position: { x: p.position.x, y: p.position.y },
+                                }));
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'get_bot_position':
+                        if (botClient) {
+                            const pos = botClient.getState().getPosition();
+                            result = { x: pos.x, y: pos.y };
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'get_map_context':
+                        if (botClient && adminApiService) {
+                            const roomUrl = botClient.getRoomUrl();
+                            const metadata = await adminApiService.getRoomMetadata(roomUrl);
+                            result = metadata || { error: 'Could not get room metadata' };
+                        } else {
+                            result = { error: 'Services not available' };
+                        }
+                        break;
+
+                    case 'get_map_areas':
+                        if (botClient && this.mapDataService) {
+                            const roomUrl = botClient.getRoomUrl();
+                            const areas = await this.mapDataService.getAreas(roomUrl);
+                            result = areas;
+                        } else {
+                            result = { error: 'Map data service not available' };
+                        }
+                        break;
+
+                    default:
+                        result = { error: `Unknown tool: ${toolCall.name}` };
+                }
+
+                results.push({ id: toolCall.id, name: toolCall.name, result });
+            } catch (error: any) {
+                results.push({
+                    id: toolCall.id,
+                    name: toolCall.name,
+                    result: { error: error.message || 'Tool execution failed' },
+                });
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * Format tool results for AI
+     */
+    private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {
+        return results.map(r => `${r.name}: ${JSON.stringify(r.result)}`).join('\n');
     }
 }
 
