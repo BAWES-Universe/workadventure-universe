@@ -758,9 +758,14 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
+        // Start typing indicator
+        this.bot?.startTyping(spaceName);
+
         // Generate AI response
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
             console.error(`[PatrolBehavior] Error generating AI response:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Send fallback message
             this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         });
@@ -810,6 +815,9 @@ export class PatrolBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
                     // Send complete message
                     if (fullMessage.trim()) {
                         this.bot.sendChatMessage(spaceName, fullMessage);
@@ -821,6 +829,8 @@ export class PatrolBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[PatrolBehavior] AI error:`, error);
+            // Stop typing indicator on error
+            this.bot.stopTyping(spaceName);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }

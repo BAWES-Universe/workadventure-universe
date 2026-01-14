@@ -179,9 +179,14 @@ export class IdleBehavior extends BaseBehavior {
         // Extract personal information from message
         this.conversationMemory.extractPersonalInfo(botId, senderId, message);
 
+        // Start typing indicator
+        this.bot?.startTyping(spaceName);
+
         // Generate AI response
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
             console.error(`[IdleBehavior] Error generating AI response:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Send fallback message
             this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         });
@@ -250,6 +255,9 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
                     // Send complete message
                     if (fullMessage.trim()) {
                         this.bot.sendChatMessage(spaceName, fullMessage);
@@ -261,6 +269,8 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] AI error:`, error);
+            // Stop typing indicator on error
+            this.bot.stopTyping(spaceName);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }

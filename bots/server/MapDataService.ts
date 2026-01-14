@@ -42,6 +42,7 @@ export class MapDataService {
             return {
                 collisionGrid: cached.collisionGrid,
                 tileDimensions: cached.tileDimensions,
+                areas: cached.areas || [],
             };
         }
         
@@ -334,9 +335,14 @@ export class MapDataService {
         // Recursively extract all layers
         const allLayers = this.extractAllLayers(layers);
         
+        let objectGroupCount = 0;
+        let totalObjects = 0;
+        
         for (const layer of allLayers) {
             if (layer.type === 'objectgroup' && layer.objects) {
+                objectGroupCount++;
                 for (const obj of layer.objects) {
+                    totalObjects++;
                     // Only include objects with names (these are areas)
                     if (obj.name && (obj.width > 0 || obj.height > 0)) {
                         const properties = this.parseProperties(obj.properties || []);
@@ -348,8 +354,17 @@ export class MapDataService {
                             height: obj.height || 0,
                             properties,
                         });
+                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[MapDataService] Skipping object: name=${obj.name}, width=${obj.width}, height=${obj.height}`);
                     }
                 }
+            }
+        }
+        
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[MapDataService] Extracted ${areas.length} areas from ${objectGroupCount} object groups (${totalObjects} total objects)`);
+            if (areas.length > 0) {
+                console.log(`[MapDataService] Areas found:`, areas.map(a => a.name).join(', '));
             }
         }
         
@@ -374,7 +389,16 @@ export class MapDataService {
      */
     async getAreas(roomUrl: string): Promise<MapArea[]> {
         const mapData = await this.getMapData(roomUrl);
-        return mapData?.areas || [];
+        const areas = mapData?.areas || [];
+        
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[MapDataService] getAreas called for ${roomUrl}, returning ${areas.length} areas`);
+            if (areas.length > 0) {
+                console.log(`[MapDataService] Areas:`, areas.map(a => a.name).join(', '));
+            }
+        }
+        
+        return areas;
     }
 
     /**

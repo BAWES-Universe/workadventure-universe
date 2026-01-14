@@ -461,6 +461,9 @@ export class SocialBehavior extends BaseBehavior {
         
         let conversation = this.activeConversations.get(senderId);
         
+        // Start typing indicator
+        this.bot?.startTyping(spaceName);
+
         // If no active conversation exists, create one (player initiated chat)
         if (!conversation) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -495,6 +498,8 @@ export class SocialBehavior extends BaseBehavior {
         // Generate AI response
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
             console.error(`[SocialBehavior] Error generating AI response:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Send fallback message
             this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         });
@@ -563,6 +568,9 @@ export class SocialBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
                     // Send complete message (WorkAdventure chat requires complete messages)
                     if (fullMessage.trim()) {
                         this.bot.sendChatMessage(spaceName, fullMessage);
@@ -575,6 +583,8 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI error:`, error);
+            // Stop typing indicator on error
+            this.bot.stopTyping(spaceName);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }
@@ -629,6 +639,9 @@ export class SocialBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
                     // Send response
                     if (fullMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {

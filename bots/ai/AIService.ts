@@ -132,31 +132,36 @@ export class AIService {
             systemPrompt += `\n\nWhen someone approaches you, respond naturally and conversationally. If you've met this person before, use your memory to respond appropriately. Don't ask meta questions about what kind of person they are - just respond naturally based on the situation.
 
 CRITICAL RULES:
-1. You MUST use tools to get information. Never guess or use placeholders like "[Room Name]" or "[World Name]".
+1. You MUST use tools to get information. Never guess or use placeholders like "[Room Name]", "[World Name]", "[Universe Name]", "[list of areas]", or any text in square brackets.
 2. NEVER ask the user to call tools - YOU call them yourself when needed.
-3. NEVER respond with vague answers like "common area" or "large building" - always call get_map_context to get the actual location names.
-4. Answer questions directly - don't ask the user questions back unless it's a natural conversation flow.
-5. After getting location from tools, provide CONTEXTUAL answers based on the question type - don't just repeat the location.
+3. NEVER mention or describe calling tools in your responses - just call them silently and use the results. Don't say "I'll call the tool" or "Let me use the tool" - just call it and answer with the results.
+4. NEVER show tool call JSON or "[END_TOOL_REQUEST]" in your response - these are internal, not for users.
+5. NEVER respond with vague answers like "common area" or "large building" - always call get_map_context to get the actual location names.
+6. Answer questions directly - don't ask the user questions back unless it's a natural conversation flow.
+7. After getting location from tools, provide CONTEXTUAL answers based on the question type - don't just repeat the location.
+8. ALWAYS use the EXACT values from tool results - copy them directly, never use placeholders.
 
 When someone asks about:
-- WHERE you are: "where are we", "what room", "what world", "what universe", "where is this" → Call get_map_context and respond with the actual universe/world/room names
+- WHERE you are: "where are we", "what room", "what world", "what universe", "where is this" → Call get_map_context and respond with ALL THREE: universe name, world name, and room name. Always mention all three, never skip any.
 - WHAT is this place: "what is this place", "what is this" → Call get_map_context to get location, then provide a brief description of what kind of place it is based on the room name (e.g., "This is the test room in the test world - it appears to be a testing or development space")
 - WHAT the place is LIKE (description/atmosphere): "what is this place like", "describe this place", "what's this place like" → Call get_map_context, then provide a meaningful description of the place's character, atmosphere, or purpose based on the room name
 - WHAT TO DO here: "what do we do here", "what can we do", "what happens here" → Call get_map_context to understand the location, then suggest activities or purposes based on the room name and context. Be creative but reasonable.
 - Who's on the map: "who's here", "who's online", "whos online here" → Call get_people_on_map tool and list the people
-- Map areas, sections → Use get_map_areas tool
+- Map areas/sections: "what areas are here", "what sections", "what zones", "what rooms are on this map", "show me areas" → Call get_map_areas tool to get list of areas defined in the map editor
 - Your position: "where are you" → Use get_bot_position tool
 
 Remember: 
-- YOU call the tools, not the user
+- YOU call the tools silently - never mention them in your response. Just call them and use the results to answer.
 - After getting location, provide CONTEXTUAL answers - don't just repeat location for every question
 - Different questions need different types of responses (location vs description vs activities)
+- When asked multiple things (like "what's this place and what areas there are"), call ALL relevant tools and answer ALL parts of the question
 - When asked "tell me more", "what else", or similar follow-ups, provide ADDITIONAL information you haven't mentioned yet:
   * Use get_map_areas to describe areas/sections on the map
   * Use get_people_on_map to mention who's currently here
   * Provide more creative details about the place based on the room name
   * Don't repeat what you just said - expand with new information
-- Vary your responses - don't use the same format for every answer`;
+- Vary your responses - don't use the same format for every answer
+- NEVER say "I'll call" or "Let me use" - just call tools and answer naturally`;
 
             // Define tools for function calling
             const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
@@ -206,7 +211,12 @@ Remember:
 You called tools and received these results:
 ${toolResultsMessage}
 
-IMPORTANT: Answer the user's question using the EXACT VALUES shown in the tool results above. Copy the actual names/values directly from the results. Do NOT use placeholders like "[Room Name]", "[World Name]", "[Place]", or "[Universe]". Use the real values that appear in the tool results.`;
+IMPORTANT: 
+- Use the context from the tool results above to answer naturally and conversationally
+- Use the actual names/values from the results - never use placeholders like "[Room Name]", "[World Name]", or any text in square brackets
+- NEVER show tool calls, JSON, or "[END_TOOL_REQUEST]" in your response - these are internal only
+- When talking about location, naturally mention universe, world, and room using the actual names from the context
+- Be conversational and natural - don't sound robotic or templated`;
                         
                         for await (const resultChunk of this.providerRegistry.generateStream(
                             providerId,
@@ -455,7 +465,7 @@ IMPORTANT: Answer the user's question using the EXACT VALUES shown in the tool r
                     type: 'function',
                     function: {
                         name: 'get_map_areas',
-                        description: 'Get a list of all areas defined on the map (from map editor).',
+                        description: 'Get a list of all areas defined on the map using the map editor. Areas are named zones/sections drawn on the map. Use this when asked about "what areas are here", "what sections", "what zones", "show me areas", or similar questions about map areas.',
                         parameters: {
                             type: 'object',
                             properties: {},
@@ -522,14 +532,24 @@ IMPORTANT: Answer the user's question using the EXACT VALUES shown in the tool r
                         if (botClient && this.mapDataService) {
                             const roomUrl = botClient.getRoomUrl();
                             const areas = await this.mapDataService.getAreas(roomUrl);
-                            result = areas;
+                            // Format areas with name, position, and size
+                            result = areas.map((area: any) => ({
+                                name: area.name,
+                                position: { x: area.x, y: area.y },
+                                size: { width: area.width, height: area.height },
+                                properties: area.properties || {},
+                            }));
                         } else {
                             result = { error: 'Map data service not available' };
                         }
                         break;
 
                     default:
-                        result = { error: `Unknown tool: ${toolCall.name}` };
+                        // Log unknown tool for debugging
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
+                        }
+                        result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
                 }
 
                 return { id: toolCall.id, name: toolCall.name, result };
@@ -554,13 +574,13 @@ IMPORTANT: Answer the user's question using the EXACT VALUES shown in the tool r
             // Format results in a more readable way for the AI
             if (r.name === 'get_map_context' && r.result && !r.result.error) {
                 const { universeName, worldName, roomName } = r.result;
-                // Format in a way that makes it very clear what values to use
-                return `get_map_context result:
-- Universe: ${universeName}
-- World: ${worldName}
-- Room: ${roomName}
+                // Provide context naturally - let the AI use it in its own words
+                return `Location context:
+- You are in the "${roomName}" room
+- This room is in the "${worldName}" world  
+- The world is part of the "${universeName}" universe
 
-Use these EXACT values: ${universeName}, ${worldName}, ${roomName}`;
+Use this context naturally in your response. Mention all three (universe, world, room) but in a conversational, natural way. Don't use placeholders - use the actual names: ${universeName}, ${worldName}, ${roomName}.`;
             }
             if (r.name === 'get_people_on_map' && Array.isArray(r.result)) {
                 if (r.result.length === 0) {
@@ -574,10 +594,12 @@ Use these EXACT values: ${universeName}, ${worldName}, ${roomName}`;
             }
             if (r.name === 'get_map_areas' && Array.isArray(r.result)) {
                 if (r.result.length === 0) {
-                    return `get_map_areas: There are no defined areas on this map.`;
+                    return `There are no defined areas on this map.`;
                 }
-                const areasList = r.result.map((a: any) => `"${a.name}"`).join(', ');
-                return `get_map_areas: Defined areas on this map: ${areasList}`;
+                const areaNames = r.result.map((a: any) => a.name).filter(Boolean);
+                return `Areas on this map: ${areaNames.join(', ')}
+
+Use these area names naturally in your response. Don't use placeholders - mention the actual areas: ${areaNames.map((n: string) => `"${n}"`).join(', ')}.`;
             }
             // Fallback to JSON for other results or errors
             return `${r.name}: ${JSON.stringify(r.result)}`;
