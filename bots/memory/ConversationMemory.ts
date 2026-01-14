@@ -97,10 +97,6 @@ export class ConversationMemory {
         spaceName?: string
     ): void {
         const memory = this.getOrCreateMemory(botId, playerId);
-        
-        // Migrate old structure if needed (before accessing emotions)
-        this.migrateMemoryStructure(memory);
-        
         const now = Date.now();
 
         // Add message to history
@@ -130,32 +126,9 @@ export class ConversationMemory {
     }
 
     /**
-     * Migrate old memory structure to new structure (playerEmotion -> personEmotion)
-     */
-    private migrateMemoryStructure(memory: BotPlayerMemory): void {
-        // Migrate old playerEmotion to personEmotion if needed
-        if ((memory.emotions as any).playerEmotion && !memory.emotions.personEmotion) {
-            memory.emotions.personEmotion = (memory.emotions as any).playerEmotion;
-            delete (memory.emotions as any).playerEmotion;
-        }
-        
-        // Ensure personEmotion exists
-        if (!memory.emotions.personEmotion) {
-            memory.emotions.personEmotion = {
-                anger: 0,
-                happiness: 50,
-                trust: 50,
-            };
-        }
-    }
-
-    /**
      * Update emotional state based on message content
      */
     private updateEmotionsFromMessage(memory: BotPlayerMemory, message: string): void {
-        // Migrate old structure if needed
-        this.migrateMemoryStructure(memory);
-        
         const lowerMessage = message.toLowerCase();
         const emotions = memory.emotions;
         const now = Date.now();
@@ -289,8 +262,6 @@ export class ConversationMemory {
         if (!memory) {
             return null;
         }
-        // Migrate old structure if needed
-        this.migrateMemoryStructure(memory);
         return memory.emotions;
     }
 
@@ -411,9 +382,6 @@ export class ConversationMemory {
         if (!memory) {
             return '';
         }
-
-        // Migrate old structure if needed
-        this.migrateMemoryStructure(memory);
 
         const context: string[] = [];
 
