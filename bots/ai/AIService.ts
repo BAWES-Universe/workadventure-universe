@@ -190,14 +190,22 @@ export class AIService {
             }
             if (conversationContext) {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
+                // Add instruction to use conversation history for context
+                systemPrompt += `\n\nIMPORTANT: Use the "Recent Conversation" above to understand context. If someone says "whats that", "where", or "whats in there", look at the most recent messages to understand what they're referring to. If they just asked about location, "that" refers to the location. Answer directly without asking questions back.`;
             }
+            
+            // Add formatting rules
+            systemPrompt += `\n\nRESPONSE FORMATTING:
+- Always capitalize the first letter of your response
+- Write in complete sentences with proper grammar
+- Don't ask questions back - answer directly
+- Be natural and conversational`;
             
             // Add guidance for natural responses and tool usage
             systemPrompt += `\n\nWhen someone approaches you, greet them based on your personality (defined in your chat instructions) and your relationship with them (from conversation memory). Your greeting should reflect:
 - Your personality traits (friendly, formal, playful, serious, etc. - as defined in your chat instructions)
 - Your emotional state toward this person (if you've met before and have a relationship)
-- The context of your location and situation
-Don't ask questions like "where are we" in your greeting - just greet them naturally based on who you are and your relationship with them. If you haven't met before, use your default personality. If you have a history, let that inform your greeting.
+Keep greetings simple and natural - just greet them directly. Don't mention location or areas in greetings unless it's relevant to your personality or the conversation context. A simple "Hello!" or "Hi there!" is often better than a long greeting with location details.
 
 IMPORTANT: When you receive the message "Someone just approached you.", respond with ONLY a greeting - don't acknowledge the instruction, don't say you're ready, just greet them directly as if they just walked up to you.
 
@@ -211,16 +219,19 @@ CRITICAL ANTI-HALLUCINATION RULES:
 7. NEVER show tool call JSON, "[END_TOOL_REQUEST]", "[Area Name 1]", "[END_MAP_CONTEXT]", or ANY placeholder text in your response - these are NOT real data.
 8. NEVER use brackets around names like [test universe] or [test room]. Use the actual names directly: "test universe, test world, test room". Brackets are NOT part of the names.
 9. NEVER use placeholder text like "[Area Name]", "[Area Name 1]", "[END_MAP_CONTEXT]" - if areas exist, use their actual names from the context. If no areas exist, say "There are no areas defined here".
-10. Answer questions directly - don't ask the user questions back. If they say "cool" or "nice", just acknowledge it briefly, don't ask them anything.
-11. ALWAYS use the EXACT values from "Current Location Context" - copy them directly, never use placeholders, brackets, or make things up. If it says "Universe: test", use "test universe", NOT "[test universe]".
+10. Answer questions directly - NEVER ask the user questions back. NEVER respond with questions like "What is this place?" or "How can I help?". Just answer what they asked. If they say "cool" or "nice", just acknowledge it briefly. If they ask "whats that", answer based on conversation history, don't ask questions back.
+11. Always capitalize the first letter of your response and write in complete sentences with proper grammar.
+12. ALWAYS use the EXACT values from "Current Location Context" - copy them directly, never use placeholders, brackets, or make things up. If it says "Universe: test", use "test universe", NOT "[test universe]".
 
 When someone asks about:
-- WHERE you are: "where are we", "what room", "what world", "what universe", "where inside" → ALWAYS mention universe, world, and room from "Current Location Context". Areas are additional info, not a replacement.
+- WHERE you are: "where are we", "what room", "what world", "what universe", "where inside" → ALWAYS mention universe, world, and room from "Current Location Context". Do NOT include area coordinates unless specifically asked about an area. Just give the location: "test universe, test world, test room".
 - WHAT is this place: "what is this place", "what is this", "what's here" → ALWAYS mention universe, world, and room first, then mention areas if they exist. Format: "[universe name] universe, [world name] world, [room name] room" + areas if any. Use the actual names from context, NOT placeholders with brackets.
 - WHAT the place is LIKE: "what is this place like", "describe this place" → Describe based on the room name from context, but do NOT invent fictional details
 - WHAT TO DO here: "what do we do here", "what can we do" → Suggest activities based on room/area names from context
-- Areas/sections: "what areas", "what areas are here", "any areas", "what's this area" → Use the areas from "Current Location Context" above. If areas are listed, mention them. If "Areas: none", say "There are no areas defined here."
-- Area location: "where is [area name]", "where is the office area" → Use the "Area positions" from "Current Location Context" above. Give the coordinates like "Office Area is at (596, 606)" or similar.
+- Areas/sections: "what areas", "what areas are here", "any areas", "what's this area", "areas here?", "areas?" → Check "Current Location Context" above. If it shows "Areas in this room: Office Area" (or other area names), list those areas. If it shows "Areas: none", say "There are no areas defined here."
+- Area location: "where is [area name]", "where is the office area", "wheres that area", "where is it" (after mentioning an area) → Use the "Area locations" from "Current Location Context" above. Give the coordinates directly like "Office Area is at coordinates (596, 606)" or "It's at coordinates (596, 606)". Don't repeat the area name or location - just give coordinates.
+- Navigation requests: "can you take me to [area]", "i wanna go", "take me there" → Explain that you can't navigate yet, but you can tell them where it is. Give the coordinates from "Area locations" in the context. Don't ask "Let me know if you'd like to go there" - just explain you can't navigate and give the location.
+- Context questions: "whats that", "where", "whats in there", "whats this" → Look at the "Recent Conversation" in Conversation Context to understand what they're referring to. If they just asked "where we at" and you said "test universe, test world, test room", then "whats that" refers to that location. If they just asked about an area, "where is it" refers to that area's coordinates. Answer directly without asking questions back.
 - Who's on the map: "who's here", "who's online" → Call get_people_on_map tool and list actual people
 - Your position: "where are you" → Use get_bot_position tool
 
@@ -234,16 +245,23 @@ CRITICAL:
 
 Remember: 
 - YOU call the tools silently - never mention them in your response. Just call them and use the results to answer.
-- Be conversational and natural - don't repeat information you just said
-- If you just told them the location, don't repeat it again in the next response unless they specifically ask
+- Be conversational and natural - don't repeat the same response for different questions
+- Vary your responses - if someone says "hey", "hows it going", "what up", respond differently each time, don't repeat the same greeting
 - Answer questions directly and contextually:
   * "where are we" → Give location once
-  * "what's here" → Give location and areas (if first time mentioning location)
-  * "what's in the office" or "where is [area]" → Just answer the question directly, don't repeat the full location you already mentioned
-  * "where is [area]" → Just give the coordinates, don't repeat the full location
+  * "what's here" or "whats this" (after location mentioned) → Describe what this place is, mention areas if they exist, don't just repeat location
+  * "what's in the office" or "where is [area]" or "wheres that area" → Just give the coordinates from "Area locations" in context, don't repeat the area name or full location
+  * "can you take me to [area]" or "i wanna go" → Explain you can't navigate yet, but give the coordinates. Don't ask questions back.
+  * "areas?" or "any areas" → Check "Current Location Context" for areas. If "Areas in this room: Office Area" exists, say "There's an area called Office Area" or list them. If "Areas: none", say "There are no areas defined here."
 - Don't append or repeat information - if you already said where you are, just answer the new question
 - Be natural - like a real conversation where you don't repeat yourself
 - Different questions need different responses - don't parrot the same answer`;
+
+            // Add /no_think for Qwen models to disable reasoning
+            const isQwenModel = config.model.toLowerCase().includes('qwen');
+            if (isQwenModel) {
+                systemPrompt += '\n\n/no_think';
+            }
 
             // Define tools for function calling
             const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
@@ -299,16 +317,18 @@ CRITICAL ANTI-HALLUCINATION RULES:
 - When talking about location, mention universe, world, and room using the ACTUAL names from the tool results
 - Be conversational, but ONLY use real information from the tools - no fictional details, no made-up descriptions, no placeholders`;
                         
+                        // Add /no_think for Qwen models in follow-up message
+                        const followUpMessageWithNoThink = isQwenModel 
+                            ? followUpMessage + '\n\n/no_think'
+                            : followUpMessage;
+
                         for await (const resultChunk of this.providerRegistry.generateStream(
                             providerId,
                             systemPrompt,
-                            followUpMessage,
+                            followUpMessageWithNoThink,
                             config,
                             tools.length > 0 ? tools : undefined
                         )) {
-                            if (resultChunk.content) {
-                                accumulatedContent += resultChunk.content;
-                            }
                             yield resultChunk;
                         }
                         continue;
