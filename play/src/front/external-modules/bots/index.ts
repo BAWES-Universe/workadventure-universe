@@ -12,6 +12,9 @@ import { IconMapPin } from "@wa-icons";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
 let botEditorOpen = false;
+let lastRoomIdWhenEditorWasOpen: string | null = null; // Track roomId when editor was last open
+let pendingRoomChangeReload = false; // Flag to indicate we need to reload after component mounts
+let wasBotEditorSelectedBeforeDestroy = false; // Track if BotEditor was selected before destroy()
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeMapEditor: (() => void) | null = null;
 let unsubscribeMapEditorVisibility: (() => void) | null = null;
@@ -33,7 +36,21 @@ function openBotEditor() {
     // If sidebar is collapsed, we need to reopen it
     const wasCollapsed = !get(mapEditorVisibilityStore);
 
+    // Check if room changed since editor was last open
+    const currentRoomId = _extensionOptions?.roomId || botApiService.getRoomId();
+    const previousRoomId = lastRoomIdWhenEditorWasOpen;
+    const roomChanged = previousRoomId !== null && currentRoomId !== null && previousRoomId !== currentRoomId;
+
+    if (roomChanged) {
+        console.log(
+            `[Bot Extension] Bot editor opened after room change (${previousRoomId} -> ${currentRoomId}), will trigger reload`
+        );
+        pendingRoomChangeReload = true;
+    }
+
     botEditorOpen = true;
+    lastRoomIdWhenEditorWasOpen = currentRoomId;
+
     mapEditorVisibilityStore.set(true);
 
     // Clear the active tool in MapEditorModeManager first to ensure clean state
@@ -173,6 +190,18 @@ function injectBotEditorComponent() {
                 target: botEditorContainer,
                 props: {},
             });
+
+            // If we detected a room change when opening, trigger reload now that component is mounted
+            if (pendingRoomChangeReload) {
+                console.log("[Bot Extension] Component mounted, triggering reload for pending room change");
+                pendingRoomChangeReload = false;
+                setTimeout(() => {
+                    void import("./stores/BotEditorStore").then(({ roomChangeTriggerStore }) => {
+                        console.log("[Bot Extension] Triggering bot list reload after room change (component mounted)");
+                        roomChangeTriggerStore.update((n) => n + 1);
+                    });
+                }, 100);
+            }
         })
         .catch((error) => {
             console.error("Failed to load BotEditor component:", error);
@@ -992,12 +1021,68 @@ const botExtensionModule: ExtensionModule = {
                 console.log("[Bot Extension] User already connected, ensuring bot editor is set up for new room");
                 setTimeout(() => {
                     setupBotEditor(options);
+
+                    // Wait a bit longer to ensure setupBotEditor has fully initialized subscriptions
+                    setTimeout(() => {
+                        // If BotEditor tool was selected before destroy() (user had it open when navigating),
+                        // restore the tool selection and reopen the bot editor for the new room
+                        if (wasBotEditorSelectedBeforeDestroy) {
+                            console.log(
+                                "[Bot Extension] BotEditor was selected before navigation, restoring and reopening for new room"
+                            );
+                            // Restore tool selection - this should trigger the subscription in setupBotEditor
+                            // which will call openBotEditor() automatically
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            mapEditorSelectedToolStore.set(BOT_EDITOR_TOOL_NAME as any);
+                            // Also call openBotEditor directly as a fallback (in case subscription hasn't fired yet)
+                            setTimeout(() => {
+                                // Check if tool selection was actually set (might have been overridden)
+                                const currentTool = get(mapEditorSelectedToolStore);
+                                if (currentTool === BOT_EDITOR_TOOL_NAME && !botEditorOpen) {
+                                    console.log(
+                                        "[Bot Extension] Tool selection restored but editor not open, opening now"
+                                    );
+                                    openBotEditor();
+                                } else if (currentTool !== BOT_EDITOR_TOOL_NAME) {
+                                    console.warn(
+                                        `[Bot Extension] Tool selection was not restored (current: ${currentTool}), trying again...`
+                                    );
+                                    // Try again - something might have reset it
+                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                    mapEditorSelectedToolStore.set(BOT_EDITOR_TOOL_NAME as any);
+                                    setTimeout(() => {
+                                        if (!botEditorOpen) {
+                                            openBotEditor();
+                                        }
+                                    }, 200);
+                                }
+                            }, 300);
+                        } else {
+                            // Check if tool is currently selected (might have been preserved)
+                            const selectedTool = get(mapEditorSelectedToolStore);
+                            if (selectedTool === BOT_EDITOR_TOOL_NAME && !botEditorOpen) {
+                                console.log(
+                                    "[Bot Extension] BotEditor tool still selected, reopening bot editor for new room"
+                                );
+                                openBotEditor();
+                            }
+                        }
+                    }, 800); // Increased delay to ensure setupBotEditor completes
                 }, 500);
             }
         }
     },
 
     destroy() {
+        // Check if BotEditor tool was selected before destroying
+        // This allows us to restore it in init() if user was in bot editor when navigating
+        wasBotEditorSelectedBeforeDestroy = get(mapEditorSelectedToolStore) === BOT_EDITOR_TOOL_NAME;
+
+        // Store the roomId before destroying, so we can detect room changes when editor reopens
+        // Don't clear lastRoomIdWhenEditorWasOpen - we need it to detect room changes
+        // when the editor is reopened after navigating to a new map
+        // Also, don't clear botEditorOpen state - we'll check if tool is still selected in init()
+
         // Notify bot-server that player left the room (may despawn bots if room is empty)
         if (_extensionOptions?.roomId && botApiService.isInitialized()) {
             botApiService.notifyRoomLeave(_extensionOptions.roomId).catch((e) => {
@@ -1021,9 +1106,14 @@ const botExtensionModule: ExtensionModule = {
             unsubscribeSelectedTool();
             unsubscribeSelectedTool = null;
         }
-        // Remove tool button
+        // Remove tool button (but don't unsubscribe from tool selection - we need to restore it)
+        // Actually, we do need to unsubscribe to avoid memory leaks, but we'll restore selection in init()
         removeBotEditorTool();
-        closeBotEditor();
+        // Don't close bot editor here - just remove the component
+        // The tool selection might still be "BotEditor", and we'll reopen it in init() if needed
+        removeBotEditorComponent();
+        botEditorOpen = false; // Mark as closed, but we'll check tool selection in init()
+        // Don't switch to EntityEditor - preserve the tool selection so we can restore it in init()
         // Ensure Phaser tool is deactivated (in case closeBotEditor didn't handle it)
         try {
             destroyBotEditorTool();
@@ -1031,7 +1121,8 @@ const botExtensionModule: ExtensionModule = {
             console.warn("Error deactivating bot editor tool in destroy:", e);
         }
         sidebarContentElement = null;
-        _extensionOptions = null;
+        // Don't clear _extensionOptions - we need it to detect room changes
+        // It will be updated in init() with the new roomId
     },
 };
 
