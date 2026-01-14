@@ -315,8 +315,9 @@ export class MapDataService {
             console.warn(`[MapDataService] WARNING: No walkable tiles found in grid! Bots cannot move.`);
         }
         
-        // Extract areas from object layers
-        const areas = this.extractAreas(tmjData.layers || []);
+        // Extract areas from WAM file (not TMJ)
+        // Areas are defined in the WAM file's "areas" array
+        const areas = this.extractAreasFromWam(wamData);
 
         return {
             collisionGrid,
@@ -326,49 +327,92 @@ export class MapDataService {
     }
 
     /**
-     * Extract areas from object layers in TMJ data
-     * Areas are defined as objects in object layers with names
+     * Extract areas from WAM file
+     * Areas are defined in the WAM file's "areas" array
+     * Only include areas that have names AND are marked as searchable
      */
-    private extractAreas(layers: any[]): MapArea[] {
+    private extractAreasFromWam(wamData: any): MapArea[] {
         const areas: MapArea[] = [];
         
-        // Recursively extract all layers
-        const allLayers = this.extractAllLayers(layers);
-        
-        let objectGroupCount = 0;
-        let totalObjects = 0;
-        
-        for (const layer of allLayers) {
-            if (layer.type === 'objectgroup' && layer.objects) {
-                objectGroupCount++;
-                for (const obj of layer.objects) {
-                    totalObjects++;
-                    // Only include objects with names (these are areas)
-                    if (obj.name && (obj.width > 0 || obj.height > 0)) {
-                        const properties = this.parseProperties(obj.properties || []);
-                        areas.push({
-                            name: obj.name,
-                            x: obj.x || 0,
-                            y: obj.y || 0,
-                            width: obj.width || 0,
-                            height: obj.height || 0,
-                            properties,
-                        });
-                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[MapDataService] Skipping object: name=${obj.name}, width=${obj.width}, height=${obj.height}`);
-                    }
-                }
+        if (!wamData.areas || !Array.isArray(wamData.areas)) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[MapDataService] No areas array in WAM file`);
             }
+            return areas;
+        }
+        
+        for (const area of wamData.areas) {
+            // Only include areas that have names (named areas)
+            if (!area.name || area.name.trim() === '') {
+                continue;
+            }
+            
+            // Check if area is searchable
+            // Searchable property is in areaDescriptionProperties with type "areaDescriptionProperties"
+            const isSearchable = this.isAreaSearchable(area.properties || []);
+            
+            if (!isSearchable) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[MapDataService] Skipping area "${area.name}" - not searchable`);
+                }
+                continue;
+            }
+            
+            const properties = this.parseWamProperties(area.properties || []);
+            areas.push({
+                name: area.name.trim(),
+                x: area.x || 0,
+                y: area.y || 0,
+                width: area.width || 0,
+                height: area.height || 0,
+                properties,
+            });
         }
         
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[MapDataService] Extracted ${areas.length} areas from ${objectGroupCount} object groups (${totalObjects} total objects)`);
+            console.log(`[MapDataService] Extracted ${areas.length} searchable named areas from WAM file (out of ${wamData.areas.length} total areas)`);
             if (areas.length > 0) {
-                console.log(`[MapDataService] Areas found:`, areas.map(a => a.name).join(', '));
+                console.log(`[MapDataService] Searchable areas found:`, areas.map(a => `${a.name} (${a.width}x${a.height} at ${a.x},${a.y})`).join(', '));
+            } else {
+                console.log(`[MapDataService] No searchable named areas found. Checked ${wamData.areas.length} areas.`);
             }
         }
         
         return areas;
+    }
+
+    /**
+     * Check if an area is marked as searchable
+     * Searchable property is in areaDescriptionProperties with type "areaDescriptionProperties"
+     */
+    private isAreaSearchable(properties: any[]): boolean {
+        for (const prop of properties) {
+            // Look for areaDescriptionProperties with searchable: true
+            if (prop.type === 'areaDescriptionProperties' && prop.searchable === true) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Parse WAM properties array into key-value object
+     * WAM properties have a different structure than TMJ properties
+     */
+    private parseWamProperties(properties: any[]): Record<string, any> {
+        const result: Record<string, any> = {};
+        for (const prop of properties) {
+            // WAM properties can have different structures
+            // Some have name/value, others have type/data
+            if (prop.type && prop.data) {
+                result[prop.type] = prop.data;
+            } else if (prop.name && prop.value !== undefined) {
+                result[prop.name] = prop.value;
+            } else if (prop.id && prop.type) {
+                result[prop.type] = prop;
+            }
+        }
+        return result;
     }
 
     /**

@@ -600,11 +600,19 @@ export class AdminApiService {
 
         try {
             // Try to call the play server's room info endpoint
-            const playServerUrl = process.env.PLAY_URL || roomUrl.split('/@/')[0];
+            // If PLAY_URL is not set, extract from roomUrl and replace localhost with host.docker.internal for Docker
+            let playServerUrl = process.env.PLAY_URL || roomUrl.split('/@/')[0];
+            
+            // If running in Docker and URL contains localhost, replace with host.docker.internal
+            // This allows Docker containers to access services on the host machine
+            if (!process.env.PLAY_URL && playServerUrl.includes('localhost')) {
+                playServerUrl = playServerUrl.replace('localhost', 'host.docker.internal');
+            }
+            
             const infoUrl = `${playServerUrl}/api/room/info?roomUrl=${encodeURIComponent(roomUrl)}`;
 
             const response = await axios.get(infoUrl, {
-                timeout: 5000,
+                timeout: 10000, // Increased from 5000ms to 10000ms
             });
 
             if (response.data) {
