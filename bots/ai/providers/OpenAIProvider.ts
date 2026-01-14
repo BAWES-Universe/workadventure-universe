@@ -57,11 +57,15 @@ export class OpenAIProvider implements AIProvider {
 
     /**
      * Check if model requires max_completion_tokens instead of max_tokens
-     * Reasoning models (o1, o3) use max_completion_tokens
+     * Reasoning models (o1, o3) and newer models (gpt-5) use max_completion_tokens
      */
     private requiresMaxCompletionTokens(model: string): boolean {
+        if (!model) return false;
         const modelLower = model.toLowerCase();
-        return modelLower.startsWith('o1') || modelLower.startsWith('o3');
+        // Handle various formats:
+        // - Reasoning models: "o1", "o1-preview", "o1-mini", "o3", "o3-mini", etc.
+        // - Newer models: "gpt-5", "gpt-5-mini", etc.
+        return /^o[13]|gpt-5/.test(modelLower);
     }
 
     /**
@@ -85,7 +89,11 @@ export class OpenAIProvider implements AIProvider {
 
         // Use correct parameter based on model type
         if (config.maxTokens) {
-            if (this.requiresMaxCompletionTokens(config.model)) {
+            const requiresMaxCompletion = this.requiresMaxCompletionTokens(config.model);
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[OpenAIProvider] Model: ${config.model}, requiresMaxCompletionTokens: ${requiresMaxCompletion}`);
+            }
+            if (requiresMaxCompletion) {
                 body.max_completion_tokens = config.maxTokens;
             } else {
                 body.max_tokens = config.maxTokens;
@@ -126,12 +134,56 @@ export class OpenAIProvider implements AIProvider {
 
             clearTimeout(timeoutId);
 
+            let finalResponse = response;
             if (!response.ok) {
                 const errorText = await response.text();
-                throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                let errorData: any = null;
+                try {
+                    errorData = JSON.parse(errorText);
+                } catch (e) {
+                    // Not JSON, use as-is
+                }
+
+                // If error is about max_tokens, retry with max_completion_tokens
+                if (errorData?.error?.code === 'unsupported_parameter' && 
+                    errorData?.error?.param === 'max_tokens' &&
+                    errorData?.error?.message?.includes('max_completion_tokens')) {
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
+                    }
+                    // Retry with max_completion_tokens
+                    const retryBody = { ...requestBody };
+                    delete retryBody.max_tokens;
+                    retryBody.max_completion_tokens = config.maxTokens;
+
+                    const retryController = new AbortController();
+                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                    const retryResponse = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
+                    });
+
+                    clearTimeout(retryTimeoutId);
+
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
+
+                    // Use retry response instead
+                    finalResponse = retryResponse;
+                } else {
+                    throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                }
             }
 
-            const reader = response.body?.getReader();
+            const reader = finalResponse.body?.getReader();
             if (!reader) {
                 throw new Error('No response body reader available');
             }
@@ -255,12 +307,56 @@ export class OpenAIProvider implements AIProvider {
 
             clearTimeout(timeoutId);
 
+            let finalResponse = response;
             if (!response.ok) {
                 const errorText = await response.text();
-                throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                let errorData: any = null;
+                try {
+                    errorData = JSON.parse(errorText);
+                } catch (e) {
+                    // Not JSON, use as-is
+                }
+
+                // If error is about max_tokens, retry with max_completion_tokens
+                if (errorData?.error?.code === 'unsupported_parameter' && 
+                    errorData?.error?.param === 'max_tokens' &&
+                    errorData?.error?.message?.includes('max_completion_tokens')) {
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
+                    }
+                    // Retry with max_completion_tokens
+                    const retryBody = { ...requestBody };
+                    delete retryBody.max_tokens;
+                    retryBody.max_completion_tokens = config.maxTokens;
+
+                    const retryController = new AbortController();
+                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                    const retryResponse = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
+                    });
+
+                    clearTimeout(retryTimeoutId);
+
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
+
+                    // Use retry response instead
+                    finalResponse = retryResponse;
+                } else {
+                    throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                }
             }
 
-            const data = await response.json();
+            const data = await finalResponse.json();
             const content = data.choices?.[0]?.message?.content || '';
             const tokensUsed = data.usage?.total_tokens || 0;
             const latency = Date.now() - startTime;
