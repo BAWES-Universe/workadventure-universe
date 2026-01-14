@@ -135,10 +135,32 @@ export function removeBot(botId: string): void {
  * Select a bot for editing
  */
 export function selectBot(bot: BotData | undefined): void {
-    selectedBotStore.set(bot);
-    if (bot) {
-        botEditorModeStore.set("detail");
+    if (!bot) {
+        selectedBotStore.set(undefined);
+        return;
     }
+
+    // Always get the latest bot data from previews store to ensure we have the correct bot
+    // This prevents selecting stale bot data
+    const previews = get(botPreviewsStore);
+    const latestBot = previews.get(bot.id);
+
+    // Use the bot from store if available, otherwise use the provided bot
+    const botToSelect = latestBot || bot;
+
+    if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+        console.log("[BotEditorStore] selectBot:", {
+            requestedBotId: bot.id,
+            requestedBotName: bot.name,
+            foundInStore: !!latestBot,
+            selectedBotId: botToSelect.id,
+            selectedBotName: botToSelect.name,
+            aiProviderRef: botToSelect.aiProviderRef,
+        });
+    }
+
+    selectedBotStore.set(botToSelect);
+    botEditorModeStore.set("detail");
 }
 
 /**

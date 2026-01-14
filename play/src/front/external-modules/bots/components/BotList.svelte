@@ -216,9 +216,19 @@
                                         <!-- DEBUG: Duplicate detected -->
                                     {/if}
                                 {/if}
+                                {@const botId = bot.id}
                                 <BotCard
                                     {bot}
-                                    onSelect={() => onSelectBot(bot)}
+                                    onSelect={() => {
+                                        // Look up bot by ID to ensure we get the latest data
+                                        const latestBot = bots.find((b) => b.id === botId);
+                                        if (latestBot) {
+                                            onSelectBot(latestBot);
+                                        } else {
+                                            // Fallback to the bot from the loop if not found
+                                            onSelectBot(bot);
+                                        }
+                                    }}
                                     onToggle={handleToggleBot}
                                     onHover={handleHoverBot}
                                     onLocate={() => handleLocate(bot)}
@@ -243,9 +253,19 @@
                                         <!-- DEBUG: Duplicate detected -->
                                     {/if}
                                 {/if}
+                                {@const botId = bot.id}
                                 <BotCard
                                     {bot}
-                                    onSelect={() => onSelectBot(bot)}
+                                    onSelect={() => {
+                                        // Look up bot by ID to ensure we get the latest data
+                                        const latestBot = bots.find((b) => b.id === botId);
+                                        if (latestBot) {
+                                            onSelectBot(latestBot);
+                                        } else {
+                                            // Fallback to the bot from the loop if not found
+                                            onSelectBot(bot);
+                                        }
+                                    }}
                                     onToggle={handleToggleBot}
                                     onHover={handleHoverBot}
                                     onLocate={() => handleLocate(bot)}
