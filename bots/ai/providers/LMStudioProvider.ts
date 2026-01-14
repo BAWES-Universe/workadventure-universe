@@ -51,6 +51,9 @@ export class LMStudioProvider implements AIProvider {
                         { role: 'user', content: userMessage },
                     ],
                     stream: true,
+                    stream_options: {
+                        include_usage: true,  // Enable token counts in streaming
+                    },
                     temperature: config.temperature,
                     max_tokens: config.maxTokens,
                 }),
@@ -111,9 +114,15 @@ export class LMStudioProvider implements AIProvider {
                                 };
                             }
 
-                            // Extract token usage from final chunk
-                            if (json.usage?.total_tokens) {
-                                tokensUsed = json.usage.total_tokens;
+                            // Extract token usage - can come in usage chunks when include_usage is true
+                            if (json.usage) {
+                                if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
+                                    // Sum prompt and completion tokens
+                                    tokensUsed = (json.usage.prompt_tokens || 0) + (json.usage.completion_tokens || 0);
+                                } else if (json.usage.total_tokens) {
+                                    // Fallback to total_tokens if available
+                                    tokensUsed = json.usage.total_tokens;
+                                }
                             }
                         } catch (e) {
                             // Skip invalid JSON lines
@@ -185,6 +194,9 @@ export class LMStudioProvider implements AIProvider {
                         { role: 'user', content: userMessage },
                     ],
                     stream: false,
+                    stream_options: {
+                        include_usage: true,  // For consistency
+                    },
                     temperature: config.temperature,
                     max_tokens: config.maxTokens,
                 }),
