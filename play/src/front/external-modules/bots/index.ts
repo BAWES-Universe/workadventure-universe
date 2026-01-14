@@ -23,7 +23,9 @@ let unsubscribeSelectedTool: (() => void) | null = null;
 let _extensionOptions: ExtensionModuleOptions | null = null;
 let toolButtonElement: HTMLElement | null = null;
 let sidebarContentElement: HTMLElement | null = null;
-let botEditorComponentInstance: { destroy: () => void } | null = null;
+// Svelte component instance - cleanup is handled by removing DOM element
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let botEditorComponentInstance: any | null = null;
 let buttonClickHandler: ((e: Event) => void) | null = null;
 
 // Function to open the bot editor in sidebar
@@ -217,17 +219,8 @@ function removeBotEditorComponent() {
         console.warn("Error deactivating bot editor tool:", e);
     }
 
-    // Destroy component
-    if (botEditorComponentInstance) {
-        try {
-            botEditorComponentInstance.destroy();
-        } catch (e) {
-            console.warn("Error destroying bot editor component:", e);
-        }
-        botEditorComponentInstance = null;
-    }
-
     // Find and remove ALL containers from DOM (in case of duplicates)
+    // Removing the DOM element will trigger Svelte's onDestroy lifecycle
     const containers = document.querySelectorAll("#bot-editor-container");
     containers.forEach((container) => {
         if (container instanceof HTMLElement && container.parentElement) {
@@ -252,6 +245,10 @@ function removeBotEditorComponent() {
             }
         });
     }
+
+    // Clear component instance reference after DOM removal
+    // Svelte will handle cleanup via onDestroy when DOM element is removed
+    botEditorComponentInstance = null;
 
     // Show conditional content again - ensure all content is visible
     if (sidebarContentElement) {
