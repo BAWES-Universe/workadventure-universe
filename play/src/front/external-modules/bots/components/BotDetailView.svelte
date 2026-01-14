@@ -208,19 +208,8 @@
             return;
         }
 
-        if (!confirm(`Are you sure you want to delete "${currentBot.name}"? This cannot be undone.`)) {
-            return;
-        }
-
-        try {
-            // TODO: Replace with actual API call
-            // await botApiService.deleteBot(currentBot.botId);
-            console.log("Deleting bot:", currentBot.botId);
-            onDelete();
-        } catch (e) {
-            console.error("Error deleting bot:", e);
-            alert("Failed to delete bot. Please try again.");
-        }
+        // Call parent's delete handler (which has the confirm dialog)
+        onDelete();
     }
 
     function getBehaviorLabel(type?: string): string {

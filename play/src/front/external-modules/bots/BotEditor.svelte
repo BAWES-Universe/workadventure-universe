@@ -347,6 +347,20 @@
         error = null;
 
         try {
+            // Get first available AI provider to auto-select
+            let aiProviderRef: string | undefined = undefined;
+            try {
+                const providers = await botApiService.getAvailableAIProviders(true);
+                if (providers.length > 0) {
+                    // Select first available provider (prefer enabled, but allow disabled if that's all we have)
+                    const enabledProvider = providers.find((p) => p.enabled);
+                    aiProviderRef = enabledProvider?.providerId || providers[0].providerId;
+                }
+            } catch (e) {
+                console.warn("[BotEditor] Failed to load AI providers for auto-selection:", e);
+                // Continue without provider - user can set it later
+            }
+
             // Create bot via API (will be placed after user clicks on map)
             const createdBot = await botApiService.createBot({
                 roomId: "", // Will be set from service's roomId
@@ -363,6 +377,7 @@
                 },
                 chatInstructions: "",
                 movementInstructions: "",
+                aiProviderRef,
             });
 
             // Convert API response to BotData format
@@ -383,6 +398,7 @@
                         radius: 0,
                     },
                 },
+                aiProviderRef: createdBot.aiProviderRef || aiProviderRef,
                 chatInstructions: createdBot.chatInstructions || "",
                 movementInstructions: createdBot.movementInstructions || "",
                 createdAt: createdBot.createdAt || new Date().toISOString(),

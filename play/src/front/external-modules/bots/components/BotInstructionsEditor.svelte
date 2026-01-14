@@ -59,6 +59,17 @@
             availableProviders = await botApiService.getAvailableAIProviders(true);
             if (availableProviders.length === 0) {
                 providerError = "No AI providers available. Please configure providers in Admin API.";
+            } else {
+                // Auto-select first provider if bot has no provider and providers are available
+                if (bot && !bot.aiProviderRef && !aiProviderRef && availableProviders.length > 0) {
+                    // Prefer enabled provider, but allow disabled if that's all we have
+                    const enabledProvider = availableProviders.find((p) => p.enabled);
+                    aiProviderRef = enabledProvider?.providerId || availableProviders[0].providerId;
+                    if (bot) {
+                        bot.aiProviderRef = aiProviderRef;
+                        dispatch("change");
+                    }
+                }
             }
         } catch (error) {
             console.error("[BotInstructionsEditor] Error loading providers:", error);
@@ -139,10 +150,8 @@
                 bind:value={aiProviderRef}
                 on:change={updateAIProviderRef}
                 style="color: white; background-color: rgba(255, 255, 255, 0.05);"
+                required
             >
-                <option value="" style="background-color: rgba(0, 0, 0, 0.8); color: white;"
-                    >-- Select AI Provider --</option
-                >
                 {#each availableProviders as provider (provider.providerId)}
                     <option value={provider.providerId} style="background-color: rgba(0, 0, 0, 0.8); color: white;">
                         {provider.name}
