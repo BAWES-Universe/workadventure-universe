@@ -69,6 +69,17 @@ export class OpenAIProvider implements AIProvider {
     }
 
     /**
+     * Check if model only supports default temperature (1)
+     * Some newer models (gpt-5, o1, o3) don't allow custom temperature values
+     */
+    private requiresDefaultTemperature(model: string): boolean {
+        if (!model) return false;
+        const modelLower = model.toLowerCase();
+        // Models that only support temperature=1 (default)
+        return /^o[13]|gpt-5/.test(modelLower);
+    }
+
+    /**
      * Build request body with correct token limit parameter
      */
     private buildRequestBody(
@@ -84,8 +95,22 @@ export class OpenAIProvider implements AIProvider {
                 { role: 'user', content: userMessage },
             ],
             stream,
-            temperature: config.temperature,
         };
+
+        // Handle temperature: some models only support default (1)
+        const requiresDefaultTemp = this.requiresDefaultTemperature(config.model);
+        if (requiresDefaultTemp) {
+            // Omit temperature parameter to use default (1)
+            // Only include if explicitly set to 1 to avoid confusion
+            if (config.temperature !== 1) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[OpenAIProvider] Model ${config.model} only supports temperature=1, omitting temperature parameter`);
+                }
+            }
+        } else {
+            // Include temperature for models that support custom values
+            body.temperature = config.temperature;
+        }
 
         // Use correct parameter based on model type
         if (config.maxTokens) {
@@ -144,8 +169,42 @@ export class OpenAIProvider implements AIProvider {
                     // Not JSON, use as-is
                 }
 
+                // If error is about temperature, retry without temperature (use default)
+                if (errorData?.error?.code === 'unsupported_value' && 
+                    errorData?.error?.param === 'temperature' &&
+                    errorData?.error?.message?.includes('Only the default')) {
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
+                    }
+                    // Retry without temperature parameter
+                    const retryBody = { ...requestBody };
+                    delete retryBody.temperature;
+
+                    const retryController = new AbortController();
+                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                    const retryResponse = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
+                    });
+
+                    clearTimeout(retryTimeoutId);
+
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
+
+                    // Use retry response instead
+                    finalResponse = retryResponse;
+                }
                 // If error is about max_tokens, retry with max_completion_tokens
-                if (errorData?.error?.code === 'unsupported_parameter' && 
+                else if (errorData?.error?.code === 'unsupported_parameter' && 
                     errorData?.error?.param === 'max_tokens' &&
                     errorData?.error?.message?.includes('max_completion_tokens')) {
                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -317,8 +376,42 @@ export class OpenAIProvider implements AIProvider {
                     // Not JSON, use as-is
                 }
 
+                // If error is about temperature, retry without temperature (use default)
+                if (errorData?.error?.code === 'unsupported_value' && 
+                    errorData?.error?.param === 'temperature' &&
+                    errorData?.error?.message?.includes('Only the default')) {
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
+                    }
+                    // Retry without temperature parameter
+                    const retryBody = { ...requestBody };
+                    delete retryBody.temperature;
+
+                    const retryController = new AbortController();
+                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                    const retryResponse = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
+                    });
+
+                    clearTimeout(retryTimeoutId);
+
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
+
+                    // Use retry response instead
+                    finalResponse = retryResponse;
+                }
                 // If error is about max_tokens, retry with max_completion_tokens
-                if (errorData?.error?.code === 'unsupported_parameter' && 
+                else if (errorData?.error?.code === 'unsupported_parameter' && 
                     errorData?.error?.param === 'max_tokens' &&
                     errorData?.error?.message?.includes('max_completion_tokens')) {
                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
