@@ -369,12 +369,20 @@ export class MapDataService {
             });
         }
         
-        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[MapDataService] Extracted ${areas.length} searchable named areas from WAM file (out of ${wamData.areas.length} total areas)`);
-            if (areas.length > 0) {
-                console.log(`[MapDataService] Searchable areas found:`, areas.map(a => `${a.name} (${a.width}x${a.height} at ${a.x},${a.y})`).join(', '));
-            } else {
-                console.log(`[MapDataService] No searchable named areas found. Checked ${wamData.areas.length} areas.`);
+        // Always log area extraction for debugging
+        console.log(`[MapDataService] Extracted ${areas.length} searchable named areas from WAM file (out of ${wamData.areas.length} total areas)`);
+        if (areas.length > 0) {
+            console.log(`[MapDataService] Searchable areas found:`, areas.map(a => `${a.name} (${a.width}x${a.height} at ${a.x},${a.y})`).join(', '));
+        } else {
+            console.log(`[MapDataService] No searchable named areas found. Checked ${wamData.areas.length} areas.`);
+            // Log details about why areas were filtered out
+            if (wamData.areas.length > 0) {
+                console.log(`[MapDataService] Area details:`);
+                for (const area of wamData.areas) {
+                    const hasName = area.name && area.name.trim() !== '';
+                    const isSearchable = this.isAreaSearchable(area.properties || []);
+                    console.log(`  - "${area.name || '(no name)'}": hasName=${hasName}, isSearchable=${isSearchable}, properties=`, area.properties?.map((p: any) => `${p.type || 'unknown'}:${p.searchable || 'N/A'}`).join(', ') || 'none');
+                }
             }
         }
         

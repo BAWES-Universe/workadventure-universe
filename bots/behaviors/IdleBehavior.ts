@@ -309,7 +309,8 @@ export class IdleBehavior extends BaseBehavior {
             // Natural prompt: person approached, respond naturally based on context
             // The AI has access to memory (if they've met before), map context, and can assess the situation
             // It should respond naturally, not ask meta questions
-            const playerMessage = 'Someone just approached you.';
+            // Use a more direct prompt that encourages a greeting, not a meta-response
+            const playerMessage = 'Greet this person who just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,

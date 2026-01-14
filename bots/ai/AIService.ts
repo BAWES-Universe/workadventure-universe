@@ -122,42 +122,115 @@ export class AIService {
             // Get provider credentials
             const config = await this.getProviderCredentials(providerId);
 
+            // Fetch map context (location + areas) upfront so bot always knows where it is
+            let mapContextInfo = '';
+            if (botClient && adminApiService) {
+                try {
+                    const roomUrl = botClient.getRoomUrl();
+                    const metadata = await adminApiService.getRoomMetadata(roomUrl);
+                    
+                    let areas: any[] = [];
+                    if (this.mapDataService) {
+                        areas = await this.mapDataService.getAreas(roomUrl);
+                        console.log(`[AIService] Upfront context fetch - Found ${areas.length} areas for ${roomUrl}:`, areas.map(a => a.name));
+                    } else {
+                        console.log(`[AIService] Upfront context fetch - mapDataService not available`);
+                    }
+                    
+                    if (metadata) {
+                        mapContextInfo = `\n\nCurrent Location Context (you are always here - ALWAYS mention this when asked about location):
+- Universe: ${metadata.universeName}
+- World: ${metadata.worldName}
+- Room: ${metadata.roomName}`;
+                        
+                        if (areas && areas.length > 0) {
+                            const areaNames = areas.filter(a => a && a.name).map(a => a.name);
+                            if (areaNames.length > 0) {
+                                mapContextInfo += `\n- Areas in this room (additional context, not a replacement for location): ${areaNames.join(', ')}`;
+                                // Make positions more explicit and readable
+                                const areaDetails = areas.filter(a => a && a.name).map(a => `${a.name} is at coordinates (${a.x}, ${a.y})`).join('; ');
+                                mapContextInfo += `\n- Area locations (use these when asked "where is [area name]"): ${areaDetails}`;
+                                console.log(`[AIService] Upfront context - Including ${areaNames.length} areas: ${areaNames.join(', ')}`);
+                            } else {
+                                mapContextInfo += `\n- Areas: none`;
+                                console.log(`[AIService] Upfront context - No valid area names found (${areas.length} areas but no names)`);
+                            }
+                        } else {
+                            mapContextInfo += `\n- Areas: none`;
+                            console.log(`[AIService] Upfront context - No areas found`);
+                        }
+                    } else {
+                        // Fallback to URL parsing
+                        const urlMatch = roomUrl.match(/\/@\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
+                        if (urlMatch) {
+                            mapContextInfo = `\n\nCurrent Location Context (you are always here):
+- Universe: ${urlMatch[1] || 'unknown'}
+- World: ${urlMatch[2] || 'unknown'}
+- Room: ${urlMatch[3] || 'unknown'}`;
+                            
+                            if (areas && areas.length > 0) {
+                                const areaNames = areas.filter(a => a && a.name).map(a => a.name);
+                                if (areaNames.length > 0) {
+                                    mapContextInfo += `\n- Areas in this room: ${areaNames.join(', ')}`;
+                                }
+                            } else {
+                                mapContextInfo += `\n- Areas: none`;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`[AIService] Failed to fetch map context upfront:`, error);
+                }
+            }
+
             // Build system prompt
             let systemPrompt = chatInstructions || 'You are a friendly bot.';
+            if (mapContextInfo) {
+                systemPrompt += mapContextInfo;
+            }
             if (conversationContext) {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
             }
             
             // Add guidance for natural responses and tool usage
-            systemPrompt += `\n\nWhen someone approaches you, respond naturally and conversationally. If you've met this person before, use your memory to respond appropriately. Don't ask meta questions about what kind of person they are - just respond naturally based on the situation.
+            systemPrompt += `\n\nWhen someone approaches you, greet them based on your personality (defined in your chat instructions) and your relationship with them (from conversation memory). Your greeting should reflect:
+- Your personality traits (friendly, formal, playful, serious, etc. - as defined in your chat instructions)
+- Your emotional state toward this person (if you've met before and have a relationship)
+- The context of your location and situation
+Don't ask questions like "where are we" in your greeting - just greet them naturally based on who you are and your relationship with them. If you haven't met before, use your default personality. If you have a history, let that inform your greeting.
+
+IMPORTANT: When you receive the message "Someone just approached you.", respond with ONLY a greeting - don't acknowledge the instruction, don't say you're ready, just greet them directly as if they just walked up to you.
 
 CRITICAL ANTI-HALLUCINATION RULES:
-1. For ANY location question ("where are we", "what's this place", "what's here"), you MUST call get_map_context FIRST before answering.
+1. You already know your location and areas from the "Current Location Context" above - use that information directly. You don't need to call get_map_context for location/area questions unless the context is missing.
 2. NEVER invent, make up, or hallucinate details about places. Examples of hallucinations to avoid: "spacious open room", "large window", "field and trees", "ornate bronze door", "Starlight Hotel", "holographic dragon", "grand staircase".
-3. Use ONLY the actual location names from tool results. If tool says universe="test", world="test", room="test" - then say "test universe, test world, test room". Nothing more, nothing fictional.
+3. Use ONLY the actual location names from the "Current Location Context" above. NEVER use brackets or placeholders like [test universe] or [test room]. Use the actual names directly: "test universe, test world, test room". Do NOT put brackets around names.
 4. NEVER describe physical features of the room unless they are explicitly in the tool results. You don't know what the room looks like - only its name.
 5. NEVER ask the user to call tools - YOU call them yourself when needed.
 6. NEVER mention or describe calling tools in your responses - just call them silently and use the results.
 7. NEVER show tool call JSON, "[END_TOOL_REQUEST]", "[Area Name 1]", "[END_MAP_CONTEXT]", or ANY placeholder text in your response - these are NOT real data.
-8. NEVER use placeholder text like "[Area Name]", "[Area Name 1]", "[END_MAP_CONTEXT]" - if areas exist, use their actual names from tool results. If no areas exist, say "There are no areas defined here".
-9. Answer questions directly - don't ask the user questions back unless it's a natural conversation flow.
-10. ALWAYS use the EXACT values from tool results - copy them directly, never use placeholders or make things up.
+8. NEVER use brackets around names like [test universe] or [test room]. Use the actual names directly: "test universe, test world, test room". Brackets are NOT part of the names.
+9. NEVER use placeholder text like "[Area Name]", "[Area Name 1]", "[END_MAP_CONTEXT]" - if areas exist, use their actual names from the context. If no areas exist, say "There are no areas defined here".
+10. Answer questions directly - don't ask the user questions back. If they say "cool" or "nice", just acknowledge it briefly, don't ask them anything.
+11. ALWAYS use the EXACT values from "Current Location Context" - copy them directly, never use placeholders, brackets, or make things up. If it says "Universe: test", use "test universe", NOT "[test universe]".
 
 When someone asks about:
-- WHERE you are: "where are we", "what room", "what world", "what universe", "where is this" → You MUST call get_map_context FIRST, then use ONLY the actual names from the results
-- WHAT is this place: "what is this place", "what is this", "what's here", "what's available here" → You MUST call get_map_context FIRST. If areas are listed in the results, MENTION THEM. Don't just repeat location.
-- WHAT the place is LIKE: "what is this place like", "describe this place" → You MUST call get_map_context FIRST. Describe based on the room name, but do NOT invent fictional details
-- WHAT TO DO here: "what do we do here", "what can we do" → Call get_map_context to understand location and areas, suggest activities based on room/area names
-- Areas/sections: "what areas", "what areas are here", "what sections", "are there areas", "areas?" → You MUST call get_map_context FIRST. If the results show areas, LIST THEM BY NAME. If no areas, say "There are no areas defined here."
-- Who's on the map: "who's here", "who's online" → Call get_people_on_map and list actual people
-- Your position: "where are you" → Use get_bot_position
+- WHERE you are: "where are we", "what room", "what world", "what universe", "where inside" → ALWAYS mention universe, world, and room from "Current Location Context". Areas are additional info, not a replacement.
+- WHAT is this place: "what is this place", "what is this", "what's here" → ALWAYS mention universe, world, and room first, then mention areas if they exist. Format: "[universe name] universe, [world name] world, [room name] room" + areas if any. Use the actual names from context, NOT placeholders with brackets.
+- WHAT the place is LIKE: "what is this place like", "describe this place" → Describe based on the room name from context, but do NOT invent fictional details
+- WHAT TO DO here: "what do we do here", "what can we do" → Suggest activities based on room/area names from context
+- Areas/sections: "what areas", "what areas are here", "any areas", "what's this area" → Use the areas from "Current Location Context" above. If areas are listed, mention them. If "Areas: none", say "There are no areas defined here."
+- Area location: "where is [area name]", "where is the office area" → Use the "Area positions" from "Current Location Context" above. Give the coordinates like "Office Area is at (596, 606)" or similar.
+- Who's on the map: "who's here", "who's online" → Call get_people_on_map tool and list actual people
+- Your position: "where are you" → Use get_bot_position tool
 
 CRITICAL: 
-- You MUST call get_map_context for ANY location or area question BEFORE answering
-- If get_map_context results show areas, you MUST mention them in your answer
-- Don't just repeat "universe, world, room" - if areas exist, list them too
-- If asked "what areas" and results show areas, list the area names
-- If asked "what areas" and results show no areas, say "There are no areas defined here"
+- When asked "what's here" or "where are we", ALWAYS mention universe, world, and room. Areas are additional context, not a replacement for location.
+- Format: Use actual names like "test universe, test world, test room" + (if areas exist: ", and there's an area called Office Area")
+- Never use brackets around names like [test universe] - use the actual names directly
+- Never say just the area name when asked about location - always include universe, world, and room
+- When asked "where is [area name]", provide the coordinates from "Area positions" in the context. For example: "Office Area is at coordinates (596, 606)"
+- If asked "what areas" specifically, then you can focus on areas, but still mention location if relevant
 
 Remember: 
 - YOU call the tools silently - never mention them in your response. Just call them and use the results to answer.
@@ -191,24 +264,18 @@ Remember:
                 )) {
                     // Collect tool calls first (before yielding content)
                     if (chunk.toolCalls && chunk.toolCalls.length > 0) {
-                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] Received tool calls:`, chunk.toolCalls);
-                        }
+                        console.log(`[AIService] Received tool calls:`, chunk.toolCalls.map(tc => ({ name: tc.name, id: tc.id })));
                         pendingToolCalls.push(...chunk.toolCalls);
                     }
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
                     if (chunk.done && pendingToolCalls.length > 0) {
-                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] Executing ${pendingToolCalls.length} tool calls`);
-                        }
+                        console.log(`[AIService] Executing ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => tc.name));
                         // Execute tool calls and continue conversation
                         const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
                         pendingToolCalls = [];
 
-                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] Tool results:`, toolResults);
-                        }
+                        console.log(`[AIService] Tool results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, areasCount: tr.result?.areas?.length || 0 })));
 
                         // Continue conversation with tool results
                         const toolResultsMessage = this.formatToolResults(toolResults);
@@ -457,37 +524,7 @@ CRITICAL ANTI-HALLUCINATION RULES:
             });
         }
 
-        if (adminApiService && botClient) {
-            // Tool: Get map context (universe, world, room names, and areas)
-            tools.push({
-                type: 'function',
-                function: {
-                    name: 'get_map_context',
-                    description: 'Get the current location context including universe name, world name, room name, and available areas. Use this for questions about location ("where are we"), what\'s here ("what is this place", "what\'s here"), or areas ("what areas are here"). This provides complete context about the space in one call.',
-                    parameters: {
-                        type: 'object',
-                        properties: {},
-                        required: [],
-                    },
-                },
-            });
-
-            // Tool: Get map areas
-            if (this.mapDataService) {
-                tools.push({
-                    type: 'function',
-                    function: {
-                        name: 'get_map_areas',
-                        description: 'Get a list of all areas defined on the map using the map editor. Areas are named zones/sections drawn on the map. Use this when asked about "what areas are here", "what sections", "what zones", "show me areas", or similar questions about map areas.',
-                        parameters: {
-                            type: 'object',
-                            properties: {},
-                            required: [],
-                        },
-                    },
-                });
-            }
-        }
+        // Removed get_map_context and get_map_areas - location and areas are now provided upfront in system prompt
 
         return tools;
     }
@@ -539,77 +576,6 @@ CRITICAL ANTI-HALLUCINATION RULES:
                         }
                         break;
 
-                    case 'get_map_context':
-                        if (botClient && adminApiService) {
-                            const roomUrl = botClient.getRoomUrl();
-                            const metadata = await adminApiService.getRoomMetadata(roomUrl);
-                            
-                            // Also get areas for this room so bot has full context
-                            let areas: any[] = [];
-                            if (this.mapDataService) {
-                                areas = await this.mapDataService.getAreas(roomUrl);
-                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                    console.log(`[AIService] get_map_context - Found ${areas.length} areas:`, areas.map(a => a.name));
-                                }
-                            }
-                            
-                            if (metadata) {
-                                result = {
-                                    ...metadata,
-                                    areas: areas.map((a: any) => ({
-                                        name: a.name,
-                                        x: a.x,
-                                        y: a.y,
-                                        width: a.width,
-                                        height: a.height,
-                                    })),
-                                };
-                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                    console.log(`[AIService] get_map_context - Returning result with ${result.areas.length} areas`);
-                                }
-                            } else {
-                                // If metadata is null, try to extract from URL as fallback
-                                const urlMatch = roomUrl.match(/\/@\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
-                                if (urlMatch) {
-                                    result = {
-                                        universeName: urlMatch[1] || 'unknown',
-                                        worldName: urlMatch[2] || 'unknown',
-                                        roomName: urlMatch[3] || 'unknown',
-                                        areas: areas.map((a: any) => ({
-                                            name: a.name,
-                                            x: a.x,
-                                            y: a.y,
-                                            width: a.width,
-                                            height: a.height,
-                                        })),
-                                    };
-                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                        console.log(`[AIService] get_map_context - Using URL fallback, returning result with ${result.areas.length} areas`);
-                                    }
-                                } else {
-                                    result = { error: 'Could not get room metadata' };
-                                }
-                            }
-                        } else {
-                            result = { error: 'Services not available' };
-                        }
-                        break;
-
-                    case 'get_map_areas':
-                        if (botClient && this.mapDataService) {
-                            const roomUrl = botClient.getRoomUrl();
-                            const areas = await this.mapDataService.getAreas(roomUrl);
-                            // Format areas with name, position, and size
-                            result = areas.map((area: any) => ({
-                                name: area.name,
-                                position: { x: area.x, y: area.y },
-                                size: { width: area.width, height: area.height },
-                                properties: area.properties || {},
-                            }));
-                        } else {
-                            result = { error: 'Map data service not available' };
-                        }
-                        break;
 
                     default:
                         // Log unknown tool for debugging
@@ -639,39 +605,6 @@ CRITICAL ANTI-HALLUCINATION RULES:
     private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {
         return results.map(r => {
             // Format results in a more readable way for the AI
-            if (r.name === 'get_map_context' && r.result && !r.result.error) {
-                const { universeName, worldName, roomName, areas } = r.result;
-                
-                // Debug logging
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[AIService] formatToolResults - get_map_context areas:`, areas);
-                }
-                
-                // Build simple, clear context with area positions
-                let context = `Location: ${universeName} universe, ${worldName} world, ${roomName} room`;
-
-                // Include areas with their positions if available - MAKE THIS VERY PROMINENT
-                if (areas && Array.isArray(areas) && areas.length > 0) {
-                    const validAreas = areas.filter((a: any) => a && a.name);
-                    if (validAreas.length > 0) {
-                        const areaNames = validAreas.map((a: any) => a.name);
-                        context += `\n\n*** AREAS IN THIS ROOM: ${areaNames.join(', ')} ***`;
-                        
-                        // Add position info
-                        const positions = validAreas.map((a: any) => `${a.name} at (${a.x}, ${a.y})`).join('; ');
-                        context += `\nArea positions: ${positions}`;
-                        
-                        // Add explicit instruction
-                        context += `\n\nCRITICAL: When asked "what's here", "what areas", or "any areas", you MUST mention these areas: ${areaNames.join(', ')}. Don't just repeat the location - include the areas.`;
-                    } else {
-                        context += `\n\nAREAS: none`;
-                    }
-                } else {
-                    context += `\n\nAREAS: none`;
-                }
-                
-                return context;
-            }
             if (r.name === 'get_people_on_map' && Array.isArray(r.result)) {
                 if (r.result.length === 0) {
                     return `get_people_on_map: There are no other people on the map currently.`;
@@ -681,15 +614,6 @@ CRITICAL ANTI-HALLUCINATION RULES:
             }
             if (r.name === 'get_bot_position' && r.result && !r.result.error) {
                 return `get_bot_position: Your current position is x: ${r.result.x}, y: ${r.result.y}`;
-            }
-            if (r.name === 'get_map_areas' && Array.isArray(r.result)) {
-                if (r.result.length === 0) {
-                    return `There are no defined areas on this map.`;
-                }
-                const areaNames = r.result.map((a: any) => a.name).filter(Boolean);
-                return `Areas on this map: ${areaNames.join(', ')}
-
-Use these area names naturally in your response. Don't use placeholders - mention the actual areas: ${areaNames.map((n: string) => `"${n}"`).join(', ')}.`;
             }
             // Fallback to JSON for other results or errors
             return `${r.name}: ${JSON.stringify(r.result)}`;
