@@ -74,7 +74,7 @@ export class PatrolBehavior extends BaseBehavior {
                 
                 // If we're close to the target (< 50px), stop and wait for bubble to initiate
                 if (distance < 50) {
-                    if (this.bot.getIsFollowingPath()) {
+            if (this.bot.getIsFollowingPath()) {
                         this.bot.cancelPathfinding();
                     }
                     this.bot.stop();
@@ -138,8 +138,8 @@ export class PatrolBehavior extends BaseBehavior {
                     }
                     
                     this.facePosition(targetPos);
-                    this.onBotPositionUpdated();
-                    return;
+                this.onBotPositionUpdated();
+                return;
                 }
             }
             
@@ -1188,7 +1188,9 @@ export class PatrolBehavior extends BaseBehavior {
                 botConfig.chatInstructions || 'You are a helpful patrol bot.',
                 botConfig.aiProviderRef,
                 spaceName,
-                context
+                context,
+                this.bot,
+                this.adminApiService
             )) {
                 if (chunk.content) {
                     fullMessage += chunk.content;
@@ -1213,5 +1215,60 @@ export class PatrolBehavior extends BaseBehavior {
             this.bot.stopTyping(spaceName);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
+    }
+
+    /**
+     * Send goodbye message and return to start position
+     */
+    private async sendGoodbyeAndReturn(spaceName: string, playerId: number, botId: string, destinationType: 'person' | 'area'): Promise<void> {
+        if (!this.bot || !this.aiService) {
+            this.returnAfterLeading();
+            return;
+        }
+
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            this.returnAfterLeading();
+            return;
+        }
+
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
+        
+        let fullMessage = '';
+        try {
+            const goodbyePrompt = `You've arrived at ${destinationText}. It was nice talking to them. Say goodbye and that you'll see them soon.`;
+            
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                goodbyePrompt,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    if (fullMessage.trim()) {
+                        if (this.bot) {
+                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                        }
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[PatrolBehavior] Error generating goodbye message:`, error);
+        }
+        
+        // Return to start position after sending message
+        this.returnAfterLeading();
     }
 }
