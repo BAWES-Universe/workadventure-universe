@@ -56,16 +56,51 @@ export class PatrolBehavior extends BaseBehavior {
         // If bot is summoned or leading, allow movement (don't stop for normal behavior logic)
         // The bot will stop when it reaches the target position
         if (this.isSummoned || this.isLeading) {
-            // During summon, only stop if we've reached the target and are in a conversation space
-            // Otherwise, continue moving towards the summoned player
+            // When leading, get the target from leadingTarget
+            let targetPos: { x: number; y: number } | null = null;
+            if (this.isLeading && this.leadingTarget) {
+                targetPos = this.leadingTarget.position;
+            } else if (this.isSummoned && this.summonedPlayerUuid) {
+                targetPos = this.getSummonedPlayerPosition();
+            }
+            
+            // Check if we've reached the target position
+            if (targetPos) {
+                const botPos = this.bot.getState().getPosition();
+                const dx = targetPos.x - botPos.x;
+                const dy = targetPos.y - botPos.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // If we're close to the target (< 50px), stop and wait for bubble to initiate
+                if (distance < 50) {
+                    if (this.bot.getIsFollowingPath()) {
+                        this.bot.cancelPathfinding();
+                    }
+                    this.bot.stop();
+                    this.facePosition(targetPos);
+                    this.onBotPositionUpdated();
+                    // If leading, end the leading state
+                    if (this.isLeading) {
+                        this.endLeading();
+                    }
+                    return;
+                }
+            }
+            
+            // During summon/leading, only stop if we've reached the target and are in a conversation space
+            // BUT: When leading, don't stop just because we're in a space - continue to target
             if (this.bot.getIsFollowingPath()) {
-                // Bot is moving to summoned player - allow it
+                // Bot is moving to target - allow it
                 this.onBotPositionUpdated();
                 return;
-            } else if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
-                // Bot reached player and is in conversation - stop and face
+            } else if ((this.currentSpaceName || this.engagedWithUsers.size > 0) && !this.isLeading) {
+                // Bot reached player and is in conversation - stop and face (only when summoned, not leading)
                 this.bot.stop();
                 this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return;
+            } else if (this.isLeading) {
+                // When leading, if path ended but we're not at target, continue (pathfinding will handle it)
                 this.onBotPositionUpdated();
                 return;
             } else {
@@ -85,7 +120,8 @@ export class PatrolBehavior extends BaseBehavior {
         // GHOST MODE: Only stop if actually in a conversation space (like social bot)
         // Check both currentSpaceName (immediate) and engagedWithUsers (after users join)
         // CRITICAL: Check this BEFORE path following to prevent movement in bubbles
-        if (shouldRespond && (this.currentSpaceName || this.engagedWithUsers.size > 0)) {
+        // BUT: When leading, don't stop just because we're in a space - continue to target
+        if (shouldRespond && (this.currentSpaceName || this.engagedWithUsers.size > 0) && !this.isLeading) {
             // Actually in a conversation space - stop immediately and cancel any movement
             if (this.bot.getIsFollowingPath()) {
                 this.bot.cancelPathfinding();
@@ -152,7 +188,8 @@ export class PatrolBehavior extends BaseBehavior {
             }
             
             // Only stop if players are actively moving (not idle)
-            if (hasNearbyPlayers && hasActivePlayers) {
+            // BUT: When leading, don't stop just because players are nearby - continue to target
+            if (hasNearbyPlayers && hasActivePlayers && !this.isLeading) {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[PatrolBehavior] 🛑 STOPPING - found active players (getNearbyPlayers=${nearbyPlayers.length}, nearbyPlayersMap=${this.nearbyPlayers.size}, responseRadius=${responseRadius}, isFollowingPath=${this.bot.getIsFollowingPath()})`);
                 }

@@ -38,9 +38,17 @@ export class IdleBehavior extends BaseBehavior {
 
         // If bot is summoned or leading, allow movement (idle bots can move when summoned or leading)
         if (this.isSummoned || this.isLeading) {
-            // Check if we've reached the target position (close enough to stop and initiate bubble)
+            // When leading, get the target from leadingTarget instead of summonedPlayerUuid
             const botPos = this.bot.getState().getPosition();
-            const targetPos = this.summonedPlayerUuid ? this.getSummonedPlayerPosition() : null;
+            let targetPos: { x: number; y: number } | null = null;
+            
+            if (this.isLeading && this.leadingTarget) {
+                // When leading, use the leading target position
+                targetPos = this.leadingTarget.position;
+            } else if (this.isSummoned && this.summonedPlayerUuid) {
+                // When summoned, use the summoned player position
+                targetPos = this.getSummonedPlayerPosition();
+            }
             
             if (targetPos) {
                 const dx = targetPos.x - botPos.x;
@@ -58,12 +66,17 @@ export class IdleBehavior extends BaseBehavior {
                     // Face the target position
                     this.facePosition(targetPos);
                     this.onBotPositionUpdated();
+                    // If leading, end the leading state
+                    if (this.isLeading) {
+                        this.endLeading();
+                    }
                     return;
                 }
             }
             
             // If we're in a conversation space, stop and engage normally (not ghost)
-            if (this.engagedWithUsers.size > 0) {
+            // BUT: When leading, don't stop just because we're in a space - continue to target
+            if (this.engagedWithUsers.size > 0 && !this.isLeading) {
                 // Bot reached player and is in conversation - stop and face
                 if (this.bot.getIsFollowingPath()) {
                     this.bot.cancelPathfinding();
@@ -80,16 +93,25 @@ export class IdleBehavior extends BaseBehavior {
                 return;
             }
             
-            // Path ended but not close to target and not in space - bot reached target, stop and wait for bubble
-            // Don't continue with normal behavior - wait for player to get close enough for bubble
-            this.bot.stop();
-            this.updateProximityEngagement(); // Face the player if nearby
-            this.onBotPositionUpdated();
-            return;
+            // Path ended but not close to target and not in space
+            // When leading, don't stop - the pathfinding should continue or we should recalculate
+            // When summoned, stop and wait for bubble
+            if (this.isSummoned && !this.isLeading) {
+                this.bot.stop();
+                this.updateProximityEngagement(); // Face the player if nearby
+                this.onBotPositionUpdated();
+                return;
+            }
+            // When leading, if path ended but we're not at target, continue (pathfinding will handle it)
+            if (this.isLeading) {
+                this.onBotPositionUpdated();
+                return;
+            }
         }
 
         // If engaged, just update facing (idle bots don't move, so no need to stop)
-        if (this.isEngaged) {
+        // BUT: When leading, don't stop just because we're engaged - continue to target
+        if (this.isEngaged && !this.isLeading) {
             // Update engagement to ensure facing is correct
             this.updateProximityEngagement();
             this.onBotPositionUpdated(); // Track position

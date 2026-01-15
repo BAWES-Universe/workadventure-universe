@@ -1200,7 +1200,9 @@ export class BotClient {
         // Debug: log when players are found (always log for debugging)
         if (result.length > 0) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] getNearbyPlayers: found ${result.length} player(s) within ${radius}px (checked ${this.players.size} total), bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] getNearbyPlayers: found ${result.length} player(s) within ${radius}px (checked ${this.players.size} total), bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
+                }
                 for (const player of result) {
                     const dx = player.position.x - botPos.x;
                     const dy = player.position.y - botPos.y;
