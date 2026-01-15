@@ -506,6 +506,7 @@ export class BotClient {
         const isLeading = (this.behavior as any)?.isLeading || false;
         const isReturning = (this.behavior as any)?.isReturning || false;
         const bypassCooldowns = isSummoned || isLeading || isReturning; // Allow immediate pathfinding when summoned, leading, or returning
+        const bypassCloseCheck = isSummoned || isLeading; // Also bypass close target check when summoned or leading
 
         // Cooldown check - don't recalculate too frequently
         // BUT: Skip this check if bot is summoned (needs immediate response)
@@ -550,8 +551,8 @@ export class BotClient {
         const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
         
         // For very close targets (< 50px), skip pathfinding to avoid tiny paths that cause glitching
-        // BUT: If summoned, always use pathfinding even for close targets (player might have moved)
-        if (!isSummoned && distanceToTarget < 50) {
+        // BUT: If summoned or leading, always use pathfinding even for close targets (player might have moved or we need to lead)
+        if (!bypassCloseCheck && distanceToTarget < 50) {
             // Already close enough, no need for pathfinding - use direct movement instead
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Target too close (${distanceToTarget.toFixed(1)}px < 50px), skipping pathfinding`);
@@ -559,10 +560,10 @@ export class BotClient {
             return false;
         }
         
-        // If summoned and target is close, log but still use pathfinding
-        if (isSummoned && distanceToTarget < 50) {
+        // If summoned or leading and target is close, log but still use pathfinding
+        if (bypassCloseCheck && distanceToTarget < 50) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] 🎯 moveToWithPathfinding: Target close (${distanceToTarget.toFixed(1)}px) but summoned - using pathfinding anyway`);
+                console.log(`[Bot ${this.config.botId}] 🎯 moveToWithPathfinding: Target close (${distanceToTarget.toFixed(1)}px) but ${isSummoned ? 'summoned' : 'leading'} - using pathfinding anyway`);
             }
         }
 
@@ -1461,7 +1462,9 @@ export class BotClient {
         console.log(`[Bot ${this.config.botId}] 📊 State: isFollowingPath=${this.isFollowingPath}, isMoving=${this.state.isMoving()}, pathLength=${this.currentPath.length}, pathIndex=${this.pathIndex}`);
 
         if (!pathfindingResult) {
-            console.error(`[Bot ${this.config.botId}] ❌ Lead pathfinding failed - bot may be too close to target (<50px) or pathfinding unavailable`);
+            const errorMsg = `Lead pathfinding failed - bot may be too close to target (<50px) or pathfinding unavailable`;
+            console.error(`[Bot ${this.config.botId}] ❌ ${errorMsg}`);
+            throw new Error(errorMsg);
         }
     }
 
