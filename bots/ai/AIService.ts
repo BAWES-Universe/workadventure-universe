@@ -296,6 +296,8 @@ Remember:
             let streamCompleted = false;
             let accumulatedContent = '';
             let pendingToolCalls: ToolCall[] = [];
+            // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
+            const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
 
             // For Qwen models, add /no_think to user message instead of system prompt
             const userMessageForQwen = isQwenModel 
@@ -311,17 +313,90 @@ Remember:
                     tools.length > 0 ? tools : undefined
                 )) {
                     // Collect tool calls first (before yielding content)
+                    // Tool calls may be streamed with partial arguments, so we need to accumulate them by ID
                     if (chunk.toolCalls && chunk.toolCalls.length > 0) {
-                        console.log(`[AIService] Received tool calls:`, chunk.toolCalls.map(tc => ({ name: tc.name, id: tc.id })));
-                        pendingToolCalls.push(...chunk.toolCalls);
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Received tool calls:`, chunk.toolCalls.map(tc => ({ name: tc.name, id: tc.id, argsLength: tc.arguments?.length || 0 })));
+                        }
+                        
+                        // Accumulate tool call arguments by ID (arguments may come in multiple chunks)
+                        // Note: In streaming mode, tool calls may come with undefined ID in some chunks
+                        // We need to handle both cases: with ID (proper streaming) and without ID (fallback)
+                        for (const toolCall of chunk.toolCalls) {
+                            if (toolCall.id) {
+                                // Proper streaming with ID - accumulate by ID
+                                const existing = toolCallAccumulator.get(toolCall.id);
+                                if (existing) {
+                                    // Append to existing arguments (streaming)
+                                    // Skip '{}' default - only append actual argument strings
+                                    if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                        existing.arguments += toolCall.arguments;
+                                    }
+                                    // Update name if provided (should be same, but just in case)
+                                    if (toolCall.name) {
+                                        existing.name = toolCall.name;
+                                    }
+                                } else {
+                                    // New tool call - initialize
+                                    // Skip '{}' default - only initialize with actual argument strings
+                                    const initArgs = (toolCall.arguments && toolCall.arguments !== '{}') ? toolCall.arguments : '';
+                                    toolCallAccumulator.set(toolCall.id, {
+                                        id: toolCall.id,
+                                        name: toolCall.name || '',
+                                        arguments: initArgs
+                                    });
+                                }
+                            } else if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                // No ID but has arguments - this is a continuation chunk
+                                // Find the most recent tool call (by insertion order) and append to it
+                                // In practice, there should only be one active tool call at a time
+                                if (toolCallAccumulator.size > 0) {
+                                    // Get the most recently added tool call (last in map iteration order)
+                                    const entries = Array.from(toolCallAccumulator.entries());
+                                    const lastEntry = entries[entries.length - 1];
+                                    if (lastEntry) {
+                                        lastEntry[1].arguments += toolCall.arguments;
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.log(`[AIService] Appended args to tool call ${lastEntry[0]}: "${lastEntry[1].arguments.substring(0, 100)}"`);
+                                        }
+                                    }
+                                } else {
+                                    // No existing tool call to append to - log warning
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.warn(`[AIService] Tool call chunk without ID and no existing tool call to append to: args="${toolCall.arguments.substring(0, 50)}"`);
+                                    }
+                                }
+                            } else {
+                                // No ID and no arguments - skip
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.warn(`[AIService] Tool call chunk without ID and no arguments: name=${toolCall.name}`);
+                                }
+                            }
+                        }
                     }
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
-                    if (chunk.done && pendingToolCalls.length > 0) {
-                        console.log(`[AIService] Executing ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => tc.name));
+                    if (chunk.done && toolCallAccumulator.size > 0) {
+                        // Convert accumulated tool calls to array (arguments should now be complete)
+                        pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
+                            id: tc.id,
+                            name: tc.name,
+                            // If arguments are empty after accumulation, default to '{}' for JSON parsing
+                            arguments: tc.arguments || '{}'
+                        }));
+                        
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Executing ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => ({ 
+                                name: tc.name, 
+                                id: tc.id, 
+                                argsPreview: tc.arguments.substring(0, 100),
+                                argsLength: tc.arguments.length
+                            })));
+                        }
                         // Execute tool calls and continue conversation
                         const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
                         pendingToolCalls = [];
+                        toolCallAccumulator.clear();
 
                         console.log(`[AIService] Tool results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, areasCount: tr.result?.areas?.length || 0 })));
 
