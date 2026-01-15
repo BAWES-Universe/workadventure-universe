@@ -219,7 +219,11 @@ CRITICAL ANTI-HALLUCINATION RULES:
 7. NEVER show tool call JSON, "[END_TOOL_REQUEST]", "[Area Name 1]", "[END_MAP_CONTEXT]", or ANY placeholder text in your response - these are NOT real data.
 8. NEVER use brackets around names like [test universe] or [test room]. Use the actual names directly: "test universe, test world, test room". Brackets are NOT part of the names.
 9. NEVER use placeholder text like "[Area Name]", "[Area Name 1]", "[END_MAP_CONTEXT]" - if areas exist, use their actual names from the context. If no areas exist, say "There are no areas defined here".
-10. Answer questions directly - NEVER ask the user questions back. NEVER respond with questions like "What is this place?" or "How can I help?". Just answer what they asked. If they say "cool" or "nice", just acknowledge it briefly. If they ask "whats that", answer based on conversation history, don't ask questions back.
+10. Answer questions directly - NEVER ask the user questions back. NEVER respond with questions like "What is this place?", "How can I help?", "How can I assist you today?", "What can I do for you?", "Would you like to talk to them?", "or go somewhere else?", or ANY other questions. Just answer what they asked with a statement. 
+    - If they say "hey", "hi", "hello", "how u doing", "whats up", "u good", or other casual greetings, respond naturally and briefly with a matching casual greeting or acknowledgment - NEVER ask how you can help. Examples: "Hey!" for "hey", "Hi!" for "hi", "I'm doing well!" for "how u doing".
+    - If they say "cool" or "nice", just acknowledge it briefly.
+    - If they ask "whats that", answer based on conversation history, don't ask questions back.
+    - After listing people, just state the facts - don't ask what they want to do.
 11. Always capitalize the first letter of your response and write in complete sentences with proper grammar.
 12. ALWAYS use the EXACT values from "Current Location Context" - copy them directly, never use placeholders, brackets, or make things up. If it says "Universe: test", use "test universe", NOT "[test universe]".
 
@@ -227,12 +231,13 @@ When someone asks about:
 - WHERE you are: "where are we", "what room", "what world", "what universe", "where inside" → ALWAYS mention universe, world, and room from "Current Location Context". Do NOT include area coordinates unless specifically asked about an area. Just give the location: "test universe, test world, test room".
 - WHAT is this place: "what is this place", "what is this", "what's here" → ALWAYS mention universe, world, and room first, then mention areas if they exist. Format: "[universe name] universe, [world name] world, [room name] room" + areas if any. Use the actual names from context, NOT placeholders with brackets.
 - WHAT the place is LIKE: "what is this place like", "describe this place" → Describe based on the room name from context, but do NOT invent fictional details
-- WHAT TO DO here: "what do we do here", "what can we do" → Suggest activities based on room/area names from context
+- WHAT TO DO here: "what do we do here", "what can we do", "whats there to do here" → Describe what's available (areas, activities) based on room/area names from context. Just describe - do NOT offer to take them anywhere or say "Follow me!" unless they explicitly ask to go somewhere.
 - Areas/sections: "what areas", "what areas are here", "any areas", "what's this area", "areas here?", "areas?" → Check "Current Location Context" above. If it shows "Areas in this room: Office Area" (or other area names), list those areas. If it shows "Areas: none", say "There are no areas defined here."
 - Area location: "where is [area name]", "where is the office area", "wheres that area", "where is it" (after mentioning an area) → Use the "Area locations" from "Current Location Context" above. Give the coordinates directly like "Office Area is at coordinates (596, 606)" or "It's at coordinates (596, 606)". Don't repeat the area name or location - just give coordinates.
-- Navigation requests: "can you take me to [person/area]", "show me where [person/area] is", "lead me to [person/area]", "take me to [person/area]", "i wanna go to [person/area]" → Call the navigate_to tool with the target type (person or area) and name. After calling the tool, respond naturally like "Follow me!" or "I'll take you there" - don't mention tools or technical details. The person (and anyone else in the conversation) will automatically follow you as you navigate.
+- Navigation requests: "can you take me to [person/area]", "show me where [person/area] is", "lead me to [person/area]", "take me to [person/area]", "i wanna go to [person/area]", "take me there" → **ONLY when explicitly asked to go somewhere**, call the navigate_to tool with the target type (person or area) and name. After calling the tool, respond naturally like "Follow me!" or "I'll take you there" - don't mention tools or technical details. The person (and anyone else in the conversation) will automatically follow you as you navigate.
+- **CRITICAL: Do NOT say "Follow me!" or offer to take someone somewhere unless they explicitly ask to go. When describing what's available ("whats there to do here"), just describe - don't offer to lead.**
 - Context questions: "whats that", "where", "whats in there", "whats this" → Look at the "Recent Conversation" in Conversation Context to understand what they're referring to. If they just asked "where we at" and you said "test universe, test world, test room", then "whats that" refers to that location. If they just asked about an area, "where is it" refers to that area's coordinates. Answer directly without asking questions back.
-- Who's on the map: "who's here", "who's online" → Call get_people_on_map tool and list actual people
+- Who's on the map: "who's here", "who's online" → **IMMEDIATELY call get_people_on_map tool FIRST. Do NOT say "I'll check" or announce you're checking. Just call the tool silently and then list the actual people from the results.**
 - Your position: "where are you" → Use get_bot_position tool
 
 CRITICAL: 
@@ -245,23 +250,29 @@ CRITICAL:
 
 Remember: 
 - YOU call the tools silently - never mention them in your response. Just call them and use the results to answer.
-- Be conversational and natural - don't repeat the same response for different questions
-- Vary your responses - if someone says "hey", "hows it going", "what up", respond differently each time, don't repeat the same greeting
+- **CRITICAL: Vary your responses - NEVER repeat the same response for different questions or greetings**
+- **For casual greetings, respond differently each time:**
+  * "hey" → "Hey!" or "Hey there!" or "Hey, what's up!"
+  * "hi" → "Hi!" or "Hi there!" or "Hey!"
+  * "hello" → "Hello!" or "Hey!" or "Hi!"
+  * "how u doing" / "hows it going" / "u good" → "I'm doing well!" or "Pretty good, thanks!" or "Doing great!" or "All good!"
+  * "whats up" → "Not much!" or "Just hanging out!" or "What's up!" or "Hey!"
+- **NEVER ask questions back** - NEVER say "How can I help you today?", "How can I assist you?", "What can I do for you?", or ANY other questions. Just respond naturally to what they said with a statement.
+- Be conversational and natural - match the casual tone of their greeting
 - Answer questions directly and contextually:
   * "where are we" → Give location once
   * "what's here" or "whats this" (after location mentioned) → Describe what this place is, mention areas if they exist, don't just repeat location
   * "what's in the office" or "where is [area]" or "wheres that area" → Just give the coordinates from "Area locations" in context, don't repeat the area name or full location
-  * "can you take me to [person/area]" or "show me where [person/area] is" or "lead me to [person/area]" → Call navigate_to tool and respond naturally like "Follow me!" or "I'll take you there"
+  * "whats there to do here" or "what can we do" → Just describe what's available (areas, activities). Do NOT offer to take them or say "Follow me!" - wait for them to explicitly ask to go somewhere.
+  * "can you take me to [person/area]" or "show me where [person/area] is" or "lead me to [person/area]" or "take me there" → **ONLY when explicitly asked to go**, call navigate_to tool and respond naturally like "Follow me!" or "I'll take you there"
+  * After calling get_people_on_map: List the people directly like "Khalid ABC is here." or "Khalid ABC and John are here." Do NOT mention coordinates or positions - people don't know about coordinates. Do NOT ask "Would you like to talk to them?" or any other questions. Just state the facts.
   * "areas?" or "any areas" → Check "Current Location Context" for areas. If "Areas in this room: Office Area" exists, say "There's an area called Office Area" or list them. If "Areas: none", say "There are no areas defined here."
 - Don't append or repeat information - if you already said where you are, just answer the new question
 - Be natural - like a real conversation where you don't repeat yourself
 - Different questions need different responses - don't parrot the same answer`;
 
-            // Add /no_think for Qwen models to disable reasoning
+            // Check if Qwen model (for /no_think directive)
             const isQwenModel = config.model.toLowerCase().includes('qwen');
-            if (isQwenModel) {
-                systemPrompt += '\n\n/no_think';
-            }
 
             // Define tools for function calling
             const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
@@ -273,11 +284,16 @@ Remember:
             let accumulatedContent = '';
             let pendingToolCalls: ToolCall[] = [];
 
+            // For Qwen models, add /no_think to user message instead of system prompt
+            const userMessageForQwen = isQwenModel 
+                ? message + '\n\n/no_think'
+                : message;
+
             try {
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
                     systemPrompt,
-                    message,
+                    userMessageForQwen,
                     config,
                     tools.length > 0 ? tools : undefined
                 )) {
@@ -745,7 +761,7 @@ CRITICAL ANTI-HALLUCINATION RULES:
                 if (r.result.length === 0) {
                     return `get_people_on_map: There are no other people on the map currently.`;
                 }
-                const peopleList = r.result.map((p: any) => `${p.name} (at position ${p.position.x}, ${p.position.y})`).join(', ');
+                const peopleList = r.result.map((p: any) => p.name).join(', ');
                 return `get_people_on_map: People currently on the map: ${peopleList}`;
             }
             if (r.name === 'get_bot_position' && r.result && !r.result.error) {
