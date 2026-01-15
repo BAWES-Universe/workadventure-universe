@@ -61,15 +61,24 @@
     // Initialize from prop - handle both bot changes and bot becoming null
     $: if (bot) {
         if (bot.id !== currentBot?.id) {
+            // Ensure behaviorType is never undefined - check both top-level and behaviorConfig
+            const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
+
             currentBot = {
                 ...bot,
                 aiProviderRef: bot.aiProviderRef,
+                behaviorType, // Guaranteed to be set
                 behaviorConfig: bot.behaviorConfig || {
+                    behaviorType,
                     assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
                 },
             };
             if (!currentBot.behaviorConfig.assignedSpace) {
                 currentBot.behaviorConfig.assignedSpace = { center: { x: 0, y: 0 }, radius: 0 };
+            }
+            // Ensure behaviorConfig also has behaviorType set
+            if (!currentBot.behaviorConfig.behaviorType) {
+                currentBot.behaviorConfig.behaviorType = behaviorType;
             }
             // Reset last saved name when bot changes
             lastSavedName = bot.name || null;

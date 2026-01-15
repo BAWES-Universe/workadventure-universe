@@ -433,12 +433,15 @@
 
         try {
             // Convert BotData to API format
+            // Ensure behaviorType is never undefined - check both top-level and behaviorConfig
+            const behaviorType = selectedBot.behaviorType || selectedBot.behaviorConfig?.behaviorType || "idle";
+
             const updateData = {
                 name: selectedBot.name,
                 description: selectedBot.description,
                 characterTextureId: selectedBot.characterTexture,
                 enabled: selectedBot.enabled,
-                behaviorType: selectedBot.behaviorType,
+                behaviorType, // Guaranteed to be set
                 behaviorConfig: selectedBot.behaviorConfig,
                 aiProviderRef: selectedBot.aiProviderRef,
                 chatInstructions: selectedBot.chatInstructions,
@@ -448,6 +451,11 @@
 
             // Convert API response back to BotData format
             const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
+            // Ensure behaviorType is never undefined
+            const behaviorConfig = updatedBot.behaviorConfig as BotData["behaviorConfig"] | undefined;
+            const responseBehaviorType =
+                (updatedBot.behaviorType as "idle" | "patrol" | "social") || behaviorConfig?.behaviorType || "idle";
+
             const botData: BotData = {
                 id: updatedBot.id,
                 botId: updatedBot.id,
@@ -455,10 +463,10 @@
                 description: typeof updatedBot.description === "string" ? updatedBot.description : undefined,
                 characterTexture: textureId,
                 characterTextureIds: textureId ? [textureId] : [],
-                behaviorType: updatedBot.behaviorType as "idle" | "patrol" | "social",
+                behaviorType: responseBehaviorType, // Guaranteed to be set
                 enabled: updatedBot.enabled ?? true,
                 behaviorConfig: updatedBot.behaviorConfig || {
-                    behaviorType: updatedBot.behaviorType as "idle" | "patrol" | "social",
+                    behaviorType: responseBehaviorType,
                     assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
                 },
                 aiProviderRef: updatedBot.aiProviderRef,

@@ -647,10 +647,22 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
     const botsMap = new Map<string, BotData>();
 
     for (const apiBot of apiBots) {
-        const behaviorType = (apiBot.behaviorType as "idle" | "patrol" | "social") || "idle";
+        // Get behaviorType with proper fallback - check both top-level and behaviorConfig
+        // Ensure it's never undefined
+        const apiBehaviorConfig = apiBot.behaviorConfig as BotData["behaviorConfig"] | undefined;
+        let behaviorType: "idle" | "patrol" | "social" =
+            (apiBot.behaviorType as "idle" | "patrol" | "social") || apiBehaviorConfig?.behaviorType || "idle"; // Final fallback
+
+        // Ensure it's a valid value
+        if (!["idle", "patrol", "social"].includes(behaviorType)) {
+            console.warn(
+                `[BotEditorStore] Invalid behaviorType "${behaviorType}" for bot ${apiBot.id}, defaulting to "idle"`
+            );
+            behaviorType = "idle";
+        }
 
         // Preserve existing behaviorConfig and only merge in defaults for missing required fields
-        const apiBehaviorConfig = apiBot.behaviorConfig as BotData["behaviorConfig"] | null | undefined;
+        // Reuse apiBehaviorConfig declared above
         const behaviorConfig: BotData["behaviorConfig"] =
             apiBehaviorConfig && typeof apiBehaviorConfig === "object" && !Array.isArray(apiBehaviorConfig)
                 ? {

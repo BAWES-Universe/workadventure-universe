@@ -518,12 +518,28 @@ export class BotAPI {
                     return;
                 }
 
-                // Merge updates
+                // Merge updates - but only include fields that are actually provided (not undefined)
+                // This prevents undefined values from overwriting existing correct values
+                const updatesToApply: Partial<BotConfiguration> = {};
+                for (const [key, value] of Object.entries(updates)) {
+                    // Only include defined values (exclude undefined, but allow null if needed)
+                    if (value !== undefined) {
+                        updatesToApply[key as keyof BotConfiguration] = value;
+                    }
+                }
+
                 const updatedConfig: BotConfiguration = {
                     ...existingConfig,
-                    ...updates,
+                    ...updatesToApply,  // Only defined values
                     botId, // Ensure botId doesn't change
                 };
+
+                // CRITICAL: Ensure behaviorType is always set (never undefined)
+                // If updates didn't include behaviorType or it was undefined, preserve existing value
+                if (!updatedConfig.behaviorType) {
+                    console.warn(`[BotAPI] Bot ${botId} missing behaviorType after merge, preserving existing: ${existingConfig.behaviorType}`);
+                    updatedConfig.behaviorType = existingConfig.behaviorType;
+                }
 
                 // Save to Admin API
                 await this.adminApiService.saveBotConfiguration(updatedConfig);
