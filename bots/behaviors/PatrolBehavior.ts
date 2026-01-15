@@ -537,13 +537,15 @@ export class PatrolBehavior extends BaseBehavior {
                     (now - (this.playerLastMoveTime.get(closestId) || 0)) < this.IDLE_RESUME_DELAY;
                 
                 // Only stop if player is actively moving OR in a conversation space
-                const shouldStop = shouldRespond && (isPlayerActive || this.currentSpaceName || this.engagedWithUsers.size > 0);
+                // BUT: Don't stop if bot is leading - it needs to continue to destination
+                const shouldStop = shouldRespond && (isPlayerActive || this.currentSpaceName || this.engagedWithUsers.size > 0) && !this.isLeading;
                 
                 if (closestId !== this.closestPlayerId) {
                     // Different player or first time
                     this.closestPlayerId = closestId;
                     
                     // For patrol bots with respondToPlayers, stop and face only if player is active
+                    // BUT: Don't stop if bot is leading - it needs to continue to destination
                     if (shouldStop) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
@@ -564,6 +566,7 @@ export class PatrolBehavior extends BaseBehavior {
                 } else {
                     // Same player, but they might have moved - update facing
                     // For patrol bots, ensure we're still stopped only if player is active
+                    // BUT: Don't stop if bot is leading - it needs to continue to destination
                     if (shouldStop && this.bot.getState().isMoving()) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
@@ -600,10 +603,11 @@ export class PatrolBehavior extends BaseBehavior {
         
         // CRITICAL: Stop immediately when joining a conversation space
         // This prevents the bot from continuing to move during the frame where onSpaceJoined is called
+        // BUT: Don't stop if bot is leading - it needs to continue to destination
         const config = this.config as PatrolBehaviorConfig;
         const shouldRespond = config.respondToPlayers !== false;
         
-        if (shouldRespond) {
+        if (shouldRespond && !this.isLeading) {
             if (this.bot?.getIsFollowingPath()) {
                 this.bot.cancelPathfinding();
             }
