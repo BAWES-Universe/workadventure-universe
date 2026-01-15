@@ -312,10 +312,10 @@ export class BotClient {
                     console.log(`[Bot ${this.config.botId}] 🔍 Path following active but bot stopped - isLeading=${isLeading}, behavior=${!!this.behavior}`);
                 }
                 if (!isLeading) {
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
-                    }
-                    this.cancelPathfinding();
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
+                }
+                this.cancelPathfinding();
                 } else {
                     // Bot is leading but stopped - keep path active and re-enable movement
                     // This handles cases where stop() was called temporarily but we should continue
@@ -551,7 +551,7 @@ export class BotClient {
         // BUT: Skip this check if bot is summoned (needs immediate response)
         if (!bypassCooldowns && now - this.lastPathRecalcTime < this.PATH_RECALC_COOLDOWN && this.isFollowingPath) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Cooldown active (${now - this.lastPathRecalcTime}ms < ${this.PATH_RECALC_COOLDOWN}ms), keeping current path`);
+            console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Cooldown active (${now - this.lastPathRecalcTime}ms < ${this.PATH_RECALC_COOLDOWN}ms), keeping current path`);
             }
             return true; // Keep following current path
         }
@@ -563,7 +563,7 @@ export class BotClient {
             if (timeSincePathEnd < this.PATH_END_COOLDOWN) {
                 // Too soon after path ended, skip pathfinding - let behavior use direct movement
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Path end cooldown active (${timeSincePathEnd}ms < ${this.PATH_END_COOLDOWN}ms), skipping pathfinding`);
+                console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Path end cooldown active (${timeSincePathEnd}ms < ${this.PATH_END_COOLDOWN}ms), skipping pathfinding`);
                 }
                 return false;
             }
@@ -594,7 +594,7 @@ export class BotClient {
         if (!bypassCloseCheck && distanceToTarget < 50) {
             // Already close enough, no need for pathfinding - use direct movement instead
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Target too close (${distanceToTarget.toFixed(1)}px < 50px), skipping pathfinding`);
+            console.log(`[Bot ${this.config.botId}] ⏸️ moveToWithPathfinding: Target too close (${distanceToTarget.toFixed(1)}px < 50px), skipping pathfinding`);
             }
             return false;
         }
@@ -603,21 +603,21 @@ export class BotClient {
         if (bypassCloseCheck && distanceToTarget < 50) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] 🎯 moveToWithPathfinding: Target close (${distanceToTarget.toFixed(1)}px) but ${isSummoned ? 'summoned' : 'leading'} - using pathfinding anyway`);
-            }
+        }
         }
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Finding path from (${Math.round(botPos.x)}, ${Math.round(botPos.y)}) to (${Math.round(x)}, ${Math.round(y)})...`);
+        console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Finding path from (${Math.round(botPos.x)}, ${Math.round(botPos.y)}) to (${Math.round(x)}, ${Math.round(y)})...`);
         }
         const rawPath = await this.pathfindingManager.findPath(botPos, { x, y }, true);
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Pathfinding returned ${rawPath.length} waypoints`);
+        console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Pathfinding returned ${rawPath.length} waypoints`);
         }
 
         if (rawPath.length === 0) {
             // No path found, fall back to direct movement
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: No path found from pathfinding algorithm`);
+            console.log(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: No path found from pathfinding algorithm`);
             }
             movementLogger.log({
                 timestamp: Date.now(),
@@ -644,18 +644,18 @@ export class BotClient {
         // Only update path if we have a valid path with at least 2 waypoints
         if (rawPath.length < 2) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: Path too short (${rawPath.length} waypoints < 2)`);
+            console.log(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: Path too short (${rawPath.length} waypoints < 2)`);
             }
             return false;
         }
 
         // CRITICAL: Validate path doesn't go through obstacles before using it
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] ✅ moveToWithPathfinding: Validating path with ${rawPath.length} waypoints...`);
+        console.log(`[Bot ${this.config.botId}] ✅ moveToWithPathfinding: Validating path with ${rawPath.length} waypoints...`);
         }
         if (!this.validatePath(rawPath)) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: Path validation failed - path goes through obstacles! Rejecting path.`);
+            console.warn(`[Bot ${this.config.botId}] ❌ moveToWithPathfinding: Path validation failed - path goes through obstacles! Rejecting path.`);
             }
             movementLogger.log({
                 timestamp: Date.now(),
@@ -668,7 +668,7 @@ export class BotClient {
             return false;
         }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] ✅ moveToWithPathfinding: Path validation passed`);
+        console.log(`[Bot ${this.config.botId}] ✅ moveToWithPathfinding: Path validation passed`);
         }
         
         // Use raw path from pathfinding - it already avoids obstacles
@@ -783,12 +783,12 @@ export class BotClient {
         if (!this.state.isMoving()) {
             const isLeading = this.behavior && (this.behavior as any).isLeading;
             if (!isLeading) {
-                // Bot was stopped (likely by behavior.update() detecting we're in a space)
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
-                }
-                this.cancelPathfinding();
-                return;
+            // Bot was stopped (likely by behavior.update() detecting we're in a space)
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
+            }
+            this.cancelPathfinding();
+            return;
             } else {
                 // Bot is leading but stopped - keep path active and re-enable movement
                 // This handles cases where stop() was called temporarily but we should continue
@@ -995,9 +995,10 @@ export class BotClient {
         const behaviorSpeed = (this.behavior as any)?.config?.speed || 
                             (this.behavior as any)?.config?.wanderSpeed || 50;
         
-        // Check if bot is summoned or returning - apply different speed multipliers
+        // Check if bot is summoned, returning, or leading - apply different speed multipliers
         const isSummoned = (this.behavior as any)?.isSummoned || false;
         const isReturning = (this.behavior as any)?.isReturning || false;
+        const isLeading = (this.behavior as any)?.isLeading || false;
         
         // CRITICAL FIX: Config has speed=100, but original bots branch used speed=50
         // Original: 50 * 0.016 = 0.8 pixels per frame
@@ -1005,9 +1006,11 @@ export class BotClient {
         // Solution: If speed > 75, halve it to match original behavior
         let effectiveSpeed = behaviorSpeed > 75 ? behaviorSpeed * 0.5 : behaviorSpeed;
         
-        // Apply speed multipliers: summon = 3x, return = 2x
+        // Apply speed multipliers: summon = 3x, leading = 3x, return = 2x
         if (isSummoned) {
             effectiveSpeed = effectiveSpeed * 3; // Fast when summoned
+        } else if (isLeading) {
+            effectiveSpeed = effectiveSpeed * 5; // Fast when leading people (same as summon)
         } else if (isReturning) {
             effectiveSpeed = effectiveSpeed * 2; // Medium speed when returning
         }
@@ -1264,8 +1267,8 @@ export class BotClient {
         // Debug: log when players are found (always log for debugging)
         if (result.length > 0) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Bot ${this.config.botId}] getNearbyPlayers: found ${result.length} player(s) within ${radius}px (checked ${this.players.size} total), bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] getNearbyPlayers: found ${result.length} player(s) within ${radius}px (checked ${this.players.size} total), bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)})`);
                 }
                 for (const player of result) {
                     const dx = player.position.x - botPos.x;
