@@ -66,8 +66,11 @@ export class IdleBehavior extends BaseBehavior {
                     // Face the target position
                     this.facePosition(targetPos);
                     this.onBotPositionUpdated();
-                    // If leading, end the leading state
+                    // If leading, end the leading state and abort follow
                     if (this.isLeading) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] ✅ Reached leading target (${distance.toFixed(1)}px away), ending leading`);
+                        }
                         this.endLeading();
                     }
                     return;

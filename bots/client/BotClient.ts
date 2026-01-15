@@ -306,10 +306,27 @@ export class BotClient {
                 this.updatePathFollowing(deltaTime);
             } else {
                 // Path following is active but bot is stopped - cancel pathfinding
+                // BUT: If bot is leading, don't cancel - let it continue to target
+                const isLeading = this.behavior && (this.behavior as any).isLeading;
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
+                    console.log(`[Bot ${this.config.botId}] 🔍 Path following active but bot stopped - isLeading=${isLeading}, behavior=${!!this.behavior}`);
                 }
-                this.cancelPathfinding();
+                if (!isLeading) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 🛑 Path following active but bot stopped - canceling pathfinding`);
+                    }
+                    this.cancelPathfinding();
+                } else {
+                    // Bot is leading but stopped - keep path active and re-enable movement
+                    // This handles cases where stop() was called temporarily but we should continue
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] ⚠️ Path following active but bot stopped while leading - re-enabling movement`);
+                    }
+                    // Re-enable movement to continue following the path
+                    this.state.setMoving(true);
+                    // Continue with path following
+                    this.updatePathFollowing(deltaTime);
+                }
             }
         }
 
@@ -390,10 +407,12 @@ export class BotClient {
      */
     stop(): void {
         const wasMoving = this.state.isMoving();
+        const isLeading = (this.behavior as any)?.isLeading || false;
+        
         // Only log in development to avoid spam in production
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             const nearbyPlayers = this.getNearbyPlayers(100);
-            if (nearbyPlayers.length > 0) {
+            if (nearbyPlayers.length > 0 && !isLeading) {
                 console.warn(`[Bot ${this.config.botId}] ⚠️ Stopping with ${nearbyPlayers.length} players nearby`);
             }
         }
@@ -406,9 +425,19 @@ export class BotClient {
             });
         }
         this.state.setMoving(false);
+        
+        // If bot was leading and we're stopping, abort the follow
+        // This handles cases where stop() is called directly (not through cancelPathfinding)
+        if (isLeading && this.isFollowingPath) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🛑 STOP() called while leading, canceling pathfinding and aborting follow`);
+            }
+            this.cancelPathfinding(true); // End leading when explicitly stopped
+        }
+        
         // Only log in development
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[Bot ${this.config.botId}] 🛑 STOP() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, isFollowingPath=${this.isFollowingPath}`);
+            console.log(`[Bot ${this.config.botId}] 🛑 STOP() called - wasMoving=${wasMoving}, now isMoving=${this.state.isMoving()}, isFollowingPath=${this.isFollowingPath}, isLeading=${isLeading}`);
         }
     }
 
@@ -445,6 +474,16 @@ export class BotClient {
      * Stop immediately and send position update (for when engaged with players)
      */
     stopAndUpdate(): void {
+        const isLeading = (this.behavior as any)?.isLeading || false;
+        
+        // If bot was leading, abort the follow when stopping
+        if (isLeading && this.isFollowingPath) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🛑 stopAndUpdate() called while leading, canceling pathfinding and aborting follow`);
+            }
+            this.cancelPathfinding(true); // End leading when explicitly stopped
+        }
+        
         this.state.setMoving(false);
         const position = this.state.getPosition();
         const direction = this.state.getDirection();
@@ -655,8 +694,26 @@ export class BotClient {
 
     /**
      * Cancel current pathfinding
+     * @param endLeading If true, also end the leading state and abort follow (default: false to allow path recalculation while leading)
      */
-    cancelPathfinding(): void {
+    cancelPathfinding(endLeading: boolean = false): void {
+        // If bot was leading and we're explicitly ending leading, abort the follow
+        if (endLeading && this.behavior && (this.behavior as any).isLeading) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🛑 Path canceled while leading, aborting follow and ending leading`);
+            }
+            this.sendFollowAbort();
+            if ((this.behavior as any).endLeading) {
+                (this.behavior as any).endLeading();
+            }
+        } else if (this.behavior && (this.behavior as any).isLeading) {
+            // Bot is leading but we're just canceling pathfinding (not ending leading)
+            // This allows path recalculation while leading
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] 🔄 Path canceled while leading (keeping leading state for recalculation)`);
+            }
+        }
+        
         this.isFollowingPath = false;
         this.currentPath = [];
         this.pathIndex = 0;
@@ -722,13 +779,26 @@ export class BotClient {
 
         // CRITICAL: Check if bot should be stopped (either by stop() call)
         // If stop() was called, isMoving() will be false - respect that!
+        // BUT: If bot is leading, don't cancel the path - let it continue to target
         if (!this.state.isMoving()) {
-            // Bot was stopped (likely by behavior.update() detecting we're in a space)
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
+            const isLeading = this.behavior && (this.behavior as any).isLeading;
+            if (!isLeading) {
+                // Bot was stopped (likely by behavior.update() detecting we're in a space)
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] 🛑 Path following stopped - bot is not moving`);
+                }
+                this.cancelPathfinding();
+                return;
+            } else {
+                // Bot is leading but stopped - keep path active and re-enable movement
+                // This handles cases where stop() was called temporarily but we should continue
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] ⚠️ Path following: bot stopped while leading - re-enabling movement`);
+                }
+                // Re-enable movement to continue following the path
+                this.state.setMoving(true);
+                // Don't return - continue with path following
             }
-            this.cancelPathfinding();
-            return;
         }
 
         const botPos = this.state.getPosition();
@@ -867,10 +937,7 @@ export class BotClient {
                         // If leading and close to target, stop leading and send follow abort
                         if (this.behavior && (this.behavior as any).isLeading) {
                             console.log(`[Bot ${this.config.botId}] ✅ Reached destination while leading (${finalDistance.toFixed(1)}px away), stopping leading`);
-                            this.sendFollowAbort();
-                            if ((this.behavior as any).endLeading) {
-                                (this.behavior as any).endLeading();
-                            }
+                            this.cancelPathfinding(true); // End leading when destination is reached
                             this.stop();
                         }
                         
@@ -896,10 +963,7 @@ export class BotClient {
                     // Check if bot was leading - if so, stop leading and send follow abort
                     if (this.behavior && (this.behavior as any).isLeading) {
                         console.log(`[Bot ${this.config.botId}] ✅ Reached destination while leading, stopping leading`);
-                        this.sendFollowAbort();
-                        if ((this.behavior as any).endLeading) {
-                            (this.behavior as any).endLeading();
-                        }
+                        this.cancelPathfinding(true); // End leading when destination is reached
                     }
                     
                     this.isFollowingPath = false;

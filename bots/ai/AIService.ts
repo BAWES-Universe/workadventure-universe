@@ -807,12 +807,13 @@ CRITICAL ANTI-HALLUCINATION RULES:
                                 }
                                 
                                 // Use center of area
+                                // Note: Area coordinates are (x, y) for top-left corner, so center is (x + width/2, y + height/2)
                                 targetPosition = {
                                     x: targetArea.x + targetArea.width / 2,
                                     y: targetArea.y + targetArea.height / 2,
                                 };
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                    console.log(`[AIService] ✅ Found area "${targetName}" at (${targetPosition.x}, ${targetPosition.y})`);
+                                    console.log(`[AIService] ✅ Found area "${targetName}": bounds (${targetArea.x}, ${targetArea.y}) size ${targetArea.width}x${targetArea.height}, center at (${targetPosition.x}, ${targetPosition.y})`);
                                 }
                             } else {
                                 result = { error: `Invalid targetType: ${targetType}. Must be 'person' or 'area'` };

@@ -281,16 +281,18 @@ export abstract class BaseBehavior {
                     }
                 } else {
                     // Same player, but they might have moved - update facing
-                    // For patrol bots, ensure we're still stopped (unless summoned and moving)
+                    // For patrol bots, ensure we're still stopped (unless summoned/leading and moving)
                     const isSummonedAndMoving = this.isSummoned && this.bot.getState().isMoving();
-                    if (shouldStopForPlayers && !isSummonedAndMoving && this.bot.getState().isMoving()) {
+                    const isLeadingAndMoving = this.isLeading && this.bot.getState().isMoving();
+                    // Don't stop if bot is leading or summoned and moving
+                    if (shouldStopForPlayers && !isSummonedAndMoving && !isLeadingAndMoving && this.bot.getState().isMoving()) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
                         }
                         this.bot.stop();
                     }
-                    // Face the player (always face, unless summoned and still moving)
-                    if (!isSummonedAndMoving) {
+                    // Face the player (always face, unless summoned/leading and still moving)
+                    if (!isSummonedAndMoving && !isLeadingAndMoving) {
                         this.facePosition(closestPos);
                     }
                 }
@@ -484,6 +486,11 @@ export abstract class BaseBehavior {
      */
     endLeading(): void {
         if (!this.bot) return;
+
+        // Send follow abort before clearing leading state
+        if (this.bot && typeof (this.bot as any).sendFollowAbort === 'function') {
+            (this.bot as any).sendFollowAbort();
+        }
 
         this.isLeading = false;
         this.leadingPersonUuid = null;
