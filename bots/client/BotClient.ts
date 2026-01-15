@@ -917,12 +917,18 @@ export class BotClient {
                         this.lastPathTarget = null;
                         this.lastPathEndTime = Date.now();
                         
-                        // If returning and reached original position, clear returning flag
+                        // If returning and reached original/start position, clear returning flag
                         if (isReturning) {
-                            console.log(`[Bot ${this.config.botId}] ✅ Reached original position (${finalDistance.toFixed(1)}px away), clearing returning flag`);
+                            console.log(`[Bot ${this.config.botId}] ✅ Reached return position (${finalDistance.toFixed(1)}px away), clearing returning flag`);
                             if (this.behavior) {
                                 (this.behavior as any).isReturning = false;
-                                (this.behavior as any).originalPosition = null;
+                                // Clear originalPosition (for summon return) or leadingStartPosition (for leading return)
+                                if ((this.behavior as any).originalPosition) {
+                                    (this.behavior as any).originalPosition = null;
+                                }
+                                if ((this.behavior as any).leadingStartPosition) {
+                                    (this.behavior as any).leadingStartPosition = null;
+                                }
                             }
                             this.stop();
                             return;

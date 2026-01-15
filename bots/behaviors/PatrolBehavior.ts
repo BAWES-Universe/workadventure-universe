@@ -79,64 +79,31 @@ export class PatrolBehavior extends BaseBehavior {
                     }
                     this.bot.stop();
                     
-                    // If leading to a person, leave current space and move one step closer to trigger bubble, then end leading
+                    // If leading to a person, send goodbye message to follower, then return
                     if (this.isLeading && this.leadingTarget?.type === 'person') {
-                        // Find the target person by position
-                        const allPeople = this.bot.getAllPeople();
-                        const targetPerson = allPeople.find(p => 
-                            !BotClient.isBot(p.userId) &&
-                            Math.abs(p.position.x - targetPos.x) < 20 && 
-                            Math.abs(p.position.y - targetPos.y) < 20
-                        );
+                        // Leading to a person - send goodbye message to follower, then return
+                        const targetPersonName = this.leadingTarget.name;
                         
-                        if (targetPerson) {
-                            // Leave current space (follower's space) before moving closer to target
-                            // This ensures we join the target's space instead of staying in follower's space
-                            this.bot.leaveAllSpaces().catch(error => {
-                                console.error(`[PatrolBehavior] Error leaving spaces before moving to target:`, error);
+                        // Find the follower (they should be nearby since they're following)
+                        const nearbyPlayers = this.bot.getNearbyPlayers(200); // Larger radius to find follower
+                        const followers = nearbyPlayers.filter(p => !BotClient.isBot(p.userId));
+                        
+                        // End leading first (clears leading state but keeps leadingStartPosition)
+                        this.endLeading();
+                        
+                        if (followers.length > 0) {
+                            // Send goodbye message to the follower(s), then return
+                            this.sendPersonArrivalMessage(targetPersonName, followers).then(() => {
+                                // After message sent and space left, return to start position
+                                this.returnAfterLeading();
+                            }).catch(error => {
+                                console.error(`[PatrolBehavior] Error sending person arrival message:`, error);
+                                // Still return even if message failed
+                                this.returnAfterLeading();
                             });
-                            
-                            // Calculate direction to target and move one step closer (about 20-30 pixels)
-                            // Goal: get within bubble radius (~64px) to trigger space join
-                            const dx = targetPos.x - botPos.x;
-                            const dy = targetPos.y - botPos.y;
-                            const distanceToTarget = Math.sqrt(dx * dx + dy * dy);
-                            const angle = Math.atan2(dy, dx);
-                            
-                            // Move 20-30 pixels closer (but stay at bubble radius ~64px from target)
-                            const targetBubbleRadius = 64;
-                            const desiredDistance = targetBubbleRadius - 10; // Slightly inside bubble radius
-                            const moveDistance = Math.max(0, Math.min(30, distanceToTarget - desiredDistance));
-                            
-                            if (moveDistance > 5) {
-                                // Move closer to trigger bubble
-                                const newX = botPos.x + Math.cos(angle) * moveDistance;
-                                const newY = botPos.y + Math.sin(angle) * moveDistance;
-                                
-                                // Determine direction for moveTo
-                                let direction: PositionMessage_Direction;
-                                if (Math.abs(dx) > Math.abs(dy)) {
-                                    direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
-                                } else {
-                                    direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
-                                }
-                                
-                                // Move one step closer, then stop
-                                this.bot.moveTo(newX, newY, direction);
-                                // Stop immediately after moving (one step)
-                                setTimeout(() => {
-                                    this.bot?.stop();
-                                }, 50);
-                                
-                                // End leading with target info for special greeting
-                                this.endLeading(targetPerson.userId, this.leadingPersonUuid || null);
-                            } else {
-                                // Already close enough, just end leading
-                                this.endLeading(targetPerson.userId, this.leadingPersonUuid || null);
-                            }
                         } else {
-                            // Target person not found, just end leading normally
-                            this.endLeading();
+                            // No followers found, just return
+                            this.returnAfterLeading();
                         }
                     } else if (this.isLeading && this.leadingTarget?.type === 'area') {
                         // Leading to an area - send arrival message to follower
@@ -862,6 +829,14 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
+        // Get the current space - we're already in it
+        const currentSpaces = this.bot.getCurrentSpaces();
+        if (currentSpaces.length === 0) {
+            console.warn(`[PatrolBehavior] Bot not in any space when trying to send area arrival message`);
+            return;
+        }
+        const spaceName = currentSpaces[0];
+
         // Get bot configuration
         const botConfig = this.bot.getFullConfig();
         if (!botConfig?.aiProviderRef) {
@@ -877,18 +852,6 @@ export class PatrolBehavior extends BaseBehavior {
         if (!followerPlayer) {
             // No followers nearby, skip
             return;
-        }
-        
-        // Use the space that was active during leading (stored in leadingSpaceName)
-        // If not available, fall back to current space
-        let spaceName: string | null = this.leadingSpaceName;
-        if (!spaceName) {
-            const currentSpaces = this.bot.getCurrentSpaces();
-            if (currentSpaces.length === 0) {
-                console.warn(`[PatrolBehavior] Bot not in any space when trying to send area arrival message`);
-                return;
-            }
-            spaceName = currentSpaces[0];
         }
         
         // Set flag to prevent returnToAssignedSpace from being called while sending message
@@ -923,8 +886,7 @@ export class PatrolBehavior extends BaseBehavior {
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
-                        
-                        // Wait a moment to ensure message is sent before leaving space
+                        // Wait a moment to ensure message is sent before leaving
                         await new Promise(resolve => setTimeout(resolve, 200));
                     }
                     break;
@@ -932,6 +894,87 @@ export class PatrolBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[PatrolBehavior] Error generating area arrival message:`, error);
+        } finally {
+            // Clear flag and leave the space after message is sent
+            this.isSendingGoodbye = false;
+            await this.bot.leaveAllSpaces();
+        }
+    }
+
+    /**
+     * Send person arrival message to follower(s)
+     * Similar to sendAreaArrivalMessage but for when leading to a person
+     */
+    private async sendPersonArrivalMessage(personName: string, followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>): Promise<void> {
+        if (!this.bot || !this.aiService || followers.length === 0) {
+            return;
+        }
+
+        // Get the current space - we're already in it
+        const currentSpaces = this.bot.getCurrentSpaces();
+        if (currentSpaces.length === 0) {
+            console.warn(`[PatrolBehavior] Bot not in any space when trying to send person arrival message`);
+            return;
+        }
+        const spaceName = currentSpaces[0];
+
+        // Get bot configuration
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            return;
+        }
+
+        const botId = this.bot.getBotId();
+        
+        // Find the first follower who is still nearby
+        const nearbyPlayers = this.bot.getNearbyPlayers(100);
+        const followerPlayer = nearbyPlayers.find(p => followers.some(f => f.userId === p.userId));
+        
+        if (!followerPlayer) {
+            // No followers nearby, skip
+            return;
+        }
+        
+        // Set flag to prevent returnToAssignedSpace from being called while sending message
+        this.isSendingGoodbye = true;
+        
+        try {
+            // Get conversation context (use first follower for context, but message goes to all)
+            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            
+            // Generate arrival and goodbye message using AI
+            const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
+            
+            let fullMessage = '';
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                followerPlayer.userId,
+                arrivalPrompt,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    if (fullMessage.trim()) {
+                        // Send message to space - all followers in the space will receive it
+                        this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                        // Store in memory for the first follower (representative of the group)
+                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        // Wait a moment to ensure message is sent before leaving
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[PatrolBehavior] Error generating person arrival message:`, error);
         } finally {
             // Clear flag and leave the space after message is sent
             this.isSendingGoodbye = false;
