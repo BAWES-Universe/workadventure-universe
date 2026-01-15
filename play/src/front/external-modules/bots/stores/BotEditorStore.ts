@@ -647,6 +647,32 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
     const botsMap = new Map<string, BotData>();
 
     for (const apiBot of apiBots) {
+        const behaviorType = (apiBot.behaviorType as "idle" | "patrol" | "social") || "idle";
+
+        // Preserve existing behaviorConfig and only merge in defaults for missing required fields
+        const apiBehaviorConfig = apiBot.behaviorConfig as BotData["behaviorConfig"] | null | undefined;
+        const behaviorConfig: BotData["behaviorConfig"] =
+            apiBehaviorConfig && typeof apiBehaviorConfig === "object" && !Array.isArray(apiBehaviorConfig)
+                ? {
+                      // Preserve all existing fields
+                      ...apiBehaviorConfig,
+                      // Ensure behaviorType is set
+                      behaviorType: apiBehaviorConfig.behaviorType || behaviorType,
+                      // Ensure assignedSpace exists with defaults
+                      assignedSpace: apiBehaviorConfig.assignedSpace || {
+                          center: { x: 0, y: 0 },
+                          radius: 0,
+                      },
+                  }
+                : {
+                      // Fallback: create minimal config if behaviorConfig is missing/invalid
+                      behaviorType,
+                      assignedSpace: {
+                          center: { x: 0, y: 0 },
+                          radius: 0,
+                      },
+                  };
+
         const botData: BotData = {
             id: apiBot.id as string,
             botId: apiBot.id as string,
@@ -654,15 +680,9 @@ export function loadBotPreviews(apiBots: Array<Record<string, unknown>>): void {
             description: (apiBot.description as string) || undefined,
             characterTexture: (apiBot.characterTextureId as string) || "",
             characterTextureIds: (apiBot.characterTextureId as string) ? [apiBot.characterTextureId as string] : [],
-            behaviorType: (apiBot.behaviorType as "idle" | "patrol" | "social") || "idle",
+            behaviorType,
             enabled: (apiBot.enabled as boolean) ?? true,
-            behaviorConfig: (apiBot.behaviorConfig as BotData["behaviorConfig"]) || {
-                behaviorType: (apiBot.behaviorType as "idle" | "patrol" | "social") || "idle",
-                assignedSpace: {
-                    center: { x: 0, y: 0 },
-                    radius: 0,
-                },
-            },
+            behaviorConfig,
             aiProviderRef: (apiBot.aiProviderRef as string) || undefined,
             chatInstructions: (apiBot.chatInstructions as string) || "",
             createdAt: (apiBot.createdAt as string) || new Date().toISOString(),
