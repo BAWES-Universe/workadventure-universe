@@ -53,9 +53,9 @@ export class PatrolBehavior extends BaseBehavior {
 
         const config = this.config as PatrolBehaviorConfig;
         
-        // If bot is summoned, allow movement to player (don't stop for normal behavior logic)
-        // The bot will stop when it reaches the player position
-        if (this.isSummoned) {
+        // If bot is summoned or leading, allow movement (don't stop for normal behavior logic)
+        // The bot will stop when it reaches the target position
+        if (this.isSummoned || this.isLeading) {
             // During summon, only stop if we've reached the target and are in a conversation space
             // Otherwise, continue moving towards the summoned player
             if (this.bot.getIsFollowingPath()) {

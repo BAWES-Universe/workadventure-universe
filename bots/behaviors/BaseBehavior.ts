@@ -44,6 +44,12 @@ export abstract class BaseBehavior {
     protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
     protected isReturning = false; // Track if bot is returning to original position (for speed matching)
 
+    // Leading state - track when bot is leading people to a destination
+    protected isLeading = false;
+    protected leadingPersonUuid: string | null = null;
+    protected leadingTarget: { type: 'person' | 'area'; name: string; position: PositionInterface } | null = null;
+    protected leadingStartPosition: PositionInterface | null = null; // Position where leading started
+
     constructor(config: BehaviorConfig) {
         this.config = config;
     }
@@ -427,6 +433,66 @@ export abstract class BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
         
         return distance < 200; // Player is still nearby
+    }
+
+    /**
+     * Start leading - bot is leading people to a destination
+     * @param personUuid Person UUID (or 'group' for group leading)
+     * @param target Target destination (person or area)
+     */
+    startLeading(personUuid: string, target: { type: 'person' | 'area'; name: string; position: PositionInterface }): void {
+        if (!this.bot) return;
+
+        // If bot was returning, cancel the return and start leading
+        if (this.isReturning) {
+            console.log(`[Behavior] Bot was returning, canceling return and starting to lead`);
+            this.isReturning = false;
+            // Cancel any ongoing return pathfinding
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+        }
+
+        // If bot was summoned, cancel summon and start leading
+        if (this.isSummoned) {
+            console.log(`[Behavior] Bot was summoned, canceling summon and starting to lead`);
+            this.isSummoned = false;
+            this.summonedPlayerUuid = null;
+            // Cancel any ongoing summon pathfinding
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+        }
+        
+        this.isLeading = true;
+        this.leadingPersonUuid = personUuid;
+        this.leadingTarget = target;
+        
+        // Store start position for return (only on first lead)
+        if (!this.leadingStartPosition) {
+            const botPos = this.bot.getState().getPosition();
+            this.leadingStartPosition = { x: botPos.x, y: botPos.y };
+        }
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Behavior] Bot started leading to ${target.type} "${target.name}" at (${target.position.x}, ${target.position.y})`);
+        }
+    }
+
+    /**
+     * End leading - bot stops leading and can return to original position
+     */
+    endLeading(): void {
+        if (!this.bot) return;
+
+        this.isLeading = false;
+        this.leadingPersonUuid = null;
+        this.leadingTarget = null;
+        // Don't clear leadingStartPosition - keep it for potential return
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Behavior] Bot stopped leading`);
+        }
     }
 
     /**

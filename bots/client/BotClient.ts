@@ -19,6 +19,8 @@ import {
     UpdateSpaceUserMessage,
     SpaceUser,
     apiVersionHash,
+    FollowRequestMessage,
+    FollowAbortMessage,
 } from '@workadventure/messages';
 import type { PositionInterface, ViewportInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { BotState } from './BotState';
@@ -349,12 +351,13 @@ export class BotClient {
      * Move bot to position
      */
     moveTo(x: number, y: number, direction: PositionMessage_Direction = PositionMessage_Direction.DOWN): void {
-        // If bot is summoned, always allow movement (override normal blocking logic)
+        // If bot is summoned or leading, always allow movement (override normal blocking logic)
         const isSummoned = (this.behavior as any)?.isSummoned || false;
+        const isLeading = (this.behavior as any)?.isLeading || false;
         
         // CRITICAL: For patrol bots, only block movement if in a conversation space
         // This allows ghost mode: continue moving if players are idle nearby
-        if (this.behavior && !isSummoned) {
+        if (this.behavior && !isSummoned && !isLeading) {
             const behaviorType = (this.behavior as any)?.config?.type;
             const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
             
@@ -498,10 +501,11 @@ export class BotClient {
 
         const now = Date.now();
         
-        // CRITICAL: If bot is summoned, bypass ALL cooldown checks to allow immediate pathfinding
+        // CRITICAL: If bot is summoned or leading, bypass ALL cooldown checks to allow immediate pathfinding
         const isSummoned = (this.behavior as any)?.isSummoned || false;
+        const isLeading = (this.behavior as any)?.isLeading || false;
         const isReturning = (this.behavior as any)?.isReturning || false;
-        const bypassCooldowns = isSummoned || isReturning; // Allow immediate pathfinding when summoned or returning
+        const bypassCooldowns = isSummoned || isLeading || isReturning; // Allow immediate pathfinding when summoned, leading, or returning
 
         // Cooldown check - don't recalculate too frequently
         // BUT: Skip this check if bot is summoned (needs immediate response)
@@ -858,6 +862,17 @@ export class BotClient {
                             console.log(`[Bot ${this.config.botId}] ✅ Reached summon target (${finalDistance.toFixed(1)}px away), stopping to initiate bubble`);
                             this.stop();
                         }
+                        
+                        // If leading and close to target, stop leading and send follow abort
+                        if (this.behavior && (this.behavior as any).isLeading) {
+                            console.log(`[Bot ${this.config.botId}] ✅ Reached destination while leading (${finalDistance.toFixed(1)}px away), stopping leading`);
+                            this.sendFollowAbort();
+                            if ((this.behavior as any).endLeading) {
+                                (this.behavior as any).endLeading();
+                            }
+                            this.stop();
+                        }
+                        
                         // GHOST MODE: Don't stop when path ends - let behavior handle it
                         // Behavior will check for nearby players and decide whether to pause
                         // this.stop(); // REMOVED - let behavior decide
@@ -876,6 +891,15 @@ export class BotClient {
                         eventType: 'path_end',
                         position: botPos,
                     });
+                    
+                    // Check if bot was leading - if so, stop leading and send follow abort
+                    if (this.behavior && (this.behavior as any).isLeading) {
+                        console.log(`[Bot ${this.config.botId}] ✅ Reached destination while leading, stopping leading`);
+                        this.sendFollowAbort();
+                        if ((this.behavior as any).endLeading) {
+                            (this.behavior as any).endLeading();
+                        }
+                    }
                     
                     this.isFollowingPath = false;
                     this.currentPath = [];
@@ -1328,6 +1352,116 @@ export class BotClient {
 
         if (!pathfindingResult) {
             console.error(`[Bot ${this.config.botId}] ❌ Summon pathfinding failed - bot may be too close to target (<50px) or pathfinding unavailable`);
+        }
+    }
+
+    /**
+     * Send a follow request to make people follow the bot
+     * @param forceFollow If true, automatically makes them follow without confirmation
+     */
+    sendFollowRequest(forceFollow: boolean = true): void {
+        if (!this.userId) {
+            console.error(`[Bot ${this.config.botId}] Cannot send follow request - not connected`);
+            return;
+        }
+
+        this.send({
+            message: {
+                $case: 'followRequestMessage',
+                followRequestMessage: {
+                    leader: this.userId,
+                    forceFollow,
+                },
+            },
+        });
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 📢 Sent follow request (forceFollow=${forceFollow})`);
+        }
+    }
+
+    /**
+     * Stop leading (send follow abort message)
+     */
+    sendFollowAbort(): void {
+        if (!this.userId) {
+            return;
+        }
+
+        this.send({
+            message: {
+                $case: 'followAbortMessage',
+                followAbortMessage: {
+                    leader: this.userId,
+                    follower: 0, // 0 means all followers
+                },
+            },
+        });
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 🛑 Sent follow abort`);
+        }
+    }
+
+    /**
+     * Lead a person (or group) to a target location
+     * Sends follow request, then navigates to the destination
+     * @param personUuid Person UUID (or 'group' for group leading)
+     * @param target Target destination (person or area)
+     */
+    async leadPersonToTarget(
+        personUuid: string,
+        target: { type: 'person' | 'area'; name: string; position: PositionInterface }
+    ): Promise<void> {
+        console.log(`[Bot ${this.config.botId}] 🎯 LEAD START - leading to ${target.type} "${target.name}" at (${target.position.x}, ${target.position.y})`);
+
+        if (!this.behavior) {
+            console.error(`[Bot ${this.config.botId}] ❌ No behavior assigned`);
+            throw new Error('Bot has no behavior assigned');
+        }
+
+        // Start leading in behavior
+        try {
+            this.behavior.startLeading(personUuid, target);
+            console.log(`[Bot ${this.config.botId}] ✅ Behavior.startLeading() completed`);
+        } catch (error: any) {
+            console.error(`[Bot ${this.config.botId}] ❌ Behavior.startLeading() failed:`, error.message);
+            throw error;
+        }
+
+        // Send follow request with forceFollow=true (makes people automatically follow)
+        this.sendFollowRequest(true);
+
+        // Cancel any existing pathfinding
+        this.cancelPathfinding();
+        // Reset pathfinding cooldowns
+        this.lastPathEndTime = 0;
+        this.lastPathRecalcTime = 0;
+        console.log(`[Bot ${this.config.botId}] ✅ Canceled existing pathfinding and reset all cooldowns`);
+
+        // Check if pathfinding is available
+        if (!this.hasPathfinding()) {
+            console.error(`[Bot ${this.config.botId}] ❌ Cannot lead - pathfinding not initialized`);
+            throw new Error('Pathfinding not initialized for bot');
+        }
+        console.log(`[Bot ${this.config.botId}] ✅ Pathfinding is available`);
+
+        // Get bot position for logging
+        const botPos = this.state.getPosition();
+        const dx = target.position.x - botPos.x;
+        const dy = target.position.y - botPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        console.log(`[Bot ${this.config.botId}] 📍 Bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)}), target at (${Math.round(target.position.x)}, ${Math.round(target.position.y)}), distance: ${Math.round(distance)}px`);
+
+        // Use pathfinding to move to target position
+        console.log(`[Bot ${this.config.botId}] 🚀 Calling moveToWithPathfinding()...`);
+        const pathfindingResult = await this.moveToWithPathfinding(target.position.x, target.position.y);
+
+        console.log(`[Bot ${this.config.botId}] ✅ Lead pathfinding ${pathfindingResult ? 'STARTED' : 'FAILED'} to (${target.position.x}, ${target.position.y})`);
+        console.log(`[Bot ${this.config.botId}] 📊 State: isFollowingPath=${this.isFollowingPath}, isMoving=${this.state.isMoving()}, pathLength=${this.currentPath.length}, pathIndex=${this.pathIndex}`);
+
+        if (!pathfindingResult) {
+            console.error(`[Bot ${this.config.botId}] ❌ Lead pathfinding failed - bot may be too close to target (<50px) or pathfinding unavailable`);
         }
     }
 

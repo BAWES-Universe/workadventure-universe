@@ -230,7 +230,7 @@ When someone asks about:
 - WHAT TO DO here: "what do we do here", "what can we do" → Suggest activities based on room/area names from context
 - Areas/sections: "what areas", "what areas are here", "any areas", "what's this area", "areas here?", "areas?" → Check "Current Location Context" above. If it shows "Areas in this room: Office Area" (or other area names), list those areas. If it shows "Areas: none", say "There are no areas defined here."
 - Area location: "where is [area name]", "where is the office area", "wheres that area", "where is it" (after mentioning an area) → Use the "Area locations" from "Current Location Context" above. Give the coordinates directly like "Office Area is at coordinates (596, 606)" or "It's at coordinates (596, 606)". Don't repeat the area name or location - just give coordinates.
-- Navigation requests: "can you take me to [area]", "i wanna go", "take me there" → Explain that you can't navigate yet, but you can tell them where it is. Give the coordinates from "Area locations" in the context. Don't ask "Let me know if you'd like to go there" - just explain you can't navigate and give the location.
+- Navigation requests: "can you take me to [person/area]", "show me where [person/area] is", "lead me to [person/area]", "take me to [person/area]", "i wanna go to [person/area]" → Call the navigate_to tool with the target type (person or area) and name. After calling the tool, respond naturally like "Follow me!" or "I'll take you there" - don't mention tools or technical details. The person (and anyone else in the conversation) will automatically follow you as you navigate.
 - Context questions: "whats that", "where", "whats in there", "whats this" → Look at the "Recent Conversation" in Conversation Context to understand what they're referring to. If they just asked "where we at" and you said "test universe, test world, test room", then "whats that" refers to that location. If they just asked about an area, "where is it" refers to that area's coordinates. Answer directly without asking questions back.
 - Who's on the map: "who's here", "who's online" → Call get_people_on_map tool and list actual people
 - Your position: "where are you" → Use get_bot_position tool
@@ -251,7 +251,7 @@ Remember:
   * "where are we" → Give location once
   * "what's here" or "whats this" (after location mentioned) → Describe what this place is, mention areas if they exist, don't just repeat location
   * "what's in the office" or "where is [area]" or "wheres that area" → Just give the coordinates from "Area locations" in context, don't repeat the area name or full location
-  * "can you take me to [area]" or "i wanna go" → Explain you can't navigate yet, but give the coordinates. Don't ask questions back.
+  * "can you take me to [person/area]" or "show me where [person/area] is" or "lead me to [person/area]" → Call navigate_to tool and respond naturally like "Follow me!" or "I'll take you there"
   * "areas?" or "any areas" → Check "Current Location Context" for areas. If "Areas in this room: Office Area" exists, say "There's an area called Office Area" or list them. If "Areas: none", say "There are no areas defined here."
 - Don't append or repeat information - if you already said where you are, just answer the new question
 - Be natural - like a real conversation where you don't repeat yourself
@@ -543,6 +543,30 @@ CRITICAL ANTI-HALLUCINATION RULES:
                     },
                 },
             });
+
+            // Tool: Navigate to a person or area and lead someone there
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'navigate_to',
+                    description: 'Navigate to a person or area and make people follow you. Use this when someone asks you to "take me to X", "show me where Y is", "lead me to Z", "can you take me to [place]", or similar navigation requests.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            targetType: {
+                                type: 'string',
+                                enum: ['person', 'area'],
+                                description: 'Whether navigating to a person or an area'
+                            },
+                            targetName: {
+                                type: 'string',
+                                description: 'Name of the person or area to navigate to. For people, use their name as it appears in get_people_on_map. For areas, use the area name from the location context.'
+                            }
+                        },
+                        required: ['targetType', 'targetName']
+                    },
+                },
+            });
         }
 
         // Removed get_map_context and get_map_areas - location and areas are now provided upfront in system prompt
@@ -597,6 +621,97 @@ CRITICAL ANTI-HALLUCINATION RULES:
                         }
                         break;
 
+                    case 'navigate_to':
+                        if (!botClient) {
+                            result = { error: 'Bot client not available' };
+                            break;
+                        }
+                        
+                        try {
+                            const targetType = toolCall.arguments?.targetType;
+                            const targetName = toolCall.arguments?.targetName;
+                            
+                            if (!targetType || !targetName) {
+                                result = { error: 'Missing required parameters: targetType and targetName' };
+                                break;
+                            }
+                            
+                            let targetPosition: { x: number; y: number } | null = null;
+                            
+                            if (targetType === 'person') {
+                                // Find person by name
+                                const people = botClient.getAllPeople();
+                                const targetPerson = people.find(p => 
+                                    !BotClient.isBot(p.userId) && 
+                                    p.name && 
+                                    p.name.toLowerCase().includes(targetName.toLowerCase())
+                                );
+                                
+                                if (!targetPerson) {
+                                    result = { error: `Could not find person named "${targetName}"` };
+                                    break;
+                                }
+                                
+                                targetPosition = {
+                                    x: targetPerson.position.x,
+                                    y: targetPerson.position.y,
+                                };
+                            } else if (targetType === 'area') {
+                                // Find area by name
+                                if (!this.mapDataService) {
+                                    result = { error: 'Map data service not available' };
+                                    break;
+                                }
+                                
+                                const roomUrl = botClient.getRoomUrl();
+                                const areas = await this.mapDataService.getAreas(roomUrl);
+                                const targetArea = areas.find(a => 
+                                    a.name && 
+                                    a.name.toLowerCase().includes(targetName.toLowerCase())
+                                );
+                                
+                                if (!targetArea) {
+                                    result = { error: `Could not find area named "${targetName}"` };
+                                    break;
+                                }
+                                
+                                // Use center of area
+                                targetPosition = {
+                                    x: targetArea.x + targetArea.width / 2,
+                                    y: targetArea.y + targetArea.height / 2,
+                                };
+                            } else {
+                                result = { error: `Invalid targetType: ${targetType}. Must be 'person' or 'area'` };
+                                break;
+                            }
+                            
+                            if (!targetPosition) {
+                                result = { error: 'Could not resolve target position' };
+                                break;
+                            }
+                            
+                            // Get person UUID from engaged users (use first person in conversation)
+                            // Since follow request goes to everyone in the space, we can use a placeholder
+                            // The actual follow request will be sent to the group
+                            const personUuid = 'group'; // Placeholder - follow goes to group anyway
+                            
+                            // Call leadPersonToTarget
+                            await botClient.leadPersonToTarget(personUuid, {
+                                type: targetType,
+                                name: targetName,
+                                position: targetPosition,
+                            });
+                            
+                            result = { 
+                                success: true, 
+                                message: `Started navigating to ${targetName}` 
+                            };
+                        } catch (error: any) {
+                            console.error('[AIService] Error executing navigate_to tool:', error);
+                            result = { error: error.message || 'Failed to navigate' };
+                        }
+                        break;
+
 
                     default:
                         // Log unknown tool for debugging
@@ -635,6 +750,14 @@ CRITICAL ANTI-HALLUCINATION RULES:
             }
             if (r.name === 'get_bot_position' && r.result && !r.result.error) {
                 return `get_bot_position: Your current position is x: ${r.result.x}, y: ${r.result.y}`;
+            }
+            if (r.name === 'navigate_to' && r.result) {
+                if (r.result.error) {
+                    return `navigate_to: Error - ${r.result.error}`;
+                }
+                if (r.result.success) {
+                    return `navigate_to: Successfully started navigating. You are now leading people to the destination. Respond naturally like "Follow me!" or "I'll take you there" - don't mention tools or technical details.`;
+                }
             }
             // Fallback to JSON for other results or errors
             return `${r.name}: ${JSON.stringify(r.result)}`;

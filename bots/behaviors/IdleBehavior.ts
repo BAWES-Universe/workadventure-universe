@@ -36,8 +36,8 @@ export class IdleBehavior extends BaseBehavior {
         const config = this.config as IdleBehaviorConfig;
         const currentTime = Date.now();
 
-        // If bot is summoned, allow movement to player (idle bots can move when summoned)
-        if (this.isSummoned) {
+        // If bot is summoned or leading, allow movement (idle bots can move when summoned or leading)
+        if (this.isSummoned || this.isLeading) {
             // Check if we've reached the target position (close enough to stop and initiate bubble)
             const botPos = this.bot.getState().getPosition();
             const targetPos = this.summonedPlayerUuid ? this.getSummonedPlayerPosition() : null;
