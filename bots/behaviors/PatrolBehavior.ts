@@ -88,21 +88,22 @@ export class PatrolBehavior extends BaseBehavior {
                         const nearbyPlayers = this.bot.getNearbyPlayers(200); // Larger radius to find follower
                         const followers = nearbyPlayers.filter(p => !BotClient.isBot(p.userId));
                         
-                        // End leading first (clears leading state but keeps leadingStartPosition)
-                        this.endLeading();
-                        
                         if (followers.length > 0) {
-                            // Send goodbye message to the follower(s), then return
+                            // Send goodbye message FIRST (before ending leading)
+                            // This ensures the person is still following and in the space
                             this.sendPersonArrivalMessage(targetPersonName, followers).then(() => {
-                                // After message sent and space left, return to start position
+                                // After message sent, end leading and return
+                                this.endLeading();
                                 this.returnAfterLeading();
                             }).catch(error => {
                                 console.error(`[PatrolBehavior] Error sending person arrival message:`, error);
-                                // Still return even if message failed
+                                // Still end leading and return even if message failed
+                                this.endLeading();
                                 this.returnAfterLeading();
                             });
                         } else {
-                            // No followers found, just return
+                            // No followers found, just end leading and return
+                            this.endLeading();
                             this.returnAfterLeading();
                         }
                     } else if (this.isLeading && this.leadingTarget?.type === 'area') {
@@ -113,21 +114,22 @@ export class PatrolBehavior extends BaseBehavior {
                         const nearbyPlayers = this.bot.getNearbyPlayers(200); // Larger radius to find follower
                         const followers = nearbyPlayers.filter(p => !BotClient.isBot(p.userId));
                         
-                        // End leading first (clears leading state but keeps leadingStartPosition)
-                        this.endLeading();
-                        
                         if (followers.length > 0) {
-                            // Send arrival and goodbye message to the follower(s), then return
+                            // Send arrival and goodbye message FIRST (before ending leading)
+                            // This ensures the person is still following and in the space
                             this.sendAreaArrivalMessage(areaName, followers).then(() => {
-                                // After message sent and space left, return to start position
+                                // After message sent, end leading and return
+                                this.endLeading();
                                 this.returnAfterLeading();
                             }).catch(error => {
                                 console.error(`[PatrolBehavior] Error sending area arrival message:`, error);
-                                // Still return even if message failed
+                                // Still end leading and return even if message failed
+                                this.endLeading();
                                 this.returnAfterLeading();
                             });
                         } else {
-                            // No followers found, just return
+                            // No followers found, just end leading and return
+                            this.endLeading();
                             this.returnAfterLeading();
                         }
                     } else {
@@ -829,13 +831,18 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
-        // Get the current space - we're already in it
+        // Get the current space - prefer conversation spaces over world spaces
+        // Use leadingSpaceName as fallback (set when user joined during leading)
         const currentSpaces = this.bot.getCurrentSpaces();
-        if (currentSpaces.length === 0) {
+        // Filter out world spaces (like "allWorldUser") and prefer conversation spaces
+        const conversationSpaces = currentSpaces.filter(space => !space.includes('allWorldUser') && space.includes('#'));
+        const spaceName = conversationSpaces.length > 0 
+            ? conversationSpaces[0] 
+            : (currentSpaces.length > 0 ? currentSpaces[0] : this.leadingSpaceName);
+        if (!spaceName) {
             console.warn(`[PatrolBehavior] Bot not in any space when trying to send area arrival message`);
             return;
         }
-        const spaceName = currentSpaces[0];
 
         // Get bot configuration
         const botConfig = this.bot.getFullConfig();
@@ -886,8 +893,6 @@ export class PatrolBehavior extends BaseBehavior {
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
-                        // Wait a moment to ensure message is sent before leaving
-                        await new Promise(resolve => setTimeout(resolve, 200));
                     }
                     break;
                 }
@@ -910,13 +915,18 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
-        // Get the current space - we're already in it
+        // Get the current space - prefer conversation spaces over world spaces
+        // Use leadingSpaceName as fallback (set when user joined during leading)
         const currentSpaces = this.bot.getCurrentSpaces();
-        if (currentSpaces.length === 0) {
+        // Filter out world spaces (like "allWorldUser") and prefer conversation spaces
+        const conversationSpaces = currentSpaces.filter(space => !space.includes('allWorldUser') && space.includes('#'));
+        const spaceName = conversationSpaces.length > 0 
+            ? conversationSpaces[0] 
+            : (currentSpaces.length > 0 ? currentSpaces[0] : this.leadingSpaceName);
+        if (!spaceName) {
             console.warn(`[PatrolBehavior] Bot not in any space when trying to send person arrival message`);
             return;
         }
-        const spaceName = currentSpaces[0];
 
         // Get bot configuration
         const botConfig = this.bot.getFullConfig();
@@ -967,8 +977,6 @@ export class PatrolBehavior extends BaseBehavior {
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
-                        // Wait a moment to ensure message is sent before leaving
-                        await new Promise(resolve => setTimeout(resolve, 200));
                     }
                     break;
                 }

@@ -68,52 +68,82 @@ export class IdleBehavior extends BaseBehavior {
                     // If leading to a person, leave current space and move one step closer to trigger bubble, then end leading
                     if (this.isLeading && this.leadingTarget?.type === 'person') {
                         // Leading to a person - send goodbye message to follower, then return
+                        // Prevent multiple concurrent calls
+                        if (this.isSendingGoodbye) {
+                            return;
+                        }
+                        
                         const targetPersonName = this.leadingTarget.name;
                         
                         // Find the follower (they should be nearby since they're following)
                         const nearbyPlayers = this.bot.getNearbyPlayers(200); // Larger radius to find follower
                         const followers = nearbyPlayers.filter(p => !BotClient.isBot(p.userId));
                         
-                        // End leading first (clears leading state but keeps leadingStartPosition)
-                        this.endLeading();
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] 🎯 Reached person destination: ${targetPersonName}, found ${followers.length} followers`);
+                        }
                         
                         if (followers.length > 0) {
-                            // Send goodbye message to the follower(s), then return
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[IdleBehavior] 📤 Calling sendPersonArrivalMessage for ${followers.length} follower(s)`);
+                            }
+                            // Send goodbye message, then end leading and return
                             this.sendPersonArrivalMessage(targetPersonName, followers).then(() => {
-                                // After message sent and space left, return to start position
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[IdleBehavior] ✅ Person arrival message sent, ending leading and returning`);
+                                }
+                                this.endLeading();
                                 this.returnAfterLeading();
                             }).catch(error => {
-                                console.error(`[IdleBehavior] Error sending person arrival message:`, error);
-                                // Still return even if message failed
+                                console.error(`[IdleBehavior] ❌ Error sending person arrival message:`, error);
+                                this.endLeading();
                                 this.returnAfterLeading();
                             });
                         } else {
-                            // No followers found, just return
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[IdleBehavior] ⚠️ No followers found when reaching person destination`);
+                            }
+                            this.endLeading();
                             this.returnAfterLeading();
                         }
                     } else if (this.isLeading && this.leadingTarget?.type === 'area') {
                         // Leading to an area - send arrival and goodbye message, then return
+                        // Prevent multiple concurrent calls
+                        if (this.isSendingGoodbye) {
+                            return;
+                        }
+                        
                         const areaName = this.leadingTarget.name;
                         
                         // Find the follower (they should be nearby since they're following)
                         const nearbyPlayers = this.bot.getNearbyPlayers(200); // Larger radius to find follower
                         const followers = nearbyPlayers.filter(p => !BotClient.isBot(p.userId));
                         
-                        // End leading first (clears leading state but keeps leadingStartPosition)
-                        this.endLeading();
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] 🎯 Reached area destination: ${areaName}, found ${followers.length} followers`);
+                        }
                         
                         if (followers.length > 0) {
-                            // Send arrival and goodbye message to the follower(s), then return
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[IdleBehavior] 📤 Calling sendAreaArrivalMessage for ${followers.length} follower(s)`);
+                            }
+                            // Send goodbye message, then end leading and return
                             this.sendAreaArrivalMessage(areaName, followers).then(() => {
-                                // After message sent and space left, return to start position
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[IdleBehavior] ✅ Area arrival message sent, ending leading and returning`);
+                                }
+                                this.endLeading();
                                 this.returnAfterLeading();
                             }).catch(error => {
-                                console.error(`[IdleBehavior] Error sending area arrival message:`, error);
-                                // Still return even if message failed
+                                console.error(`[IdleBehavior] ❌ Error sending area arrival message:`, error);
+                                this.endLeading();
                                 this.returnAfterLeading();
                             });
                         } else {
-                            // No followers found, just return
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[IdleBehavior] ⚠️ No followers found when reaching area destination`);
+                            }
+                            this.endLeading();
                             this.returnAfterLeading();
                         }
                     } else {
@@ -517,48 +547,56 @@ export class IdleBehavior extends BaseBehavior {
      */
     private async sendAreaArrivalMessage(areaName: string, followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>): Promise<void> {
         if (!this.bot || !this.aiService || followers.length === 0) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[IdleBehavior] sendAreaArrivalMessage: Missing bot/aiService or no followers`);
+            }
             return;
         }
 
-        // Get the current space - we're already in it
+        // Get the current space - prefer conversation spaces over world spaces
         const currentSpaces = this.bot.getCurrentSpaces();
-        if (currentSpaces.length === 0) {
-            console.warn(`[IdleBehavior] Bot not in any space when trying to send area arrival message`);
+        // Filter out world spaces (like "allWorldUser") and prefer conversation spaces
+        const conversationSpaces = currentSpaces.filter(space => !space.includes('allWorldUser') && space.includes('#'));
+        const spaceName = conversationSpaces.length > 0 
+            ? conversationSpaces[0] 
+            : (currentSpaces.length > 0 ? currentSpaces[0] : this.leadingSpaceName);
+        if (!spaceName) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[IdleBehavior] sendAreaArrivalMessage: Bot not in any space (currentSpaces=${currentSpaces.length}, leadingSpaceName=${this.leadingSpaceName})`);
+            }
             return;
         }
-        const spaceName = currentSpaces[0];
 
-        // Get bot configuration
         const botConfig = this.bot.getFullConfig();
         if (!botConfig?.aiProviderRef) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[IdleBehavior] sendAreaArrivalMessage: No AI provider configured`);
+            }
             return;
         }
 
         const botId = this.bot.getBotId();
+        const followerUserId = followers[0].userId; // Use first follower for context
         
-        // Find the first follower who is still nearby
-        const nearbyPlayers = this.bot.getNearbyPlayers(100);
-        const followerPlayer = nearbyPlayers.find(p => followers.some(f => f.userId === p.userId));
-        
-        if (!followerPlayer) {
-            // No followers nearby, skip
-            return;
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] sendAreaArrivalMessage: spaceName=${spaceName}, followerUserId=${followerUserId}, areaName=${areaName}`);
         }
         
-        // Set flag to prevent returnToAssignedSpace from being called while sending message
         this.isSendingGoodbye = true;
         
         try {
-            // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
-            
-            // Generate arrival and goodbye message using AI
+            const context = this.conversationMemory.getConversationContext(botId, followerUserId);
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] sendAreaArrivalMessage: Generating AI response...`);
+            }
+            
             let fullMessage = '';
+            let chunkCount = 0;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
-                followerPlayer.userId,
+                followerUserId,
                 arrivalPrompt,
                 botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
@@ -567,26 +605,40 @@ export class IdleBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                chunkCount++;
                 if (chunk.content) {
                     fullMessage += chunk.content;
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[IdleBehavior] sendAreaArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
+                    }
                 }
-                
                 if (chunk.done) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[IdleBehavior] sendAreaArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
+                    }
                     if (fullMessage.trim()) {
-                        // Send message to space - all followers in the space will receive it
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] sendAreaArrivalMessage: Sending message to space: "${fullMessage.trim()}"`);
+                        }
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                        // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
-                        // Wait a moment to ensure message is sent before leaving
-                        await new Promise(resolve => setTimeout(resolve, 200));
+                        this.conversationMemory.addMessage(botId, followerUserId, fullMessage.trim(), 'bot', spaceName);
+                    } else {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.warn(`[IdleBehavior] sendAreaArrivalMessage: Generated message is empty`);
+                        }
                     }
                     break;
+                }
+            }
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                if (!fullMessage.trim()) {
+                    console.warn(`[IdleBehavior] sendAreaArrivalMessage: Stream ended without chunk.done=true or message is empty. Chunks received: ${chunkCount}`);
                 }
             }
         } catch (error) {
             console.error(`[IdleBehavior] Error generating area arrival message:`, error);
         } finally {
-            // Clear flag and leave the space after message is sent
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
         }
@@ -598,48 +650,58 @@ export class IdleBehavior extends BaseBehavior {
      */
     private async sendPersonArrivalMessage(personName: string, followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>): Promise<void> {
         if (!this.bot || !this.aiService || followers.length === 0) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[IdleBehavior] sendPersonArrivalMessage: Missing bot/aiService or no followers`);
+            }
             return;
         }
 
-        // Get the current space - we're already in it
+        // Get the current space - prefer conversation spaces over world spaces
+        // Use leadingSpaceName as fallback (set when user joined during leading)
         const currentSpaces = this.bot.getCurrentSpaces();
-        if (currentSpaces.length === 0) {
-            console.warn(`[IdleBehavior] Bot not in any space when trying to send person arrival message`);
+        // Filter out world spaces (like "allWorldUser") and prefer conversation spaces
+        const conversationSpaces = currentSpaces.filter(space => !space.includes('allWorldUser') && space.includes('#'));
+        const spaceName = conversationSpaces.length > 0 
+            ? conversationSpaces[0] 
+            : (currentSpaces.length > 0 ? currentSpaces[0] : this.leadingSpaceName);
+        if (!spaceName) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[IdleBehavior] sendPersonArrivalMessage: Bot not in any space (currentSpaces=${currentSpaces.length}, leadingSpaceName=${this.leadingSpaceName})`);
+            }
             return;
         }
-        const spaceName = currentSpaces[0];
 
         // Get bot configuration
         const botConfig = this.bot.getFullConfig();
         if (!botConfig?.aiProviderRef) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[IdleBehavior] sendPersonArrivalMessage: No AI provider configured`);
+            }
             return;
         }
 
         const botId = this.bot.getBotId();
+        const followerUserId = followers[0].userId; // Use first follower for context
         
-        // Find the first follower who is still nearby
-        const nearbyPlayers = this.bot.getNearbyPlayers(100);
-        const followerPlayer = nearbyPlayers.find(p => followers.some(f => f.userId === p.userId));
-        
-        if (!followerPlayer) {
-            // No followers nearby, skip
-            return;
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] sendPersonArrivalMessage: spaceName=${spaceName}, followerUserId=${followerUserId}, personName=${personName}`);
         }
         
-        // Set flag to prevent returnToAssignedSpace from being called while sending message
         this.isSendingGoodbye = true;
         
         try {
-            // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
-            
-            // Generate arrival and goodbye message using AI
+            const context = this.conversationMemory.getConversationContext(botId, followerUserId);
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] sendPersonArrivalMessage: Generating AI response...`);
+            }
+            
             let fullMessage = '';
+            let chunkCount = 0;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
-                followerPlayer.userId,
+                followerUserId,
                 arrivalPrompt,
                 botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
@@ -648,26 +710,40 @@ export class IdleBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                chunkCount++;
                 if (chunk.content) {
                     fullMessage += chunk.content;
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[IdleBehavior] sendPersonArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
+                    }
                 }
-                
                 if (chunk.done) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[IdleBehavior] sendPersonArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
+                    }
                     if (fullMessage.trim()) {
-                        // Send message to space - all followers in the space will receive it
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message to space: "${fullMessage.trim()}"`);
+                        }
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                        // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
-                        // Wait a moment to ensure message is sent before leaving
-                        await new Promise(resolve => setTimeout(resolve, 200));
+                        this.conversationMemory.addMessage(botId, followerUserId, fullMessage.trim(), 'bot', spaceName);
+                    } else {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.warn(`[IdleBehavior] sendPersonArrivalMessage: Generated message is empty`);
+                        }
                     }
                     break;
+                }
+            }
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                if (!fullMessage.trim()) {
+                    console.warn(`[IdleBehavior] sendPersonArrivalMessage: Stream ended without chunk.done=true or message is empty. Chunks received: ${chunkCount}`);
                 }
             }
         } catch (error) {
             console.error(`[IdleBehavior] Error generating person arrival message:`, error);
         } finally {
-            // Clear flag and leave the space after message is sent
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
         }
