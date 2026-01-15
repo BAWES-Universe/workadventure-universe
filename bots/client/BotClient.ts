@@ -1130,6 +1130,48 @@ export class BotClient {
     }
 
     /**
+     * Get all spaces the bot is currently in
+     */
+    getCurrentSpaces(): string[] {
+        return Array.from(this.spaces.keys());
+    }
+
+    /**
+     * Leave a conversation space
+     */
+    async leaveSpace(spaceName: string): Promise<void> {
+        if (!this.spaces.has(spaceName)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Not in space ${spaceName}, nothing to leave`);
+            }
+            return;
+        }
+
+        try {
+            await this.emitLeaveSpace(spaceName);
+            this.spaces.delete(spaceName);
+            if (this.behavior) {
+                this.behavior.onSpaceLeft(spaceName);
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Left space: ${spaceName}`);
+            }
+        } catch (error) {
+            console.error(`[Bot ${this.config.botId}] Error leaving space ${spaceName}:`, error);
+        }
+    }
+
+    /**
+     * Leave all current conversation spaces
+     */
+    async leaveAllSpaces(): Promise<void> {
+        const spacesToLeave = Array.from(this.spaces.keys());
+        for (const spaceName of spacesToLeave) {
+            await this.leaveSpace(spaceName);
+        }
+    }
+
+    /**
      * Send chat message to space
      */
     sendChatMessage(spaceName: string, message: string): void {
