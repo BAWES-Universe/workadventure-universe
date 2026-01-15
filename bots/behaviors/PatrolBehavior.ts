@@ -485,13 +485,25 @@ export class PatrolBehavior extends BaseBehavior {
 
     onSpaceJoined(spaceName: string): void {
         // When bot joins a space, it means a player is in proximity
-        // GHOST MODE: Don't stop - continue moving to avoid triggering bubbles
+        // CRITICAL: Stop immediately and cancel pathfinding to prevent continued movement
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[PatrolBehavior] SPACE JOINED: ${spaceName}, nearbyPlayers=${this.nearbyPlayers.size} - CONTINUING (ghost mode)`);
+            console.log(`[PatrolBehavior] SPACE JOINED: ${spaceName}, nearbyPlayers=${this.nearbyPlayers.size}`);
             console.log(`[PatrolBehavior] Setting currentSpaceName to: ${spaceName}`);
         }
         
         this.currentSpaceName = spaceName;
+        
+        // CRITICAL: Stop immediately when joining a conversation space
+        // This prevents the bot from continuing to move during the frame where onSpaceJoined is called
+        const config = this.config as PatrolBehaviorConfig;
+        const shouldRespond = config.respondToPlayers !== false;
+        
+        if (shouldRespond) {
+            if (this.bot?.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+            this.bot?.stop();
+        }
         
         // Send greeting if:
         // 1. Player actively approached (nearbyPlayers.size > 0) - normal case
