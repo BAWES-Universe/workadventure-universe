@@ -439,8 +439,10 @@ export class BotClient {
         this.state.setMoving(false);
         
         // If bot was leading and we're stopping, abort the follow
+        // BUT: Don't end leading if bot is summoned (summoning is not leading)
         // This handles cases where stop() is called directly (not through cancelPathfinding)
-        if (isLeading && this.isFollowingPath) {
+        const isSummoned = (this.behavior as any)?.isSummoned || false;
+        if (isLeading && this.isFollowingPath && !isSummoned) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] 🛑 STOP() called while leading, canceling pathfinding and aborting follow`);
             }
@@ -487,9 +489,11 @@ export class BotClient {
      */
     stopAndUpdate(): void {
         const isLeading = (this.behavior as any)?.isLeading || false;
+        const isSummoned = (this.behavior as any)?.isSummoned || false;
         
         // If bot was leading, abort the follow when stopping
-        if (isLeading && this.isFollowingPath) {
+        // BUT: Don't end leading if bot is summoned (summoning is not leading)
+        if (isLeading && this.isFollowingPath && !isSummoned) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Bot ${this.config.botId}] 🛑 stopAndUpdate() called while leading, canceling pathfinding and aborting follow`);
             }

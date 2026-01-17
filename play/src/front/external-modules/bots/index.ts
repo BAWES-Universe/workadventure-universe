@@ -851,21 +851,43 @@ function registerSummonButtonsForBots() {
                 actionIcon: IconMapPin,
                 callback: async () => {
                     try {
-                        console.log(`[Bot Extension] Summon button clicked for player ${playerData.name} (${botUuid})`);
+                        if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                            console.log(
+                                `[Bot Extension] Summon button clicked for player ${playerData.name} (${botUuid})`
+                            );
+                        }
 
-                        // Get current player position at click time (not when button was registered)
-                        const currentPlayer = scene.CurrentPlayer;
-                        if (!currentPlayer) {
-                            console.warn(`[Bot Extension] Cannot summon - current player not available`);
+                        // Get current scene at click time (not when button was registered)
+                        // This ensures we get the current scene instance, not a stale one after portaling
+                        const currentScene = gameManager.getCurrentGameScene();
+                        if (!currentScene) {
+                            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                                console.warn(`[Bot Extension] Cannot summon - scene not available`);
+                            }
                             return;
                         }
 
+                        // Get current player position at click time
+                        // Use CurrentPlayer sprite coordinates - these are always up-to-date
+                        const currentPlayer = currentScene.CurrentPlayer;
+                        if (!currentPlayer) {
+                            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                                console.warn(`[Bot Extension] Cannot summon - current player not available`);
+                            }
+                            return;
+                        }
+
+                        // Use the sprite's current x/y coordinates directly - these are always up-to-date
                         const currentPosition = {
                             x: currentPlayer.x,
                             y: currentPlayer.y,
                         };
 
-                        console.log(`[Bot Extension] Current position: (${currentPosition.x}, ${currentPosition.y})`);
+                        if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                            console.log(
+                                `[Bot Extension] Current player position: (${currentPosition.x}, ${currentPosition.y})`
+                            );
+                        }
 
                         // Bot userUuid is in format "bot-{botId}", but BotManager stores by botId
                         // Strip the "bot-" prefix to get the actual botId
@@ -877,10 +899,14 @@ function registerSummonButtonsForBots() {
                             currentPosition.x,
                             currentPosition.y
                         );
-                        console.log(`[Bot Extension] Summon request sent successfully`);
+                        if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                            console.log(`[Bot Extension] Summon request sent successfully`);
+                        }
                     } catch (error) {
                         // Silently fail if it's not a bot (API will return 404)
-                        console.warn(`[Bot Extension] Summon failed for ${botUuid}:`, error);
+                        if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                            console.warn(`[Bot Extension] Summon failed for ${botUuid}:`, error);
+                        }
                     }
                 },
             };
