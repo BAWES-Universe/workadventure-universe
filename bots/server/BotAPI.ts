@@ -552,7 +552,7 @@ export class BotAPI {
                     botId, // Ensure botId doesn't change
                 };
 
-                // CRITICAL: Ensure behaviorType is always set (never undefined)
+                // CRITICAL: Ensure behaviorType is always set (never undefined) for response
                 // If updates didn't include behaviorType or it was undefined, preserve existing value
                 if (!updatedConfig.behaviorType) {
                     console.warn(`[BotAPI] Bot ${botId} missing behaviorType after merge, preserving existing: ${existingConfig.behaviorType}`);
@@ -564,8 +564,40 @@ export class BotAPI {
                     console.log(`[BotAPI] Saving config for ${botId} with behaviorType: ${updatedConfig.behaviorType}`);
                 }
 
+                // CRITICAL FIX: Only save behaviorType to Admin API if it was explicitly provided in updates
+                // This prevents stale Admin API data from overwriting the running bot's behavior
+                // If behaviorType was not in updates, don't save it (preserve what's in Admin API without overwriting)
+                const shouldSaveBehaviorType = 'behaviorType' in updates;
+                
+                if (!shouldSaveBehaviorType) {
+                    // behaviorType was not provided in updates - don't save it to Admin API
+                    // This prevents accidental resets when other fields (like position) are updated
+                    // The running bot keeps its current behavior, and Admin API keeps its stored value
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotAPI] behaviorType not in updates, skipping save to Admin API to prevent stale data overwrite`);
+                    }
+                }
+                
                 // Save to Admin API
-                await this.adminApiService.saveBotConfiguration(updatedConfig);
+                // Build config to save: merge existing with updates, but exclude behaviorType if it wasn't in updates
+                const finalConfigToSave: BotConfiguration = {
+                    ...existingConfig,
+                    ...updatesToApply, // Only fields explicitly provided in updates
+                    botId, // Ensure botId doesn't change
+                };
+                
+                // CRITICAL: If behaviorType wasn't in updates, preserve existing Admin API value
+                // This prevents stale Admin API data from being re-saved and potentially causing issues
+                // The running bot's behavior is managed by BotManager, not by Admin API saves
+                if (!shouldSaveBehaviorType) {
+                    // Keep existing Admin API value - don't change it
+                    finalConfigToSave.behaviorType = existingConfig.behaviorType;
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotAPI] Preserving existing behaviorType in Admin API: ${existingConfig.behaviorType} (not in updates)`);
+                    }
+                }
+                
+                await this.adminApiService.saveBotConfiguration(finalConfigToSave);
 
                 // Check if name or texture changed (require respawn)
                 const nameChanged = 'name' in updates && updates.name !== existingConfig.name;
