@@ -530,6 +530,13 @@ export class PatrolBehavior extends BaseBehavior {
             
             // Face the closest player
             if (closestPos) {
+                // When leading, don't face the follower - face the direction of movement instead
+                // The pathfinding system will handle facing the direction of movement
+                if (this.isLeading) {
+                    // Skip facing the player when leading - let pathfinding handle direction
+                    return;
+                }
+                
                 // Check if player is actively moving (not idle)
                 const now = Date.now();
                 const isPlayerActive = closestId !== null && 

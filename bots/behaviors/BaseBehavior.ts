@@ -908,8 +908,17 @@ export abstract class BaseBehavior {
         // Only update if direction actually changed
         if (oldDirection !== direction) {
             this.bot.getState().setDirection(direction);
-            this.bot.getState().setMoving(false);
-            this.bot.stopAndUpdate(); // Force immediate position/direction update to server
+            // If bot is leading, don't stop - just update direction while continuing to move
+            if (this.isLeading) {
+                // Update direction but keep moving - send position update without stopping
+                const currentPos = this.bot.getState().getPosition();
+                const isMoving = this.bot.getState().isMoving();
+                this.bot.sendPosition(currentPos, direction, isMoving);
+            } else {
+                // Not leading - stop and update (normal behavior)
+                this.bot.getState().setMoving(false);
+                this.bot.stopAndUpdate(); // Force immediate position/direction update to server
+            }
         }
     }
 

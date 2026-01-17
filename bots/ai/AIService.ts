@@ -386,7 +386,7 @@ Remember:
                         }));
                         
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] Executing ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => ({ 
+                            console.log(`[AIService] 🔧 About to execute ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => ({ 
                                 name: tc.name, 
                                 id: tc.id, 
                                 argsPreview: tc.arguments.substring(0, 100),
@@ -398,7 +398,9 @@ Remember:
                         pendingToolCalls = [];
                         toolCallAccumulator.clear();
 
-                        console.log(`[AIService] Tool results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, areasCount: tr.result?.areas?.length || 0 })));
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] ✅ Tool execution completed. Results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, success: tr.result?.success, error: tr.result?.error, areasCount: tr.result?.areas?.length || 0 })));
+                        }
 
                         // Continue conversation with tool results
                         const toolResultsMessage = this.formatToolResults(toolResults);
@@ -700,6 +702,9 @@ CRITICAL ANTI-HALLUCINATION RULES:
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
             try {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] 🔧 Executing tool: ${toolCall.name}, id: ${toolCall.id}, botClient: ${botClient ? 'available' : 'missing'}`);
+                }
                 let result: any;
 
                 switch (toolCall.name) {
@@ -730,6 +735,7 @@ CRITICAL ANTI-HALLUCINATION RULES:
                     case 'navigate_to':
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[AIService] 🔧 Executing navigate_to tool with raw arguments:`, toolCall.arguments);
+                            console.log(`[AIService] 📍 Bot client available: ${botClient ? 'YES' : 'NO'}`);
                         }
                         if (!botClient) {
                             console.error('[AIService] ❌ Bot client not available for navigate_to');
@@ -744,6 +750,9 @@ CRITICAL ANTI-HALLUCINATION RULES:
                                 parsedArgs = typeof toolCall.arguments === 'string' 
                                     ? JSON.parse(toolCall.arguments) 
                                     : toolCall.arguments || {};
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] 📋 Parsed navigate_to arguments:`, parsedArgs);
+                                }
                             } catch (parseError) {
                                 console.error('[AIService] ❌ Failed to parse tool arguments:', parseError);
                                 result = { error: 'Invalid tool arguments format' };

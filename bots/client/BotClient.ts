@@ -288,19 +288,31 @@ export class BotClient {
             } else if (shouldRespond && isInSpace) {
                 // For patrol bots that should respond, only stop if in a conversation space
                 // Don't stop just because players are nearby (ghost mode for idle players)
-                if (isMoving) {
-                    // Bot should be stopped but is still moving - force stop
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot in space - stopping and canceling pathfinding`);
+                // BUT: Don't stop if bot is leading - it needs to continue to destination
+                const isLeading = this.behavior && (this.behavior as any).isLeading;
+                if (!isLeading) {
+                    if (isMoving) {
+                        // Bot should be stopped but is still moving - force stop
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot in space - stopping and canceling pathfinding`);
+                        }
+                        this.stop();
+                        this.cancelPathfinding();
+                    } else {
+                        // Already stopped - just cancel pathfinding
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot in space and stopped - canceling pathfinding`);
+                        }
+                        this.cancelPathfinding();
                     }
-                    this.stop();
-                    this.cancelPathfinding();
                 } else {
-                    // Already stopped - just cancel pathfinding
+                    // Bot is leading - allow movement to continue
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] 🛑 Patrol bot in space and stopped - canceling pathfinding`);
+                        console.log(`[Bot ${this.config.botId}] ✅ Patrol bot in space but leading - allowing movement to continue`);
                     }
-                    this.cancelPathfinding();
+                    if (isMoving) {
+                        this.updatePathFollowing(deltaTime);
+                    }
                 }
             } else if (isMoving) {
                 this.updatePathFollowing(deltaTime);
