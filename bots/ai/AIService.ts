@@ -167,10 +167,10 @@ export class AIService {
                         if (areas && areas.length > 0) {
                             const areaNames = areas.filter(a => a && a.name).map(a => a.name);
                             if (areaNames.length > 0) {
-                                mapContextInfo += `\n- Areas in this room (additional context, not a replacement for location): ${areaNames.join(', ')}`;
+                                mapContextInfo += `\n- Areas in this room: ${areaNames.join(', ')}`;
                                 // Make positions more explicit and readable
                                 const areaDetails = areas.filter(a => a && a.name).map(a => `${a.name} is at coordinates (${a.x}, ${a.y})`).join('; ');
-                                mapContextInfo += `\n- Area locations (use these when asked "where is [area name]"): ${areaDetails}`;
+                                mapContextInfo += `\n- Area locations: ${areaDetails}`;
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.log(`[AIService] Upfront context - Including ${areaNames.length} areas: ${areaNames.join(', ')}`);
                                 }
@@ -222,93 +222,65 @@ export class AIService {
             }
 
             // Build system prompt
-            let systemPrompt = chatInstructions || 'You are a friendly bot.';
+            // CRITICAL: Chat instructions define the bot's personality and MUST be followed
+            let systemPrompt = '';
+            if (chatInstructions && chatInstructions.trim()) {
+                systemPrompt = chatInstructions;
+                // Add note that personality rules from chat instructions take precedence
+                systemPrompt += `\n\n**CRITICAL: The instructions above define your personality and behavior. Follow them strictly. Your personality should be reflected in ALL responses. The technical rules below are guidelines for HOW to respond (formatting, tool usage, etc.), but your personality (defined above) takes precedence over any conflicting rules below. If you're instructed to be mean/angry, be mean/angry. If you're instructed to be friendly, be friendly. Your personality comes first.**`;
+            } else {
+                systemPrompt = 'You are a friendly bot.';
+            }
+            
             if (mapContextInfo) {
                 systemPrompt += mapContextInfo;
             }
             if (conversationContext) {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
                 // Add instruction to use conversation history for context
-                systemPrompt += `\n\nIMPORTANT: Use the "Recent Conversation" above to understand context. If someone says "whats that", "where", or "whats in there", look at the most recent messages to understand what they're referring to. If they just asked about location, "that" refers to the location. Answer directly without asking questions back.`;
+                systemPrompt += `\n\nIMPORTANT: Use the "Recent Conversation" above to understand context. **CRITICAL: If you already said the location (universe/world/room) in this conversation, do NOT repeat it when answering follow-up questions like "what areas", "who's here", "what can we do here", or "whats the plan" - just answer the new question directly. If they just asked "where are we" and you said "BAWES Universe, StudentHub World, test room", and they ask "what areas", just say "There's an Office Area here" - do NOT repeat the location. For "what can we do here" or "whats the plan", mention areas/activities available, NOT the location again.** If someone says "whats that", "where", or "whats in there", look at the most recent messages to understand what they're referring to. Answer directly without asking questions back.`;
             }
             
-            // Add formatting rules
-            systemPrompt += `\n\nRESPONSE FORMATTING:
-- Always capitalize the first letter of your response
-- Write in complete sentences with proper grammar
-- Don't ask questions back - answer directly
-- Be natural and conversational`;
-            
-            // Add guidance for natural responses and tool usage
-            systemPrompt += `\n\nWhen someone approaches you, greet them based on your personality (defined in your chat instructions) and your relationship with them (from conversation memory). Your greeting should reflect:
-- Your personality traits (friendly, formal, playful, serious, etc. - as defined in your chat instructions)
-- Your emotional state toward this person (if you've met before and have a relationship)
-Keep greetings simple and natural - just greet them directly. Don't mention location or areas in greetings unless it's relevant to your personality or the conversation context. A simple "Hello!" or "Hi there!" is often better than a long greeting with location details.
-
-IMPORTANT: When you receive the message "Someone just approached you.", respond with ONLY a greeting - don't acknowledge the instruction, don't say you're ready, just greet them directly as if they just walked up to you.
+            // Add formatting and behavior rules (condensed)
+            // NOTE: These are technical guidelines - personality from chat instructions takes precedence
+            systemPrompt += `\n\nTECHNICAL RESPONSE GUIDELINES (follow within your personality defined above):
+- Capitalize first letter, use complete sentences, be natural and conversational
+- **Your personality from the chat instructions above should be reflected in ALL responses. If you're instructed to be mean/angry, be mean/angry. If you're instructed to be friendly, be friendly. The rules below are technical guidelines that should be followed WITHIN your personality.**
+- Answer directly - if your personality allows questions, you can ask them. If your personality is to be helpful, offer help. If your personality is to be mean, be mean. Follow your personality first.
+- **Only apologize or explain if it fits your personality. If you're instructed to be mean/angry, don't apologize. If you're instructed to be friendly, you can be friendly.**
+- **CRITICAL: When a question requires a tool (like "who's here" needs get_people_on_map), call the tool FIRST before generating ANY text. Do NOT say "I'll check" or "Please wait" - just call the tool silently and then respond with the results.**
+- For greetings: Match their tone, vary responses, keep it simple. If message is "Someone just approached you.", respond with ONLY a greeting.
+- Call tools silently when needed - never mention them in responses, never ask permission to call them, never announce you're checking
+- Vary responses - never repeat the same answer for different questions
+- **CRITICAL: Check "Recent Conversation" before answering - if you already answered a question, don't repeat that answer. If you said the location, don't repeat it when asked about areas or people.**
 
 CRITICAL ANTI-HALLUCINATION RULES:
-1. You already know your location and areas from the "Current Location Context" above - use that information directly. You don't need to call get_map_context for location/area questions unless the context is missing.
-2. NEVER invent, make up, or hallucinate details about places. Examples of hallucinations to avoid: "spacious open room", "large window", "field and trees", "ornate bronze door", "Starlight Hotel", "holographic dragon", "grand staircase".
-3. Use ONLY the actual location names from the "Current Location Context" above. NEVER use brackets or placeholders like [test universe] or [test room]. Use the actual names directly: "test universe, test world, test room". Do NOT put brackets around names.
-4. NEVER describe physical features of the room unless they are explicitly in the tool results. You don't know what the room looks like - only its name.
-5. NEVER ask the user to call tools - YOU call them yourself when needed.
-6. NEVER mention or describe calling tools in your responses - just call them silently and use the results.
-7. NEVER show tool call JSON, "[END_TOOL_REQUEST]", "[Area Name 1]", "[END_MAP_CONTEXT]", or ANY placeholder text in your response - these are NOT real data.
-8. NEVER use brackets around names like [test universe] or [test room]. Use the actual names directly: "test universe, test world, test room". Brackets are NOT part of the names.
-9. NEVER use placeholder text like "[Area Name]", "[Area Name 1]", "[END_MAP_CONTEXT]" - if areas exist, use their actual names from the context. If no areas exist, say "There are no areas defined here".
-10. Answer questions directly - NEVER ask the user questions back. NEVER respond with questions like "What is this place?", "How can I help?", "How can I assist you today?", "What can I do for you?", "Would you like to talk to them?", "or go somewhere else?", or ANY other questions. Just answer what they asked with a statement. 
-    - If they say "hey", "hi", "hello", "how u doing", "whats up", "u good", or other casual greetings, respond naturally and briefly with a matching casual greeting or acknowledgment - NEVER ask how you can help. Examples: "Hey!" for "hey", "Hi!" for "hi", "I'm doing well!" for "how u doing".
-    - If they say "cool" or "nice", just acknowledge it briefly.
-    - If they ask "whats that", answer based on conversation history, don't ask questions back.
-    - After listing people, just state the facts - don't ask what they want to do.
-11. Always capitalize the first letter of your response and write in complete sentences with proper grammar.
-12. ALWAYS use the EXACT values from "Current Location Context" - copy them directly, never use placeholders, brackets, or make things up. If it says "Universe: test", use "test universe", NOT "[test universe]".
+1. Use ONLY actual location names from "Current Location Context" - copy them exactly. NEVER use brackets, placeholders, or invent details.
+2. **NEVER mention areas that are NOT in "Current Location Context" or tool results. If context shows "Areas in this room: Office Area", ONLY mention Office Area - do NOT add Creative Hub or any other areas that aren't listed.**
+3. NEVER invent physical features ("spacious room", "large window", etc.) - you only know room/area names, not appearance.
+4. NEVER show tool JSON, placeholders, or internal markers in responses.
+5. If areas exist, use their actual names from context. If none, say "There are no areas defined here."
 
-When someone asks about:
-- WHERE you are: "where are we", "what room", "what world", "what universe", "where inside" → ALWAYS mention universe, world, and room from "Current Location Context". Do NOT include area coordinates unless specifically asked about an area. Just give the location: "test universe, test world, test room".
-- WHAT is this place: "what is this place", "what is this", "what's here" → ALWAYS mention universe, world, and room first, then mention areas if they exist. Format: "[universe name] universe, [world name] world, [room name] room" + areas if any. Use the actual names from context, NOT placeholders with brackets.
-- WHAT the place is LIKE: "what is this place like", "describe this place" → Describe based on the room name from context, but do NOT invent fictional details
-- WHAT TO DO here: "what do we do here", "what can we do", "whats there to do here" → Describe what's available (areas, activities) based on room/area names from context. Just describe - do NOT offer to take them anywhere or say "Follow me!" unless they explicitly ask to go somewhere.
-- Areas/sections: "what areas", "what areas are here", "any areas", "what's this area", "areas here?", "areas?" → Check "Current Location Context" above. If it shows "Areas in this room: Office Area" (or other area names), list those areas. If it shows "Areas: none", say "There are no areas defined here."
-- Area location: "where is [area name]", "where is the office area", "wheres that area", "where is it" (after mentioning an area) → Use the "Area locations" from "Current Location Context" above. Give the coordinates directly like "Office Area is at coordinates (596, 606)" or "It's at coordinates (596, 606)". Don't repeat the area name or location - just give coordinates.
-- Navigation requests: "can you take me to [person/area]", "show me where [person/area] is", "lead me to [person/area]", "take me to [person/area]", "i wanna go to [person/area]", "take me there" → **CRITICAL: When someone asks you to take them somewhere, you MUST call the navigate_to tool FIRST. Do NOT generate any response text like "Follow me!" or "I'll take you there" until AFTER you have called the tool. The tool call must happen BEFORE any text response. For example, if they say "take me to the office area", you must: 1) Call navigate_to with targetType="area" and targetName="Office Area", 2) THEN respond with "Follow me!" or "I'll take you there".**
-- **CRITICAL: Do NOT say "Follow me!" or offer to take someone somewhere unless they explicitly ask to go. When describing what's available ("whats there to do here"), just describe - don't offer to lead.**
-- **If you already called navigate_to and said "Follow me!", and the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading.**
-- Context questions: "whats that", "where", "whats in there", "whats this" → Look at the "Recent Conversation" in Conversation Context to understand what they're referring to. If they just asked "where we at" and you said "test universe, test world, test room", then "whats that" refers to that location. If they just asked about an area, "where is it" refers to that area's coordinates. Answer directly without asking questions back.
-- Who's on the map: "who's here", "who's online" → **IMMEDIATELY call get_people_on_map tool FIRST. Do NOT say "I'll check" or announce you're checking. Just call the tool silently and then list the actual people from the results.**
-- Your position: "where are you" → Use get_bot_position tool
+LOCATION QUESTIONS:
+- "where are we"/"what room"/"what universe" → Give location simply: "[universe name], [world name], [room name]" (use actual names from "Current Location Context" - if it says "Universe: BAWES, World: StudentHub, Room: test", say "BAWES Universe, StudentHub World, test room" - use the ACTUAL world name, not the universe name). **If areas exist in "Current Location Context", naturally mention ONLY those areas after the location (e.g., if context shows "Areas in this room: Office Area", say "BAWES Universe, StudentHub World, test room. There's an Office Area here"). NEVER mention areas that aren't in the current context, even if mentioned in previous conversations. Do NOT say "you are in [area]" - just give location and mention areas separately. NEVER mention coordinates.**
+- "what's here"/"what is this place" → Give location first, then naturally mention areas if any. Do NOT mention coordinates.
+- "what areas"/"areas?"/"what other areas" → **CRITICAL: Check "Recent Conversation" first - if you already said the location in this conversation, do NOT repeat it. Just list the areas (e.g., "There's an Office Area here" or "Office Area and Creative Hub are here"). If you haven't said location yet, check "Current Location Context" above. If it shows "Areas in this room: [list]" then list those areas naturally. If it shows "Areas: none" or you're unsure, IMMEDIATELY call get_areas_on_map tool silently (do NOT ask permission or announce you're checking), then list the areas or say "There are no areas defined here."** Do NOT mention coordinates. Do NOT ask questions. **NEVER repeat the location (universe/world/room) if you already said it.**
+- "where is [area]" → Give coordinates from "Area locations" in context (e.g., "at coordinates (596, 606)"). Only mention coordinates when specifically asked about an area's location.
+- "who's here"/"who's online" → **IMMEDIATELY call get_people_on_map tool silently (do NOT say "I'll check" or announce you're checking), then list people naturally (e.g., "Khalid ABC is here" or "Khalid ABC and John are here"). Do NOT repeat location. Do NOT mention coordinates.**
+- "where are you" → Use get_bot_position tool, but format as natural location, not coordinates
+- "what can we do here"/"what can we do"/"whats the plan" → **CRITICAL: Check "Recent Conversation" first - if you already said the location, do NOT repeat it. Mention areas available for exploring (e.g., "You can explore the Office Area" or "There's an Office Area you can check out"). If no areas, suggest general activities like exploring or chatting. For "whats the plan", be conversational and suggest activities based on available areas. Do NOT repeat location.**
 
-CRITICAL: 
-- When asked "what's here" or "where are we" (first time in conversation), mention universe, world, and room. Areas are additional context.
-- Format: Use actual names like "test universe, test world, test room" + (if areas exist: ", and there's an area called Office Area")
-- Never use brackets around names like [test universe] - use the actual names directly
-- BUT: If you already told them the location in this conversation, don't repeat it. Just answer the new question directly.
-- When asked "where is [area name]", just give the coordinates without repeating the full location you already mentioned
-- If asked "what areas" specifically, focus on areas. Don't repeat location if you already said it.
+NAVIGATION:
+- "take me to [person/area]" → Call navigate_to tool FIRST, then respond "Follow me!" or "I'll take you there"
+- Only offer to lead when explicitly asked - don't say "Follow me!" when describing what's available
+- If already leading and user asks why not moving, reassure them you're leading
 
-Remember: 
-- YOU call the tools silently - never mention them in your response. Just call them and use the results to answer.
-- **CRITICAL: Vary your responses - NEVER repeat the same response for different questions or greetings**
-- **For casual greetings, respond differently each time:**
-  * "hey" → "Hey!" or "Hey there!" or "Hey, what's up!"
-  * "hi" → "Hi!" or "Hi there!" or "Hey!"
-  * "hello" → "Hello!" or "Hey!" or "Hi!"
-  * "how u doing" / "hows it going" / "u good" → "I'm doing well!" or "Pretty good, thanks!" or "Doing great!" or "All good!"
-  * "whats up" → "Not much!" or "Just hanging out!" or "What's up!" or "Hey!"
-- **NEVER ask questions back** - NEVER say "How can I help you today?", "How can I assist you?", "What can I do for you?", or ANY other questions. Just respond naturally to what they said with a statement.
-- Be conversational and natural - match the casual tone of their greeting
-- Answer questions directly and contextually:
-  * "where are we" → Give location once
-  * "what's here" or "whats this" (after location mentioned) → Describe what this place is, mention areas if they exist, don't just repeat location
-  * "what's in the office" or "where is [area]" or "wheres that area" → Just give the coordinates from "Area locations" in context, don't repeat the area name or full location
-  * "whats there to do here" or "what can we do" → Just describe what's available (areas, activities). Do NOT offer to take them or say "Follow me!" - wait for them to explicitly ask to go somewhere.
-  * "can you take me to [person/area]" or "show me where [person/area] is" or "lead me to [person/area]" or "take me there" → **ONLY when explicitly asked to go**, call navigate_to tool and respond naturally like "Follow me!" or "I'll take you there"
-  * After calling get_people_on_map: List the people directly like "Khalid ABC is here." or "Khalid ABC and John are here." Do NOT mention coordinates or positions - people don't know about coordinates. Do NOT ask "Would you like to talk to them?" or any other questions. Just state the facts.
-  * "areas?" or "any areas" → Check "Current Location Context" for areas. If "Areas in this room: Office Area" exists, say "There's an area called Office Area" or list them. If "Areas: none", say "There are no areas defined here."
-- Don't append or repeat information - if you already said where you are, just answer the new question
-- Be natural - like a real conversation where you don't repeat yourself
-- Different questions need different responses - don't parrot the same answer`;
+CONTEXT:
+- "whats that"/"where" → Check "Recent Conversation" to understand what they're referring to
+- **CRITICAL: Don't repeat information already given. If you just said "BAWES Universe, StudentHub World, test room" and they ask "what areas", just say "There's an Office Area here" - do NOT repeat the location. If you already answered a question, don't repeat that answer when answering a new question.**
+- **NEVER explain why you said something (e.g., "I said X because..."). Just answer the current question directly.**
+- Be natural and conversational - avoid repetitive phrases like "In the [universe], [world], and [room]"
+- Format location as "[universe], [world], [room]" - use the ACTUAL world name from context, not the universe name. If context shows "World: StudentHub", say "StudentHub World", not "[universe] World"`;
 
             // Check if Qwen model (for /no_think directive)
             const isQwenModel = config.model.toLowerCase().includes('qwen');
@@ -438,16 +410,13 @@ You called tools and received these results:
 ${toolResultsMessage}
 
 CRITICAL ANTI-HALLUCINATION RULES:
-- Use ONLY the information from the tool results above. Do NOT invent, make up, or hallucinate ANY details.
-- If tool results show universe="test", world="test", room="test" - then say "test universe, test world, test room". Do NOT add fictional descriptions like "spacious open room" or "large window".
-- You do NOT know what the room looks like - only its name. Do NOT describe physical features unless they are in the tool results.
-- **IF AREAS ARE LISTED IN THE TOOL RESULTS, YOU MUST MENTION THEM WHEN ASKED ABOUT AREAS OR "WHAT'S HERE"**
-- **IF NO AREAS ARE LISTED, SAY "There are no areas defined here" when asked about areas**
-- Use the actual names/values from the results - never use placeholders or make things up
-- NEVER show tool calls, JSON, "[END_TOOL_REQUEST]", "[Area Name 1]", "[END_MAP_CONTEXT]", or ANY placeholder text in your response
-- NEVER use placeholder text - if areas exist, use their actual names. If no areas exist, say "There are no areas defined here"
-- When talking about location, mention universe, world, and room using the ACTUAL names from the tool results
-- Be conversational, but ONLY use real information from the tools - no fictional details, no made-up descriptions, no placeholders`;
+- Use ONLY information from tool results above - never invent or make up details
+- If results show universe="[universe]", world="[world]", room="[room]" → say "[universe] Universe, [world] World, [room] room" (use actual values from results - if world is "StudentHub", say "StudentHub World", not "[universe] World")
+- You only know room/area names, not appearance - never describe physical features
+- If areas listed, mention them. If none, say "There are no areas defined here"
+- Use actual names/values from results - never placeholders or made-up text
+- NEVER show tool JSON, placeholders, or internal markers in responses
+- Be conversational but ONLY use real information from tools`;
                         
                         // Add /no_think for Qwen models in follow-up message
                         const followUpMessageWithNoThink = isQwenModel 
@@ -676,6 +645,22 @@ CRITICAL ANTI-HALLUCINATION RULES:
                 },
             });
 
+            // Tool: Get areas on the map
+            if (this.mapDataService) {
+                tools.push({
+                    type: 'function',
+                    function: {
+                        name: 'get_areas_on_map',
+                        description: 'Get a list of all areas currently on the map. Call this tool silently (do NOT announce or ask permission) if "Current Location Context" shows "Areas: none" but you need to check for areas, or if asked about areas and the context is unclear. Just call the tool and use the results.',
+                        parameters: {
+                            type: 'object',
+                            properties: {},
+                            required: [],
+                        },
+                    },
+                });
+            }
+
             // Tool: Navigate to a person or area and lead someone there
             tools.push({
                 type: 'function',
@@ -700,8 +685,6 @@ CRITICAL ANTI-HALLUCINATION RULES:
                 },
             });
         }
-
-        // Removed get_map_context and get_map_areas - location and areas are now provided upfront in system prompt
 
         return tools;
     }
@@ -755,6 +738,26 @@ CRITICAL ANTI-HALLUCINATION RULES:
                             result = { x: pos.x, y: pos.y };
                         } else {
                             result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'get_areas_on_map':
+                        if (!this.mapDataService || !botClient) {
+                            result = { error: 'Map data service or bot client not available' };
+                            break;
+                        }
+                        try {
+                            const roomUrl = botClient.getRoomUrl();
+                            const areas = await this.mapDataService.getAreas(roomUrl);
+                            result = {
+                                areas: areas.map(a => ({
+                                    name: a.name,
+                                    x: a.x,
+                                    y: a.y,
+                                })),
+                            };
+                        } catch (error) {
+                            result = { error: `Failed to get areas: ${error instanceof Error ? error.message : 'Unknown error'}` };
                         }
                         break;
 
@@ -930,14 +933,23 @@ CRITICAL ANTI-HALLUCINATION RULES:
                     return `get_people_on_map: There are no other people on the map currently.`;
                 }
                 const peopleList = r.result.map((p: any) => p.name).join(', ');
-                return `get_people_on_map: People currently on the map: ${peopleList}`;
+                return `get_people_on_map: People on the map: ${peopleList}. List them naturally (e.g., "Khalid ABC is here" or "Khalid ABC and John are here"). Do NOT repeat the location. Do NOT mention areas. Just list the people.`;
             }
             if (r.name === 'get_bot_position' && r.result && !r.result.error) {
                 return `get_bot_position: Your current position is x: ${r.result.x}, y: ${r.result.y}`;
             }
+            if (r.name === 'get_areas_on_map' && r.result && !r.result.error) {
+                if (r.result.areas && Array.isArray(r.result.areas)) {
+                    if (r.result.areas.length === 0) {
+                        return `get_areas_on_map: There are no areas defined on this map.`;
+                    }
+                    const areasList = r.result.areas.map((a: any) => a.name).join(', ');
+                    return `get_areas_on_map: Areas found on this map: ${areasList}. List these areas naturally when asked about areas.`;
+                }
+            }
             if (r.name === 'navigate_to' && r.result) {
                 if (r.result.error) {
-                    return `navigate_to: Error - ${r.result.error}. If navigation failed, explain the issue to the user (e.g., "I'm too close to that location" or "I couldn't find a path there"). Do NOT say you can't take them if you haven't tried yet - only say that if there was an actual error.`;
+                    return `navigate_to: Error - ${r.result.error}. Explain the issue simply (e.g., "I couldn't find a path there" or "I'm too close to that location"). Do NOT suggest alternatives, do NOT ask questions like "Would you like me to try another location?", just state the error simply.`;
                 }
                 if (r.result.success) {
                     return `navigate_to: Successfully started navigating. You are now leading people to the destination. The bot has started moving. If the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading. Respond naturally like "I'm leading you there now, just follow me!" or "Come on, follow me!" - don't mention tools or technical details.`;
