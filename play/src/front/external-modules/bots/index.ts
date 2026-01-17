@@ -837,6 +837,11 @@ function registerSummonButtonsForBots() {
                 return;
             }
 
+            // Only register summon button for bots (bots have UUID starting with "bot-")
+            if (!botUuid.startsWith("bot-")) {
+                return;
+            }
+
             // Check if we already registered for this player
             if (registeredActionsByUuid.has(botUuid)) {
                 return;
