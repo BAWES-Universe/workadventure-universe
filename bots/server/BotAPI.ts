@@ -511,11 +511,29 @@ export class BotAPI {
                 const { botId } = req.params;
                 const updates: Partial<BotConfiguration> = req.body;
 
+                // ADD DEBUG LOGGING
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotAPI] PUT /api/bots/${botId} received:`, {
+                        hasBehaviorType: 'behaviorType' in updates,
+                        behaviorType: updates.behaviorType,
+                        hasBehaviorConfig: 'behaviorConfig' in updates,
+                        behaviorConfigKeys: updates.behaviorConfig ? Object.keys(updates.behaviorConfig) : [],
+                    });
+                }
+
                 // Get existing config
                 const existingConfig = await this.adminApiService.getBotConfiguration(botId);
                 if (!existingConfig) {
                     res.status(404).json({ error: 'Bot not found' });
                     return;
+                }
+
+                // ADD DEBUG LOGGING
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotAPI] Existing config for ${botId}:`, {
+                        behaviorType: existingConfig.behaviorType,
+                        behaviorConfigKeys: existingConfig.behaviorConfig ? Object.keys(existingConfig.behaviorConfig) : [],
+                    });
                 }
 
                 // Merge updates - but only include fields that are actually provided (not undefined)
@@ -539,6 +557,11 @@ export class BotAPI {
                 if (!updatedConfig.behaviorType) {
                     console.warn(`[BotAPI] Bot ${botId} missing behaviorType after merge, preserving existing: ${existingConfig.behaviorType}`);
                     updatedConfig.behaviorType = existingConfig.behaviorType;
+                }
+
+                // ADD DEBUG LOGGING BEFORE SAVE
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotAPI] Saving config for ${botId} with behaviorType: ${updatedConfig.behaviorType}`);
                 }
 
                 // Save to Admin API

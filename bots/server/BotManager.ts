@@ -393,8 +393,37 @@ export class BotManager {
         if (updates.behaviorConfig || updates.behaviorType) {
             const { IdleBehavior, PatrolBehavior, SocialBehavior } = await import('../behaviors');
             
+            // ADD DEBUG LOGGING
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] updateBot behavior change triggered for ${botId}:`, {
+                    hasBehaviorType: 'behaviorType' in updates,
+                    behaviorTypeValue: updates.behaviorType,
+                    hasBehaviorConfig: 'behaviorConfig' in updates,
+                    currentInstanceBehaviorType: instance.config.behaviorType,
+                    currentInstanceBehaviorConfigKeys: instance.config.behaviorConfig ? Object.keys(instance.config.behaviorConfig) : [],
+                });
+            }
+            
             const newBehaviorType = updates.behaviorType || instance.config.behaviorType;
             const newBehaviorConfig = updates.behaviorConfig || instance.config.behaviorConfig || {};
+            
+            // CRITICAL FIX: Ensure we have a valid behaviorType before proceeding
+            if (!newBehaviorType) {
+                console.error(`[BotManager] Cannot update behavior for ${botId}: behaviorType is missing!`, {
+                    updatesBehaviorType: updates.behaviorType,
+                    instanceBehaviorType: instance.config.behaviorType,
+                });
+                throw new Error(`Cannot update behavior: behaviorType is required`);
+            }
+            
+            // ADD MORE DEBUG LOGGING
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Resolved behavior for ${botId}:`, {
+                    newBehaviorType,
+                    newBehaviorConfigKeys: Object.keys(newBehaviorConfig),
+                    willCreateBehavior: true,
+                });
+            }
             
             // Update stored config
             if (updates.behaviorType) {

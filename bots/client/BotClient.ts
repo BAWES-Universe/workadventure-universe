@@ -1547,7 +1547,9 @@ export class BotClient {
         personUuid: string,
         target: { type: 'person' | 'area'; name: string; position: PositionInterface }
     ): Promise<void> {
-        console.log(`[Bot ${this.config.botId}] 🎯 LEAD START - leading to ${target.type} "${target.name}" at (${target.position.x}, ${target.position.y})`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 🎯 LEAD START - leading to ${target.type} "${target.name}" at (${target.position.x}, ${target.position.y})`);
+        }
 
         if (!this.behavior) {
             console.error(`[Bot ${this.config.botId}] ❌ No behavior assigned`);

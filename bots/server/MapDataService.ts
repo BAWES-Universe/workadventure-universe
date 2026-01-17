@@ -37,8 +37,12 @@ export class MapDataService {
     async getMapData(roomUrl: string): Promise<MapData | null> {
         // Check cache first
         const cached = this.cache.get(roomUrl);
-        if (cached && Date.now() - cached.cachedAt < this.CACHE_TTL) {
-            console.log(`[MapDataService] Using cached collision grid for ${roomUrl} (cached ${Math.round((Date.now() - cached.cachedAt) / 1000)}s ago)`);
+        const cacheAge = cached ? Date.now() - cached.cachedAt : Infinity;
+        
+        if (cached && cacheAge < this.CACHE_TTL) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[MapDataService] Using cached collision grid for ${roomUrl} (cached ${Math.round(cacheAge / 1000)}s ago, areas: ${(cached.areas || []).length})`);
+            }
             return {
                 collisionGrid: cached.collisionGrid,
                 tileDimensions: cached.tileDimensions,
@@ -48,7 +52,9 @@ export class MapDataService {
         
         // Cache expired or missing - clear it
         if (cached) {
-            console.log(`[MapDataService] Cache expired for ${roomUrl}, refreshing...`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[MapDataService] Cache expired for ${roomUrl} (age: ${Math.round(cacheAge / 1000)}s, TTL: ${this.CACHE_TTL / 1000}s), refreshing...`);
+            }
             this.cache.delete(roomUrl);
         }
 
@@ -440,13 +446,19 @@ export class MapDataService {
      * Get areas for a room (cached)
      */
     async getAreas(roomUrl: string): Promise<MapArea[]> {
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[MapDataService] getAreas called for ${roomUrl}`);
+        }
+        
         const mapData = await this.getMapData(roomUrl);
         const areas = mapData?.areas || [];
         
-        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[MapDataService] getAreas called for ${roomUrl}, returning ${areas.length} areas`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[MapDataService] getAreas for ${roomUrl}, returning ${areas.length} areas`);
             if (areas.length > 0) {
                 console.log(`[MapDataService] Areas:`, areas.map(a => a.name).join(', '));
+            } else {
+                console.log(`[MapDataService] No areas found for ${roomUrl}`);
             }
         }
         

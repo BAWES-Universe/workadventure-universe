@@ -180,7 +180,9 @@ export abstract class BaseBehavior {
         }
         // Log current state for debugging
         if (this.nearbyPlayers.size > 0 || this.isEngaged) {
-            console.log(`[Behavior] State: nearbyPlayers=${this.nearbyPlayers.size}, isEngaged=${this.isEngaged}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] State: nearbyPlayers=${this.nearbyPlayers.size}, isEngaged=${this.isEngaged}`);
+            }
         }
     }
     

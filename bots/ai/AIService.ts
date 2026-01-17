@@ -127,7 +127,20 @@ export class AIService {
             if (botClient && adminApiService) {
                 try {
                     const roomUrl = botClient.getRoomUrl();
+                    
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[AIService] Fetching map context for roomUrl: ${roomUrl}`);
+                    }
+                    
                     const metadata = await adminApiService.getRoomMetadata(roomUrl);
+                    
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[AIService] Room metadata for ${roomUrl}:`, metadata ? {
+                            universe: metadata.universeName,
+                            world: metadata.worldName,
+                            room: metadata.roomName,
+                        } : 'null (using URL fallback)');
+                    }
                     
                     let areas: any[] = [];
                     if (this.mapDataService) {
@@ -146,6 +159,10 @@ export class AIService {
 - Universe: ${metadata.universeName}
 - World: ${metadata.worldName}
 - Room: ${metadata.roomName}`;
+                        
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Building map context with metadata: ${metadata.universeName}/${metadata.worldName}/${metadata.roomName}, areas: ${areas.length}`);
+                        }
                         
                         if (areas && areas.length > 0) {
                             const areaNames = areas.filter(a => a && a.name).map(a => a.name);
@@ -173,6 +190,9 @@ export class AIService {
                         // Fallback to URL parsing
                         const urlMatch = roomUrl.match(/\/@\/([^\/]+)\/([^\/]+)\/([^\/]+)/);
                         if (urlMatch) {
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[AIService] Using URL fallback for map context: ${urlMatch[1]}/${urlMatch[2]}/${urlMatch[3]}`);
+                            }
                             mapContextInfo = `\n\nCurrent Location Context (you are always here):
 - Universe: ${urlMatch[1] || 'unknown'}
 - World: ${urlMatch[2] || 'unknown'}
@@ -188,9 +208,15 @@ export class AIService {
                             }
                         }
                     }
-                } catch (error) {
+                    
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.warn(`[AIService] Failed to fetch map context upfront:`, error);
+                        console.log(`[AIService] Final map context info length: ${mapContextInfo.length} chars`);
+                    }
+                } catch (error) {
+                    // Always log errors, even in production
+                    console.error(`[AIService] Failed to fetch map context upfront for ${botClient.getRoomUrl()}:`, error);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error(`[AIService] Error details:`, error);
                     }
                 }
             }

@@ -111,6 +111,8 @@ export class AdminApiService {
                 console.log(`[AdminApiService] Saving bot config for ${config.botId}:`, {
                     botId: payload.botId,
                     name: payload.name,
+                    behaviorType: payload.behaviorType,
+                    hasBehaviorConfig: !!payload.behaviorConfig,
                     hasAiProviderRef: !!payload.aiProviderRef,
                     aiProviderRef: payload.aiProviderRef,
                     hasChatInstructions: !!payload.chatInstructions,
@@ -164,6 +166,8 @@ export class AdminApiService {
                 console.log(`[AdminApiService] Fetched bot config for ${botId}:`, {
                     botId: response.data.botId,
                     name: response.data.name,
+                    behaviorType: response.data.behaviorType,
+                    hasBehaviorConfig: !!response.data.behaviorConfig,
                     hasAiProviderRef: !!response.data.aiProviderRef,
                     aiProviderRef: response.data.aiProviderRef,
                     hasChatInstructions: !!response.data.chatInstructions,
@@ -592,8 +596,21 @@ export class AdminApiService {
     async getRoomMetadata(roomUrl: string): Promise<{ universeName: string; worldName: string; roomName: string } | null> {
         // Check cache first
         const cached = this.roomMetadataCache.get(roomUrl);
-        if (cached && Date.now() - cached.cachedAt < this.ROOM_METADATA_CACHE_TTL) {
+        const cacheAge = cached ? Date.now() - cached.cachedAt : Infinity;
+        
+        if (cached && cacheAge < this.ROOM_METADATA_CACHE_TTL) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Using cached room metadata for ${roomUrl} (cached ${Math.round(cacheAge / 1000)}s ago):`, cached.data);
+            }
             return cached.data;
+        }
+        
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            if (cached) {
+                console.log(`[AdminApiService] Cache expired for ${roomUrl} (age: ${Math.round(cacheAge / 1000)}s, TTL: ${this.ROOM_METADATA_CACHE_TTL / 1000}s), fetching fresh data`);
+            } else {
+                console.log(`[AdminApiService] No cache for ${roomUrl}, fetching fresh data`);
+            }
         }
 
         let result: { universeName: string; worldName: string; roomName: string } | null = null;
@@ -654,6 +671,13 @@ export class AdminApiService {
                 data: result,
                 cachedAt: Date.now(),
             });
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Cached room metadata for ${roomUrl}: ${result.universeName}/${result.worldName}/${result.roomName}`);
+            }
+        } else {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[AdminApiService] Failed to get room metadata for ${roomUrl}, result is null`);
+            }
         }
 
         return result;
