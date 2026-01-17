@@ -107,7 +107,11 @@
                 saveTimeout = setTimeout(() => {
                     void (async () => {
                         try {
+                            // Extract behaviorType from behaviorConfig if present, or use top-level
+                            const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
+
                             await botApiService.updateBot(bot.id, {
+                                behaviorType, // Include behaviorType explicitly to ensure it's saved
                                 behaviorConfig: bot.behaviorConfig,
                             });
                             lastSavedBotConfig = currentConfig;
@@ -152,7 +156,11 @@
                                     chatInstructions: bot.chatInstructions?.substring(0, 50),
                                 });
                             }
+                            // Include behaviorType to ensure it's saved when AI config changes
+                            const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
+
                             await botApiService.updateBot(bot.id, {
+                                behaviorType, // Include behaviorType explicitly to ensure it's saved
                                 aiProviderRef: bot.aiProviderRef,
                                 chatInstructions: bot.chatInstructions,
                             });
