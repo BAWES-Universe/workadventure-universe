@@ -377,7 +377,7 @@ export class BotAPI {
                     position,
                     behaviorConfig,
                     behaviorType,
-                });
+                } as Partial<BotConfiguration>);
 
                 if (!result.updated) {
                     res.status(404).json({
@@ -518,6 +518,7 @@ export class BotAPI {
                         behaviorType: updates.behaviorType,
                         hasBehaviorConfig: 'behaviorConfig' in updates,
                         behaviorConfigKeys: updates.behaviorConfig ? Object.keys(updates.behaviorConfig) : [],
+                        allUpdateKeys: Object.keys(updates),
                     });
                 }
 
@@ -542,7 +543,7 @@ export class BotAPI {
                 for (const [key, value] of Object.entries(updates)) {
                     // Only include defined values (exclude undefined, but allow null if needed)
                     if (value !== undefined) {
-                        updatesToApply[key as keyof BotConfiguration] = value;
+                        (updatesToApply as any)[key] = value;
                     }
                 }
 
@@ -559,15 +560,21 @@ export class BotAPI {
                     updatedConfig.behaviorType = existingConfig.behaviorType;
                 }
 
-                // ADD DEBUG LOGGING BEFORE SAVE
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[BotAPI] Saving config for ${botId} with behaviorType: ${updatedConfig.behaviorType}`);
-                }
-
                 // CRITICAL FIX: Only save behaviorType to Admin API if it was explicitly provided in updates
                 // This prevents stale Admin API data from overwriting the running bot's behavior
                 // If behaviorType was not in updates, don't save it (preserve what's in Admin API without overwriting)
                 const shouldSaveBehaviorType = 'behaviorType' in updates;
+                
+                // ADD DEBUG LOGGING BEFORE SAVE
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotAPI] Saving config for ${botId}:`, {
+                        behaviorTypeInUpdates: 'behaviorType' in updates,
+                        behaviorTypeValue: updates.behaviorType,
+                        existingBehaviorType: existingConfig.behaviorType,
+                        willSaveBehaviorType: shouldSaveBehaviorType,
+                        updatedConfigBehaviorType: updatedConfig.behaviorType,
+                    });
+                }
                 
                 if (!shouldSaveBehaviorType) {
                     // behaviorType was not provided in updates - don't save it to Admin API
@@ -594,6 +601,10 @@ export class BotAPI {
                     finalConfigToSave.behaviorType = existingConfig.behaviorType;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[BotAPI] Preserving existing behaviorType in Admin API: ${existingConfig.behaviorType} (not in updates)`);
+                    }
+                } else {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotAPI] Saving behaviorType to Admin API: ${finalConfigToSave.behaviorType} (was in updates)`);
                     }
                 }
                 
