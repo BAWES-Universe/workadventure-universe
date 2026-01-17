@@ -135,11 +135,19 @@ export class LMStudioProvider implements AIProvider {
 
                             // Handle tool calls
                             if (delta?.tool_calls) {
-                                const toolCalls = delta.tool_calls.map((tc: any) => ({
-                                    id: tc.id,
-                                    name: tc.function?.name || '',
-                                    arguments: tc.function?.arguments || '{}',
-                                }));
+                                const toolCalls = delta.tool_calls.map((tc: any) => {
+                                    // Use empty string instead of '{}' for undefined arguments
+                                    // This allows proper accumulation of streamed arguments
+                                    const toolCall = {
+                                        id: tc.id,
+                                        name: tc.function?.name || '',
+                                        arguments: tc.function?.arguments || '',
+                                    };
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.log(`[LMStudioProvider] Tool call chunk: id=${toolCall.id}, name=${toolCall.name}, args="${toolCall.arguments.substring(0, 50)}"`);
+                                    }
+                                    return toolCall;
+                                });
                                 yield {
                                     content: '',
                                     done: false,

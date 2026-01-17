@@ -2,7 +2,7 @@
  * BaseBehavior - Abstract base class for all bot behaviors
  */
 
-import type { BotClient } from '../client/BotClient';
+import { BotClient } from '../client/BotClient';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
@@ -43,6 +43,17 @@ export abstract class BaseBehavior {
     protected originalPosition: PositionInterface | null = null; // Position to return to after summon (set on first summon only)
     protected spawnPosition: PositionInterface | null = null; // Bot's spawn/assigned position (set when bot is initialized)
     protected isReturning = false; // Track if bot is returning to original position (for speed matching)
+
+    // Leading state - track when bot is leading people to a destination
+    protected isLeading = false;
+    protected leadingPersonUuid: string | null = null;
+    protected leadingTarget: { type: 'person' | 'area'; name: string; position: PositionInterface } | null = null;
+    protected leadingStartPosition: PositionInterface | null = null; // Position where leading started
+    protected leadingSpaceName: string | null = null; // Space name that was active during leading (for goodbye message)
+    protected isSendingGoodbye = false; // Track if we're currently sending goodbye message (prevent returnToAssignedSpace)
+    protected justCompletedLeading: { targetPersonId: number | null; followerUuid: string | null } | null = null; // Track when we just completed leading to trigger special greeting
+    protected preparedGoodbyeMessage: string | null = null; // Message prepared in advance while still leading
+    protected isPreparingGoodbye = false; // Track if we're currently preparing the goodbye message
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -275,16 +286,18 @@ export abstract class BaseBehavior {
                     }
                 } else {
                     // Same player, but they might have moved - update facing
-                    // For patrol bots, ensure we're still stopped (unless summoned and moving)
+                    // For patrol bots, ensure we're still stopped (unless summoned/leading and moving)
                     const isSummonedAndMoving = this.isSummoned && this.bot.getState().isMoving();
-                    if (shouldStopForPlayers && !isSummonedAndMoving && this.bot.getState().isMoving()) {
+                    const isLeadingAndMoving = this.isLeading && this.bot.getState().isMoving();
+                    // Don't stop if bot is leading or summoned and moving
+                    if (shouldStopForPlayers && !isSummonedAndMoving && !isLeadingAndMoving && this.bot.getState().isMoving()) {
                         if (this.bot.getIsFollowingPath()) {
                             this.bot.cancelPathfinding();
                         }
                         this.bot.stop();
                     }
-                    // Face the player (always face, unless summoned and still moving)
-                    if (!isSummonedAndMoving) {
+                    // Face the player (always face, unless summoned/leading and still moving)
+                    if (!isSummonedAndMoving && !isLeadingAndMoving) {
                         this.facePosition(closestPos);
                     }
                 }
@@ -313,7 +326,13 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      */
     onSpaceJoined(spaceName: string): void {
-        // Default: do nothing
+        // If leading and space name not set yet, set it now (space was just created)
+        if (this.isLeading && !this.leadingSpaceName) {
+            this.leadingSpaceName = spaceName;
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Leading space name set to: ${spaceName}`);
+            }
+        }
     }
 
     /**
@@ -321,6 +340,42 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      */
     onSpaceLeft(spaceName: string): void {
+        // Clear justCompletedLeading flag if we left the space before greeting was sent
+        // BUT: Don't clear it if we're still leading (we intentionally left to join target's space)
+        if (!this.isLeading) {
+            this.justCompletedLeading = null;
+        }
+        
+        // If we just finished leading (not currently leading but have leadingStartPosition), check if follower left
+        if (!this.isLeading && this.leadingStartPosition) {
+            // If we're sending goodbye, don't return yet - wait for message to complete
+            if (this.isSendingGoodbye) {
+                return;
+            }
+            // Check if any followers are still nearby
+            const followersStillNearby = this.checkFollowerStillNearby();
+            if (!followersStillNearby) {
+                // All followers left, return to where we started leading
+                this.returnAfterLeading();
+                return;
+            }
+            // If followers still nearby, don't return yet - wait for them to leave
+            return;
+        }
+        
+        // If we're leading, don't return to assigned space - we're moving to a target
+        if (this.isLeading) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Left space ${spaceName} while leading - not returning to assigned space`);
+            }
+            return;
+        }
+        
+        // If we're sending goodbye message, don't return to assigned space yet
+        if (this.isSendingGoodbye) {
+            return;
+        }
+        
         // If summoned and player left, return to original position
         if (this.isSummoned && this.summonedPlayerUuid) {
             // Check if the summoned player is still nearby
@@ -342,22 +397,35 @@ export abstract class BaseBehavior {
     startSummon(playerUuid: string, targetPosition: PositionInterface): void {
         if (!this.bot) return;
 
-        // Check if bot is engaged with someone else - don't allow summon if busy
-        if (this.engagedWithUsers.size > 0 || this.isEngaged) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Behavior] Bot cannot be summoned - currently engaged with ${this.engagedWithUsers.size} user(s)`);
-            }
-            throw new Error('Bot is currently engaged with another player and cannot be summoned');
-        }
+        // Always sync isEngaged with actual engagedWithUsers size FIRST to avoid stale state
+        const actualEngagedCount = this.engagedWithUsers.size;
+        this.isEngaged = actualEngagedCount > 0;
 
-        // If bot was returning, cancel the return and start new summon
+        // If bot was returning (from summon or leading), cancel the return and start new summon
+        // Allow summoning even if engaged when returning (returning is a transitional state)
         if (this.isReturning) {
             console.log(`[Behavior] Bot was returning, canceling return and starting new summon`);
             this.isReturning = false;
+            // If returning from leading, clear leadingStartPosition (summon will use originalPosition)
+            if (this.leadingStartPosition) {
+                this.leadingStartPosition = null;
+            }
             // Cancel any ongoing return pathfinding
             if (this.bot.getIsFollowingPath()) {
                 this.bot.cancelPathfinding();
             }
+            // Clear engagement state when returning (bot is transitioning)
+            this.engagedWithUsers.clear();
+            this.isEngaged = false;
+        } else {
+            // Check if bot is engaged with someone else - don't allow summon if busy (unless returning)
+            // Only check the actual size, not the stale isEngaged flag
+            if (actualEngagedCount > 0) {
+                console.log(`[Behavior] Bot cannot be summoned - currently engaged with ${actualEngagedCount} user(s)`);
+                throw new Error('Bot is currently engaged with another player and cannot be summoned');
+            }
+            // If we get here, bot is not engaged - ensure isEngaged is false
+            this.isEngaged = false;
         }
         
         this.isSummoned = true;
@@ -427,6 +495,172 @@ export abstract class BaseBehavior {
         const distance = Math.sqrt(dx * dx + dy * dy);
         
         return distance < 200; // Player is still nearby
+    }
+
+    /**
+     * Check if follower is still nearby
+     * Returns true if any follower is still in proximity, false if they all left
+     */
+    protected checkFollowerStillNearby(): boolean {
+        if (!this.bot) return false;
+
+        const allPeople = this.bot.getAllPeople();
+        const botPos = this.bot.getState().getPosition();
+        
+        // Find nearby non-bot people (followers)
+        const nearbyPeople = allPeople.filter(p => {
+            if (BotClient.isBot(p.userId)) return false;
+            const dx = p.position.x - botPos.x;
+            const dy = p.position.y - botPos.y;
+            return Math.sqrt(dx * dx + dy * dy) < 200;
+        });
+        
+        return nearbyPeople.length > 0;
+    }
+
+    /**
+     * Return to position where leading started (similar to endSummon)
+     */
+    protected returnAfterLeading(): void {
+        if (!this.bot || !this.leadingStartPosition) return;
+
+        console.log(`[Behavior] Follower left after leading, returning to start position: (${this.leadingStartPosition.x}, ${this.leadingStartPosition.y})`);
+
+        // Store return position but DON'T clear leadingStartPosition yet (similar to endSummon)
+        // We need it to check when we've reached it, and to preserve it if interrupted
+        const startPos = this.leadingStartPosition;
+        this.leadingPersonUuid = null;
+        this.leadingSpaceName = null; // Clear space name after return
+        // Set returning flag so bot moves at 3x speed (matching summon/leading speed)
+        this.isReturning = true;
+
+        // Return to start position if we have one
+        const botPos = this.bot.getState().getPosition();
+        const dx = startPos.x - botPos.x;
+        const dy = startPos.y - botPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        // If not at start position, move back using pathfinding
+        if (distance > 50) {
+            console.log(`[Behavior] Bot at (${Math.round(botPos.x)}, ${Math.round(botPos.y)}), returning to (${Math.round(startPos.x)}, ${Math.round(startPos.y)}), distance: ${Math.round(distance)}px`);
+            
+            // Reset path end time so we can immediately start return path
+            (this.bot as any).lastPathEndTime = 0;
+            
+            // Use pathfinding to return (will use 3x speed because isReturning is true)
+            // Match endSummon behavior exactly - clear leadingStartPosition only when return completes
+            this.bot.moveToWithPathfinding(startPos.x, startPos.y).then((success) => {
+                if (success) {
+                    console.log(`[Behavior] ✅ Return after leading pathfinding started to start position (3x speed)`);
+                } else {
+                    console.error(`[Behavior] ❌ Return after leading pathfinding failed, bot will stay at current position`);
+                    this.isReturning = false;
+                    this.leadingStartPosition = null; // Clear only on failure
+                }
+            }).catch((error) => {
+                console.error(`[Behavior] Error returning after leading:`, error);
+                this.isReturning = false;
+                this.leadingStartPosition = null; // Clear only on error
+            });
+        } else {
+            console.log(`[Behavior] Bot already at start position, no need to move`);
+            this.isReturning = false;
+            this.leadingStartPosition = null; // Clear when already at destination
+        }
+    }
+
+    /**
+     * Start leading - bot is leading people to a destination
+     * @param personUuid Person UUID (or 'group' for group leading)
+     * @param target Target destination (person or area)
+     */
+    startLeading(personUuid: string, target: { type: 'person' | 'area'; name: string; position: PositionInterface }): void {
+        if (!this.bot) return;
+
+        // If bot was returning, cancel the return and start leading
+        if (this.isReturning) {
+            console.log(`[Behavior] Bot was returning, canceling return and starting to lead`);
+            this.isReturning = false;
+            // Cancel any ongoing return pathfinding
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+        }
+
+        // If bot was summoned, cancel summon and start leading
+        if (this.isSummoned) {
+            console.log(`[Behavior] Bot was summoned, canceling summon and starting to lead`);
+            this.isSummoned = false;
+            this.summonedPlayerUuid = null;
+            // Cancel any ongoing summon pathfinding
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.cancelPathfinding();
+            }
+        }
+        
+        this.isLeading = true;
+        this.leadingPersonUuid = personUuid;
+        this.leadingTarget = target;
+        
+        // Store start position for return (only on first lead, similar to summon)
+        // If bot is returning from a previous lead, preserve the original start position
+        // This ensures bot always returns to spawn/assigned position, not the interrupted position
+        if (!this.leadingStartPosition) {
+            // Use spawn position if available (like summon does), otherwise use current position
+            if (this.spawnPosition) {
+                this.leadingStartPosition = { x: this.spawnPosition.x, y: this.spawnPosition.y };
+            } else {
+                const botPos = this.bot.getState().getPosition();
+                this.leadingStartPosition = { x: botPos.x, y: botPos.y };
+            }
+        }
+        // If leadingStartPosition already exists (from previous lead), keep it - don't overwrite
+        
+        // Store the current space name (the space we're in during follow)
+        // If not in a space yet, we'll set it when the space is created (when follower joins)
+        const currentSpaces = this.bot.getCurrentSpaces();
+        if (currentSpaces.length > 0) {
+            this.leadingSpaceName = currentSpaces[0];
+        } else {
+            // Not in a space yet - will be set when space is created
+            // This happens when the bot sends follow request and the person follows
+            this.leadingSpaceName = null;
+        }
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Behavior] Bot started leading to ${target.type} "${target.name}" at (${target.position.x}, ${target.position.y})`);
+        }
+    }
+
+    /**
+     * End leading - bot stops leading and can return to original position
+     * @param targetPersonId Optional: ID of the person we led to (for special greeting)
+     * @param followerUuid Optional: UUID of the person who was following (for special greeting)
+     */
+    endLeading(targetPersonId?: number, followerUuid?: string): void {
+        if (!this.bot) return;
+
+        // Send follow abort before clearing leading state
+        if (this.bot && typeof (this.bot as any).sendFollowAbort === 'function') {
+            (this.bot as any).sendFollowAbort();
+        }
+
+        // Store info about who we just led and to whom (for special greeting when bubble forms)
+        if (targetPersonId !== undefined && followerUuid !== undefined) {
+            this.justCompletedLeading = { targetPersonId, followerUuid };
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Bot completed leading - will send special greeting to person ${targetPersonId}`);
+            }
+        }
+
+        this.isLeading = false;
+        this.leadingPersonUuid = null;
+        this.leadingTarget = null;
+        // Don't clear leadingStartPosition or leadingSpaceName - keep them for potential return and message
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Behavior] Bot stopped leading`);
+        }
     }
 
     /**
@@ -504,16 +738,32 @@ export abstract class BaseBehavior {
 
         const assignedSpace = this.config.assignedSpace;
         const botPos = this.bot.getState().getPosition();
-        const dx = assignedSpace.center.x - botPos.x;
-        const dy = assignedSpace.center.y - botPos.y;
+        
+        // Prefer spawn position if available, otherwise use center of assigned space
+        let targetX: number;
+        let targetY: number;
+        
+        if (this.spawnPosition) {
+            // Return to spawn position (actual spawn point)
+            targetX = this.spawnPosition.x;
+            targetY = this.spawnPosition.y;
+        } else {
+            // Fallback to center of assigned space
+            targetX = assignedSpace.center.x;
+            targetY = assignedSpace.center.y;
+        }
+        
+        const dx = targetX - botPos.x;
+        const dy = targetY - botPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        // If outside assigned space, return to it using pathfinding
-        if (distance > assignedSpace.radius) {
-            // Calculate target position inside the assigned space (80% of radius from center)
-            const angle = Math.atan2(dy, dx);
-            const targetX = assignedSpace.center.x - Math.cos(angle) * (assignedSpace.radius * 0.8);
-            const targetY = assignedSpace.center.y - Math.sin(angle) * (assignedSpace.radius * 0.8);
+        // If outside assigned space or not at spawn, return to it using pathfinding
+        const distanceToCenter = Math.sqrt(
+            Math.pow(assignedSpace.center.x - botPos.x, 2) + 
+            Math.pow(assignedSpace.center.y - botPos.y, 2)
+        );
+        
+        if (distanceToCenter > assignedSpace.radius || distance > 50) {
             
             // Use pathfinding to return (walk back, don't teleport)
             if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
@@ -584,6 +834,14 @@ export abstract class BaseBehavior {
         
         this.engagedWithUsers.set(user.id, { spaceName, position: userPosition });
         this.isEngaged = this.engagedWithUsers.size > 0;
+        
+        // If leading and space name not set yet, set it now (space was just created)
+        if (this.isLeading && !this.leadingSpaceName) {
+            this.leadingSpaceName = spaceName;
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Leading space name set to: ${spaceName}`);
+            }
+        }
 
         // Face the player who just joined
         if (userPosition) {
@@ -650,8 +908,17 @@ export abstract class BaseBehavior {
         // Only update if direction actually changed
         if (oldDirection !== direction) {
             this.bot.getState().setDirection(direction);
-            this.bot.getState().setMoving(false);
-            this.bot.stopAndUpdate(); // Force immediate position/direction update to server
+            // If bot is leading, don't stop - just update direction while continuing to move
+            if (this.isLeading) {
+                // Update direction but keep moving - send position update without stopping
+                const currentPos = this.bot.getState().getPosition();
+                const isMoving = this.bot.getState().isMoving();
+                this.bot.sendPosition(currentPos, direction, isMoving);
+            } else {
+                // Not leading - stop and update (normal behavior)
+                this.bot.getState().setMoving(false);
+                this.bot.stopAndUpdate(); // Force immediate position/direction update to server
+            }
         }
     }
 

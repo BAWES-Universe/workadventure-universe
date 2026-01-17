@@ -177,6 +177,14 @@ export class BotPathfindingManager {
                 // Convert tile path to pixel path
                 const pixelPath = path.map(tile => this.tileToPixels(tile));
                 
+                // CRITICAL: Replace the first waypoint with the actual start position
+                // EasyStar returns the start tile center, but we need the exact pixel position
+                // This matches WorkAdventure's PathfindingManager behavior (line 53-54)
+                // This ensures the bot starts from its exact current position, not the tile center
+                if (pixelPath.length > 0) {
+                    pixelPath[0] = { x: start.x, y: start.y };
+                }
+                
                 // Cache the path
                 this.cachePath(cacheKey, pixelPath);
                 

@@ -132,9 +132,13 @@ export class AIService {
                     let areas: any[] = [];
                     if (this.mapDataService) {
                         areas = await this.mapDataService.getAreas(roomUrl);
-                        console.log(`[AIService] Upfront context fetch - Found ${areas.length} areas for ${roomUrl}:`, areas.map(a => a.name));
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Upfront context fetch - Found ${areas.length} areas for ${roomUrl}:`, areas.map(a => a.name));
+                        }
                     } else {
-                        console.log(`[AIService] Upfront context fetch - mapDataService not available`);
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Upfront context fetch - mapDataService not available`);
+                        }
                     }
                     
                     if (metadata) {
@@ -150,14 +154,20 @@ export class AIService {
                                 // Make positions more explicit and readable
                                 const areaDetails = areas.filter(a => a && a.name).map(a => `${a.name} is at coordinates (${a.x}, ${a.y})`).join('; ');
                                 mapContextInfo += `\n- Area locations (use these when asked "where is [area name]"): ${areaDetails}`;
-                                console.log(`[AIService] Upfront context - Including ${areaNames.length} areas: ${areaNames.join(', ')}`);
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] Upfront context - Including ${areaNames.length} areas: ${areaNames.join(', ')}`);
+                                }
                             } else {
                                 mapContextInfo += `\n- Areas: none`;
-                                console.log(`[AIService] Upfront context - No valid area names found (${areas.length} areas but no names)`);
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] Upfront context - No valid area names found (${areas.length} areas but no names)`);
+                                }
                             }
                         } else {
                             mapContextInfo += `\n- Areas: none`;
-                            console.log(`[AIService] Upfront context - No areas found`);
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[AIService] Upfront context - No areas found`);
+                            }
                         }
                     } else {
                         // Fallback to URL parsing
@@ -179,7 +189,9 @@ export class AIService {
                         }
                     }
                 } catch (error) {
-                    console.warn(`[AIService] Failed to fetch map context upfront:`, error);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.warn(`[AIService] Failed to fetch map context upfront:`, error);
+                    }
                 }
             }
 
@@ -219,7 +231,11 @@ CRITICAL ANTI-HALLUCINATION RULES:
 7. NEVER show tool call JSON, "[END_TOOL_REQUEST]", "[Area Name 1]", "[END_MAP_CONTEXT]", or ANY placeholder text in your response - these are NOT real data.
 8. NEVER use brackets around names like [test universe] or [test room]. Use the actual names directly: "test universe, test world, test room". Brackets are NOT part of the names.
 9. NEVER use placeholder text like "[Area Name]", "[Area Name 1]", "[END_MAP_CONTEXT]" - if areas exist, use their actual names from the context. If no areas exist, say "There are no areas defined here".
-10. Answer questions directly - NEVER ask the user questions back. NEVER respond with questions like "What is this place?" or "How can I help?". Just answer what they asked. If they say "cool" or "nice", just acknowledge it briefly. If they ask "whats that", answer based on conversation history, don't ask questions back.
+10. Answer questions directly - NEVER ask the user questions back. NEVER respond with questions like "What is this place?", "How can I help?", "How can I assist you today?", "What can I do for you?", "Would you like to talk to them?", "or go somewhere else?", or ANY other questions. Just answer what they asked with a statement. 
+    - If they say "hey", "hi", "hello", "how u doing", "whats up", "u good", or other casual greetings, respond naturally and briefly with a matching casual greeting or acknowledgment - NEVER ask how you can help. Examples: "Hey!" for "hey", "Hi!" for "hi", "I'm doing well!" for "how u doing".
+    - If they say "cool" or "nice", just acknowledge it briefly.
+    - If they ask "whats that", answer based on conversation history, don't ask questions back.
+    - After listing people, just state the facts - don't ask what they want to do.
 11. Always capitalize the first letter of your response and write in complete sentences with proper grammar.
 12. ALWAYS use the EXACT values from "Current Location Context" - copy them directly, never use placeholders, brackets, or make things up. If it says "Universe: test", use "test universe", NOT "[test universe]".
 
@@ -227,12 +243,14 @@ When someone asks about:
 - WHERE you are: "where are we", "what room", "what world", "what universe", "where inside" → ALWAYS mention universe, world, and room from "Current Location Context". Do NOT include area coordinates unless specifically asked about an area. Just give the location: "test universe, test world, test room".
 - WHAT is this place: "what is this place", "what is this", "what's here" → ALWAYS mention universe, world, and room first, then mention areas if they exist. Format: "[universe name] universe, [world name] world, [room name] room" + areas if any. Use the actual names from context, NOT placeholders with brackets.
 - WHAT the place is LIKE: "what is this place like", "describe this place" → Describe based on the room name from context, but do NOT invent fictional details
-- WHAT TO DO here: "what do we do here", "what can we do" → Suggest activities based on room/area names from context
+- WHAT TO DO here: "what do we do here", "what can we do", "whats there to do here" → Describe what's available (areas, activities) based on room/area names from context. Just describe - do NOT offer to take them anywhere or say "Follow me!" unless they explicitly ask to go somewhere.
 - Areas/sections: "what areas", "what areas are here", "any areas", "what's this area", "areas here?", "areas?" → Check "Current Location Context" above. If it shows "Areas in this room: Office Area" (or other area names), list those areas. If it shows "Areas: none", say "There are no areas defined here."
 - Area location: "where is [area name]", "where is the office area", "wheres that area", "where is it" (after mentioning an area) → Use the "Area locations" from "Current Location Context" above. Give the coordinates directly like "Office Area is at coordinates (596, 606)" or "It's at coordinates (596, 606)". Don't repeat the area name or location - just give coordinates.
-- Navigation requests: "can you take me to [area]", "i wanna go", "take me there" → Explain that you can't navigate yet, but you can tell them where it is. Give the coordinates from "Area locations" in the context. Don't ask "Let me know if you'd like to go there" - just explain you can't navigate and give the location.
+- Navigation requests: "can you take me to [person/area]", "show me where [person/area] is", "lead me to [person/area]", "take me to [person/area]", "i wanna go to [person/area]", "take me there" → **CRITICAL: When someone asks you to take them somewhere, you MUST call the navigate_to tool FIRST. Do NOT generate any response text like "Follow me!" or "I'll take you there" until AFTER you have called the tool. The tool call must happen BEFORE any text response. For example, if they say "take me to the office area", you must: 1) Call navigate_to with targetType="area" and targetName="Office Area", 2) THEN respond with "Follow me!" or "I'll take you there".**
+- **CRITICAL: Do NOT say "Follow me!" or offer to take someone somewhere unless they explicitly ask to go. When describing what's available ("whats there to do here"), just describe - don't offer to lead.**
+- **If you already called navigate_to and said "Follow me!", and the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading.**
 - Context questions: "whats that", "where", "whats in there", "whats this" → Look at the "Recent Conversation" in Conversation Context to understand what they're referring to. If they just asked "where we at" and you said "test universe, test world, test room", then "whats that" refers to that location. If they just asked about an area, "where is it" refers to that area's coordinates. Answer directly without asking questions back.
-- Who's on the map: "who's here", "who's online" → Call get_people_on_map tool and list actual people
+- Who's on the map: "who's here", "who's online" → **IMMEDIATELY call get_people_on_map tool FIRST. Do NOT say "I'll check" or announce you're checking. Just call the tool silently and then list the actual people from the results.**
 - Your position: "where are you" → Use get_bot_position tool
 
 CRITICAL: 
@@ -245,23 +263,29 @@ CRITICAL:
 
 Remember: 
 - YOU call the tools silently - never mention them in your response. Just call them and use the results to answer.
-- Be conversational and natural - don't repeat the same response for different questions
-- Vary your responses - if someone says "hey", "hows it going", "what up", respond differently each time, don't repeat the same greeting
+- **CRITICAL: Vary your responses - NEVER repeat the same response for different questions or greetings**
+- **For casual greetings, respond differently each time:**
+  * "hey" → "Hey!" or "Hey there!" or "Hey, what's up!"
+  * "hi" → "Hi!" or "Hi there!" or "Hey!"
+  * "hello" → "Hello!" or "Hey!" or "Hi!"
+  * "how u doing" / "hows it going" / "u good" → "I'm doing well!" or "Pretty good, thanks!" or "Doing great!" or "All good!"
+  * "whats up" → "Not much!" or "Just hanging out!" or "What's up!" or "Hey!"
+- **NEVER ask questions back** - NEVER say "How can I help you today?", "How can I assist you?", "What can I do for you?", or ANY other questions. Just respond naturally to what they said with a statement.
+- Be conversational and natural - match the casual tone of their greeting
 - Answer questions directly and contextually:
   * "where are we" → Give location once
   * "what's here" or "whats this" (after location mentioned) → Describe what this place is, mention areas if they exist, don't just repeat location
   * "what's in the office" or "where is [area]" or "wheres that area" → Just give the coordinates from "Area locations" in context, don't repeat the area name or full location
-  * "can you take me to [area]" or "i wanna go" → Explain you can't navigate yet, but give the coordinates. Don't ask questions back.
+  * "whats there to do here" or "what can we do" → Just describe what's available (areas, activities). Do NOT offer to take them or say "Follow me!" - wait for them to explicitly ask to go somewhere.
+  * "can you take me to [person/area]" or "show me where [person/area] is" or "lead me to [person/area]" or "take me there" → **ONLY when explicitly asked to go**, call navigate_to tool and respond naturally like "Follow me!" or "I'll take you there"
+  * After calling get_people_on_map: List the people directly like "Khalid ABC is here." or "Khalid ABC and John are here." Do NOT mention coordinates or positions - people don't know about coordinates. Do NOT ask "Would you like to talk to them?" or any other questions. Just state the facts.
   * "areas?" or "any areas" → Check "Current Location Context" for areas. If "Areas in this room: Office Area" exists, say "There's an area called Office Area" or list them. If "Areas: none", say "There are no areas defined here."
 - Don't append or repeat information - if you already said where you are, just answer the new question
 - Be natural - like a real conversation where you don't repeat yourself
 - Different questions need different responses - don't parrot the same answer`;
 
-            // Add /no_think for Qwen models to disable reasoning
+            // Check if Qwen model (for /no_think directive)
             const isQwenModel = config.model.toLowerCase().includes('qwen');
-            if (isQwenModel) {
-                systemPrompt += '\n\n/no_think';
-            }
 
             // Define tools for function calling
             const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
@@ -272,29 +296,111 @@ Remember:
             let streamCompleted = false;
             let accumulatedContent = '';
             let pendingToolCalls: ToolCall[] = [];
+            // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
+            const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
+
+            // For Qwen models, add /no_think to user message instead of system prompt
+            const userMessageForQwen = isQwenModel 
+                ? message + '\n\n/no_think'
+                : message;
 
             try {
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
                     systemPrompt,
-                    message,
+                    userMessageForQwen,
                     config,
                     tools.length > 0 ? tools : undefined
                 )) {
                     // Collect tool calls first (before yielding content)
+                    // Tool calls may be streamed with partial arguments, so we need to accumulate them by ID
                     if (chunk.toolCalls && chunk.toolCalls.length > 0) {
-                        console.log(`[AIService] Received tool calls:`, chunk.toolCalls.map(tc => ({ name: tc.name, id: tc.id })));
-                        pendingToolCalls.push(...chunk.toolCalls);
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Received tool calls:`, chunk.toolCalls.map(tc => ({ name: tc.name, id: tc.id, argsLength: tc.arguments?.length || 0 })));
+                        }
+                        
+                        // Accumulate tool call arguments by ID (arguments may come in multiple chunks)
+                        // Note: In streaming mode, tool calls may come with undefined ID in some chunks
+                        // We need to handle both cases: with ID (proper streaming) and without ID (fallback)
+                        for (const toolCall of chunk.toolCalls) {
+                            if (toolCall.id) {
+                                // Proper streaming with ID - accumulate by ID
+                                const existing = toolCallAccumulator.get(toolCall.id);
+                                if (existing) {
+                                    // Append to existing arguments (streaming)
+                                    // Skip '{}' default - only append actual argument strings
+                                    if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                        existing.arguments += toolCall.arguments;
+                                    }
+                                    // Update name if provided (should be same, but just in case)
+                                    if (toolCall.name) {
+                                        existing.name = toolCall.name;
+                                    }
+                                } else {
+                                    // New tool call - initialize
+                                    // Skip '{}' default - only initialize with actual argument strings
+                                    const initArgs = (toolCall.arguments && toolCall.arguments !== '{}') ? toolCall.arguments : '';
+                                    toolCallAccumulator.set(toolCall.id, {
+                                        id: toolCall.id,
+                                        name: toolCall.name || '',
+                                        arguments: initArgs
+                                    });
+                                }
+                            } else if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                // No ID but has arguments - this is a continuation chunk
+                                // Find the most recent tool call (by insertion order) and append to it
+                                // In practice, there should only be one active tool call at a time
+                                if (toolCallAccumulator.size > 0) {
+                                    // Get the most recently added tool call (last in map iteration order)
+                                    const entries = Array.from(toolCallAccumulator.entries());
+                                    const lastEntry = entries[entries.length - 1];
+                                    if (lastEntry) {
+                                        lastEntry[1].arguments += toolCall.arguments;
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.log(`[AIService] Appended args to tool call ${lastEntry[0]}: "${lastEntry[1].arguments.substring(0, 100)}"`);
+                                        }
+                                    }
+                                } else {
+                                    // No existing tool call to append to - log warning
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.warn(`[AIService] Tool call chunk without ID and no existing tool call to append to: args="${toolCall.arguments.substring(0, 50)}"`);
+                                    }
+                                }
+                            } else {
+                                // No ID and no arguments - skip
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.warn(`[AIService] Tool call chunk without ID and no arguments: name=${toolCall.name}`);
+                                }
+                            }
+                        }
                     }
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
-                    if (chunk.done && pendingToolCalls.length > 0) {
-                        console.log(`[AIService] Executing ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => tc.name));
+                    if (chunk.done && toolCallAccumulator.size > 0) {
+                        // Convert accumulated tool calls to array (arguments should now be complete)
+                        pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
+                            id: tc.id,
+                            name: tc.name,
+                            // If arguments are empty after accumulation, default to '{}' for JSON parsing
+                            arguments: tc.arguments || '{}'
+                        }));
+                        
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] 🔧 About to execute ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => ({ 
+                                name: tc.name, 
+                                id: tc.id, 
+                                argsPreview: tc.arguments.substring(0, 100),
+                                argsLength: tc.arguments.length
+                            })));
+                        }
                         // Execute tool calls and continue conversation
                         const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
                         pendingToolCalls = [];
+                        toolCallAccumulator.clear();
 
-                        console.log(`[AIService] Tool results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, areasCount: tr.result?.areas?.length || 0 })));
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] ✅ Tool execution completed. Results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, success: tr.result?.success, error: tr.result?.error, areasCount: tr.result?.areas?.length || 0 })));
+                        }
 
                         // Continue conversation with tool results
                         const toolResultsMessage = this.formatToolResults(toolResults);
@@ -424,7 +530,7 @@ CRITICAL ANTI-HALLUCINATION RULES:
             // Calculate cost
             const cost = this.calculateCost(providerId, metadata);
 
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[AIService] trackUsage called: botId=${botId}, providerId=${providerId}, tokensUsed=${metadata.tokensUsed}, cost=${cost}`);
             }
 
@@ -441,7 +547,7 @@ CRITICAL ANTI-HALLUCINATION RULES:
                 timestamp: new Date().toISOString(),
             });
 
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[AIService] Usage tracked successfully for ${providerId}`);
             }
         } catch (error) {
@@ -543,6 +649,30 @@ CRITICAL ANTI-HALLUCINATION RULES:
                     },
                 },
             });
+
+            // Tool: Navigate to a person or area and lead someone there
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'navigate_to',
+                    description: 'CRITICAL: You MUST call this tool when someone asks you to take them somewhere. Do NOT just say "Follow me!" without calling this tool first. This tool navigates to a person or area and makes people follow you. Use this when someone asks you to "take me to X", "show me where Y is", "lead me to Z", "can you take me to [place]", "take me there", or similar navigation requests. You MUST call this tool BEFORE generating any response text. If they say "take me there" or "lead me there", look at the recent conversation to see what area or person they\'re referring to (e.g., if you just mentioned "Office Area", "there" refers to "Office Area").',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            targetType: {
+                                type: 'string',
+                                enum: ['person', 'area'],
+                                description: 'Whether navigating to a person or an area'
+                            },
+                            targetName: {
+                                type: 'string',
+                                description: 'Name of the person or area to navigate to. For people, use their name as it appears in get_people_on_map. For areas, use the area name from the location context. If they say "there" or "that place", look at recent conversation to find the area/person name they\'re referring to.'
+                            }
+                        },
+                        required: ['targetType', 'targetName']
+                    },
+                },
+            });
         }
 
         // Removed get_map_context and get_map_areas - location and areas are now provided upfront in system prompt
@@ -564,12 +694,17 @@ CRITICAL ANTI-HALLUCINATION RULES:
         
         if (validToolCalls.length !== toolCalls.length) {
             const invalidCalls = toolCalls.filter(tc => !tc || !tc.name || tc.name.trim() === '');
-            console.warn(`[AIService] Filtered out ${invalidCalls.length} invalid tool calls:`, invalidCalls);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[AIService] Filtered out ${invalidCalls.length} invalid tool calls:`, invalidCalls);
+            }
         }
         
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
             try {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] 🔧 Executing tool: ${toolCall.name}, id: ${toolCall.id}, botClient: ${botClient ? 'available' : 'missing'}`);
+                }
                 let result: any;
 
                 switch (toolCall.name) {
@@ -597,10 +732,148 @@ CRITICAL ANTI-HALLUCINATION RULES:
                         }
                         break;
 
+                    case 'navigate_to':
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] 🔧 Executing navigate_to tool with raw arguments:`, toolCall.arguments);
+                            console.log(`[AIService] 📍 Bot client available: ${botClient ? 'YES' : 'NO'}`);
+                        }
+                        if (!botClient) {
+                            console.error('[AIService] ❌ Bot client not available for navigate_to');
+                            result = { error: 'Bot client not available' };
+                            break;
+                        }
+                        
+                        try {
+                            // Parse JSON arguments string
+                            let parsedArgs: any = {};
+                            try {
+                                parsedArgs = typeof toolCall.arguments === 'string' 
+                                    ? JSON.parse(toolCall.arguments) 
+                                    : toolCall.arguments || {};
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] 📋 Parsed navigate_to arguments:`, parsedArgs);
+                                }
+                            } catch (parseError) {
+                                console.error('[AIService] ❌ Failed to parse tool arguments:', parseError);
+                                result = { error: 'Invalid tool arguments format' };
+                                break;
+                            }
+                            
+                            const targetType = parsedArgs.targetType;
+                            const targetName = parsedArgs.targetName;
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[AIService] 📍 Resolving target: type=${targetType}, name=${targetName}`);
+                            }
+                            
+                            if (!targetType || !targetName) {
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.error(`[AIService] ❌ Missing parameters: targetType=${targetType}, targetName=${targetName}`);
+                                }
+                                result = { error: 'Missing required parameters: targetType and targetName' };
+                                break;
+                            }
+                            
+                            let targetPosition: { x: number; y: number } | null = null;
+                            
+                            if (targetType === 'person') {
+                                // Find person by name
+                                const people = botClient.getAllPeople();
+                                const targetPerson = people.find(p => 
+                                    !BotClient.isBot(p.userId) && 
+                                    p.name && 
+                                    p.name.toLowerCase().includes(targetName.toLowerCase())
+                                );
+                                
+                                if (!targetPerson) {
+                                    result = { error: `Could not find person named "${targetName}"` };
+                                    break;
+                                }
+                                
+                                targetPosition = {
+                                    x: targetPerson.position.x,
+                                    y: targetPerson.position.y,
+                                };
+                            } else if (targetType === 'area') {
+                                // Find area by name
+                                if (!this.mapDataService) {
+                                    result = { error: 'Map data service not available' };
+                                    break;
+                                }
+                                
+                                const roomUrl = botClient.getRoomUrl();
+                                const areas = await this.mapDataService.getAreas(roomUrl);
+                                const targetArea = areas.find(a => 
+                                    a.name && 
+                                    a.name.toLowerCase().includes(targetName.toLowerCase())
+                                );
+                                
+                                if (!targetArea) {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error(`[AIService] ❌ Could not find area named "${targetName}". Available areas:`, areas.map(a => a.name));
+                                    }
+                                    result = { error: `Could not find area named "${targetName}"` };
+                                    break;
+                                }
+                                
+                                // Use center of area
+                                // Note: Area coordinates are (x, y) for top-left corner, so center is (x + width/2, y + height/2)
+                                targetPosition = {
+                                    x: targetArea.x + targetArea.width / 2,
+                                    y: targetArea.y + targetArea.height / 2,
+                                };
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] ✅ Found area "${targetName}": bounds (${targetArea.x}, ${targetArea.y}) size ${targetArea.width}x${targetArea.height}, center at (${targetPosition.x}, ${targetPosition.y})`);
+                                }
+                            } else {
+                                result = { error: `Invalid targetType: ${targetType}. Must be 'person' or 'area'` };
+                                break;
+                            }
+                            
+                            if (!targetPosition) {
+                                result = { error: 'Could not resolve target position' };
+                                break;
+                            }
+                            
+                            // Get person UUID from engaged users (use first person in conversation)
+                            // Since follow request goes to everyone in the space, we can use a placeholder
+                            // The actual follow request will be sent to the group
+                            const personUuid = 'group'; // Placeholder - follow goes to group anyway
+                            
+                            // Call leadPersonToTarget
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[AIService] 🚀 Calling leadPersonToTarget: type=${targetType}, name=${targetName}, position=(${targetPosition.x}, ${targetPosition.y})`);
+                            }
+                            try {
+                                await botClient.leadPersonToTarget(personUuid, {
+                                    type: targetType,
+                                    name: targetName,
+                                    position: targetPosition,
+                                });
+                                
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] ✅ leadPersonToTarget completed successfully`);
+                                }
+                                result = { 
+                                    success: true, 
+                                    message: `Started navigating to ${targetName}` 
+                                };
+                            } catch (leadError: any) {
+                                // If leadPersonToTarget throws, it means navigation failed
+                                console.error('[AIService] ❌ leadPersonToTarget failed:', leadError);
+                                result = { 
+                                    error: leadError.message || 'Failed to start navigation. The bot may be too close to the target or pathfinding is unavailable.' 
+                                };
+                            }
+                        } catch (error: any) {
+                            console.error('[AIService] Error executing navigate_to tool:', error);
+                            result = { error: error.message || 'Failed to navigate' };
+                        }
+                        break;
+
 
                     default:
                         // Log unknown tool for debugging
-                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
                         }
                         result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
@@ -630,11 +903,19 @@ CRITICAL ANTI-HALLUCINATION RULES:
                 if (r.result.length === 0) {
                     return `get_people_on_map: There are no other people on the map currently.`;
                 }
-                const peopleList = r.result.map((p: any) => `${p.name} (at position ${p.position.x}, ${p.position.y})`).join(', ');
+                const peopleList = r.result.map((p: any) => p.name).join(', ');
                 return `get_people_on_map: People currently on the map: ${peopleList}`;
             }
             if (r.name === 'get_bot_position' && r.result && !r.result.error) {
                 return `get_bot_position: Your current position is x: ${r.result.x}, y: ${r.result.y}`;
+            }
+            if (r.name === 'navigate_to' && r.result) {
+                if (r.result.error) {
+                    return `navigate_to: Error - ${r.result.error}. If navigation failed, explain the issue to the user (e.g., "I'm too close to that location" or "I couldn't find a path there"). Do NOT say you can't take them if you haven't tried yet - only say that if there was an actual error.`;
+                }
+                if (r.result.success) {
+                    return `navigate_to: Successfully started navigating. You are now leading people to the destination. The bot has started moving. If the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading. Respond naturally like "I'm leading you there now, just follow me!" or "Come on, follow me!" - don't mention tools or technical details.`;
+                }
             }
             // Fallback to JSON for other results or errors
             return `${r.name}: ${JSON.stringify(r.result)}`;

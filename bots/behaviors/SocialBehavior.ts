@@ -8,6 +8,7 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
 import { movementLogger } from '../utils/MovementLogger';
+import { BotClient } from '../client/BotClient';
 
 export interface SocialBehaviorConfig extends BehaviorConfig {
     type: 'social';
@@ -58,19 +59,109 @@ export class SocialBehavior extends BaseBehavior {
         const config = this.config as SocialBehaviorConfig;
         const currentTime = Date.now();
 
-        // If bot is summoned, allow movement to player (don't stop for normal behavior logic)
-        // The bot will stop when it reaches the player position
-        if (this.isSummoned) {
-            // During summon, only stop if we've reached the target and are in a conversation space
-            // Otherwise, continue moving towards the summoned player
+        // If bot is summoned or leading, allow movement (don't stop for normal behavior logic)
+        // The bot will stop when it reaches the target position
+        if (this.isSummoned || this.isLeading) {
+            // When leading, get the target from leadingTarget
+            let targetPos: { x: number; y: number } | null = null;
+            if (this.isLeading && this.leadingTarget) {
+                targetPos = this.leadingTarget.position;
+            } else if (this.isSummoned && this.summonedPlayerUuid) {
+                targetPos = this.getSummonedPlayerPosition();
+            }
+            
+            // Check if we've reached the target position
+            if (targetPos) {
+                const botPos = this.bot.getState().getPosition();
+                const dx = targetPos.x - botPos.x;
+                const dy = targetPos.y - botPos.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // If we're close to the target (< 50px), stop and wait for bubble to initiate
+                if (distance < 50) {
+                    if (this.bot.getIsFollowingPath()) {
+                        this.bot.cancelPathfinding();
+                    }
+                    this.bot.stop();
+                    
+                    // If leading to a person, send goodbye message to follower, then return
+                    if (this.isLeading && this.leadingTarget?.type === 'person') {
+                        // Leading to a person - send goodbye message to follower, then return
+                        const targetPersonName = this.leadingTarget.name;
+                        
+                        // Find the follower (they should be nearby since they're following)
+                        const nearbyPlayers = this.bot.getNearbyPlayers(200); // Larger radius to find follower
+                        const followers = nearbyPlayers.filter(p => !BotClient.isBot(p.userId));
+                        
+                        if (followers.length > 0) {
+                            // Send goodbye message FIRST (before ending leading)
+                            // This ensures the person is still following and in the space
+                            this.sendPersonArrivalMessage(targetPersonName, followers).then(() => {
+                                // After message sent, end leading and return
+                                this.endLeading();
+                                this.returnAfterLeading();
+                            }).catch(error => {
+                                console.error(`[SocialBehavior] Error sending person arrival message:`, error);
+                                // Still end leading and return even if message failed
+                                this.endLeading();
+                                this.returnAfterLeading();
+                            });
+                        } else {
+                            // No followers found, just end leading and return
+                            this.endLeading();
+                            this.returnAfterLeading();
+                        }
+                    } else if (this.isLeading && this.leadingTarget?.type === 'area') {
+                        // Leading to an area - send arrival message to follower
+                        const areaName = this.leadingTarget.name;
+                        
+                        // Find the follower (they should be nearby since they're following)
+                        const nearbyPlayers = this.bot.getNearbyPlayers(200); // Larger radius to find follower
+                        const followers = nearbyPlayers.filter(p => !BotClient.isBot(p.userId));
+                        
+                        if (followers.length > 0) {
+                            // Send arrival and goodbye message FIRST (before ending leading)
+                            // This ensures the person is still following and in the space
+                            this.sendAreaArrivalMessage(areaName, followers).then(() => {
+                                // After message sent, end leading and return
+                                this.endLeading();
+                                this.returnAfterLeading();
+                            }).catch(error => {
+                                console.error(`[SocialBehavior] Error sending area arrival message:`, error);
+                                // Still end leading and return even if message failed
+                                this.endLeading();
+                                this.returnAfterLeading();
+                            });
+                        } else {
+                            // No followers found, just end leading and return
+                            this.endLeading();
+                            this.returnAfterLeading();
+                        }
+                    } else {
+                        // Not leading, just end leading normally
+                        this.endLeading();
+                    }
+                    
+                    this.facePosition(targetPos);
+                    this.onBotPositionUpdated();
+                    return;
+                }
+            }
+            
+            // During summon/leading, only stop if we've reached the target and are in a conversation space
+            // BUT: When leading, don't stop just because we're in a space - continue to target
             if (this.bot.getIsFollowingPath()) {
-                // Bot is moving to summoned player - allow it
+                // Bot is moving to target - allow it
                 this.onBotPositionUpdated();
                 return;
-            } else if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
-                // Bot reached player and is in conversation - stop and face
+            } else if ((this.currentSpaceName || this.engagedWithUsers.size > 0) && !this.isLeading) {
+                // Bot reached player and is in conversation - stop and face (only when summoned, not leading)
                 this.bot.stop();
                 this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return;
+            } else if (this.isLeading) {
+                // When leading, if path ended but we're not at target, continue (pathfinding will handle it)
                 this.onBotPositionUpdated();
                 return;
             } else {
@@ -122,7 +213,8 @@ export class SocialBehavior extends BaseBehavior {
         // Don't stop just because players are nearby - continue moving until actively engaging
         // Check both currentSpaceName (immediate) and engagedWithUsers (after users join)
         // CRITICAL: Check this BEFORE path following to prevent movement in bubbles
-        if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+        // BUT: When leading, don't stop just because we're in a space - continue to target
+        if ((this.currentSpaceName || this.engagedWithUsers.size > 0) && !this.isLeading) {
             // Actually in a conversation space - stop immediately and cancel any movement
             if (this.bot.getIsFollowingPath()) {
                 this.bot.cancelPathfinding();
@@ -192,6 +284,43 @@ export class SocialBehavior extends BaseBehavior {
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] onSpaceJoined: spaceName=${spaceName}, targetPlayerId=${this.targetPlayerId}, engagedWithUsers=${this.engagedWithUsers.size}`);
+        }
+
+        // Check if we just completed leading someone to this person
+        if (this.justCompletedLeading && this.justCompletedLeading.targetPersonId) {
+            const targetPersonId = this.justCompletedLeading.targetPersonId;
+            const followerUuid = this.justCompletedLeading.followerUuid;
+            
+            // Find the player in the space who matches the target
+            const nearbyPlayers = this.bot.getNearbyPlayers(100);
+            const targetPlayer = nearbyPlayers.find(p => p.userId === targetPersonId);
+            
+            if (targetPlayer) {
+                // Clear the flag
+                this.justCompletedLeading = null;
+                
+                // Start conversation in memory
+                this.conversationMemory.startConversation(botId, targetPersonId);
+                
+                // Start conversation
+                this.activeConversations.set(targetPersonId, {
+                    playerId: targetPersonId,
+                    spaceName,
+                    startTime: currentTime,
+                    lastMessageTime: currentTime,
+                });
+                
+                // Generate special greeting explaining we brought someone, then say goodbye and return
+                this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).then(() => {
+                    // After greeting, send goodbye message and return
+                    this.sendGoodbyeAndReturn(spaceName, targetPersonId, botId, 'person').catch(error => {
+                        console.error(`[SocialBehavior] Error sending goodbye and returning:`, error);
+                    });
+                }).catch(error => {
+                    console.error(`[SocialBehavior] Error generating leading completion greeting:`, error);
+                });
+                return; // Don't continue with normal greeting
+            }
         }
 
         // If we have a target player, start a formal conversation (bot-initiated)
@@ -430,6 +559,14 @@ export class SocialBehavior extends BaseBehavior {
             }
         }
 
+        // If we're leading, don't return to assigned space - we're moving to a target
+        if (this.isLeading) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Left space ${spaceName} while leading - not returning to assigned space`);
+            }
+            return;
+        }
+        
         // If summoned and player left, return to original position using endSummon()
         // This uses pathfinding to walk back (not teleport)
         if (this.isSummoned && this.summonedPlayerUuid) {
@@ -586,6 +723,302 @@ export class SocialBehavior extends BaseBehavior {
             // Stop typing indicator on error
             this.bot.stopTyping(spaceName);
             this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+        }
+    }
+
+    /**
+     * Send area arrival message to follower(s)
+     * Sends one message to the space - all followers in that space will receive it
+     */
+    private async sendAreaArrivalMessage(areaName: string, followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>): Promise<void> {
+        if (!this.bot || !this.aiService || followers.length === 0) {
+            return;
+        }
+
+        // Get the current space - prefer conversation spaces over world spaces
+        // Use leadingSpaceName as fallback (set when user joined during leading)
+        const currentSpaces = this.bot.getCurrentSpaces();
+        // Filter out world spaces (like "allWorldUser") and prefer conversation spaces
+        const conversationSpaces = currentSpaces.filter(space => !space.includes('allWorldUser') && space.includes('#'));
+        const spaceName = conversationSpaces.length > 0 
+            ? conversationSpaces[0] 
+            : (currentSpaces.length > 0 ? currentSpaces[0] : this.leadingSpaceName);
+        if (!spaceName) {
+            console.warn(`[SocialBehavior] Bot not in any space when trying to send area arrival message`);
+            return;
+        }
+
+        // Get bot configuration
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            return;
+        }
+
+        const botId = this.bot.getBotId();
+        
+        // Find the first follower who is still nearby
+        const nearbyPlayers = this.bot.getNearbyPlayers(100);
+        const followerPlayer = nearbyPlayers.find(p => followers.some(f => f.userId === p.userId));
+        
+        if (!followerPlayer) {
+            // No followers nearby, skip
+            return;
+        }
+        
+        // Set flag to prevent returnToAssignedSpace from being called while sending message
+        this.isSendingGoodbye = true;
+        
+        try {
+            // Get conversation context (use first follower for context, but message goes to all)
+            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            
+            // Generate arrival and goodbye message using AI
+            const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
+            
+            let fullMessage = '';
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                followerPlayer.userId,
+                arrivalPrompt,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    if (fullMessage.trim()) {
+                        // Send message to space - all followers in the space will receive it
+                        this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                        // Store in memory for the first follower (representative of the group)
+                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[SocialBehavior] Error generating area arrival message:`, error);
+        } finally {
+            // Clear flag and leave the space after message is sent
+            this.isSendingGoodbye = false;
+            await this.bot.leaveAllSpaces();
+        }
+    }
+
+    /**
+     * Send person arrival message to follower(s)
+     * Similar to sendAreaArrivalMessage but for when leading to a person
+     */
+    private async sendPersonArrivalMessage(personName: string, followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>): Promise<void> {
+        if (!this.bot || !this.aiService || followers.length === 0) {
+            return;
+        }
+
+        // Get the current space - prefer conversation spaces over world spaces
+        // Use leadingSpaceName as fallback (set when user joined during leading)
+        const currentSpaces = this.bot.getCurrentSpaces();
+        // Filter out world spaces (like "allWorldUser") and prefer conversation spaces
+        const conversationSpaces = currentSpaces.filter(space => !space.includes('allWorldUser') && space.includes('#'));
+        const spaceName = conversationSpaces.length > 0 
+            ? conversationSpaces[0] 
+            : (currentSpaces.length > 0 ? currentSpaces[0] : this.leadingSpaceName);
+        if (!spaceName) {
+            console.warn(`[SocialBehavior] Bot not in any space when trying to send person arrival message`);
+            return;
+        }
+
+        // Get bot configuration
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            return;
+        }
+
+        const botId = this.bot.getBotId();
+        
+        // Find the first follower who is still nearby
+        const nearbyPlayers = this.bot.getNearbyPlayers(100);
+        const followerPlayer = nearbyPlayers.find(p => followers.some(f => f.userId === p.userId));
+        
+        if (!followerPlayer) {
+            // No followers nearby, skip
+            return;
+        }
+        
+        // Set flag to prevent returnToAssignedSpace from being called while sending message
+        this.isSendingGoodbye = true;
+        
+        try {
+            // Get conversation context (use first follower for context, but message goes to all)
+            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            
+            // Generate arrival and goodbye message using AI
+            const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
+            
+            let fullMessage = '';
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                followerPlayer.userId,
+                arrivalPrompt,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    if (fullMessage.trim()) {
+                        // Send message to space - all followers in the space will receive it
+                        this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                        // Store in memory for the first follower (representative of the group)
+                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[SocialBehavior] Error generating person arrival message:`, error);
+        } finally {
+            // Clear flag and leave the space after message is sent
+            this.isSendingGoodbye = false;
+            await this.bot.leaveAllSpaces();
+        }
+    }
+
+    /**
+     * Send goodbye message and return to start position
+     */
+    private async sendGoodbyeAndReturn(spaceName: string, playerId: number, botId: string, destinationType: 'person' | 'area'): Promise<void> {
+        if (!this.bot || !this.aiService) {
+            this.returnAfterLeading();
+            return;
+        }
+
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            this.returnAfterLeading();
+            return;
+        }
+
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
+        
+        let fullMessage = '';
+        try {
+            const goodbyePrompt = `You've arrived at ${destinationText}. It was nice talking to them. Say goodbye and that you'll see them soon.`;
+            
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                goodbyePrompt,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    if (fullMessage.trim()) {
+                        if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
+                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                        }
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[SocialBehavior] Error generating goodbye message:`, error);
+        }
+        
+        // Return to start position after sending message
+        this.returnAfterLeading();
+    }
+
+    /**
+     * Generate AI greeting with special context for leading completion
+     */
+    private async generateAIGreetingWithLeadingContext(
+        spaceName: string,
+        playerId: number,
+        botId: string,
+        followerUuid: string | null
+    ): Promise<void> {
+        if (!this.bot || !this.aiService) {
+            return;
+        }
+
+        // Get bot configuration from client (stored at spawn, no HTTP request needed)
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            // No AI provider configured - don't send greeting
+            return;
+        }
+
+        // Get conversation context
+        const context = this.conversationMemory.getConversationContext(botId, playerId);
+
+        let fullMessage = '';
+        
+        try {
+            // Special prompt for leading completion
+            const leadingContext = followerUuid === 'group' 
+                ? 'You just guided a group of people to this person. They asked about them. Let them know you\'ve brought the people who wanted to talk with them.'
+                : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
+            
+            const playerMessage = leadingContext;
+            
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                playerMessage,
+                botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.content) {
+                    fullMessage += chunk.content;
+                }
+                
+                if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot.stopTyping(spaceName);
+                    
+                    // Send response
+                    if (fullMessage.trim()) {
+                        if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
+                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            // Record bot's message in memory
+                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                        }
+                    }
+                    // After greeting, send goodbye message and return
+                    this.sendGoodbyeAndReturn(spaceName, playerId, botId, 'person').catch(error => {
+                        console.error(`[SocialBehavior] Error sending goodbye and returning:`, error);
+                    });
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[SocialBehavior] AI leading completion greeting error:`, error);
+            // Don't send fallback - just fail silently
         }
     }
 
