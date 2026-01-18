@@ -1036,9 +1036,39 @@ export class BotAPI {
             }
 
             try {
-                // Get autopilot instance (we'll need to expose this from BotManager)
-                // For now, return not implemented
-                res.status(501).json({ error: 'Task endpoint - use file system: bots/improvement-tasks/' });
+                // Tasks are stored as files - read from directory
+                const tasksDir = process.env.IMPROVEMENT_TASKS_DIR || 
+                    require('path').join(process.cwd(), 'bots', 'improvement-tasks');
+                const fs = require('fs/promises');
+                const path = require('path');
+                
+                try {
+                    const files = await fs.readdir(tasksDir);
+                    const taskFiles = files.filter((f: string) => f.endsWith('.json'));
+                    
+                    const tasks: any[] = [];
+                    for (const file of taskFiles) {
+                        try {
+                            const content = await fs.readFile(path.join(tasksDir, file), 'utf-8');
+                            const task = JSON.parse(content);
+                            tasks.push(task);
+                        } catch (error) {
+                            // Skip invalid files
+                        }
+                    }
+                    
+                    // Sort by priority
+                    const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+                    tasks.sort((a, b) => priorityOrder[b.priority] - priorityOrder[a.priority]);
+                    
+                    res.json({ tasks, count: tasks.length, directory: tasksDir });
+                } catch (error: any) {
+                    if (error.code === 'ENOENT') {
+                        res.json({ tasks: [], count: 0, directory: tasksDir, message: 'Tasks directory does not exist yet' });
+                    } else {
+                        throw error;
+                    }
+                }
             } catch (error: any) {
                 console.error('[BotAPI] Error getting improvement tasks:', error);
                 res.status(500).json({ error: error.message });
