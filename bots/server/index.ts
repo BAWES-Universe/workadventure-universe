@@ -38,6 +38,18 @@ const botRegistry = new BotRegistry(BOT_SERVER_ID, {
 const botManager = new BotManager(adminApiService, botRegistry);
 const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
 
+// Start improvement scheduler (development only)
+if (process.env.NODE_ENV === 'development' || process.env.ENABLE_IMPROVEMENT === 'true') {
+    const { ImprovementScheduler } = require('../services/ImprovementScheduler');
+    const scheduler = new ImprovementScheduler(botManager, {
+        enabled: true,
+        intervalMs: parseInt(process.env.IMPROVEMENT_INTERVAL_MS || '3600000', 10), // Default: 1 hour
+        autoApply: process.env.IMPROVEMENT_AUTO_APPLY === 'true',
+    });
+    scheduler.start();
+    console.log('[BotServer] Improvement scheduler started');
+}
+
 // Graceful shutdown handler
 async function shutdown(signal: string) {
     console.log(`[BotServer] Received ${signal}, shutting down gracefully...`);

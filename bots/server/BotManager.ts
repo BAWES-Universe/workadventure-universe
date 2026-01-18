@@ -15,6 +15,8 @@ import { ConversationReplay } from '../testing/ConversationReplay';
 import { ConversationMonitor } from '../monitoring/ConversationMonitor';
 import { ConversationStorage } from '../memory/ConversationStorage';
 import { ConversationCleanup } from '../memory/ConversationCleanup';
+import { AutoImprovement } from '../improvement/AutoImprovement';
+import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 
 export interface BotInstance {
     botId: string;
