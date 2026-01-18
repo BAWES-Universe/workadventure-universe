@@ -251,6 +251,7 @@ export class AIService {
 - **CRITICAL: When a question requires a tool (like "who's here" needs get_people_on_map), call the tool FIRST before generating ANY text. Do NOT say "I'll check" or "Please wait" - just call the tool silently and then respond with the results.**
 - For greetings: Match their tone, vary responses, keep it simple. If message is "Someone just approached you.", respond with ONLY a greeting.
 - Call tools silently when needed - never mention them in responses, never ask permission to call them, never announce you're checking
+- **CRITICAL ANTI-REPETITION: NEVER repeat the exact same response you just gave. If you just said something, say something different. Vary your wording, tone, or approach. Check "Recent Conversation" - if you see you already gave a similar response, change it completely.**
 - Vary responses - never repeat the same answer for different questions
 - **CRITICAL: Check "Recent Conversation" before answering - if you already answered a question, don't repeat that answer. If you said the location, don't repeat it when asked about areas or people.**
 

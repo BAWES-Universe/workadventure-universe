@@ -66,7 +66,9 @@ export class ResponseProcessor {
         );
 
         const issues: string[] = [];
-        if (repetitionScore > 0.8) {
+        if (repetitionScore >= 1.0) {
+            issues.push('BLOCKED: Exact duplicate');
+        } else if (repetitionScore > 0.8) {
             issues.push('High repetition detected');
         }
         if (systemPromptLeakage) {
@@ -76,7 +78,7 @@ export class ResponseProcessor {
             issues.push('Personality compliance low');
         }
 
-        // Store response for repetition checking
+        // Store response for repetition checking (even if duplicate, so we can detect it next time)
         this.storeResponse(botId, cleaned);
 
         // Monitor response
@@ -157,6 +159,16 @@ export class ResponseProcessor {
             return 0;
         }
 
+        // First check for exact duplicates (normalized - trim and lowercase)
+        const normalizedResponse = response.trim().toLowerCase();
+        for (const recentResponse of recent) {
+            const normalizedRecent = recentResponse.trim().toLowerCase();
+            if (normalizedResponse === normalizedRecent) {
+                return 1.0; // Exact duplicate
+            }
+        }
+
+        // Then check similarity for near-duplicates
         let maxSimilarity = 0;
         for (const recentResponse of recent) {
             const similarity = this.calculateSimilarity(response, recentResponse);

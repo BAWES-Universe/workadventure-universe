@@ -431,6 +431,16 @@ export class IdleBehavior extends BaseBehavior {
                             chatInstructions
                         );
                         processedMessage = processed.cleaned;
+                        
+                        // If exact duplicate detected (repetitionScore === 1.0), regenerate response
+                        if (processed.metrics.repetitionScore >= 1.0 && processed.issues.includes('BLOCKED: Exact duplicate')) {
+                            // Log the issue but still send the response (with a note)
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[IdleBehavior] Exact duplicate detected for bot ${botId}, player ${playerId}. Response: "${fullMessage.substring(0, 50)}..."`);
+                            }
+                            // For now, we'll still send it but the system prompt should prevent this
+                            // In the future, we could trigger a regeneration here
+                        }
                     }
                     
                     // Record metrics
