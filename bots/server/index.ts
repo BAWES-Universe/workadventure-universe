@@ -40,14 +40,17 @@ const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
 
 // Start improvement scheduler (development only)
 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_IMPROVEMENT === 'true') {
-    const { ImprovementScheduler } = require('../services/ImprovementScheduler');
-    const scheduler = new ImprovementScheduler(botManager, {
-        enabled: true,
-        intervalMs: parseInt(process.env.IMPROVEMENT_INTERVAL_MS || '3600000', 10), // Default: 1 hour
-        autoApply: process.env.IMPROVEMENT_AUTO_APPLY === 'true',
+    import('../services/ImprovementScheduler').then(({ ImprovementScheduler }) => {
+        const scheduler = new ImprovementScheduler(botManager, {
+            enabled: true,
+            intervalMs: parseInt(process.env.IMPROVEMENT_INTERVAL_MS || '3600000', 10), // Default: 1 hour
+            autoApply: process.env.IMPROVEMENT_AUTO_APPLY === 'true',
+        });
+        scheduler.start();
+        console.log('[BotServer] Improvement scheduler started');
+    }).catch(error => {
+        console.error('[BotServer] Failed to start improvement scheduler:', error);
     });
-    scheduler.start();
-    console.log('[BotServer] Improvement scheduler started');
 }
 
 // Graceful shutdown handler
