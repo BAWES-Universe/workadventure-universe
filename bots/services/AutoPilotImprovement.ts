@@ -262,6 +262,30 @@ export class AutoPilotImprovement {
                     // Create improvement task file for AI to analyze
                     await this.createImprovementTask(botId, testRun, metrics);
                     
+                    // Save improvement record to Admin API (task created = improvement needed)
+                    const adminApiService = this.botManager.getAdminApiService();
+                    if (adminApiService) {
+                        adminApiService.saveImprovement({
+                            botId,
+                            improvementType: 'test_failure',
+                            changes: {
+                                failedTests: testRun.summary.failed,
+                                totalTests: testRun.summary.total,
+                                taskFile: `task-${Date.now()}-${botId.substring(0, 8)}.json`,
+                            },
+                            metricsBefore: {
+                                repetitionScore: metrics.find(m => m.metrics?.repetitionScore)?.metrics?.repetitionScore,
+                                personalityCompliance: metrics.find(m => m.metrics?.personalityCompliance)?.metrics?.personalityCompliance,
+                            },
+                            deployed: false,
+                        }).catch(error => {
+                            // Fire-and-forget, don't break the flow
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.error('[AutoPilot] Error saving improvement:', error);
+                            }
+                        });
+                    }
+                    
                     // Also trigger improvement cycle
                     this.improveBot(botId).catch(error => {
                         console.error(`[AutoPilot] Error improving bot ${botId}:`, error);
