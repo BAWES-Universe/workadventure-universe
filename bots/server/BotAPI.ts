@@ -997,9 +997,15 @@ export class BotAPI {
             }
         });
 
-        // Improvement endpoints
+        // Improvement endpoints (DEVELOPMENT ONLY - disabled in production)
         // Get improvement recommendations
         this.app.get('/api/bots/improve/recommendations', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Improvement endpoints disabled in production' });
+                return;
+            }
+
             try {
                 const botId = req.query.botId as string;
                 if (!botId) {
@@ -1009,7 +1015,7 @@ export class BotAPI {
 
                 const autoImprovement = this.botManager.getAutoImprovement();
                 if (!autoImprovement) {
-                    res.status(503).json({ error: 'Auto-improvement not available' });
+                    res.status(503).json({ error: 'Auto-improvement not available (development mode required)' });
                     return;
                 }
 
@@ -1023,6 +1029,12 @@ export class BotAPI {
 
         // Run improvement cycle
         this.app.post('/api/bots/improve/cycle', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Improvement endpoints disabled in production' });
+                return;
+            }
+
             try {
                 const { botId } = req.body;
                 if (!botId) {
@@ -1032,7 +1044,7 @@ export class BotAPI {
 
                 const improvementLoop = this.botManager.getSelfImprovementLoop();
                 if (!improvementLoop) {
-                    res.status(503).json({ error: 'Self-improvement loop not available' });
+                    res.status(503).json({ error: 'Self-improvement loop not available (development mode required)' });
                     return;
                 }
 

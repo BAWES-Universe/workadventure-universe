@@ -25,12 +25,22 @@ export class ImprovementScheduler {
 
     constructor(botManager: BotManager, config: Partial<SchedulerConfig> = {}) {
         this.botManager = botManager;
+        
+        // STRICT: Only enable in development mode
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        
         this.config = {
-            enabled: config.enabled ?? (process.env.NODE_ENV === 'development' || process.env.ENABLE_IMPROVEMENT === 'true'),
+            enabled: config.enabled ?? isDevelopment,
             intervalMs: config.intervalMs ?? 60 * 60 * 1000, // 1 hour
             minMetricsBeforeImprovement: config.minMetricsBeforeImprovement ?? 50,
-            autoApply: config.autoApply ?? (process.env.NODE_ENV === 'development'),
+            autoApply: config.autoApply ?? isDevelopment, // Only auto-apply in dev
         };
+        
+        // Safety check: Never enable in production
+        if (process.env.NODE_ENV === 'production' && this.config.enabled) {
+            console.warn('[ImprovementScheduler] WARNING: Scheduler disabled in production for performance');
+            this.config.enabled = false;
+        }
     }
 
     /**

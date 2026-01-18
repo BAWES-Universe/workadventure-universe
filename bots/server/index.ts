@@ -38,8 +38,9 @@ const botRegistry = new BotRegistry(BOT_SERVER_ID, {
 const botManager = new BotManager(adminApiService, botRegistry);
 const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
 
-// Start improvement scheduler (development only)
-if (process.env.NODE_ENV === 'development' || process.env.ENABLE_IMPROVEMENT === 'true') {
+// Start improvement scheduler (DEVELOPMENT ONLY - never in production)
+const isDevelopment = process.env.NODE_ENV === 'development';
+if (isDevelopment) {
     import('../services/ImprovementScheduler').then(({ ImprovementScheduler }) => {
         const scheduler = new ImprovementScheduler(botManager, {
             enabled: true,
@@ -47,10 +48,12 @@ if (process.env.NODE_ENV === 'development' || process.env.ENABLE_IMPROVEMENT ===
             autoApply: process.env.IMPROVEMENT_AUTO_APPLY === 'true',
         });
         scheduler.start();
-        console.log('[BotServer] Improvement scheduler started');
+        console.log('[BotServer] Improvement scheduler started (DEV MODE ONLY)');
     }).catch(error => {
         console.error('[BotServer] Failed to start improvement scheduler:', error);
     });
+} else {
+    console.log('[BotServer] Improvement scheduler disabled (production mode)');
 }
 
 // Graceful shutdown handler
@@ -207,5 +210,3 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Start the server
 start();
-
-// RESPAWN FIX - 01:16:41

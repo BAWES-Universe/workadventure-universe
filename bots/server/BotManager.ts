@@ -85,9 +85,10 @@ export class BotManager {
             this.mapDataService
         );
 
-        // Initialize test runner and conversation replay (lazy initialization)
-        // These are only created when needed (development/testing)
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TESTING === 'true') {
+        // Initialize test runner and conversation replay (DEVELOPMENT ONLY)
+        // These are only created in development to keep production lightweight
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        if (isDevelopment) {
             this.testRunner = new BotTestRunner(
                 this.aiService,
                 this.conversationMemory,
@@ -97,8 +98,9 @@ export class BotManager {
             this.conversationReplay = new ConversationReplay(this.testRunner);
         }
 
-        // Initialize improvement and analytics (development only)
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_IMPROVEMENT === 'true') {
+        // Initialize improvement and analytics (DEVELOPMENT ONLY - never in production)
+        // Production should be lightweight - no improvement cycles, no heavy analysis
+        if (isDevelopment) {
             this.autoImprovement = new AutoImprovement(this.metricsCollector, this.testRunner);
             if (this.testRunner) {
                 this.selfImprovementLoop = new SelfImprovementLoop(
