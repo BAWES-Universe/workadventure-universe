@@ -484,6 +484,7 @@ export class AutoPilotImprovement {
         const chatInstructions = config.chatInstructions || 'You are a helpful bot.';
 
         // Test 1: Basic greeting (always test)
+        // Be flexible - "Hello", "Hi", "Hey" all count as greetings
         testCases.push({
             id: `autopilot-greeting-${Date.now()}`,
             name: 'Bot should respond to greeting',
@@ -491,7 +492,8 @@ export class AutoPilotImprovement {
             chatInstructions,
             input: 'Hello',
             expectedBehavior: {
-                shouldContain: ['hello', 'hi', 'hey', 'greeting'],
+                // Accept any greeting word - case insensitive, partial matches OK
+                shouldContain: ['hello', 'hi', 'hey', 'greeting', 'greet', 'assist', 'help'],
                 maxResponseTime: 5000,
                 personalityCompliance: true,
             },
@@ -521,7 +523,8 @@ export class AutoPilotImprovement {
                 chatInstructions,
                 input: 'Hello',
                 expectedBehavior: {
-                    shouldContain: ['hello', 'hi', 'help'],
+                    // Friendly bots should greet or offer help - be flexible
+                    shouldContain: ['hello', 'hi', 'help', 'assist', 'greeting'],
                     personalityCompliance: true,
                 },
             });

@@ -9,6 +9,8 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 import type { AIService } from '../ai/AIService';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
+import type { ResponseProcessor } from '../ai/ResponseProcessor';
+import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 
 export interface BehaviorConfig {
     type: string;
@@ -25,6 +27,7 @@ export abstract class BaseBehavior {
     protected aiService: AIService | null = null;
     protected adminApiService: AdminApiService | null = null;
     protected conversationStorage: ConversationStorage | null = null;
+    protected responseProcessor: ResponseProcessor | null = null;
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
@@ -83,13 +86,20 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * Set AI service, Admin API service, and ConversationStorage (called by BotManager)
+     * Set AI service, Admin API service, ConversationStorage, ResponseProcessor, and MetricsCollector (called by BotManager)
      */
-    setServices(aiService: AIService, adminApiService: AdminApiService, conversationStorage?: ConversationStorage): void {
+    setServices(aiService: AIService, adminApiService: AdminApiService, conversationStorage?: ConversationStorage, responseProcessor?: ResponseProcessor | null, metricsCollector?: BotMetricsCollector | null): void {
         this.aiService = aiService;
         this.adminApiService = adminApiService;
         this.conversationStorage = conversationStorage || null;
+        this.responseProcessor = responseProcessor || null;
+        this.metricsCollector = metricsCollector || null;
     }
+    
+    /**
+     * Set conversation memory (optional - behaviors can override to use shared memory)
+     */
+    setConversationMemory?(memory: ConversationMemory): void;
 
     /**
      * Update behavior (called every frame/tick)
@@ -315,14 +325,17 @@ export abstract class BaseBehavior {
             if (wasEngaged) {
                 console.log(`[Behavior] No longer engaged - all players left proximity/space`);
                 
-                // End conversation in storage if player left
+                // End conversation in storage if player left (with a small delay to ensure all messages are stored)
                 if (previousClosestPlayerId && this.conversationStorage && this.bot) {
                     const botId = this.bot.getBotId();
-                    this.conversationStorage.endConversation(botId, previousClosestPlayerId).catch(error => {
-                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.error(`[Behavior] Error ending conversation:`, error);
-                        }
-                    });
+                    // Delay to ensure any pending messages are stored
+                    setTimeout(() => {
+                        this.conversationStorage?.endConversation(botId, previousClosestPlayerId).catch(error => {
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.error(`[Behavior] Error ending conversation:`, error);
+                            }
+                        });
+                    }, 2000); // 2 second delay to capture any final messages
                 }
             }
         }

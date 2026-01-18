@@ -21,14 +21,18 @@ export interface IdleBehaviorConfig extends BehaviorConfig {
 export class IdleBehavior extends BaseBehavior {
     private lastAnimationTime: number = 0;
     private greetedPlayers: Set<number> = new Set();
-    private conversationMemory: ConversationMemory;
+    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
 
     constructor(config: IdleBehaviorConfig) {
         super(config);
-        this.conversationMemory = new ConversationMemory(
-            config.conversationHistorySize || 50,
-            1000 // Max 1000 player memories per bot
-        );
+        // ConversationMemory will be set by BotManager via setConversationMemory
+    }
+    
+    /**
+     * Set conversation memory (called by BotManager to share the persistent memory instance)
+     */
+    setConversationMemory(memory: ConversationMemory): void {
+        this.conversationMemory = memory;
     }
 
     update(deltaTime: number): void {
@@ -307,23 +311,17 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Start conversation in memory if needed
-        this.conversationMemory.startConversation(botId, senderId);
+        if (this.conversationMemory) {
+            this.conversationMemory.startConversation(botId, senderId);
+            this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
+            this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+        }
         
         // Start conversation in storage (if available)
         if (this.conversationStorage) {
             this.conversationStorage.startConversation(botId, senderId);
-        }
-        
-        // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
-        
-        // Store player's message in conversation storage
-        if (this.conversationStorage) {
             this.conversationStorage.addMessage(botId, senderId, message, 'person');
         }
-        
-        // Extract personal information from message
-        this.conversationMemory.extractPersonalInfo(botId, senderId, message);
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);
@@ -379,10 +377,13 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Get conversation context (includes memory, emotions, relationship history)
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate streaming response
         let fullMessage = '';
+        const startTime = Date.now(); // Track response time BEFORE streaming starts
+        let tokensUsed = 0;
+        let latency = 0;
         
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -400,18 +401,68 @@ export class IdleBehavior extends BaseBehavior {
                     fullMessage += chunk.content;
                 }
                 
+                // Extract token usage and latency from chunk metadata
+                if (chunk.tokensUsed) {
+                    tokensUsed = chunk.tokensUsed;
+                }
+                if (chunk.metadata?.tokensUsed) {
+                    tokensUsed = chunk.metadata.tokensUsed;
+                }
+                if (chunk.metadata?.latency) {
+                    latency = chunk.metadata.latency;
+                }
+                
                 if (chunk.done) {
                     // Stop typing indicator
                     this.bot.stopTyping(spaceName);
                     
-                    // Send complete message
-                    if (fullMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, fullMessage);
+                    // Calculate response time (use latency from metadata if available, otherwise calculate)
+                    const responseTime = latency || (Date.now() - startTime);
+                    
+                    // Process response through ResponseProcessor (for metrics and quality checks)
+                    let processedMessage = fullMessage;
+                    
+                    if (this.responseProcessor && fullMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            fullMessage,
+                            chatInstructions
+                        );
+                        processedMessage = processed.cleaned;
+                    }
+                    
+                    // Record metrics
+                    if (this.metricsCollector) {
+                        // Record response time
+                        this.metricsCollector.recordResponseTime(botId, responseTime, {
+                            playerId,
+                            spaceName,
+                        });
+                        
+                        // Record token usage
+                        if (tokensUsed > 0) {
+                            // Extract prompt/completion tokens if available, otherwise estimate
+                            const promptTokens = chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7);
+                            const completionTokens = chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3);
+                            this.metricsCollector.recordTokenUsage(botId, promptTokens, completionTokens, {
+                                playerId,
+                                spaceName,
+                            });
+                        }
+                    }
+                    
+                    // Send processed message
+                    if (processedMessage.trim()) {
+                        this.bot.sendChatMessage(spaceName, processedMessage);
                         // Store bot's message in memory
-                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
+                        }
                         // Store bot's message in conversation storage
                         if (this.conversationStorage) {
-                            this.conversationStorage.addMessage(botId, playerId, fullMessage, 'bot');
+                            this.conversationStorage.addMessage(botId, playerId, processedMessage, 'bot');
                         }
                     }
                     break;
@@ -445,7 +496,7 @@ export class IdleBehavior extends BaseBehavior {
             return;
         }
 
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
@@ -510,7 +561,7 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Get conversation context
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
         
@@ -787,7 +838,7 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Get conversation context (includes memory, emotions, relationship history)
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';

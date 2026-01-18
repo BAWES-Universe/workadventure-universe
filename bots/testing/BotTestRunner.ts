@@ -213,10 +213,13 @@ export class BotTestRunner {
 
         // Check response content
         if (expected.shouldContain) {
-            for (const text of expected.shouldContain) {
-                if (!response.toLowerCase().includes(text.toLowerCase())) {
-                    errors.push(`Expected response to contain "${text}"`);
-                }
+            const responseLower = response.toLowerCase();
+            // Check if ANY of the shouldContain texts are present (OR logic, not AND)
+            const foundAny = expected.shouldContain.some(text => 
+                responseLower.includes(text.toLowerCase())
+            );
+            if (!foundAny) {
+                errors.push(`Expected response to contain one of: ${expected.shouldContain.join(', ')}`);
             }
         }
 

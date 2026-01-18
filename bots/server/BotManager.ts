@@ -8,6 +8,9 @@ import { BotRegistry } from './BotRegistry';
 import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
 import { ConversationMemory } from '../memory/ConversationMemory';
+import { PersistentMemory } from '../memory/PersistentMemory';
+import { MemoryStorage } from '../memory/MemoryStorage';
+import { ResponseProcessor } from '../ai/ResponseProcessor';
 import { AIService } from '../ai/AIService';
 import { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 import { BotTestRunner } from '../testing/BotTestRunner';
@@ -40,10 +43,11 @@ export class BotManager {
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
     private mapDataService: MapDataService;
-    private conversationMemory: ConversationMemory;
+    private conversationMemory: ConversationMemory | PersistentMemory;
     private aiService: AIService;
     private metricsCollector: BotMetricsCollector;
     private conversationMonitor: ConversationMonitor;
+    private responseProcessor: ResponseProcessor | null = null;
     private conversationStorage: ConversationStorage;
     private conversationCleanup: ConversationCleanup;
     private autoImprovement: AutoImprovement | null = null;
@@ -63,14 +67,42 @@ export class BotManager {
         this.botRegistry = botRegistry;
         this.mapDataService = new MapDataService();
         
-        // Initialize conversation memory
-        this.conversationMemory = new ConversationMemory(50, 1000);
+        // Initialize conversation memory - use PersistentMemory in development for testing
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        if (isDevelopment && adminApiService.isConfigured()) {
+            // Use PersistentMemory with MemoryStorage for persistence
+            const memoryStorage = new MemoryStorage({
+                adminApiUrl: process.env.ADMIN_API_URL,
+                adminApiToken: process.env.ADMIN_API_TOKEN,
+                botServiceToken: process.env.BOT_SERVICE_TOKEN,
+                saveInterval: 5 * 60 * 1000, // 5 minutes
+                maxRetries: 3,
+            });
+            this.conversationMemory = new PersistentMemory({
+                maxHistorySize: 50,
+                maxMemories: 1000,
+                adminApiUrl: process.env.ADMIN_API_URL,
+                adminApiToken: process.env.ADMIN_API_TOKEN,
+                debounceInterval: 30000, // 30 seconds
+                immediateSaveEnabled: true,
+            });
+            console.log('[BotManager] Using PersistentMemory (development mode with persistence)');
+        } else {
+            // Fallback to in-memory only
+            this.conversationMemory = new ConversationMemory(50, 1000);
+            if (isDevelopment) {
+                console.log('[BotManager] Using ConversationMemory (Admin API not configured)');
+            }
+        }
         
         // Initialize metrics collector
         this.metricsCollector = new BotMetricsCollector(this.adminApiService);
         
         // Initialize conversation monitor
         this.conversationMonitor = new ConversationMonitor(this.metricsCollector);
+        
+        // Initialize response processor (for metrics and quality checks)
+        this.responseProcessor = new ResponseProcessor(this.metricsCollector, this.conversationMonitor);
         
         // Initialize conversation storage and cleanup
         this.conversationStorage = new ConversationStorage(this.adminApiService);
@@ -87,7 +119,6 @@ export class BotManager {
 
         // Initialize test runner and conversation replay (DEVELOPMENT ONLY)
         // These are only created in development to keep production lightweight
-        const isDevelopment = process.env.NODE_ENV === 'development';
         if (isDevelopment) {
             this.testRunner = new BotTestRunner(
                 this.aiService,
@@ -309,8 +340,13 @@ export class BotManager {
         
         behavior = createBehavior(config.behaviorType, behaviorConfig);
         
-        // Set services for behavior
-        behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage);
+        // Set services for behavior (including response processor and metrics collector for metrics)
+        behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
+        
+        // Set shared conversation memory (so behaviors use PersistentMemory if enabled)
+        if (behavior.setConversationMemory) {
+            behavior.setConversationMemory(this.conversationMemory);
+        }
 
         // Store full config in client so behaviors can access it without HTTP requests
         client.setFullConfig(config);

@@ -42,15 +42,19 @@ export class SocialBehavior extends BaseBehavior {
     private lastWanderFailure: number = 0; // Track when pathfinding failed
     private wanderInProgress: boolean = false; // Prevent multiple concurrent calls
     private readonly WANDER_FAILURE_COOLDOWN = 2000; // 2 seconds before retrying after failure
-    private conversationMemory: ConversationMemory;
+    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
     private currentSpaceName: string | null = null; // Track current space to prevent wandering
 
     constructor(config: SocialBehaviorConfig) {
         super(config);
-        this.conversationMemory = new ConversationMemory(
-            config.conversationHistorySize || 50,
-            1000 // Max 1000 player memories per bot
-        );
+        // ConversationMemory will be set by BotManager via setConversationMemory
+    }
+    
+    /**
+     * Set conversation memory (called by BotManager to share the persistent memory instance)
+     */
+    setConversationMemory(memory: ConversationMemory): void {
+        this.conversationMemory = memory;
     }
 
     update(deltaTime: number): void {
@@ -300,7 +304,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.justCompletedLeading = null;
                 
                 // Start conversation in memory
-                this.conversationMemory.startConversation(botId, targetPersonId);
+                this.conversationMemory?.startConversation(botId, targetPersonId);
                 
                 // Start conversation
                 this.activeConversations.set(targetPersonId, {
@@ -330,7 +334,7 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             // Start conversation in memory
-            this.conversationMemory.startConversation(botId, this.targetPlayerId);
+            this.conversationMemory?.startConversation(botId, this.targetPlayerId);
 
             // Start conversation
             this.activeConversations.set(this.targetPlayerId, {
@@ -443,7 +447,7 @@ export class SocialBehavior extends BaseBehavior {
             try {
                 this.bot.sendChatMessage(spaceName, greeting);
                 // Record bot's message in memory
-                this.conversationMemory.addMessage(botId, playerId, greeting, 'bot', spaceName);
+                this.conversationMemory?.addMessage(botId, playerId, greeting, 'bot', spaceName);
             } catch (error) {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.warn(`[SocialBehavior] Error sending greeting (attempt ${attempt + 1}), will retry:`, error);
@@ -477,7 +481,7 @@ export class SocialBehavior extends BaseBehavior {
         const currentTime = Date.now();
         
         // Start conversation in memory (this creates memory if it doesn't exist)
-        this.conversationMemory.startConversation(botId, playerId);
+        this.conversationMemory?.startConversation(botId, playerId);
         
         // Start conversation tracking
         this.activeConversations.set(playerId, {
@@ -628,7 +632,7 @@ export class SocialBehavior extends BaseBehavior {
         }
         
         // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
+        this.conversationMemory?.addMessage(botId, senderId, message, 'person', spaceName);
         
         // Store player's message in conversation storage
         if (this.conversationStorage) {
@@ -636,7 +640,7 @@ export class SocialBehavior extends BaseBehavior {
         }
         
         // Extract personal information from message
-        this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, message);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);
@@ -693,10 +697,13 @@ export class SocialBehavior extends BaseBehavior {
         });
 
         // Get conversation context
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate streaming response
         let fullMessage = '';
+        const startTime = Date.now(); // Track response time BEFORE streaming starts
+        let tokensUsed = 0;
+        let latency = 0;
         
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -714,19 +721,67 @@ export class SocialBehavior extends BaseBehavior {
                     fullMessage += chunk.content;
                 }
                 
+                // Extract token usage and latency from chunk metadata
+                if (chunk.tokensUsed) {
+                    tokensUsed = chunk.tokensUsed;
+                }
+                if (chunk.metadata?.tokensUsed) {
+                    tokensUsed = chunk.metadata.tokensUsed;
+                }
+                if (chunk.metadata?.latency) {
+                    latency = chunk.metadata.latency;
+                }
+                
                 if (chunk.done) {
                     // Stop typing indicator
                     this.bot.stopTyping(spaceName);
                     
-                    // Send complete message (WorkAdventure chat requires complete messages)
-                    if (fullMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, fullMessage);
+                    // Calculate response time (use latency from metadata if available, otherwise calculate)
+                    const responseTime = latency || (Date.now() - startTime);
+                    
+                    // Process response through ResponseProcessor (for metrics and quality checks)
+                    let processedMessage = fullMessage;
+                    
+                    if (this.responseProcessor && fullMessage.trim()) {
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            fullMessage,
+                            chatInstructions
+                        );
+                        processedMessage = processed.cleaned;
+                    }
+                    
+                    // Record metrics
+                    if (this.metricsCollector) {
+                        // Record response time
+                        this.metricsCollector.recordResponseTime(botId, responseTime, {
+                            playerId,
+                            spaceName,
+                        });
+                        
+                        // Record token usage
+                        if (tokensUsed > 0) {
+                            const promptTokens = chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7);
+                            const completionTokens = chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3);
+                            this.metricsCollector.recordTokenUsage(botId, promptTokens, completionTokens, {
+                                playerId,
+                                spaceName,
+                            });
+                        }
+                    }
+                    
+                    // Send processed message
+                    if (processedMessage.trim()) {
+                        this.bot.sendChatMessage(spaceName, processedMessage);
                         
                         // Store in memory
-                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
+                        }
                         // Store in conversation storage
                         if (this.conversationStorage) {
-                            this.conversationStorage.addMessage(botId, playerId, fullMessage, 'bot');
+                            this.conversationStorage.addMessage(botId, playerId, processedMessage, 'bot');
                         }
                     }
                     break;
@@ -784,7 +839,7 @@ export class SocialBehavior extends BaseBehavior {
         
         try {
             // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -810,7 +865,7 @@ export class SocialBehavior extends BaseBehavior {
                         // Send message to space - all followers in the space will receive it
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -868,7 +923,7 @@ export class SocialBehavior extends BaseBehavior {
         
         try {
             // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -894,7 +949,7 @@ export class SocialBehavior extends BaseBehavior {
                         // Send message to space - all followers in the space will receive it
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -923,7 +978,7 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
@@ -949,7 +1004,7 @@ export class SocialBehavior extends BaseBehavior {
                     if (fullMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;
@@ -984,7 +1039,7 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Get conversation context
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
         
@@ -1020,7 +1075,7 @@ export class SocialBehavior extends BaseBehavior {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
                             // Record bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     // After greeting, send goodbye message and return
@@ -1058,7 +1113,7 @@ export class SocialBehavior extends BaseBehavior {
         // Get conversation context (includes memory, emotions, relationship history)
         // This context includes previous conversations, emotional state, and relationship history
         // The AI will use this to remember bad interactions and respond appropriately
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
@@ -1094,7 +1149,7 @@ export class SocialBehavior extends BaseBehavior {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
                             // Record bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;
