@@ -42,7 +42,7 @@ if [ ! -d "$TASKS_DIR" ]; then
 fi
 
 TASK_FILES=$(find "$TASKS_DIR" -name "task-*.json" -type f 2>/dev/null)
-TASK_COUNT=$(echo "$TASK_FILES" | grep -c . || echo "0")
+TASK_COUNT=$(echo "$TASK_FILES" | wc -l)
 
 if [ "$TASK_COUNT" -eq 0 ]; then
     echo "✅ No tasks to clean up"
