@@ -875,6 +875,127 @@ export class BotAPI {
                 res.status(500).json({ error: error.message });
             }
         });
+
+        // Conversation storage endpoints (production)
+        // Get recent conversations for a bot
+        this.app.get('/api/bots/:botId/conversations', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+                const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+                const playerId = req.query.playerId ? parseInt(req.query.playerId as string, 10) : undefined;
+                const startDate = req.query.startDate ? parseInt(req.query.startDate as string, 10) : undefined;
+                const endDate = req.query.endDate ? parseInt(req.query.endDate as string, 10) : undefined;
+
+                const conversationStorage = this.botManager.getConversationStorage();
+                if (!conversationStorage) {
+                    res.status(503).json({ error: 'Conversation storage not available' });
+                    return;
+                }
+
+                const conversations = await conversationStorage.getConversations({
+                    botId,
+                    limit,
+                    offset,
+                    playerId,
+                    startDate,
+                    endDate,
+                });
+
+                res.json({ botId, conversations, count: conversations.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get specific conversation
+        this.app.get('/api/bots/:botId/conversations/:conversationId', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId, conversationId } = req.params;
+                
+                // This would fetch from Admin API in a real implementation
+                res.status(501).json({ error: 'Not implemented - fetch from Admin API' });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting conversation:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get conversation stats
+        this.app.get('/api/bots/:botId/conversations/stats', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+
+                const conversationStorage = this.botManager.getConversationStorage();
+                if (!conversationStorage) {
+                    res.status(503).json({ error: 'Conversation storage not available' });
+                    return;
+                }
+
+                const stats = await conversationStorage.getConversationStats(botId);
+                res.json(stats);
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting conversation stats:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Manual cleanup for specific bot (admin only)
+        this.app.delete('/api/bots/:botId/conversations/cleanup', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const olderThanDays = req.query.olderThanDays ? parseInt(req.query.olderThanDays as string, 10) : undefined;
+                const keepRecent = req.query.keepRecent ? parseInt(req.query.keepRecent as string, 10) : undefined;
+
+                const conversationCleanup = this.botManager.getConversationCleanup();
+                if (!conversationCleanup) {
+                    res.status(503).json({ error: 'Conversation cleanup not available' });
+                    return;
+                }
+
+                let stats;
+                if (keepRecent !== undefined) {
+                    stats = await conversationCleanup.cleanupByBot(botId, keepRecent);
+                } else if (olderThanDays !== undefined) {
+                    stats = await conversationCleanup.cleanupOldConversations(botId, olderThanDays);
+                } else {
+                    res.status(400).json({ error: 'Must provide olderThanDays or keepRecent' });
+                    return;
+                }
+
+                res.json(stats);
+            } catch (error: any) {
+                console.error('[BotAPI] Error cleaning up conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Manual cleanup for all bots (admin only)
+        this.app.delete('/api/bots/conversations/cleanup', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const olderThanDays = req.query.olderThanDays ? parseInt(req.query.olderThanDays as string, 10) : undefined;
+                const maxPerBot = req.query.maxPerBot ? parseInt(req.query.maxPerBot as string, 10) : undefined;
+                const maxTotal = req.query.maxTotal ? parseInt(req.query.maxTotal as string, 10) : undefined;
+
+                const conversationCleanup = this.botManager.getConversationCleanup();
+                if (!conversationCleanup) {
+                    res.status(503).json({ error: 'Conversation cleanup not available' });
+                    return;
+                }
+
+                const stats = await conversationCleanup.cleanupAll({
+                    olderThanDays,
+                    maxPerBot,
+                    maxTotal,
+                });
+
+                res.json(stats);
+            } catch (error: any) {
+                console.error('[BotAPI] Error cleaning up all conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
     }
 
     /**

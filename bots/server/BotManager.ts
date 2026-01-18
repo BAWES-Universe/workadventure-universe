@@ -13,6 +13,8 @@ import { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 import { BotTestRunner } from '../testing/BotTestRunner';
 import { ConversationReplay } from '../testing/ConversationReplay';
 import { ConversationMonitor } from '../monitoring/ConversationMonitor';
+import { ConversationStorage } from '../memory/ConversationStorage';
+import { ConversationCleanup } from '../memory/ConversationCleanup';
 
 export interface BotInstance {
     botId: string;
@@ -40,6 +42,8 @@ export class BotManager {
     private aiService: AIService;
     private metricsCollector: BotMetricsCollector;
     private conversationMonitor: ConversationMonitor;
+    private conversationStorage: ConversationStorage;
+    private conversationCleanup: ConversationCleanup;
     private testRunner: BotTestRunner | null = null;
     private conversationReplay: ConversationReplay | null = null;
     private isInitialized = false;
@@ -61,6 +65,10 @@ export class BotManager {
         
         // Initialize conversation monitor
         this.conversationMonitor = new ConversationMonitor(this.metricsCollector);
+        
+        // Initialize conversation storage and cleanup
+        this.conversationStorage = new ConversationStorage(this.adminApiService);
+        this.conversationCleanup = new ConversationCleanup(this.adminApiService);
         
         // Initialize AI service
         const adminApiUrl = process.env.ADMIN_API_URL || '';
@@ -408,6 +416,20 @@ export class BotManager {
      */
     getConversationMonitor(): ConversationMonitor {
         return this.conversationMonitor;
+    }
+
+    /**
+     * Get conversation storage
+     */
+    getConversationStorage(): ConversationStorage {
+        return this.conversationStorage;
+    }
+
+    /**
+     * Get conversation cleanup
+     */
+    getConversationCleanup(): ConversationCleanup {
+        return this.conversationCleanup;
     }
 
     /**
