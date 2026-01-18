@@ -39,18 +39,22 @@ const botManager = new BotManager(adminApiService, botRegistry);
 const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
 
 // Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
+// This system runs tests every 30 seconds and creates improvement task files for AI analysis
 const isDevelopment = process.env.NODE_ENV === 'development';
 if (isDevelopment) {
     import('../services/AutoPilotImprovement').then(({ AutoPilotImprovement }) => {
         const autopilot = new AutoPilotImprovement(botManager, {
             enabled: true,
-            testIntervalMs: parseInt(process.env.AUTOPILOT_TEST_INTERVAL_MS || '300000', 10), // Default: 5 minutes
-            improvementIntervalMs: parseInt(process.env.AUTOPILOT_IMPROVEMENT_INTERVAL_MS || '600000', 10), // Default: 10 minutes
+            testIntervalMs: parseInt(process.env.AUTOPILOT_TEST_INTERVAL_MS || '30000', 10), // Default: 30 seconds (FAST)
+            improvementIntervalMs: parseInt(process.env.AUTOPILOT_IMPROVEMENT_INTERVAL_MS || '60000', 10), // Default: 1 minute
             autoApplyImprovements: process.env.AUTOPILOT_AUTO_APPLY !== 'false', // Default: true
-            maxIterationsPerBot: parseInt(process.env.AUTOPILOT_MAX_ITERATIONS || '10', 10),
+            maxIterationsPerBot: parseInt(process.env.AUTOPILOT_MAX_ITERATIONS || '50', 10), // Higher for continuous iteration
+            tasksDirectory: process.env.IMPROVEMENT_TASKS_DIR || path.join(process.cwd(), 'bots', 'improvement-tasks'),
         });
         autopilot.start();
-        console.log('[BotServer] 🚀 AutoPilot improvement system started (FULLY AUTONOMOUS)');
+        console.log('[BotServer] 🚀 AutoPilot improvement system started (FAST CONTINUOUS ITERATION)');
+        console.log('[BotServer]    Tests run every 30 seconds');
+        console.log('[BotServer]    Improvement tasks created in: bots/improvement-tasks/');
     }).catch(error => {
         console.error('[BotServer] Failed to start autopilot:', error);
     });

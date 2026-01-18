@@ -3,25 +3,62 @@
  * 
  * This system:
  * 1. Automatically creates test scenarios based on bot behavior
- * 2. Runs tests continuously
- * 3. Detects failures and issues
- * 4. Generates improvements automatically
- * 5. Applies fixes and re-tests
+ * 2. Runs tests continuously (every 30 seconds)
+ * 3. Detects failures and issues immediately
+ * 4. Creates improvement task files for AI analysis
+ * 5. Triggers immediate re-test after improvements
  * 6. Iterates until perfect
  * 
- * Runs automatically in development mode - no manual intervention needed
+ * The AI (Auto) analyzes task files and improves code/system prompts.
+ * This system just runs tests and creates tasks - the AI does the improving.
  */
 
 import type { BotManager } from '../server/BotManager';
 import type { TestCase, TestRun } from '../testing/types';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 export interface AutoPilotConfig {
     enabled: boolean;
-    testIntervalMs: number; // How often to run tests (default: 5 minutes)
-    improvementIntervalMs: number; // How often to check for improvements (default: 10 minutes)
+    testIntervalMs: number; // How often to run tests (default: 30 seconds for fast iteration)
+    improvementIntervalMs: number; // How often to check for improvements (default: 1 minute)
     minMetricsBeforeTesting: number; // Minimum metrics before running tests
     autoApplyImprovements: boolean; // Auto-apply fixes (default: true in dev)
-    maxIterationsPerBot: number; // Max improvement iterations per bot (default: 10)
+    maxIterationsPerBot: number; // Max improvement iterations per bot (default: 50 for fast iteration)
+    tasksDirectory: string; // Directory to write improvement task files
+}
+
+export interface ImprovementTask {
+    id: string;
+    botId: string;
+    timestamp: number;
+    testResults: TestRun;
+    metrics: {
+        repetitionScore?: number;
+        personalityCompliance?: number;
+        systemPromptLeakage?: number;
+        responseTime?: number;
+        conversationQuality?: number;
+    };
+    failedTests: Array<{
+        testCaseId: string;
+        name: string;
+        input: string;
+        expectedBehavior?: any;
+        actualResponse?: string;
+        errors?: string[];
+    }>;
+    recommendations: Array<{
+        type: string;
+        priority: string;
+        description: string;
+        suggestedChanges: any;
+    }>;
+    priority: 'low' | 'medium' | 'high' | 'critical';
+    botConfig?: {
+        chatInstructions?: string;
+        behaviorType?: string;
+    };
 }
 
 export class AutoPilotImprovement {
@@ -32,24 +69,48 @@ export class AutoPilotImprovement {
     private isRunning: boolean = false;
     private botIterations: Map<string, number> = new Map(); // botId -> iteration count
     private lastTestRun: Map<string, number> = new Map(); // botId -> last test timestamp
+    private tasksDirectory: string;
 
     constructor(botManager: BotManager, config: Partial<AutoPilotConfig> = {}) {
         this.botManager = botManager;
         
         const isDevelopment = process.env.NODE_ENV === 'development';
         
+        this.tasksDirectory = config.tasksDirectory || 
+            process.env.IMPROVEMENT_TASKS_DIR || 
+            path.join(process.cwd(), 'bots', 'improvement-tasks');
+        
         this.config = {
             enabled: config.enabled ?? isDevelopment,
-            testIntervalMs: config.testIntervalMs ?? 5 * 60 * 1000, // 5 minutes
-            improvementIntervalMs: config.improvementIntervalMs ?? 10 * 60 * 1000, // 10 minutes
-            minMetricsBeforeTesting: config.minMetricsBeforeTesting ?? 20,
+            testIntervalMs: config.testIntervalMs ?? 30000, // 30 seconds for fast iteration
+            improvementIntervalMs: config.improvementIntervalMs ?? 60000, // 1 minute
+            minMetricsBeforeTesting: config.minMetricsBeforeTesting ?? 5, // Lower threshold for faster start
             autoApplyImprovements: config.autoApplyImprovements ?? isDevelopment,
-            maxIterationsPerBot: config.maxIterationsPerBot ?? 10,
+            maxIterationsPerBot: config.maxIterationsPerBot ?? 50, // Higher limit for continuous iteration
+            tasksDirectory: this.tasksDirectory,
         };
 
         // Safety: Never enable in production
         if (process.env.NODE_ENV === 'production') {
             this.config.enabled = false;
+        }
+
+        // Ensure tasks directory exists
+        this.ensureTasksDirectory().catch(error => {
+            console.error('[AutoPilot] Failed to create tasks directory:', error);
+        });
+    }
+
+    /**
+     * Ensure tasks directory exists
+     */
+    private async ensureTasksDirectory(): Promise<void> {
+        try {
+            await fs.mkdir(this.tasksDirectory, { recursive: true });
+        } catch (error: any) {
+            if (error.code !== 'EEXIST') {
+                throw error;
+            }
         }
     }
 
@@ -68,8 +129,9 @@ export class AutoPilotImprovement {
         }
 
         console.log('[AutoPilot] 🚀 Starting fully autonomous improvement system');
-        console.log(`[AutoPilot] Test interval: ${this.config.testIntervalMs / 1000}s`);
+        console.log(`[AutoPilot] Test interval: ${this.config.testIntervalMs / 1000}s (FAST ITERATION)`);
         console.log(`[AutoPilot] Improvement interval: ${this.config.improvementIntervalMs / 1000}s`);
+        console.log(`[AutoPilot] Tasks directory: ${this.tasksDirectory}`);
         console.log(`[AutoPilot] Auto-apply: ${this.config.autoApplyImprovements}`);
 
         // Run immediately
@@ -107,7 +169,7 @@ export class AutoPilotImprovement {
     }
 
     /**
-     * Run test cycle - automatically test all bots
+     * Run test cycle - automatically test all bots (runs every 30 seconds)
      */
     private async runTestCycle(): Promise<void> {
         if (this.isRunning) {
@@ -129,8 +191,9 @@ export class AutoPilotImprovement {
                 
                 // Check if we have enough metrics
                 const metricsCollector = this.botManager.getMetricsCollector();
+                let metrics: any[] = [];
                 if (metricsCollector) {
-                    const metrics = await metricsCollector.queryMetrics({
+                    metrics = await metricsCollector.queryMetrics({
                         botId,
                         limit: this.config.minMetricsBeforeTesting,
                     });
@@ -169,7 +232,10 @@ export class AutoPilotImprovement {
                 if (testRun.summary.failed > 0) {
                     console.log(`[AutoPilot] ❌ Bot ${botId.substring(0, 8)}... failed ${testRun.summary.failed}/${testRun.summary.total} tests`);
                     
-                    // Trigger improvement cycle for this bot
+                    // Create improvement task file for AI to analyze
+                    await this.createImprovementTask(botId, testRun, metrics);
+                    
+                    // Also trigger improvement cycle
                     this.improveBot(botId).catch(error => {
                         console.error(`[AutoPilot] Error improving bot ${botId}:`, error);
                     });
@@ -185,7 +251,7 @@ export class AutoPilotImprovement {
     }
 
     /**
-     * Run improvement cycle - check metrics and improve
+     * Run improvement cycle - check metrics and create tasks
      */
     private async runImprovementCycle(): Promise<void> {
         const bots = this.botManager.getAllBots();
@@ -210,7 +276,7 @@ export class AutoPilotImprovement {
     }
 
     /**
-     * Improve a specific bot
+     * Improve a specific bot - creates task file for AI analysis
      */
     private async improveBot(botId: string): Promise<void> {
         const autoImprovement = this.botManager.getAutoImprovement();
@@ -226,7 +292,7 @@ export class AutoPilotImprovement {
             }
 
             console.log(`[AutoPilot] 🔧 Bot ${botId.substring(0, 8)}... has ${recommendations.length} improvement(s)`);
-
+            
             // Filter to high-priority recommendations
             const highPriority = recommendations.filter(r => 
                 r.priority === 'critical' || r.priority === 'high'
@@ -236,26 +302,160 @@ export class AutoPilotImprovement {
                 return;
             }
 
+            // Get metrics for task file
+            const metricsCollector = this.botManager.getMetricsCollector();
+            const metrics = await metricsCollector.queryMetrics({
+                botId,
+                limit: 50,
+            });
+
+            // Calculate average metrics
+            const avgMetrics = {
+                repetitionScore: metrics.filter(m => m.metrics.repetitionScore !== undefined)
+                    .reduce((sum, m) => sum + (m.metrics.repetitionScore || 0), 0) / 
+                    Math.max(metrics.filter(m => m.metrics.repetitionScore !== undefined).length, 1),
+                personalityCompliance: metrics.filter(m => m.metrics.personalityCompliance !== undefined)
+                    .reduce((sum, m) => sum + (m.metrics.personalityCompliance || 0), 0) / 
+                    Math.max(metrics.filter(m => m.metrics.personalityCompliance !== undefined).length, 1),
+                systemPromptLeakage: metrics.filter(m => m.metrics.systemPromptLeakage === true).length / 
+                    Math.max(metrics.length, 1),
+                responseTime: metrics.filter(m => m.metrics.responseTime !== undefined)
+                    .reduce((sum, m) => sum + (m.metrics.responseTime || 0), 0) / 
+                    Math.max(metrics.filter(m => m.metrics.responseTime !== undefined).length, 1),
+            };
+
+            // Create improvement task file
+            await this.createImprovementTaskFromMetrics(botId, avgMetrics, highPriority);
+
             if (this.config.autoApplyImprovements) {
-                const improvementLoop = this.botManager.getSelfImprovementLoop();
-                if (improvementLoop) {
-                    console.log(`[AutoPilot] 🚀 Auto-applying improvements for bot ${botId.substring(0, 8)}...`);
-                    const cycle = await improvementLoop.runImprovementCycle(botId);
-                    
-                    if (cycle.success) {
-                        const iterations = (this.botIterations.get(botId) || 0) + 1;
-                        this.botIterations.set(botId, iterations);
-                        console.log(`[AutoPilot] ✅ Improvement applied (iteration ${iterations})`);
-                    }
-                }
+                // Note: Auto-apply would happen here if we had code modification capability
+                // For now, we just create task files for AI to analyze
+                console.log(`[AutoPilot] 📝 Improvement task created - AI will analyze and improve code`);
             } else {
-                console.log(`[AutoPilot] 📋 Recommendations (auto-apply disabled):`);
-                for (const rec of highPriority) {
-                    console.log(`[AutoPilot]   - [${rec.priority.toUpperCase()}] ${rec.type}: ${rec.description}`);
-                }
+                console.log(`[AutoPilot] 📋 Recommendations logged in task file`);
             }
         } catch (error: any) {
             console.error(`[AutoPilot] Error improving bot ${botId}:`, error);
+        }
+    }
+
+    /**
+     * Create improvement task file from test results
+     */
+    private async createImprovementTask(
+        botId: string,
+        testRun: TestRun,
+        metrics: any[]
+    ): Promise<void> {
+        try {
+            await this.ensureTasksDirectory();
+
+            // Get recommendations
+            const autoImprovement = this.botManager.getAutoImprovement();
+            const recommendations = autoImprovement ? 
+                await autoImprovement.analyzeAndRecommend(botId) : [];
+
+            // Get bot config
+            const bot = this.botManager.getBot(botId);
+            const botConfig = bot?.getFullConfig();
+
+            // Calculate average metrics
+            const avgMetrics = {
+                repetitionScore: metrics.filter(m => m.metrics.repetitionScore !== undefined)
+                    .reduce((sum, m) => sum + (m.metrics.repetitionScore || 0), 0) / 
+                    Math.max(metrics.filter(m => m.metrics.repetitionScore !== undefined).length, 1),
+                personalityCompliance: metrics.filter(m => m.metrics.personalityCompliance !== undefined)
+                    .reduce((sum, m) => sum + (m.metrics.personalityCompliance || 0), 0) / 
+                    Math.max(metrics.filter(m => m.metrics.personalityCompliance !== undefined).length, 1),
+                systemPromptLeakage: metrics.filter(m => m.metrics.systemPromptLeakage === true).length / 
+                    Math.max(metrics.length, 1),
+                responseTime: metrics.filter(m => m.metrics.responseTime !== undefined)
+                    .reduce((sum, m) => sum + (m.metrics.responseTime || 0), 0) / 
+                    Math.max(metrics.filter(m => m.metrics.responseTime !== undefined).length, 1),
+            };
+
+            const task: ImprovementTask = {
+                id: `task-${Date.now()}-${botId.substring(0, 8)}`,
+                botId,
+                timestamp: Date.now(),
+                testResults: testRun,
+                metrics: avgMetrics,
+                failedTests: testRun.results
+                    .filter(r => !r.passed)
+                    .map(r => ({
+                        testCaseId: r.testCaseId,
+                        name: testRun.results.find(tr => tr.testCaseId === r.testCaseId)?.testCaseId || 'unknown',
+                        input: testRun.results.find(tr => tr.testCaseId === r.testCaseId)?.response || 'unknown',
+                        expectedBehavior: undefined, // Would need to get from test case
+                        actualResponse: r.response,
+                        errors: r.errors,
+                    })),
+                recommendations,
+                priority: testRun.summary.failed > 0 ? 'high' : 'medium',
+                botConfig: botConfig ? {
+                    chatInstructions: botConfig.chatInstructions,
+                    behaviorType: botConfig.behaviorType,
+                } : undefined,
+            };
+
+            const taskFile = path.join(this.tasksDirectory, `${task.id}.json`);
+            await fs.writeFile(taskFile, JSON.stringify(task, null, 2), 'utf-8');
+            
+            console.log(`[AutoPilot] 📝 Created improvement task: ${taskFile}`);
+            console.log(`[AutoPilot]    Failed tests: ${task.failedTests.length}`);
+            console.log(`[AutoPilot]    Recommendations: ${recommendations.length}`);
+        } catch (error: any) {
+            console.error(`[AutoPilot] Error creating improvement task:`, error);
+        }
+    }
+
+    /**
+     * Create improvement task file from metrics (when no test failures, but metrics show issues)
+     */
+    private async createImprovementTaskFromMetrics(
+        botId: string,
+        metrics: any,
+        recommendations: any[]
+    ): Promise<void> {
+        try {
+            await this.ensureTasksDirectory();
+
+            // Get bot config
+            const bot = this.botManager.getBot(botId);
+            const botConfig = bot?.getFullConfig();
+
+            const task: ImprovementTask = {
+                id: `task-${Date.now()}-${botId.substring(0, 8)}`,
+                botId,
+                timestamp: Date.now(),
+                testResults: {
+                    id: 'metrics-based',
+                    testSuiteId: 'metrics',
+                    botId,
+                    status: 'passed',
+                    results: [],
+                    startedAt: Date.now(),
+                    completedAt: Date.now(),
+                    duration: 0,
+                    summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
+                },
+                metrics,
+                failedTests: [],
+                recommendations,
+                priority: recommendations.some(r => r.priority === 'critical') ? 'critical' :
+                         recommendations.some(r => r.priority === 'high') ? 'high' : 'medium',
+                botConfig: botConfig ? {
+                    chatInstructions: botConfig.chatInstructions,
+                    behaviorType: botConfig.behaviorType,
+                } : undefined,
+            };
+
+            const taskFile = path.join(this.tasksDirectory, `${task.id}.json`);
+            await fs.writeFile(taskFile, JSON.stringify(task, null, 2), 'utf-8');
+            
+            console.log(`[AutoPilot] 📝 Created improvement task from metrics: ${taskFile}`);
+        } catch (error: any) {
+            console.error(`[AutoPilot] Error creating improvement task from metrics:`, error);
         }
     }
 
@@ -349,5 +549,50 @@ export class AutoPilotImprovement {
         }
 
         return testCases;
+    }
+
+    /**
+     * Get all pending improvement tasks
+     */
+    async getPendingTasks(): Promise<ImprovementTask[]> {
+        try {
+            await this.ensureTasksDirectory();
+            const files = await fs.readdir(this.tasksDirectory);
+            const taskFiles = files.filter(f => f.endsWith('.json'));
+            
+            const tasks: ImprovementTask[] = [];
+            for (const file of taskFiles) {
+                try {
+                    const content = await fs.readFile(path.join(this.tasksDirectory, file), 'utf-8');
+                    const task = JSON.parse(content) as ImprovementTask;
+                    tasks.push(task);
+                } catch (error) {
+                    console.error(`[AutoPilot] Error reading task file ${file}:`, error);
+                }
+            }
+            
+            return tasks.sort((a, b) => {
+                const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+                return priorityOrder[b.priority] - priorityOrder[a.priority];
+            });
+        } catch (error) {
+            console.error('[AutoPilot] Error getting pending tasks:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Mark task as resolved (delete task file)
+     */
+    async resolveTask(taskId: string): Promise<void> {
+        try {
+            const taskFile = path.join(this.tasksDirectory, `${taskId}.json`);
+            await fs.unlink(taskFile);
+            console.log(`[AutoPilot] ✅ Resolved task: ${taskId}`);
+        } catch (error: any) {
+            if (error.code !== 'ENOENT') {
+                console.error(`[AutoPilot] Error resolving task ${taskId}:`, error);
+            }
+        }
     }
 }

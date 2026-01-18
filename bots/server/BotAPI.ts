@@ -1027,6 +1027,24 @@ export class BotAPI {
             }
         });
 
+        // Get pending improvement tasks (for AI analysis)
+        this.app.get('/api/bots/improve/tasks', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Improvement endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                // Get autopilot instance (we'll need to expose this from BotManager)
+                // For now, return not implemented
+                res.status(501).json({ error: 'Task endpoint - use file system: bots/improvement-tasks/' });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting improvement tasks:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // Run improvement cycle
         this.app.post('/api/bots/improve/cycle', async (req: BotAPIRequest, res: Response) => {
             // Block in production
