@@ -589,6 +589,122 @@ export class AdminApiService {
     }
 
     /**
+     * Save bot metrics to Admin API
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     * Fire-and-forget (doesn't throw errors)
+     */
+    async saveBotMetrics(metrics: Array<{
+        botId: string;
+        timestamp: number;
+        metrics: {
+            responseTime?: number;
+            tokenUsage?: {
+                prompt: number;
+                completion: number;
+                total: number;
+            };
+            repetitionScore?: number;
+            systemPromptLeakage?: boolean;
+            personalityCompliance?: number;
+            conversationQuality?: number;
+            errorCount?: number;
+        };
+        metadata?: Record<string, any>;
+    }>): Promise<void> {
+        if (!this.isConfigured()) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] Admin API not configured, skipping metrics save');
+            }
+            return;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, skipping metrics save');
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/metrics`,
+                { metrics },
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Saved ${metrics.length} metrics`);
+            }
+        } catch (error: any) {
+            // Fire-and-forget: don't throw, just log
+            console.error('[AdminApiService] Error saving bot metrics:', error);
+            if (error.response) {
+                console.error('[AdminApiService] Error response status:', error.response.status);
+                console.error('[AdminApiService] Error response data:', error.response.data);
+            }
+        }
+    }
+
+    /**
+     * Get bot metrics from Admin API
+     */
+    async getBotMetrics(botId: string, query?: {
+        metricType?: string;
+        startTime?: number;
+        endTime?: number;
+        limit?: number;
+        offset?: number;
+    }): Promise<Array<{
+        botId: string;
+        timestamp: number;
+        metrics: Record<string, any>;
+        metadata?: Record<string, any>;
+    }>> {
+        if (!this.isConfigured()) {
+            return [];
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, cannot get metrics');
+            return [];
+        }
+
+        try {
+            const params: Record<string, any> = { botId };
+            if (query) {
+                if (query.metricType) params.metricType = query.metricType;
+                if (query.startTime) params.startTime = query.startTime;
+                if (query.endTime) params.endTime = query.endTime;
+                if (query.limit) params.limit = query.limit;
+                if (query.offset) params.offset = query.offset;
+            }
+
+            const response = await axios.get(
+                `${this.adminApiUrl}/api/bots/${botId}/metrics`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                    },
+                    params,
+                }
+            );
+
+            return response.data || [];
+        } catch (error: any) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                return [];
+            }
+            console.error('[AdminApiService] Error getting bot metrics:', error);
+            return [];
+        }
+    }
+
+    /**
      * Get room metadata (universe, world, room names)
      * Calls the Admin API's /api/room/info endpoint or extracts from URL
      * Results are cached for 5 minutes to improve performance

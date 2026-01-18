@@ -9,6 +9,10 @@ import { MapDataService } from './MapDataService';
 import type { BotConfiguration } from './AdminApiService';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { AIService } from '../ai/AIService';
+import { BotMetricsCollector } from '../metrics/BotMetricsCollector';
+import { BotTestRunner } from '../testing/BotTestRunner';
+import { ConversationReplay } from '../testing/ConversationReplay';
+import { ConversationMonitor } from '../monitoring/ConversationMonitor';
 
 export interface BotInstance {
     botId: string;
@@ -34,6 +38,10 @@ export class BotManager {
     private mapDataService: MapDataService;
     private conversationMemory: ConversationMemory;
     private aiService: AIService;
+    private metricsCollector: BotMetricsCollector;
+    private conversationMonitor: ConversationMonitor;
+    private testRunner: BotTestRunner | null = null;
+    private conversationReplay: ConversationReplay | null = null;
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
@@ -48,6 +56,12 @@ export class BotManager {
         // Initialize conversation memory
         this.conversationMemory = new ConversationMemory(50, 1000);
         
+        // Initialize metrics collector
+        this.metricsCollector = new BotMetricsCollector(this.adminApiService);
+        
+        // Initialize conversation monitor
+        this.conversationMonitor = new ConversationMonitor(this.metricsCollector);
+        
         // Initialize AI service
         const adminApiUrl = process.env.ADMIN_API_URL || '';
         this.aiService = new AIService(
@@ -56,6 +70,18 @@ export class BotManager {
             adminApiUrl,
             this.mapDataService
         );
+
+        // Initialize test runner and conversation replay (lazy initialization)
+        // These are only created when needed (development/testing)
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TESTING === 'true') {
+            this.testRunner = new BotTestRunner(
+                this.aiService,
+                this.conversationMemory,
+                this.adminApiService,
+                this.metricsCollector
+            );
+            this.conversationReplay = new ConversationReplay(this.testRunner);
+        }
     }
     
     /**
@@ -354,6 +380,34 @@ export class BotManager {
      */
     getAIService(): AIService {
         return this.aiService;
+    }
+
+    /**
+     * Get metrics collector
+     */
+    getMetricsCollector(): BotMetricsCollector {
+        return this.metricsCollector;
+    }
+
+    /**
+     * Get test runner (only available in development/testing mode)
+     */
+    getTestRunner(): BotTestRunner | null {
+        return this.testRunner;
+    }
+
+    /**
+     * Get conversation replay (only available in development/testing mode)
+     */
+    getConversationReplay(): ConversationReplay | null {
+        return this.conversationReplay;
+    }
+
+    /**
+     * Get conversation monitor
+     */
+    getConversationMonitor(): ConversationMonitor {
+        return this.conversationMonitor;
     }
 
     /**

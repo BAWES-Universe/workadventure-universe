@@ -1,0 +1,269 @@
+/**
+ * BotMetricsCollector - Collects and stores bot performance metrics
+ * 
+ * Tracks:
+ * - Response time
+ * - Token usage (prompt, completion, total)
+ * - Repetition score
+ * - System prompt leakage
+ * - Personality compliance score
+ * - Conversation quality metrics
+ */
+
+import type { BotMetrics, MetricType, MetricQuery, MetricAggregation, ResponseQualityMetrics } from './types';
+import { AdminApiService } from '../server/AdminApiService';
+
+export class BotMetricsCollector {
+    private adminApiService: AdminApiService;
+    private metricsBuffer: BotMetrics[] = [];
+    private bufferSize: number = 100;
+    private flushInterval: number = 30000; // 30 seconds
+    private flushTimer: NodeJS.Timeout | null = null;
+    private isFlushing: boolean = false;
+
+    constructor(adminApiService: AdminApiService, bufferSize: number = 100, flushInterval: number = 30000) {
+        this.adminApiService = adminApiService;
+        this.bufferSize = bufferSize;
+        this.flushInterval = flushInterval;
+        this.startFlushTimer();
+    }
+
+    /**
+     * Record a metric (non-blocking)
+     */
+    recordMetric(metric: BotMetrics): void {
+        this.metricsBuffer.push(metric);
+
+        // Flush if buffer is full
+        if (this.metricsBuffer.length >= this.bufferSize) {
+            this.flushMetrics().catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[BotMetricsCollector] Error flushing metrics:', error);
+                }
+            });
+        }
+    }
+
+    /**
+     * Record response time
+     */
+    recordResponseTime(botId: string, responseTime: number, metadata?: Record<string, any>): void {
+        this.recordMetric({
+            botId,
+            timestamp: Date.now(),
+            metrics: {
+                responseTime,
+            },
+            metadata,
+        });
+    }
+
+    /**
+     * Record token usage
+     */
+    recordTokenUsage(
+        botId: string,
+        promptTokens: number,
+        completionTokens: number,
+        metadata?: Record<string, any>
+    ): void {
+        this.recordMetric({
+            botId,
+            timestamp: Date.now(),
+            metrics: {
+                tokenUsage: {
+                    prompt: promptTokens,
+                    completion: completionTokens,
+                    total: promptTokens + completionTokens,
+                },
+            },
+            metadata,
+        });
+    }
+
+    /**
+     * Record repetition score (0-1, where 0 = no repetition, 1 = exact duplicate)
+     */
+    recordRepetitionScore(botId: string, score: number, metadata?: Record<string, any>): void {
+        this.recordMetric({
+            botId,
+            timestamp: Date.now(),
+            metrics: {
+                repetitionScore: Math.max(0, Math.min(1, score)), // Clamp to 0-1
+            },
+            metadata,
+        });
+    }
+
+    /**
+     * Record system prompt leakage detection
+     */
+    recordSystemPromptLeakage(botId: string, hasLeakage: boolean, metadata?: Record<string, any>): void {
+        this.recordMetric({
+            botId,
+            timestamp: Date.now(),
+            metrics: {
+                systemPromptLeakage: hasLeakage,
+            },
+            metadata,
+        });
+    }
+
+    /**
+     * Record personality compliance score (0-1, where 1 = perfect match with chat instructions)
+     */
+    recordPersonalityCompliance(botId: string, score: number, metadata?: Record<string, any>): void {
+        this.recordMetric({
+            botId,
+            timestamp: Date.now(),
+            metrics: {
+                personalityCompliance: Math.max(0, Math.min(1, score)), // Clamp to 0-1
+            },
+            metadata,
+        });
+    }
+
+    /**
+     * Record conversation quality score (0-1)
+     */
+    recordConversationQuality(botId: string, score: number, metadata?: Record<string, any>): void {
+        this.recordMetric({
+            botId,
+            timestamp: Date.now(),
+            metrics: {
+                conversationQuality: Math.max(0, Math.min(1, score)), // Clamp to 0-1
+            },
+            metadata,
+        });
+    }
+
+    /**
+     * Record a complete response quality metric
+     */
+    recordResponseQuality(quality: ResponseQualityMetrics): void {
+        this.recordMetric({
+            botId: quality.botId,
+            timestamp: quality.timestamp,
+            metrics: {
+                responseTime: quality.metrics.responseTime,
+                tokenUsage: {
+                    prompt: 0, // Will be filled by token usage metric
+                    completion: quality.metrics.tokenUsage,
+                    total: quality.metrics.tokenUsage,
+                },
+                repetitionScore: quality.metrics.repetitionScore,
+                systemPromptLeakage: quality.metrics.systemPromptLeakage,
+                personalityCompliance: quality.metrics.personalityCompliance,
+                conversationQuality: quality.metrics.overallQuality,
+            },
+            metadata: {
+                playerId: quality.playerId,
+                responseId: quality.responseId,
+            },
+        });
+    }
+
+    /**
+     * Get current metrics for a bot (from buffer, not persisted)
+     */
+    getCurrentMetrics(botId: string): BotMetrics[] {
+        return this.metricsBuffer.filter(m => m.botId === botId);
+    }
+
+    /**
+     * Query metrics (delegates to Admin API)
+     */
+    async queryMetrics(query: MetricQuery): Promise<BotMetrics[]> {
+        try {
+            // This will be implemented when Admin API endpoints are ready
+            // For now, return empty array
+            return [];
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[BotMetricsCollector] Error querying metrics:', error);
+            }
+            return [];
+        }
+    }
+
+    /**
+     * Get metric aggregations (delegates to Admin API)
+     */
+    async getAggregations(
+        botId: string,
+        metricType: MetricType,
+        startTime: number,
+        endTime: number
+    ): Promise<MetricAggregation | null> {
+        try {
+            // This will be implemented when Admin API endpoints are ready
+            // For now, return null
+            return null;
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[BotMetricsCollector] Error getting aggregations:', error);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Flush metrics buffer to Admin API (non-blocking)
+     */
+    private async flushMetrics(): Promise<void> {
+        if (this.isFlushing || this.metricsBuffer.length === 0) {
+            return;
+        }
+
+        this.isFlushing = true;
+        const metricsToFlush = this.metricsBuffer.splice(0, this.bufferSize);
+
+        try {
+            // Send to Admin API
+            await this.adminApiService.saveBotMetrics(metricsToFlush);
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotMetricsCollector] Flushed ${metricsToFlush.length} metrics`);
+            }
+        } catch (error) {
+            // Put metrics back in buffer if flush failed
+            this.metricsBuffer.unshift(...metricsToFlush);
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[BotMetricsCollector] Error flushing metrics, re-queued:', error);
+            }
+        } finally {
+            this.isFlushing = false;
+        }
+    }
+
+    /**
+     * Start periodic flush timer
+     */
+    private startFlushTimer(): void {
+        if (this.flushTimer) {
+            clearInterval(this.flushTimer);
+        }
+
+        this.flushTimer = setInterval(() => {
+            this.flushMetrics().catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[BotMetricsCollector] Error in periodic flush:', error);
+                }
+            });
+        }, this.flushInterval);
+    }
+
+    /**
+     * Stop the collector and flush remaining metrics
+     */
+    async shutdown(): Promise<void> {
+        if (this.flushTimer) {
+            clearInterval(this.flushTimer);
+            this.flushTimer = null;
+        }
+
+        // Flush remaining metrics
+        await this.flushMetrics();
+    }
+}

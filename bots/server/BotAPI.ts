@@ -729,6 +729,152 @@ export class BotAPI {
                 res.status(500).json({ error: error.message });
             }
         });
+
+        // Metrics endpoints
+        // Get current metrics for a bot (from buffer)
+        this.app.get('/api/bots/:botId/metrics/current', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const metricsCollector = this.botManager.getMetricsCollector();
+                
+                if (!metricsCollector) {
+                    res.status(503).json({ error: 'Metrics collector not available' });
+                    return;
+                }
+
+                const metrics = metricsCollector.getCurrentMetrics(botId);
+                res.json({ botId, metrics, count: metrics.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting current metrics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get metrics with time range (from Admin API)
+        this.app.get('/api/bots/:botId/metrics', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const metricType = req.query.metricType as string | undefined;
+                const startTime = req.query.startTime ? parseInt(req.query.startTime as string, 10) : undefined;
+                const endTime = req.query.endTime ? parseInt(req.query.endTime as string, 10) : undefined;
+                const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+                const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+
+                const metrics = await this.adminApiService.getBotMetrics(botId, {
+                    metricType,
+                    startTime,
+                    endTime,
+                    limit,
+                    offset,
+                });
+
+                res.json({ botId, metrics, count: metrics.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting metrics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Record metrics (internal endpoint, uses BOT_SERVICE_TOKEN)
+        this.app.post('/api/bots/metrics', async (req: Request, res: Response) => {
+            try {
+                const { metrics } = req.body;
+
+                if (!Array.isArray(metrics)) {
+                    res.status(400).json({ error: 'Metrics must be an array' });
+                    return;
+                }
+
+                await this.adminApiService.saveBotMetrics(metrics);
+                res.json({ saved: metrics.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error recording metrics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Test endpoints
+        // Run test suite
+        this.app.post('/api/bots/test/run-suite', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { testSuite, botId } = req.body;
+
+                if (!testSuite || !botId) {
+                    res.status(400).json({ error: 'Missing testSuite or botId' });
+                    return;
+                }
+
+                const testRunner = this.botManager.getTestRunner();
+                if (!testRunner) {
+                    res.status(503).json({ error: 'Test runner not available' });
+                    return;
+                }
+
+                const testRun = await testRunner.runTestSuite(testSuite, botId);
+                res.json(testRun);
+            } catch (error: any) {
+                console.error('[BotAPI] Error running test suite:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get test results
+        this.app.get('/api/bots/test/results/:testId', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { testId } = req.params;
+                
+                // This would fetch from Admin API in a real implementation
+                // For now, return not implemented
+                res.status(501).json({ error: 'Not implemented - test results stored in Admin API' });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting test results:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Replay conversation
+        this.app.post('/api/bots/test/replay', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { conversationId, newChatInstructions } = req.body;
+
+                if (!conversationId) {
+                    res.status(400).json({ error: 'Missing conversationId' });
+                    return;
+                }
+
+                const conversationReplay = this.botManager.getConversationReplay();
+                if (!conversationReplay) {
+                    res.status(503).json({ error: 'Conversation replay not available' });
+                    return;
+                }
+
+                const result = await conversationReplay.replayConversation(conversationId, newChatInstructions);
+                res.json(result);
+            } catch (error: any) {
+                console.error('[BotAPI] Error replaying conversation:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get problematic conversations
+        this.app.get('/api/bots/:botId/conversations/problematic', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const criteria = req.query.criteria ? JSON.parse(req.query.criteria as string) : undefined;
+
+                const conversationReplay = this.botManager.getConversationReplay();
+                if (!conversationReplay) {
+                    res.status(503).json({ error: 'Conversation replay not available' });
+                    return;
+                }
+
+                const problematic = conversationReplay.identifyProblematicConversations(botId, criteria);
+                res.json({ botId, conversations: problematic, count: problematic.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting problematic conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
     }
 
     /**
