@@ -14,6 +14,7 @@ import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { movementLogger } from '../utils/MovementLogger';
+import * as path from 'path';
 
 // Environment variables
 const BOT_SERVER_PORT = parseInt(process.env.BOT_SERVER_PORT || '3001', 10);

@@ -129,7 +129,9 @@ export class ResponseProcessor {
         cleaned = cleaned.replace(/CONTEXT:.*?(?=\n|$)/gs, '');
         cleaned = cleaned.replace(/^- .*?(?=\n|$)/gm, ''); // Remove bullet points that might be part of instructions
         cleaned = cleaned.replace(/\s*\[END_TOOL_REQUEST\].*?\[END_TOOL_RESPONSE\]\s*/gs, ''); // Remove tool markers
-        cleaned = cleaned.replace(/<think>.*?<\/think>/gs, ''); // Remove reasoning tags
+        cleaned = cleaned.replace(/<think>.*?<\/redacted_reasoning>/gs, ''); // Remove redacted reasoning tags (most common)
+        cleaned = cleaned.replace(/<think>.*?<\/think>/gs, ''); // Remove think tags
+        cleaned = cleaned.replace(/<reasoning>.*?<\/reasoning>/gs, ''); // Remove reasoning tags (alternative format)
 
         // If the message still contains instruction-like text, take only the first "real" line
         if (cleaned.includes('\n') && (cleaned.includes('CRITICAL') || cleaned.includes('RULES') || cleaned.includes('GUIDELINES'))) {

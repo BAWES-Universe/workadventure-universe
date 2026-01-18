@@ -76,15 +76,21 @@ export class AutoPilotImprovement {
         
         const isDevelopment = process.env.NODE_ENV === 'development';
         
-        this.tasksDirectory = config.tasksDirectory || 
+        // Fix path - process.cwd() is /usr/src/app/bots in docker
+        // We want: /usr/src/app/bots/improvement-tasks
+        // But if path already has /bots/bots/, normalize it
+        let tasksDir = config.tasksDirectory || 
             process.env.IMPROVEMENT_TASKS_DIR || 
-            path.join(process.cwd(), 'bots', 'improvement-tasks');
+            path.join(process.cwd(), 'improvement-tasks');
+        
+        // Normalize: remove double "bots" if present
+        this.tasksDirectory = tasksDir.replace(/\/bots\/bots\//g, '/bots/');
         
         this.config = {
             enabled: config.enabled ?? isDevelopment,
             testIntervalMs: config.testIntervalMs ?? 30000, // 30 seconds for fast iteration
             improvementIntervalMs: config.improvementIntervalMs ?? 60000, // 1 minute
-            minMetricsBeforeTesting: config.minMetricsBeforeTesting ?? 5, // Lower threshold for faster start
+            minMetricsBeforeTesting: config.minMetricsBeforeTesting ?? 0, // Run tests immediately, don't wait for metrics
             autoApplyImprovements: config.autoApplyImprovements ?? isDevelopment,
             maxIterationsPerBot: config.maxIterationsPerBot ?? 50, // Higher limit for continuous iteration
             tasksDirectory: this.tasksDirectory,
@@ -189,33 +195,33 @@ export class AutoPilotImprovement {
             for (const bot of bots) {
                 const botId = bot.getBotId();
                 
-                // Check if we have enough metrics
+                // Get metrics (if available) - but don't skip if we don't have any
                 const metricsCollector = this.botManager.getMetricsCollector();
                 let metrics: any[] = [];
                 if (metricsCollector) {
                     metrics = await metricsCollector.queryMetrics({
                         botId,
-                        limit: this.config.minMetricsBeforeTesting,
+                        limit: 50,
                     });
-
-                    if (metrics.length < this.config.minMetricsBeforeTesting) {
-                        console.log(`[AutoPilot] Skipping bot ${botId.substring(0, 8)}... (need ${this.config.minMetricsBeforeTesting} metrics, have ${metrics.length})`);
-                        continue;
-                    }
                 }
 
-                // Generate test cases based on bot configuration and metrics
+                // Always run tests - don't wait for metrics
+                // Generate test cases based on bot configuration
                 const testCases = await this.generateTestCases(botId);
                 
                 if (testCases.length === 0) {
+                    console.log(`[AutoPilot] No test cases generated for bot ${botId.substring(0, 8)}...`);
                     continue;
                 }
 
                 // Run tests
                 const testRunner = this.botManager.getTestRunner();
                 if (!testRunner) {
+                    console.log(`[AutoPilot] Test runner not available for bot ${botId.substring(0, 8)}...`);
                     continue;
                 }
+
+                console.log(`[AutoPilot] 🧪 Running ${testCases.length} test(s) for bot ${botId.substring(0, 8)}...`);
 
                 const testRun = await testRunner.runTestSuite({
                     id: `autopilot-${Date.now()}`,
