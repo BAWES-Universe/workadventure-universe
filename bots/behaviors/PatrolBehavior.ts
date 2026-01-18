@@ -1161,6 +1161,25 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
+        // Start conversation in memory if needed
+        this.conversationMemory.startConversation(botId, senderId);
+        
+        // Start conversation in storage (if available)
+        if (this.conversationStorage) {
+            this.conversationStorage.startConversation(botId, senderId);
+        }
+        
+        // Store player's message in memory
+        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
+        
+        // Store player's message in conversation storage
+        if (this.conversationStorage) {
+            this.conversationStorage.addMessage(botId, senderId, message, 'person');
+        }
+        
+        // Extract personal information from message
+        this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+
         // Start typing indicator
         this.bot?.startTyping(spaceName);
 
@@ -1228,6 +1247,10 @@ export class PatrolBehavior extends BaseBehavior {
                         this.bot.sendChatMessage(spaceName, fullMessage);
                         // Store bot's message in memory
                         this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                        // Store in conversation storage
+                        if (this.conversationStorage) {
+                            this.conversationStorage.addMessage(botId, playerId, fullMessage, 'bot');
+                        }
                     }
                     break;
                 }

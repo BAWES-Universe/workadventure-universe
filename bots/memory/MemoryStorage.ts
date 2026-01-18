@@ -11,6 +11,7 @@ import axios from 'axios';
 export interface MemoryStorageConfig {
     adminApiUrl?: string;
     adminApiToken?: string;
+    botServiceToken?: string; // Use BOT_SERVICE_TOKEN for bot endpoints
     saveInterval: number; // Save interval in milliseconds (default: 5 minutes)
     maxRetries: number;
 }
@@ -18,6 +19,7 @@ export interface MemoryStorageConfig {
 export class MemoryStorage {
     private adminApiUrl?: string;
     private adminApiToken?: string;
+    private botServiceToken?: string;
     private saveInterval: number;
     private maxRetries: number;
     private saveTimer: NodeJS.Timeout | null = null;
@@ -25,6 +27,7 @@ export class MemoryStorage {
     constructor(config: MemoryStorageConfig) {
         this.adminApiUrl = config.adminApiUrl || process.env.ADMIN_API_URL;
         this.adminApiToken = config.adminApiToken || process.env.ADMIN_API_TOKEN;
+        this.botServiceToken = config.botServiceToken || process.env.BOT_SERVICE_TOKEN;
         this.saveInterval = config.saveInterval || 5 * 60 * 1000; // 5 minutes
         this.maxRetries = config.maxRetries || 3;
     }
@@ -33,7 +36,7 @@ export class MemoryStorage {
      * Check if storage is configured
      */
     isConfigured(): boolean {
-        return !!(this.adminApiUrl && this.adminApiToken);
+        return !!(this.adminApiUrl && (this.botServiceToken || this.adminApiToken));
     }
 
     /**
@@ -71,14 +74,22 @@ export class MemoryStorage {
 
     /**
      * Save memories for a bot
+     * @param saveType - "immediate" for emotion-only updates, "periodic" for full memory saves
      */
-    async saveMemories(botId: string, memories: BotPlayerMemory[]): Promise<void> {
+    async saveMemories(botId: string, memories: BotPlayerMemory[], saveType: 'immediate' | 'periodic' = 'periodic'): Promise<void> {
         if (!this.isConfigured() || memories.length === 0) {
             return;
         }
 
         if (!botId) {
             console.warn('[MemoryStorage] botId is required');
+            return;
+        }
+
+        // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
+        const authToken = this.botServiceToken || this.adminApiToken;
+        if (!authToken) {
+            console.warn('[MemoryStorage] No authentication token available');
             return;
         }
 
@@ -90,10 +101,11 @@ export class MemoryStorage {
                     {
                         memories: memories.map(mem => this.serializeMemory(mem)),
                         timestamp: Date.now(),
+                        saveType: saveType, // "immediate" for emotions, "periodic" for full saves
                     },
                     {
                         headers: {
-                            Authorization: `Bearer ${this.adminApiToken}`,
+                            Authorization: `Bearer ${authToken}`,
                             'Content-Type': 'application/json',
                         },
                     }
@@ -120,12 +132,19 @@ export class MemoryStorage {
             return [];
         }
 
+        // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
+        const authToken = this.botServiceToken || this.adminApiToken;
+        if (!authToken) {
+            console.warn('[MemoryStorage] No authentication token available');
+            return [];
+        }
+
         try {
             const response = await axios.get(
                 `${this.adminApiUrl}/api/bots/memory/${botId}`,
                 {
                     headers: {
-                        Authorization: `Bearer ${this.adminApiToken}`,
+                        Authorization: `Bearer ${authToken}`,
                     },
                 }
             );
@@ -147,9 +166,10 @@ export class MemoryStorage {
 
     /**
      * Save a single memory update (for immediate persistence)
+     * @param saveType - "immediate" for emotion-only updates, "periodic" for full memory saves
      */
-    async saveMemory(botId: string, memory: BotPlayerMemory): Promise<void> {
-        await this.saveMemories(botId, [memory]);
+    async saveMemory(botId: string, memory: BotPlayerMemory, saveType: 'immediate' | 'periodic' = 'periodic'): Promise<void> {
+        await this.saveMemories(botId, [memory], saveType);
     }
 
     /**

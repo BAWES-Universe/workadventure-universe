@@ -306,7 +306,7 @@ export class BotManager {
         behavior = createBehavior(config.behaviorType, behaviorConfig);
         
         // Set services for behavior
-        behavior.setServices(this.aiService, this.adminApiService);
+        behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage);
 
         // Store full config in client so behaviors can access it without HTTP requests
         client.setFullConfig(config);

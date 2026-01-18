@@ -622,8 +622,18 @@ export class SocialBehavior extends BaseBehavior {
         
         conversation.lastMessageTime = Date.now();
         
+        // Start conversation in storage (if available)
+        if (this.conversationStorage) {
+            this.conversationStorage.startConversation(botId, senderId);
+        }
+        
         // Store player's message in memory
         this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
+        
+        // Store player's message in conversation storage
+        if (this.conversationStorage) {
+            this.conversationStorage.addMessage(botId, senderId, message, 'person');
+        }
         
         // Extract personal information from message
         this.conversationMemory.extractPersonalInfo(botId, senderId, message);
@@ -714,6 +724,10 @@ export class SocialBehavior extends BaseBehavior {
                         
                         // Store in memory
                         this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                        // Store in conversation storage
+                        if (this.conversationStorage) {
+                            this.conversationStorage.addMessage(botId, playerId, fullMessage, 'bot');
+                        }
                     }
                     break;
                 }

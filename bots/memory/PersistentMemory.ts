@@ -39,6 +39,7 @@ export class PersistentMemory extends ConversationMemory {
         this.memoryStorage = new MemoryStorage({
             adminApiUrl: config.adminApiUrl,
             adminApiToken: config.adminApiToken,
+            botServiceToken: process.env.BOT_SERVICE_TOKEN, // Use BOT_SERVICE_TOKEN for bot endpoints
             saveInterval: 5 * 60 * 1000, // 5 minutes (not used for debounced saves)
             maxRetries: 3,
         });
@@ -181,9 +182,9 @@ export class PersistentMemory extends ConversationMemory {
         }
         this.pendingSaves.delete(key);
 
-        // Save to storage
+        // Save to storage (periodic save for conversation history)
         try {
-            await this.memoryStorage.saveMemory(botId, memory);
+            await this.memoryStorage.saveMemory(botId, memory, 'periodic');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[PersistentMemory] Saved conversation history for bot ${botId}, player ${playerId}`);
@@ -200,7 +201,8 @@ export class PersistentMemory extends ConversationMemory {
      */
     private async saveMemoryImmediately(botId: string, memory: BotPlayerMemory): Promise<void> {
         try {
-            await this.memoryStorage.saveMemory(botId, memory);
+            // Use "immediate" saveType for emotion-only updates
+            await this.memoryStorage.saveMemory(botId, memory, 'immediate');
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[PersistentMemory] Immediately saved emotions for bot ${botId}, player ${memory.playerId}`);
