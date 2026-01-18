@@ -38,22 +38,24 @@ const botRegistry = new BotRegistry(BOT_SERVER_ID, {
 const botManager = new BotManager(adminApiService, botRegistry);
 const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
 
-// Start improvement scheduler (DEVELOPMENT ONLY - never in production)
+// Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
 const isDevelopment = process.env.NODE_ENV === 'development';
 if (isDevelopment) {
-    import('../services/ImprovementScheduler').then(({ ImprovementScheduler }) => {
-        const scheduler = new ImprovementScheduler(botManager, {
+    import('../services/AutoPilotImprovement').then(({ AutoPilotImprovement }) => {
+        const autopilot = new AutoPilotImprovement(botManager, {
             enabled: true,
-            intervalMs: parseInt(process.env.IMPROVEMENT_INTERVAL_MS || '3600000', 10), // Default: 1 hour
-            autoApply: process.env.IMPROVEMENT_AUTO_APPLY === 'true',
+            testIntervalMs: parseInt(process.env.AUTOPILOT_TEST_INTERVAL_MS || '300000', 10), // Default: 5 minutes
+            improvementIntervalMs: parseInt(process.env.AUTOPILOT_IMPROVEMENT_INTERVAL_MS || '600000', 10), // Default: 10 minutes
+            autoApplyImprovements: process.env.AUTOPILOT_AUTO_APPLY !== 'false', // Default: true
+            maxIterationsPerBot: parseInt(process.env.AUTOPILOT_MAX_ITERATIONS || '10', 10),
         });
-        scheduler.start();
-        console.log('[BotServer] Improvement scheduler started (DEV MODE ONLY)');
+        autopilot.start();
+        console.log('[BotServer] 🚀 AutoPilot improvement system started (FULLY AUTONOMOUS)');
     }).catch(error => {
-        console.error('[BotServer] Failed to start improvement scheduler:', error);
+        console.error('[BotServer] Failed to start autopilot:', error);
     });
 } else {
-    console.log('[BotServer] Improvement scheduler disabled (production mode)');
+    console.log('[BotServer] AutoPilot disabled (production mode)');
 }
 
 // Graceful shutdown handler
