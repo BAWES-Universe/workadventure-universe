@@ -996,6 +996,93 @@ export class BotAPI {
                 res.status(500).json({ error: error.message });
             }
         });
+
+        // Improvement endpoints
+        // Get improvement recommendations
+        this.app.get('/api/bots/improve/recommendations', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const botId = req.query.botId as string;
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
+                    return;
+                }
+
+                const autoImprovement = this.botManager.getAutoImprovement();
+                if (!autoImprovement) {
+                    res.status(503).json({ error: 'Auto-improvement not available' });
+                    return;
+                }
+
+                const recommendations = await autoImprovement.analyzeAndRecommend(botId);
+                res.json({ botId, recommendations, count: recommendations.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting improvement recommendations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Run improvement cycle
+        this.app.post('/api/bots/improve/cycle', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.body;
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
+                    return;
+                }
+
+                const improvementLoop = this.botManager.getSelfImprovementLoop();
+                if (!improvementLoop) {
+                    res.status(503).json({ error: 'Self-improvement loop not available' });
+                    return;
+                }
+
+                const cycle = await improvementLoop.runImprovementCycle(botId);
+                res.json(cycle);
+            } catch (error: any) {
+                console.error('[BotAPI] Error running improvement cycle:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Analytics endpoints
+        // Get conversation analytics
+        this.app.get('/api/bots/:botId/analytics', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const startTime = req.query.startTime ? parseInt(req.query.startTime as string, 10) : undefined;
+                const endTime = req.query.endTime ? parseInt(req.query.endTime as string, 10) : undefined;
+
+                const analytics = this.botManager.getConversationAnalytics();
+                if (!analytics) {
+                    res.status(503).json({ error: 'Conversation analytics not available' });
+                    return;
+                }
+
+                const result = await analytics.getAnalytics(botId, startTime, endTime);
+                res.json(result);
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting analytics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get purpose distribution
+        this.app.get('/api/bots/:botId/purposes', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const analytics = this.botManager.getConversationAnalytics();
+                if (!analytics) {
+                    res.status(503).json({ error: 'Conversation analytics not available' });
+                    return;
+                }
+
+                const result = await analytics.getAnalytics(botId);
+                res.json({ botId, purposeDistribution: result.purposeDistribution });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting purpose distribution:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
     }
 
     /**

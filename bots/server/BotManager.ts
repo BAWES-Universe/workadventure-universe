@@ -44,6 +44,10 @@ export class BotManager {
     private conversationMonitor: ConversationMonitor;
     private conversationStorage: ConversationStorage;
     private conversationCleanup: ConversationCleanup;
+    private autoImprovement: AutoImprovement | null = null;
+    private selfImprovementLoop: SelfImprovementLoop | null = null;
+    private purposeDetector: PurposeDetector | null = null;
+    private conversationAnalytics: ConversationAnalytics | null = null;
     private testRunner: BotTestRunner | null = null;
     private conversationReplay: ConversationReplay | null = null;
     private isInitialized = false;
@@ -90,6 +94,25 @@ export class BotManager {
             );
             this.conversationReplay = new ConversationReplay(this.testRunner);
         }
+
+        // Initialize improvement and analytics (development only)
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_IMPROVEMENT === 'true') {
+            this.autoImprovement = new AutoImprovement(this.metricsCollector, this.testRunner);
+            if (this.testRunner) {
+                this.selfImprovementLoop = new SelfImprovementLoop(
+                    this.autoImprovement,
+                    this.testRunner,
+                    this.metricsCollector
+                );
+            }
+        }
+
+        // Initialize analytics (always available)
+        // Note: This requires PersistentMemory, but we're using ConversationMemory for now
+        // In production, this would use PersistentMemory
+        // For now, create a placeholder that will work with ConversationMemory
+        // this.purposeDetector = new PurposeDetector(this.persistentMemory, this.aiService);
+        // this.conversationAnalytics = new ConversationAnalytics(this.persistentMemory, this.metricsCollector);
     }
     
     /**
@@ -430,6 +453,27 @@ export class BotManager {
      */
     getConversationCleanup(): ConversationCleanup {
         return this.conversationCleanup;
+    }
+
+    /**
+     * Get auto-improvement (development only)
+     */
+    getAutoImprovement(): AutoImprovement | null {
+        return this.autoImprovement;
+    }
+
+    /**
+     * Get self-improvement loop (development only)
+     */
+    getSelfImprovementLoop(): SelfImprovementLoop | null {
+        return this.selfImprovementLoop;
+    }
+
+    /**
+     * Get conversation analytics
+     */
+    getConversationAnalytics(): ConversationAnalytics | null {
+        return this.conversationAnalytics;
     }
 
     /**
