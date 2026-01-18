@@ -297,7 +297,19 @@ export class PatrolBehavior extends BaseBehavior {
         // If following a path, let BotClient handle movement
         // BUT: BotClient.updatePathFollowing() already checks for nearby players and stops
         // So we just need to call it - the stop logic is handled there
+        // CRITICAL: Don't call updatePathFollowing if we're in a conversation space
         if (this.bot.getIsFollowingPath()) {
+            // CRITICAL FIX: Check if we're in a space BEFORE calling updatePathFollowing
+            // This prevents the bot from continuing to move after stopping in a conversation
+            if (shouldRespond && (this.currentSpaceName || this.engagedWithUsers.size > 0) && !this.isLeading) {
+                // We're in a conversation space - stop and cancel pathfinding
+                this.bot.cancelPathfinding();
+                this.bot.stop();
+                this.updateProximityEngagement();
+                this.onBotPositionUpdated();
+                return;
+            }
+            
             // BotClient.updatePathFollowing() will check for nearby players and stop if needed
             this.bot.updatePathFollowing(deltaTime);
             
