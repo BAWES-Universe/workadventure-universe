@@ -13,12 +13,17 @@ import { AIService } from '../ai/AIService';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { AdminApiService } from '../server/AdminApiService';
 import { BotMetricsCollector } from '../metrics/BotMetricsCollector';
+import { ResponseProcessor } from '../ai/ResponseProcessor';
+import { ConversationMonitor } from '../monitoring/ConversationMonitor';
+import { PersonalityComplianceValidator } from '../ai/PersonalityComplianceValidator';
 
 export class BotTestRunner {
     private aiService: AIService;
     private conversationMemory: ConversationMemory;
     private adminApiService: AdminApiService;
     private metricsCollector: BotMetricsCollector;
+    private responseProcessor: ResponseProcessor;
+    private personalityValidator: PersonalityComplianceValidator;
 
     constructor(
         aiService: AIService,
@@ -30,6 +35,11 @@ export class BotTestRunner {
         this.conversationMemory = conversationMemory;
         this.adminApiService = adminApiService;
         this.metricsCollector = metricsCollector;
+        
+        // Initialize response processor and validators for test response cleaning
+        const conversationMonitor = new ConversationMonitor(metricsCollector);
+        this.responseProcessor = new ResponseProcessor(metricsCollector, conversationMonitor);
+        this.personalityValidator = new PersonalityComplianceValidator(metricsCollector);
     }
 
     /**
@@ -131,7 +141,33 @@ export class BotTestRunner {
                 }
             }
 
-            response = fullMessage;
+            // Clean response using ResponseProcessor (removes reasoning tags, system prompt leakage, etc.)
+            let cleanedResponse = fullMessage;
+            let repetitionScore = 0;
+            let systemPromptLeakage = false;
+            let personalityCompliance = 0;
+            
+            if (fullMessage.trim()) {
+                const processed = this.responseProcessor.processResponse(
+                    botId,
+                    testPlayerId,
+                    fullMessage,
+                    chatInstructions
+                );
+                cleanedResponse = processed.cleaned;
+                repetitionScore = processed.metrics.repetitionScore;
+                systemPromptLeakage = processed.metrics.systemPromptLeakage;
+                
+                // Validate personality compliance
+                const complianceResult = this.personalityValidator.validateCompliance(
+                    botId,
+                    cleanedResponse,
+                    chatInstructions
+                );
+                personalityCompliance = complianceResult.score;
+            }
+            
+            response = cleanedResponse; // Use cleaned response for validation
             const responseTime = Date.now() - startTime;
 
             // Extract tools called from response (if tool markers are present)

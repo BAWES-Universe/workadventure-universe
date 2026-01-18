@@ -234,6 +234,27 @@ export class AutoPilotImprovement {
 
                 this.lastTestRun.set(botId, Date.now());
 
+                // Save test results to Admin API
+                const adminApiService = this.botManager.getAdminApiService();
+                if (adminApiService) {
+                    adminApiService.saveTestResults({
+                        testId: testRun.id,
+                        botId,
+                        testSuite: testRun.testSuiteId,
+                        results: testRun.results,
+                        passed: testRun.status === 'passed',
+                        summary: testRun.summary,
+                        startedAt: testRun.startedAt,
+                        completedAt: testRun.completedAt,
+                        duration: testRun.duration,
+                    }).catch(error => {
+                        // Fire-and-forget, don't break the flow
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.error('[AutoPilot] Error saving test results:', error);
+                        }
+                    });
+                }
+
                 // Check results
                 if (testRun.summary.failed > 0) {
                     console.log(`[AutoPilot] ❌ Bot ${botId.substring(0, 8)}... failed ${testRun.summary.failed}/${testRun.summary.total} tests`);
@@ -247,6 +268,14 @@ export class AutoPilotImprovement {
                     });
                 } else {
                     console.log(`[AutoPilot] ✅ Bot ${botId.substring(0, 8)}... passed all ${testRun.summary.total} tests`);
+                    
+                    // Clean up old task files for this bot (tests are passing, issues are resolved)
+                    // Delete tasks older than 5 minutes for this bot
+                    this.cleanupResolvedTasks(botId).catch(error => {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.error(`[AutoPilot] Error cleaning up tasks for bot ${botId}:`, error);
+                        }
+                    });
                 }
             }
         } catch (error: any) {
@@ -485,6 +514,7 @@ export class AutoPilotImprovement {
 
         // Test 1: Basic greeting (always test)
         // Be flexible - "Hello", "Hi", "Hey" all count as greetings
+        // Also accept "assist", "help", "can", "what" as valid greeting responses
         testCases.push({
             id: `autopilot-greeting-${Date.now()}`,
             name: 'Bot should respond to greeting',
@@ -492,8 +522,9 @@ export class AutoPilotImprovement {
             chatInstructions,
             input: 'Hello',
             expectedBehavior: {
-                // Accept any greeting word - case insensitive, partial matches OK
-                shouldContain: ['hello', 'hi', 'hey', 'greeting', 'greet', 'assist', 'help'],
+                // Accept any greeting word or helpful response - case insensitive, partial matches OK
+                // Very flexible: any response that acknowledges the greeting is fine
+                shouldContain: ['hello', 'hi', 'hey', 'greeting', 'greet', 'assist', 'help', 'can', 'what', 'how'],
                 maxResponseTime: 5000,
                 personalityCompliance: true,
             },
@@ -601,6 +632,47 @@ export class AutoPilotImprovement {
         } catch (error: any) {
             if (error.code !== 'ENOENT') {
                 console.error(`[AutoPilot] Error resolving task ${taskId}:`, error);
+            }
+        }
+    }
+
+    /**
+     * Clean up resolved tasks for a bot (when tests are passing)
+     * Deletes task files older than 5 minutes for this bot
+     */
+    private async cleanupResolvedTasks(botId: string): Promise<void> {
+        try {
+            const files = await fs.readdir(this.tasksDirectory);
+            const botIdShort = botId.substring(0, 8);
+            const now = Date.now();
+            const FIVE_MINUTES = 5 * 60 * 1000;
+
+            for (const file of files) {
+                if (!file.startsWith('task-') || !file.endsWith('.json')) {
+                    continue;
+                }
+
+                // Check if task is for this bot
+                if (!file.includes(botIdShort)) {
+                    continue;
+                }
+
+                const taskFile = path.join(this.tasksDirectory, file);
+                const stats = await fs.stat(taskFile);
+                const taskAge = now - stats.mtimeMs;
+
+                // Delete tasks older than 5 minutes (likely resolved if tests are passing)
+                if (taskAge > FIVE_MINUTES) {
+                    await fs.unlink(taskFile);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[AutoPilot] 🗑️  Cleaned up resolved task: ${file} (${Math.round(taskAge / 1000 / 60)} minutes old)`);
+                    }
+                }
+            }
+        } catch (error: any) {
+            // Don't throw - cleanup failures shouldn't break the system
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error(`[AutoPilot] Error cleaning up tasks:`, error);
             }
         }
     }

@@ -95,10 +95,10 @@ When tests fail or metrics show issues, AutoPilot creates a task file:
    - System automatically re-tests in 30 seconds
    - Verify improvements worked
 
-6. **Resolve task:**
-   ```bash
-   rm bots/improvement-tasks/task-{id}.json
-   ```
+6. **Task cleanup (automatic):**
+   - When tests pass, AutoPilot automatically deletes task files older than 5 minutes
+   - This prevents folder bloat while keeping recent issues visible
+   - You can also manually clean up: `bash bots/scripts/cleanup-resolved-tasks.sh`
 
 ### 4. Fast Iteration Loop
 

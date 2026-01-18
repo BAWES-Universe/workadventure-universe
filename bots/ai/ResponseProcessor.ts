@@ -132,10 +132,16 @@ export class ResponseProcessor {
         cleaned = cleaned.replace(/^- .*?(?=\n|$)/gm, ''); // Remove bullet points that might be part of instructions
         cleaned = cleaned.replace(/\s*\[END_TOOL_REQUEST\].*?\[END_TOOL_RESPONSE\]\s*/gs, ''); // Remove tool markers
         // Remove reasoning tags - handle all variations
+        // Handle self-closing format: <think>\n\n</think>
+        cleaned = cleaned.replace(/<think>[\s\S]*?<\/redacted_reasoning>/gs, ''); // Both redacted (most common)
+        cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gs, ''); // Opening redacted, closing think
         cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gs, ''); // Standard think tags
-        cleaned = cleaned.replace(/<think>[\s\S]*?<\/redacted_reasoning>/gs, ''); // Opening think, closing redacted
-        cleaned = cleaned.replace(/<think>[\s\S]*?<\/redacted_reasoning>/gs, ''); // Both redacted
         cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gs, ''); // Alternative format
+        // Also handle any remaining standalone tags
+        cleaned = cleaned.replace(/<redacted_reasoning\s*\/?>/g, ''); // Self-closing or opening only
+        cleaned = cleaned.replace(/<\/redacted_reasoning>/g, ''); // Closing only
+        cleaned = cleaned.replace(/<think\s*\/?>/g, ''); // Self-closing or opening only
+        cleaned = cleaned.replace(/<\/think>/g, ''); // Closing only
 
         // If the message still contains instruction-like text, take only the first "real" line
         if (cleaned.includes('\n') && (cleaned.includes('CRITICAL') || cleaned.includes('RULES') || cleaned.includes('GUIDELINES'))) {

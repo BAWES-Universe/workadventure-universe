@@ -524,6 +524,13 @@ export class BotManager {
     }
 
     /**
+     * Get AdminApiService instance
+     */
+    getAdminApiService(): AdminApiService {
+        return this.adminApiService;
+    }
+
+    /**
      * Update bot configuration (live update for running bot)
      */
     async updateBot(

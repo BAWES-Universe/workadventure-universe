@@ -650,6 +650,120 @@ export class AdminApiService {
     }
 
     /**
+     * Save test results to Admin API
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     * Fire-and-forget (doesn't throw errors)
+     */
+    async saveTestResults(testResult: {
+        testId: string;
+        botId: string;
+        testSuite: string;
+        results: any;
+        passed: boolean;
+        summary?: {
+            total: number;
+            passed: number;
+            failed: number;
+            skipped: number;
+        };
+        startedAt?: number;
+        completedAt?: number;
+        duration?: number;
+    }): Promise<void> {
+        if (!this.isConfigured()) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] Admin API not configured, skipping test results save');
+            }
+            return;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, skipping test results save');
+            }
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/test/results`,
+                testResult,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Saved test result: ${testResult.testId}`);
+            }
+        } catch (error: any) {
+            // Fire-and-forget: don't throw, just log
+            console.error('[AdminApiService] Error saving test results:', error);
+            if (error.response) {
+                console.error('[AdminApiService] Error response status:', error.response.status);
+                console.error('[AdminApiService] Error response data:', error.response.data);
+            }
+        }
+    }
+
+    /**
+     * Save improvement cycle to Admin API
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     * Fire-and-forget (doesn't throw errors)
+     */
+    async saveImprovement(improvement: {
+        botId: string;
+        improvementType: string;
+        changes: any;
+        metricsBefore?: any;
+        metricsAfter?: any;
+        deployed?: boolean;
+    }): Promise<void> {
+        if (!this.isConfigured()) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] Admin API not configured, skipping improvement save');
+            }
+            return;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, skipping improvement save');
+            }
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/improvements`,
+                improvement,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Saved improvement: ${improvement.improvementType} for bot ${improvement.botId}`);
+            }
+        } catch (error: any) {
+            // Fire-and-forget: don't throw, just log
+            console.error('[AdminApiService] Error saving improvement:', error);
+            if (error.response) {
+                console.error('[AdminApiService] Error response status:', error.response.status);
+                console.error('[AdminApiService] Error response data:', error.response.data);
+            }
+        }
+    }
+
+    /**
      * Get bot metrics from Admin API
      */
     async getBotMetrics(botId: string, query?: {
