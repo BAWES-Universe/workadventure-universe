@@ -32,6 +32,7 @@ export interface ImprovementTask {
     id: string;
     botId: string;
     timestamp: number;
+    status: 'pending' | 'in_progress' | 'resolved' | 'failed'; // Task status tracking
     testResults: TestRun;
     metrics: {
         repetitionScore?: number;
@@ -59,6 +60,11 @@ export interface ImprovementTask {
         chatInstructions?: string;
         behaviorType?: string;
     };
+    // Fields for tracking fixes
+    fixApplied?: boolean;
+    fixDescription?: string;
+    fixTimestamp?: number;
+    resolvedAt?: number;
 }
 
 export class AutoPilotImprovement {
@@ -259,71 +265,35 @@ export class AutoPilotImprovement {
                 if (testRun.summary.failed > 0) {
                     console.log(`[AutoPilot] ❌ Bot ${botId.substring(0, 8)}... failed ${testRun.summary.failed}/${testRun.summary.total} tests`);
                     
-                    // Calculate average metrics for metricsBefore
-                    // Use metrics from queryMetrics if available, otherwise extract from test results
-                    let avgMetrics: any = {};
+                    // Check if there's an existing unresolved task for this bot
+                    const existingTask = await this.findUnresolvedTask(botId);
                     
-                    if (metrics.length > 0) {
-                        // Use queried metrics (real conversation metrics)
-                        avgMetrics = {
-                            repetitionScore: metrics.filter(m => m.metrics?.repetitionScore !== undefined)
-                                .reduce((sum, m) => sum + (m.metrics.repetitionScore || 0), 0) / 
-                                Math.max(metrics.filter(m => m.metrics?.repetitionScore !== undefined).length, 1),
-                            personalityCompliance: metrics.filter(m => m.metrics?.personalityCompliance !== undefined)
-                                .reduce((sum, m) => sum + (m.metrics.personalityCompliance || 0), 0) / 
-                                Math.max(metrics.filter(m => m.metrics?.personalityCompliance !== undefined).length, 1),
-                            systemPromptLeakage: metrics.filter(m => m.metrics?.systemPromptLeakage === true).length / 
-                                Math.max(metrics.length, 1),
-                            responseTime: metrics.filter(m => m.metrics?.responseTime !== undefined)
-                                .reduce((sum, m) => sum + (m.metrics.responseTime || 0), 0) / 
-                                Math.max(metrics.filter(m => m.metrics?.responseTime !== undefined).length, 1),
-                        };
-                    } else if (testRun.results.length > 0) {
-                        // Fallback: extract metrics from test results
-                        const testMetrics = testRun.results.filter(r => r.metrics).map(r => r.metrics!);
-                        if (testMetrics.length > 0) {
-                            avgMetrics = {
-                                repetitionScore: testMetrics.filter(m => m.repetitionScore !== undefined)
-                                    .reduce((sum, m) => sum + (m.repetitionScore || 0), 0) / 
-                                    Math.max(testMetrics.filter(m => m.repetitionScore !== undefined).length, 1),
-                                personalityCompliance: testMetrics.filter(m => m.personalityCompliance !== undefined)
-                                    .reduce((sum, m) => sum + (m.personalityCompliance || 0), 0) / 
-                                    Math.max(testMetrics.filter(m => m.personalityCompliance !== undefined).length, 1),
-                                systemPromptLeakage: testMetrics.filter(m => m.systemPromptLeakage === true).length / 
-                                    Math.max(testMetrics.length, 1),
-                                responseTime: testRun.results.filter(r => r.responseTime !== undefined)
-                                    .reduce((sum, r) => sum + (r.responseTime || 0), 0) / 
-                                    Math.max(testRun.results.filter(r => r.responseTime !== undefined).length, 1),
-                            };
-                        }
-                    }
-
-                    // Create improvement task file for AI to analyze
-                    const taskId = await this.createImprovementTask(botId, testRun, metrics);
-                    
-                    // Save improvement record to Admin API (task created = improvement needed)
-                    const adminApiService = this.botManager.getAdminApiService();
-                    if (adminApiService) {
-                        adminApiService.saveImprovement({
-                            botId,
-                            improvementType: 'test_failure',
-                            changes: {
-                                failedTests: testRun.summary.failed,
-                                totalTests: testRun.summary.total,
-                                taskFile: taskId ? `${taskId}.json` : `task-${Date.now()}-${botId.substring(0, 8)}.json`,
-                            },
-                            metricsBefore: avgMetrics,
-                            deployed: false,
-                            testRunId: testRun.id,
-                        }).catch(error => {
-                            // Fire-and-forget, don't break the flow
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.error('[AutoPilot] Error saving improvement:', error);
+                    if (existingTask) {
+                        // Check if task is in_progress (AI is working on it)
+                        if (existingTask.status === 'in_progress') {
+                            // Re-test to see if fix worked
+                            console.log(`[AutoPilot] 🔄 Re-testing bot ${botId.substring(0, 8)}... (fix in progress)`);
+                            
+                            if (testRun.summary.failed === 0) {
+                                // Fix worked! Mark task as resolved
+                                await this.updateTaskStatus(existingTask.id, 'resolved');
+                                console.log(`[AutoPilot] ✅ Task ${existingTask.id} resolved - tests passing!`);
+                            } else {
+                                // Still broken, mark as failed and create new task with different approach
+                                await this.updateTaskStatus(existingTask.id, 'failed');
+                                console.log(`[AutoPilot] ❌ Task ${existingTask.id} failed - creating new task`);
+                                await this.createImprovementTask(botId, testRun, metrics);
                             }
-                        });
+                        } else if (existingTask.status === 'pending') {
+                            // Task exists but not being worked on - don't create duplicate
+                            console.log(`[AutoPilot] ⏳ Task ${existingTask.id} already exists (pending) - skipping duplicate`);
+                        }
+                    } else {
+                        // No existing task - create new one
+                        await this.createImprovementTask(botId, testRun, metrics);
                     }
                     
-                    // Also trigger improvement cycle
+                    // Also trigger improvement cycle (for metrics-based improvements)
                     this.improveBot(botId).catch(error => {
                         console.error(`[AutoPilot] Error improving bot ${botId}:`, error);
                     });
@@ -436,7 +406,7 @@ export class AutoPilotImprovement {
 
     /**
      * Create improvement task file from test results
-     * Returns the task ID for use in saveImprovement
+     * Returns the task ID
      */
     private async createImprovementTask(
         botId: string,
@@ -474,6 +444,7 @@ export class AutoPilotImprovement {
                 id: `task-${Date.now()}-${botId.substring(0, 8)}`,
                 botId,
                 timestamp: Date.now(),
+                status: 'pending', // New task starts as pending
                 testResults: testRun,
                 metrics: avgMetrics,
                 failedTests: testRun.results
@@ -792,6 +763,70 @@ export class AutoPilotImprovement {
     }
 
     /**
+     * Find unresolved task for a bot (pending or in_progress)
+     */
+    private async findUnresolvedTask(botId: string): Promise<ImprovementTask | null> {
+        try {
+            const files = await fs.readdir(this.tasksDirectory);
+            const botIdShort = botId.substring(0, 8);
+            
+            for (const file of files) {
+                if (!file.startsWith('task-') || !file.endsWith('.json')) {
+                    continue;
+                }
+                
+                // Check if task is for this bot
+                if (!file.includes(botIdShort)) {
+                    continue;
+                }
+                
+                const taskFile = path.join(this.tasksDirectory, file);
+                const taskContent = await fs.readFile(taskFile, 'utf-8');
+                const task: ImprovementTask = JSON.parse(taskContent);
+                
+                // Check if task is unresolved (pending or in_progress)
+                if (task.botId === botId && (task.status === 'pending' || task.status === 'in_progress')) {
+                    return task;
+                }
+            }
+            
+            return null;
+        } catch (error: any) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error(`[AutoPilot] Error finding unresolved task:`, error);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Update task status
+     */
+    private async updateTaskStatus(taskId: string, status: 'pending' | 'in_progress' | 'resolved' | 'failed'): Promise<void> {
+        try {
+            const taskFile = path.join(this.tasksDirectory, `${taskId}.json`);
+            const taskContent = await fs.readFile(taskFile, 'utf-8');
+            const task: ImprovementTask = JSON.parse(taskContent);
+            
+            task.status = status;
+            
+            if (status === 'resolved') {
+                task.resolvedAt = Date.now();
+            }
+            
+            await fs.writeFile(taskFile, JSON.stringify(task, null, 2), 'utf-8');
+            
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AutoPilot] Updated task ${taskId} status to: ${status}`);
+            }
+        } catch (error: any) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error(`[AutoPilot] Error updating task status:`, error);
+            }
+        }
+    }
+
+    /**
      * Clean up resolved tasks for a bot (when tests are passing)
      * Deletes task files older than 5 minutes for this bot
      * Also runs periodic cleanup of ALL old tasks (>10 minutes) to prevent folder bloat
@@ -813,23 +848,37 @@ export class AutoPilotImprovement {
                 const stats = await fs.stat(taskFile);
                 const taskAge = now - stats.mtimeMs;
 
+                // Read task to check status
+                let task: ImprovementTask | null = null;
+                try {
+                    const taskContent = await fs.readFile(taskFile, 'utf-8');
+                    task = JSON.parse(taskContent);
+                } catch {
+                    // If we can't read the task, skip it
+                    continue;
+                }
+
                 // Check if task is for this bot
                 const isForThisBot = file.includes(botIdShort);
 
-                // Delete tasks older than 5 minutes for this bot (when tests pass)
-                if (isForThisBot && taskAge > FIVE_MINUTES) {
+                // Only delete resolved or failed tasks (not pending/in_progress)
+                const canDelete = task.status === 'resolved' || task.status === 'failed';
+
+                // Delete resolved/failed tasks older than 5 minutes for this bot (when tests pass)
+                if (isForThisBot && canDelete && taskAge > FIVE_MINUTES) {
                     await fs.unlink(taskFile);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[AutoPilot] 🗑️  Cleaned up resolved task: ${file} (${Math.round(taskAge / 1000 / 60)} minutes old)`);
+                        console.log(`[AutoPilot] 🗑️  Cleaned up ${task.status} task: ${file} (${Math.round(taskAge / 1000 / 60)} minutes old)`);
                     }
                 }
                 
-                // Also delete ALL tasks older than 10 minutes (prevent folder bloat)
+                // Also delete ALL resolved/failed tasks older than 10 minutes (prevent folder bloat)
                 // This ensures tasks don't accumulate indefinitely
-                if (taskAge > TEN_MINUTES) {
+                // But keep pending/in_progress tasks even if old (they're being worked on)
+                if (canDelete && taskAge > TEN_MINUTES) {
                     await fs.unlink(taskFile);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[AutoPilot] 🗑️  Cleaned up old task: ${file} (${Math.round(taskAge / 1000 / 60)} minutes old - preventing bloat)`);
+                        console.log(`[AutoPilot] 🗑️  Cleaned up old ${task.status} task: ${file} (${Math.round(taskAge / 1000 / 60)} minutes old - preventing bloat)`);
                     }
                 }
             }

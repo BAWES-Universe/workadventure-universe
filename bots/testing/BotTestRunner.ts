@@ -146,13 +146,17 @@ export class BotTestRunner {
             let repetitionScore = 0;
             let systemPromptLeakage = false;
             let personalityCompliance = 0;
+            const responseTime = Date.now() - startTime;
             
             if (fullMessage.trim()) {
+                // Process response to get actual metrics (not hardcoded zeros!)
                 const processed = this.responseProcessor.processResponse(
                     botId,
                     testPlayerId,
                     fullMessage,
-                    chatInstructions
+                    chatInstructions,
+                    responseTime, // Pass response time
+                    undefined // Token usage not available in test context
                 );
                 cleanedResponse = processed.cleaned;
                 repetitionScore = processed.metrics.repetitionScore;
@@ -168,7 +172,6 @@ export class BotTestRunner {
             }
             
             response = cleanedResponse; // Use cleaned response for validation
-            const responseTime = Date.now() - startTime;
 
             // Extract tools called from response (if tool markers are present)
             // This is a simplified check - in reality, AIService should expose tools called
@@ -183,11 +186,11 @@ export class BotTestRunner {
             const validationErrors = this.validateResponse(testCase, response, toolsCalled, responseTime);
             errors.push(...validationErrors);
 
-            // Calculate metrics
+            // Use actual metrics from ResponseProcessor (not hardcoded zeros!)
             const metrics = {
-                repetitionScore: 0, // Would be calculated by RepetitionDetector
-                systemPromptLeakage: this.detectSystemPromptLeakage(response),
-                personalityCompliance: 0, // Would be calculated by PersonalityComplianceValidator
+                repetitionScore: repetitionScore,
+                systemPromptLeakage: systemPromptLeakage,
+                personalityCompliance: personalityCompliance,
             };
 
             const passed = errors.length === 0;
