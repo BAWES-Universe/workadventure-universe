@@ -133,12 +133,20 @@ export class ConversationMemory {
         const emotions = memory.emotions;
         const now = Date.now();
 
-        // Detect anger
-        const angerKeywords = ['angry', 'mad', 'hate', 'annoyed', 'frustrated', 'upset'];
+        // Detect anger - expanded keywords
+        const angerKeywords = [
+            'angry', 'mad', 'hate', 'annoyed', 'frustrated', 'upset',
+            'sucks', 'suck', 'bad', 'terrible', 'awful', 'worst', 'horrible',
+            'disgusting', 'pathetic', 'useless', 'stupid', 'dumb', 'idiot',
+            'disappointed', 'disappointing', 'hate you', 'you suck'
+        ];
         const angerLevel = angerKeywords.filter(keyword => lowerMessage.includes(keyword)).length;
         if (angerLevel > 0) {
             emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + (angerLevel * 10));
             emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + (angerLevel * 5));
+            // Also decrease happiness when anger detected
+            emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - (angerLevel * 5));
+            emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - (angerLevel * 3));
         } else {
             // Decay anger over time
             const timeSinceUpdate = now - emotions.lastEmotionUpdate;
@@ -147,8 +155,11 @@ export class ConversationMemory {
             emotions.botEmotion.anger = Math.max(0, emotions.botEmotion.anger - (decayRate * 2));
         }
 
-        // Detect happiness
-        const happyKeywords = ['happy', 'glad', 'love', 'great', 'awesome', 'thanks', 'thank you'];
+        // Detect happiness - expanded keywords
+        const happyKeywords = [
+            'happy', 'glad', 'love', 'great', 'awesome', 'thanks', 'thank you',
+            'good', 'nice', 'wonderful', 'amazing', 'excellent', 'fantastic', 'brilliant'
+        ];
         const happyLevel = happyKeywords.filter(keyword => lowerMessage.includes(keyword)).length;
         if (happyLevel > 0) {
             emotions.personEmotion.happiness = Math.min(100, emotions.personEmotion.happiness + (happyLevel * 10));
@@ -219,6 +230,24 @@ export class ConversationMemory {
                     memory.personalInfo.preferences.push(preference);
                     memory.personalInfo.lastInfoUpdate = Date.now();
                 }
+            }
+        }
+
+        // Extract emotional/physical states (facts)
+        const statePatterns = [
+            /i'?m (hungry|sad|happy|tired|excited|angry|frustrated|worried|scared|nervous|thirsty|bored|lonely|confused|sick|ill|fine|okay|ok)/i,
+            /i am (hungry|sad|happy|tired|excited|angry|frustrated|worried|scared|nervous|thirsty|bored|lonely|confused|sick|ill|fine|okay|ok)/i,
+            /i feel (hungry|sad|happy|tired|excited|angry|frustrated|worried|scared|nervous|thirsty|bored|lonely|confused|sick|ill|fine|okay|ok)/i,
+        ];
+
+        for (const pattern of statePatterns) {
+            const match = message.match(pattern);
+            if (match && match[1]) {
+                const state = match[1].toLowerCase();
+                memory.personalInfo.facts.set('current_state', state);
+                memory.personalInfo.facts.set(`${state}_mentioned_at`, Date.now().toString());
+                memory.personalInfo.lastInfoUpdate = Date.now();
+                break;
             }
         }
     }
@@ -398,15 +427,44 @@ export class ConversationMemory {
         context.push(`- Person's feelings (inferred): ${this.describeEmotion(emotions.personEmotion)}`);
 
         // Personal information
+        let hasPersonalInfo = false;
         if (memory.personalInfo.birthday) {
-            context.push(`\nPersonal Information:`);
+            if (!hasPersonalInfo) {
+                context.push(`\nPersonal Information:`);
+                hasPersonalInfo = true;
+            }
             context.push(`- Birthday: ${memory.personalInfo.birthday}`);
         }
         if (memory.personalInfo.name) {
+            if (!hasPersonalInfo) {
+                context.push(`\nPersonal Information:`);
+                hasPersonalInfo = true;
+            }
             context.push(`- Name: ${memory.personalInfo.name}`);
         }
         if (memory.personalInfo.preferences && memory.personalInfo.preferences.length > 0) {
+            if (!hasPersonalInfo) {
+                context.push(`\nPersonal Information:`);
+                hasPersonalInfo = true;
+            }
             context.push(`- Preferences: ${memory.personalInfo.preferences.join(', ')}`);
+        }
+
+        // Facts (emotional/physical states, etc.)
+        if (memory.personalInfo.facts.size > 0) {
+            if (!hasPersonalInfo) {
+                context.push(`\nPersonal Information:`);
+            }
+            context.push(`\nRemembered Facts:`);
+            for (const [key, value] of memory.personalInfo.facts.entries()) {
+                if (key === 'current_state') {
+                    context.push(`- Currently: ${value}`);
+                } else if (key.endsWith('_mentioned_at')) {
+                    // Skip timestamp keys in context (they're metadata)
+                } else {
+                    context.push(`- ${key}: ${value}`);
+                }
+            }
         }
 
         // Recent conversation history

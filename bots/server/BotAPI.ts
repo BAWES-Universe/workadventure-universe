@@ -1104,6 +1104,31 @@ export class BotAPI {
             }
         });
 
+        // Improvement tasks endpoint
+        this.app.get('/api/bots/improve/tasks', async (req: BotAPIRequest, res: Response) => {
+            await authenticateToken(req, res, async () => {
+                try {
+                    const autoPilot = this.botManager.getAutoPilot();
+                    if (!autoPilot) {
+                        res.status(503).json({ error: 'AutoPilot not available' });
+                        return;
+                    }
+
+                    const status = req.query.status as string | undefined;
+                    const tasks = await autoPilot.getPendingTasks();
+
+                    const filtered = status
+                        ? tasks.filter(t => t.status === status)
+                        : tasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
+
+                    res.json({ tasks: filtered, total: filtered.length });
+                } catch (error: any) {
+                    console.error('[BotAPI] Error getting improvement tasks:', error);
+                    res.status(500).json({ error: error.message });
+                }
+            }, this.adminApiService);
+        });
+
         // Analytics endpoints
         // Get conversation analytics
         this.app.get('/api/bots/:botId/analytics', async (req: BotAPIRequest, res: Response) => {

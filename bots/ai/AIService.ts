@@ -237,8 +237,13 @@ export class AIService {
             }
             if (conversationContext) {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
-                // Add instruction to use conversation history for context
-                systemPrompt += `\n\nIMPORTANT: Use the "Recent Conversation" above to understand context. **CRITICAL: If you already said the location (universe/world/room) in this conversation, do NOT repeat it when answering follow-up questions like "what areas", "who's here", "what can we do here", or "whats the plan" - just answer the new question directly. If they just asked "where are we" and you said "BAWES Universe, StudentHub World, test room", and they ask "what areas", just say "There's an Office Area here" - do NOT repeat the location. For "what can we do here" or "whats the plan", mention areas/activities available, NOT the location again.** If someone says "whats that", "where", or "whats in there", look at the most recent messages to understand what they're referring to. Answer directly without asking questions back.`;
+                // Add instruction to use conversation history and facts for context
+                systemPrompt += `\n\nIMPORTANT: Use the "Recent Conversation" and "Remembered Facts" above to understand context. **CRITICAL MEMORY RULES:**
+- If "Remembered Facts" shows "Currently: [state]" (e.g., "hungry", "sad", "tired"), you MUST remember this and reference it when asked "remember what I said?" or "what did I tell you?"
+- When user asks "remember what I said?" or "what did I tell you?", you MUST reference the specific facts you remember (e.g., "You mentioned you're hungry" or "You said you were sad")
+- Don't just say "I remember" - actually state WHAT you remember from the facts
+- If facts show a state like "hungry", acknowledge it naturally in your response when relevant
+- If you already said the location (universe/world/room) in this conversation, do NOT repeat it when answering follow-up questions like "what areas", "who's here", "what can we do here", or "whats the plan" - just answer the new question directly. If they just asked "where are we" and you said "BAWES Universe, StudentHub World, test room", and they ask "what areas", just say "There's an Office Area here" - do NOT repeat the location. For "what can we do here" or "whats the plan", mention areas/activities available, NOT the location again.** If someone says "whats that", "where", or "whats in there", look at the most recent messages to understand what they're referring to. Answer directly without asking questions back.`;
             }
             
             // Add formatting and behavior rules (condensed)

@@ -20,6 +20,8 @@ import { ConversationStorage } from '../memory/ConversationStorage';
 import { ConversationCleanup } from '../memory/ConversationCleanup';
 import { AutoImprovement } from '../improvement/AutoImprovement';
 import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
+import { EmotionAnalyzer } from '../memory/EmotionAnalyzer';
+import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 
 export interface BotInstance {
     botId: string;
@@ -56,6 +58,8 @@ export class BotManager {
     private conversationAnalytics: ConversationAnalytics | null = null;
     private testRunner: BotTestRunner | null = null;
     private conversationReplay: ConversationReplay | null = null;
+    private emotionAnalyzer: EmotionAnalyzer | null = null;
+    private autoPilot: AutoPilotImprovement | null = null;
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
     private roomSyncLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent spawning
@@ -78,7 +82,7 @@ export class BotManager {
                 saveInterval: 5 * 60 * 1000, // 5 minutes
                 maxRetries: 3,
             });
-            this.conversationMemory = new PersistentMemory({
+            const persistentMemory = new PersistentMemory({
                 maxHistorySize: 50,
                 maxMemories: 1000,
                 adminApiUrl: process.env.ADMIN_API_URL,
@@ -86,7 +90,29 @@ export class BotManager {
                 debounceInterval: 30000, // 30 seconds
                 immediateSaveEnabled: true,
             });
+            this.conversationMemory = persistentMemory;
+            
+            // Initialize AI service first (needed for EmotionAnalyzer)
+            const adminApiUrl = process.env.ADMIN_API_URL || '';
+            this.aiService = new AIService(
+                this.conversationMemory,
+                this.adminApiService,
+                adminApiUrl,
+                this.mapDataService
+            );
+            
+            // Initialize EmotionAnalyzer for AI-based emotion analysis
+            this.emotionAnalyzer = new EmotionAnalyzer(
+                persistentMemory,
+                this.aiService,
+                this.adminApiService
+            );
+            
+            // Set emotion analyzer in PersistentMemory so it can schedule analysis
+            persistentMemory.setEmotionAnalyzer(this.emotionAnalyzer);
+            
             console.log('[BotManager] Using PersistentMemory (development mode with persistence)');
+            console.log('[BotManager] EmotionAnalyzer initialized for AI-based emotion analysis');
         } else {
             // Fallback to in-memory only
             this.conversationMemory = new ConversationMemory(50, 1000);
@@ -108,14 +134,16 @@ export class BotManager {
         this.conversationStorage = new ConversationStorage(this.adminApiService);
         this.conversationCleanup = new ConversationCleanup(this.adminApiService);
         
-        // Initialize AI service
-        const adminApiUrl = process.env.ADMIN_API_URL || '';
-        this.aiService = new AIService(
-            this.conversationMemory,
-            this.adminApiService,
-            adminApiUrl,
-            this.mapDataService
-        );
+        // Initialize AI service (if not already initialized in PersistentMemory block)
+        if (!this.aiService) {
+            const adminApiUrl = process.env.ADMIN_API_URL || '';
+            this.aiService = new AIService(
+                this.conversationMemory,
+                this.adminApiService,
+                adminApiUrl,
+                this.mapDataService
+            );
+        }
 
         // Initialize test runner and conversation replay (DEVELOPMENT ONLY)
         // These are only created in development to keep production lightweight
@@ -124,7 +152,8 @@ export class BotManager {
                 this.aiService,
                 this.conversationMemory,
                 this.adminApiService,
-                this.metricsCollector
+                this.metricsCollector,
+                this.conversationStorage // Pass conversationStorage to log test conversations
             );
             this.conversationReplay = new ConversationReplay(this.testRunner);
         }
@@ -521,6 +550,20 @@ export class BotManager {
      */
     getConversationMemory(): ConversationMemory {
         return this.conversationMemory;
+    }
+
+    /**
+     * Set AutoPilot instance (called from index.ts)
+     */
+    setAutoPilot(autoPilot: AutoPilotImprovement): void {
+        this.autoPilot = autoPilot;
+    }
+
+    /**
+     * Get AutoPilot instance
+     */
+    getAutoPilot(): AutoPilotImprovement | null {
+        return this.autoPilot;
     }
 
     /**

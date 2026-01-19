@@ -10,6 +10,7 @@
 
 import { ConversationMemory, type BotPlayerMemory, type EmotionalState } from './ConversationMemory';
 import { MemoryStorage } from './MemoryStorage';
+import type { EmotionAnalyzer } from './EmotionAnalyzer';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -28,6 +29,7 @@ export class PersistentMemory extends ConversationMemory {
     private debounceInterval: number;
     private immediateSaveEnabled: boolean;
     private pendingSaves: Map<string, BotPlayerMemory> = new Map(); // key: "botId_playerId"
+    private emotionAnalyzer: EmotionAnalyzer | null = null;
 
     constructor(config: PersistentMemoryConfig = {}) {
         super(config.maxHistorySize || 50, config.maxMemories || 1000);
@@ -46,7 +48,14 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
-     * Override addMessage to add debounced save
+     * Set emotion analyzer (called by BotManager)
+     */
+    setEmotionAnalyzer(emotionAnalyzer: EmotionAnalyzer): void {
+        this.emotionAnalyzer = emotionAnalyzer;
+    }
+
+    /**
+     * Override addMessage to add debounced save, immediate emotion save, and AI analysis
      */
     addMessage(
         botId: string,
@@ -55,10 +64,43 @@ export class PersistentMemory extends ConversationMemory {
         sender: 'bot' | 'person',
         spaceName?: string
     ): void {
-        // Call parent implementation
+        // Get emotions before update
+        const memory = this.getOrCreateMemory(botId, playerId);
+        const oldEmotions = {
+            personAnger: memory.emotions.personEmotion.anger,
+            personHappiness: memory.emotions.personEmotion.happiness,
+            botAnger: memory.emotions.botEmotion.anger,
+            botHappiness: memory.emotions.botEmotion.happiness,
+        };
+
+        // Call parent implementation (updates emotions via keywords)
         super.addMessage(botId, playerId, message, sender, spaceName);
 
-        // Schedule debounced save
+        // Get updated emotions
+        const updatedMemory = this.getOrCreateMemory(botId, playerId);
+        const newEmotions = updatedMemory.emotions;
+
+        // If emotions changed, trigger immediate save
+        if (
+            oldEmotions.personAnger !== newEmotions.personEmotion.anger ||
+            oldEmotions.personHappiness !== newEmotions.personEmotion.happiness ||
+            oldEmotions.botAnger !== newEmotions.botEmotion.anger ||
+            oldEmotions.botHappiness !== newEmotions.botEmotion.happiness
+        ) {
+            // Trigger immediate save by calling updateEmotions (which saves immediately)
+            this.updateEmotions(botId, playerId, {
+                botEmotion: newEmotions.botEmotion,
+                personEmotion: newEmotions.personEmotion,
+                lastEmotionUpdate: newEmotions.lastEmotionUpdate,
+            });
+        }
+
+        // Schedule AI analysis (runs 10s after last message, debounced)
+        if (this.emotionAnalyzer && sender === 'person') {
+            this.emotionAnalyzer.scheduleAnalysis(botId, playerId);
+        }
+
+        // Schedule debounced save for conversation history
         this.scheduleDebouncedSave(botId, playerId);
     }
 

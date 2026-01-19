@@ -177,8 +177,13 @@ Return a JSON object with:
         let personHappiness = currentEmotions.personEmotion.happiness;
         let personTrust = currentEmotions.personEmotion.trust;
 
-        // Detect anger
-        const angerKeywords = ['angry', 'mad', 'hate', 'annoyed', 'frustrated', 'upset', 'stop', 'no'];
+        // Detect anger - expanded keywords (matches ConversationMemory)
+        const angerKeywords = [
+            'angry', 'mad', 'hate', 'annoyed', 'frustrated', 'upset', 'stop', 'no',
+            'sucks', 'suck', 'bad', 'terrible', 'awful', 'worst', 'horrible',
+            'disgusting', 'pathetic', 'useless', 'stupid', 'dumb', 'idiot',
+            'disappointed', 'disappointing', 'hate you', 'you suck'
+        ];
         const angerCount = personMessages.reduce((count, msg) => 
             count + angerKeywords.filter(kw => msg.includes(kw)).length, 0
         );
@@ -188,8 +193,11 @@ Return a JSON object with:
             personAnger = Math.max(0, personAnger - 2); // Decay
         }
 
-        // Detect happiness
-        const happyKeywords = ['happy', 'glad', 'love', 'great', 'awesome', 'thanks', 'thank you', 'yes', 'good'];
+        // Detect happiness - expanded keywords (matches ConversationMemory)
+        const happyKeywords = [
+            'happy', 'glad', 'love', 'great', 'awesome', 'thanks', 'thank you', 'yes', 'good',
+            'nice', 'wonderful', 'amazing', 'excellent', 'fantastic', 'brilliant'
+        ];
         const happyCount = personMessages.reduce((count, msg) => 
             count + happyKeywords.filter(kw => msg.includes(kw)).length, 0
         );

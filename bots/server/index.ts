@@ -52,6 +52,8 @@ if (isDevelopment) {
             maxIterationsPerBot: parseInt(process.env.AUTOPILOT_MAX_ITERATIONS || '50', 10), // Higher for continuous iteration
             tasksDirectory: process.env.IMPROVEMENT_TASKS_DIR || path.join(process.cwd(), 'bots', 'improvement-tasks'),
         });
+        // Register with BotManager so API can access it
+        botManager.setAutoPilot(autopilot);
         autopilot.start();
         console.log('[BotServer] 🚀 AutoPilot improvement system started (FAST CONTINUOUS ITERATION)');
         console.log('[BotServer]    Tests run every 30 seconds');
