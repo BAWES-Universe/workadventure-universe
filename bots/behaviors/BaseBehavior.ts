@@ -35,6 +35,9 @@ export abstract class BaseBehavior {
     
     // Proximity tracking - players nearby (based on userMovedMessage)
     protected nearbyPlayers: Map<number, PositionInterface> = new Map();
+    
+    // UUID tracking - map userId (number) to UUID (string) for conversation storage
+    protected userIdToUuid: Map<number, string> = new Map();
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     protected closestPlayerId: number | null = null;
@@ -330,7 +333,8 @@ export abstract class BaseBehavior {
                     const botId = this.bot.getBotId();
                     // Delay to ensure any pending messages are stored
                     setTimeout(() => {
-                        this.conversationStorage?.endConversation(botId, previousClosestPlayerId).catch(error => {
+                        const userUuid = this.userIdToUuid.get(previousClosestPlayerId) || String(previousClosestPlayerId);
+                        this.conversationStorage?.endConversation(botId, userUuid).catch(error => {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.error(`[Behavior] Error ending conversation:`, error);
                             }
@@ -860,6 +864,11 @@ export abstract class BaseBehavior {
             return;
         }
 
+        // Track UUID for conversation storage (REQUIRED by Admin API)
+        if (user.uuid) {
+            this.userIdToUuid.set(user.id, user.uuid);
+        }
+
         // Track this user as engaged
         const userPosition = user.characterPosition ? {
             x: user.characterPosition.x,
@@ -894,6 +903,9 @@ export abstract class BaseBehavior {
         // Remove from engaged users
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
+        
+        // Clean up UUID mapping (optional - keep for a while in case conversation ends later)
+        // this.userIdToUuid.delete(userId);
 
         // If summoned and no players left, end summon and return
         if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {

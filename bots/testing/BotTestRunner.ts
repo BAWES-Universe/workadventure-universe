@@ -239,10 +239,15 @@ export class BotTestRunner {
             // Log test conversation to Admin API
             if (this.conversationStorage && cleanedResponse) {
                 try {
-                    await this.conversationStorage.startConversation(botId, testPlayerId, 'AutoPilot Test');
-                    await this.conversationStorage.addMessage(botId, testPlayerId, testCase.input, 'person');
-                    await this.conversationStorage.addMessage(botId, testPlayerId, cleanedResponse, 'bot');
-                    await this.conversationStorage.endConversation(botId, testPlayerId);
+                    // Use test player ID as UUID for test conversations
+                    const testUserUuid = `test-${testPlayerId}`;
+                    await this.conversationStorage.startConversation(botId, testUserUuid, {
+                        name: 'AutoPilot Test',
+                        uuid: testUserUuid,
+                    });
+                    await this.conversationStorage.addMessage(botId, testUserUuid, testCase.input, 'person');
+                    await this.conversationStorage.addMessage(botId, testUserUuid, cleanedResponse, 'bot');
+                    await this.conversationStorage.endConversation(botId, testUserUuid);
                 } catch (error) {
                     // Don't fail test if logging fails
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

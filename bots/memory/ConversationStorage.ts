@@ -21,8 +21,10 @@ export interface ConversationMessage {
 export interface ConversationRecord {
     id?: number;
     botId: string;
-    playerId: number;
-    playerName?: string;
+    userUuid: string; // REQUIRED - WorkAdventure UUID (ephemeral for guests) - primary identifier
+    userId?: string; // Optional - Foreign key to User.id (only set if authenticated) - Admin API will set this
+    userName?: string; // Optional - Display name (from request or User.name)
+    isGuest?: boolean; // Optional - true if unauthenticated (defaults to true)
     messages: ConversationMessage[];
     startedAt: number;
     endedAt: number;
@@ -34,9 +36,12 @@ export interface ConversationQuery {
     botId: string;
     limit?: number;
     offset?: number;
-    playerId?: number;
+    userId?: string; // Changed from playerId: number
     startDate?: number;
     endDate?: number;
+    // Backward compatibility
+    /** @deprecated Use userId instead */
+    playerId?: number;
 }
 
 export interface ConversationStats {
@@ -57,9 +62,22 @@ export class ConversationStorage {
 
     /**
      * Start tracking a conversation
+     * @param userUuid - REQUIRED - WorkAdventure UUID (string) - primary identifier
+     * @param userInfo - Optional user information (name, uuid, isLogged)
+     * Note: userId (User.id) will be set by Admin API when storing if user is authenticated
      */
-    startConversation(botId: string, playerId: number, playerName?: string): void {
-        const key = `${botId}_${playerId}`;
+    startConversation(
+        botId: string, 
+        userUuid: string, 
+        userInfo?: {
+            name?: string;
+            uuid?: string;
+            isLogged?: boolean;
+        }
+    ): void {
+        // Use provided UUID or fallback to the passed userUuid
+        const finalUserUuid = userInfo?.uuid || userUuid;
+        const key = `${botId}_${finalUserUuid}`;
         
         // Don't overwrite existing conversation
         if (this.activeConversations.has(key)) {
@@ -67,10 +85,13 @@ export class ConversationStorage {
         }
 
         const now = Date.now();
+        const isGuest = userInfo?.isLogged === undefined ? true : !userInfo.isLogged;
         this.activeConversations.set(key, {
             botId,
-            playerId,
-            playerName,
+            userUuid: finalUserUuid, // REQUIRED
+            userId: undefined, // Will be set by Admin API if user is authenticated
+            userName: userInfo?.name,
+            isGuest: isGuest,
             messages: [],
             startedAt: now,
             endedAt: now,
@@ -80,19 +101,20 @@ export class ConversationStorage {
 
     /**
      * Add a message to an active conversation
+     * @param userUuid - REQUIRED - User UUID (string) - WorkAdventure UUID
      */
     addMessage(
         botId: string,
-        playerId: number,
+        userUuid: string,
         message: string,
         sender: 'bot' | 'person'
     ): void {
-        const key = `${botId}_${playerId}`;
+        const key = `${botId}_${userUuid}`;
         const conversation = this.activeConversations.get(key);
 
         if (!conversation) {
-            // Start conversation if it doesn't exist
-            this.startConversation(botId, playerId);
+            // Start conversation if it doesn't exist (userUuid is required)
+            this.startConversation(botId, userUuid);
             const newConversation = this.activeConversations.get(key);
             if (newConversation) {
                 newConversation.messages.push({
@@ -117,9 +139,10 @@ export class ConversationStorage {
 
     /**
      * End a conversation and store it
+     * @param userUuid - REQUIRED - User UUID (string) - WorkAdventure UUID
      */
-    async endConversation(botId: string, playerId: number): Promise<void> {
-        const key = `${botId}_${playerId}`;
+    async endConversation(botId: string, userUuid: string): Promise<void> {
+        const key = `${botId}_${userUuid}`;
         const conversation = this.activeConversations.get(key);
 
         if (!conversation || conversation.messages.length === 0) {
@@ -172,7 +195,7 @@ export class ConversationStorage {
             );
 
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[ConversationStorage] Stored conversation for bot ${conversation.botId}, player ${conversation.playerId}`);
+                console.log(`[ConversationStorage] Stored conversation for bot ${conversation.botId}, userUuid ${conversation.userUuid}`);
             }
         } catch (error: any) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -200,7 +223,9 @@ export class ConversationStorage {
             const params: Record<string, any> = {};
             if (query.limit) params.limit = query.limit;
             if (query.offset) params.offset = query.offset;
-            if (query.playerId) params.playerId = query.playerId;
+            if (query.userId) params.userId = query.userId;
+            // Backward compatibility
+            if (query.playerId) params.userId = String(query.playerId);
             if (query.startDate) params.startDate = query.startDate;
             if (query.endDate) params.endDate = query.endDate;
 

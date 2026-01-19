@@ -310,6 +310,13 @@ export class IdleBehavior extends BaseBehavior {
             console.log(`[IdleBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
         }
 
+        // Get user info from bot's player map
+        const playerInfo = this.bot.getPlayerInfo(senderId);
+        const userName = playerInfo?.name;
+        
+        // Get UUID (REQUIRED by Admin API) - use tracked UUID or fallback to numeric ID as string
+        const userUuid = this.userIdToUuid.get(senderId) || String(senderId);
+        
         // Start conversation in memory if needed
         if (this.conversationMemory) {
             this.conversationMemory.startConversation(botId, senderId);
@@ -317,10 +324,13 @@ export class IdleBehavior extends BaseBehavior {
             this.conversationMemory.extractPersonalInfo(botId, senderId, message);
         }
         
-        // Start conversation in storage (if available)
+        // Start conversation in storage (if available) - userUuid is REQUIRED
         if (this.conversationStorage) {
-            this.conversationStorage.startConversation(botId, senderId);
-            this.conversationStorage.addMessage(botId, senderId, message, 'person');
+            this.conversationStorage.startConversation(botId, userUuid, {
+                name: userName,
+                uuid: userUuid,
+            });
+            this.conversationStorage.addMessage(botId, userUuid, message, 'person');
         }
 
         // Start typing indicator
@@ -517,7 +527,8 @@ export class IdleBehavior extends BaseBehavior {
                         }
                         // Store bot's message in conversation storage
                         if (this.conversationStorage) {
-                            this.conversationStorage.addMessage(botId, playerId, processedMessage, 'bot');
+                            const userUuid = this.userIdToUuid.get(playerId) || String(playerId);
+                            this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot');
                         }
                     }
                     break;
@@ -580,7 +591,8 @@ export class IdleBehavior extends BaseBehavior {
                             this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                             // Store bot's message in conversation storage
                             if (this.conversationStorage) {
-                                this.conversationStorage.addMessage(botId, playerId, fullMessage.trim(), 'bot');
+                                const userUuid = this.userIdToUuid.get(playerId) || String(playerId);
+                                this.conversationStorage.addMessage(botId, userUuid, fullMessage.trim(), 'bot');
                             }
                         }
                     }
