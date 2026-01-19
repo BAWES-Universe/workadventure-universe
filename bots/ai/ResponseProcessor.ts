@@ -138,16 +138,21 @@ export class ResponseProcessor {
         cleaned = cleaned.replace(/^- .*?(?=\n|$)/gm, ''); // Remove bullet points that might be part of instructions
         cleaned = cleaned.replace(/\s*\[END_TOOL_REQUEST\].*?\[END_TOOL_RESPONSE\]\s*/gs, ''); // Remove tool markers
         // Remove reasoning tags - handle all variations
-        // Handle self-closing format: <think>\n\n</think>
+        // CRITICAL: Remove these BEFORE any other processing to prevent leakage
+        // Handle complete tags first (most common) - use non-greedy matching
         cleaned = cleaned.replace(/<think>[\s\S]*?<\/redacted_reasoning>/gs, ''); // Both redacted (most common)
         cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gs, ''); // Opening redacted, closing think
         cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gs, ''); // Standard think tags
         cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gs, ''); // Alternative format
-        // Also handle any remaining standalone tags
+        // Also handle any remaining standalone tags (must come after complete tags)
         cleaned = cleaned.replace(/<redacted_reasoning\s*\/?>/g, ''); // Self-closing or opening only
         cleaned = cleaned.replace(/<\/redacted_reasoning>/g, ''); // Closing only
         cleaned = cleaned.replace(/<think\s*\/?>/g, ''); // Self-closing or opening only
         cleaned = cleaned.replace(/<\/think>/g, ''); // Closing only
+        // Handle any newline-only content left by tag removal
+        cleaned = cleaned.replace(/\n\s*\n\s*\n+/g, '\n\n'); // Clean up excessive newlines (3+ becomes 2)
+        cleaned = cleaned.replace(/^\n+/, ''); // Remove leading newlines
+        cleaned = cleaned.replace(/\n+$/, ''); // Remove trailing newlines
 
         // If the message still contains instruction-like text, take only the first "real" line
         if (cleaned.includes('\n') && (cleaned.includes('CRITICAL') || cleaned.includes('RULES') || cleaned.includes('GUIDELINES'))) {
