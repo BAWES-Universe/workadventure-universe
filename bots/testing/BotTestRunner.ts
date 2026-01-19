@@ -261,8 +261,22 @@ export class BotTestRunner {
 
         if (expected.shouldNotContain) {
             for (const text of expected.shouldNotContain) {
-                if (response.toLowerCase().includes(text.toLowerCase())) {
-                    errors.push(`Expected response NOT to contain "${text}"`);
+                const textLower = text.toLowerCase().trim();
+                const responseLower = response.toLowerCase();
+                // Use word boundaries for better matching (avoid false positives like "no" in "know")
+                // If text has spaces, it's already a phrase - match as-is
+                // If no spaces, check if it's a standalone word
+                if (textLower.includes(' ')) {
+                    // Phrase match (e.g., "i don't know")
+                    if (responseLower.includes(textLower)) {
+                        errors.push(`Expected response NOT to contain "${text}"`);
+                    }
+                } else {
+                    // Word match - use word boundaries to avoid false positives
+                    const wordRegex = new RegExp(`\\b${textLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+                    if (wordRegex.test(responseLower)) {
+                        errors.push(`Expected response NOT to contain "${text}"`);
+                    }
                 }
             }
         }
@@ -270,6 +284,18 @@ export class BotTestRunner {
         // Check response time
         if (expected.maxResponseTime && responseTime > expected.maxResponseTime) {
             errors.push(`Response time ${responseTime}ms exceeds maximum ${expected.maxResponseTime}ms`);
+        }
+
+        // Check minimum response length
+        if (expected.minResponseLength && response.length < expected.minResponseLength) {
+            errors.push(`Response length ${response.length} is below minimum ${expected.minResponseLength} characters`);
+        }
+
+        // Check repetition score (if provided)
+        if (expected.maxRepetitionScore !== undefined) {
+            // Get repetition score from metrics if available
+            // For now, we'll check this in the test result metrics
+            // The actual validation happens in the test result processing
         }
 
         return errors;

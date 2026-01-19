@@ -26,7 +26,7 @@ export interface ProcessedResponse {
 export class ResponseProcessor {
     private metricsCollector: BotMetricsCollector;
     private conversationMonitor: ConversationMonitor;
-    private recentResponses: Map<string, string[]> = new Map(); // botId -> recent responses
+    private recentResponses: Map<string, string[]> = new Map(); // key: "botId_playerId" -> recent responses (per conversation)
     private readonly MAX_RECENT_RESPONSES = 10;
 
     constructor(
@@ -49,8 +49,8 @@ export class ResponseProcessor {
         // Clean system prompt leakage
         const cleaned = this.cleanSystemPromptLeakage(response);
         
-        // Detect repetition
-        const repetitionScore = this.calculateRepetitionScore(botId, cleaned);
+        // Detect repetition (per conversation - use botId_playerId as key)
+        const repetitionScore = this.calculateRepetitionScore(botId, playerId, cleaned);
         
         // Detect system prompt leakage
         const systemPromptLeakage = this.detectSystemPromptLeakage(cleaned);
@@ -79,29 +79,33 @@ export class ResponseProcessor {
         }
 
         // Store response for repetition checking (even if duplicate, so we can detect it next time)
-        this.storeResponse(botId, cleaned);
+        this.storeResponse(botId, playerId, cleaned);
 
         // Monitor response
         this.conversationMonitor.monitorResponse(botId, playerId, cleaned, chatInstructions);
 
-        // Record metrics
-        const metrics: ResponseQualityMetrics = {
-            botId,
-            playerId,
-            responseId: `response-${Date.now()}`,
-            timestamp: Date.now(),
-            metrics: {
-                responseTime: 0, // Would be set by caller
-                tokenUsage: 0, // Would be set by caller
-                repetitionScore,
-                systemPromptLeakage,
-                personalityCompliance,
-                overallQuality,
-            },
-            responseText: cleaned,
-            chatInstructions,
-        };
-        this.metricsCollector.recordResponseQuality(metrics);
+        // Record metrics (skip for test conversations - playerId 999999 is used for tests)
+        // Tests create their own metrics separately, we don't need to duplicate
+        // Also combine all metrics into ONE record instead of multiple separate records
+        if (playerId !== 999999) {
+            const metrics: ResponseQualityMetrics = {
+                botId,
+                playerId,
+                responseId: `response-${Date.now()}`,
+                timestamp: Date.now(),
+                metrics: {
+                    responseTime: responseTime || 0, // Use provided response time
+                    tokenUsage: tokenUsage?.total || 0, // Use provided token usage
+                    repetitionScore,
+                    systemPromptLeakage,
+                    personalityCompliance,
+                    overallQuality,
+                },
+                responseText: cleaned,
+                chatInstructions,
+            };
+            this.metricsCollector.recordResponseQuality(metrics);
+        }
 
         return {
             cleaned,
@@ -158,9 +162,11 @@ export class ResponseProcessor {
 
     /**
      * Calculate repetition score (0-1, where 1 = exact duplicate)
+     * Tracks per conversation (botId_playerId) to catch repetition in same conversation
      */
-    private calculateRepetitionScore(botId: string, response: string): number {
-        const recent = this.recentResponses.get(botId) || [];
+    private calculateRepetitionScore(botId: string, playerId: number, response: string): number {
+        const key = `${botId}_${playerId}`;
+        const recent = this.recentResponses.get(key) || [];
         if (recent.length === 0) {
             return 0;
         }
@@ -278,10 +284,11 @@ export class ResponseProcessor {
     }
 
     /**
-     * Store response for repetition checking
+     * Store response for repetition checking (per conversation)
      */
-    private storeResponse(botId: string, response: string): void {
-        const recent = this.recentResponses.get(botId) || [];
+    private storeResponse(botId: string, playerId: number, response: string): void {
+        const key = `${botId}_${playerId}`;
+        const recent = this.recentResponses.get(key) || [];
         recent.push(response);
         
         // Keep only last N responses
@@ -289,13 +296,14 @@ export class ResponseProcessor {
             recent.shift();
         }
         
-        this.recentResponses.set(botId, recent);
+        this.recentResponses.set(key, recent);
     }
 
     /**
-     * Clear recent responses for a bot (for cleanup)
+     * Clear recent responses for a conversation (for cleanup)
      */
-    clearRecentResponses(botId: string): void {
-        this.recentResponses.delete(botId);
+    clearRecentResponses(botId: string, playerId: number): void {
+        const key = `${botId}_${playerId}`;
+        this.recentResponses.delete(key);
     }
 }

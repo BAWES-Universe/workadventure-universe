@@ -99,11 +99,12 @@ export class AutoImprovement {
             sum + (m.metrics.repetitionScore || 0), 0
         ) / repetitionMetrics.length;
 
-        if (avgRepetition > 0.3) {
+        // Lower threshold to catch more issues (0.15 = 15% repetition is worth improving)
+        if (avgRepetition > 0.15) {
             return {
                 type: 'repetition_fix',
-                priority: avgRepetition > 0.6 ? 'high' : 'medium',
-                description: `High repetition detected (average: ${(avgRepetition * 100).toFixed(1)}%)`,
+                priority: avgRepetition > 0.4 ? 'high' : avgRepetition > 0.25 ? 'medium' : 'low',
+                description: `Repetition detected (average: ${(avgRepetition * 100).toFixed(1)}%) - could be improved`,
                 suggestedChanges: {
                     prompt: 'Add explicit instruction to vary responses and avoid repeating previous messages.',
                     code: '// Consider implementing RepetitionDetector in response pipeline',
@@ -132,11 +133,12 @@ export class AutoImprovement {
             sum + (m.metrics.personalityCompliance || 0), 0
         ) / complianceMetrics.length;
 
-        if (avgCompliance < 0.8) {
+        // Lower threshold to catch more issues (0.85 = 85% compliance could be better)
+        if (avgCompliance < 0.85) {
             return {
                 type: 'personality_compliance',
-                priority: avgCompliance < 0.6 ? 'critical' : 'high',
-                description: `Low personality compliance (average: ${(avgCompliance * 100).toFixed(1)}%)`,
+                priority: avgCompliance < 0.7 ? 'critical' : avgCompliance < 0.8 ? 'high' : 'medium',
+                description: `Personality compliance could be improved (average: ${(avgCompliance * 100).toFixed(1)}%)`,
                 suggestedChanges: {
                     prompt: 'Strengthen personality instructions in system prompt. Ensure chat instructions are clear and explicit.',
                     code: '// Consider using PersonalityComplianceValidator in response pipeline',
@@ -196,11 +198,12 @@ export class AutoImprovement {
             sum + (m.metrics.responseTime || 0), 0
         ) / responseTimeMetrics.length;
 
-        if (avgResponseTime > 5000) { // 5 seconds
+        // Lower threshold to catch more issues (3000ms = 3 seconds)
+        if (avgResponseTime > 3000) { // 3 seconds
             return {
                 type: 'performance',
-                priority: 'medium',
-                description: `Slow response time (average: ${avgResponseTime.toFixed(0)}ms)`,
+                priority: avgResponseTime > 5000 ? 'high' : 'medium',
+                description: `Response time could be optimized (average: ${avgResponseTime.toFixed(0)}ms)`,
                 suggestedChanges: {
                     config: {
                         enableContextSummarization: true,

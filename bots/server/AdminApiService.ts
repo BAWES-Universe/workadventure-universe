@@ -625,9 +625,22 @@ export class AdminApiService {
         }
 
         try {
+            // Filter out test metrics one more time (defense in depth)
+            const realMetrics = metrics.filter(metric => {
+                const playerId = metric.metadata?.playerId;
+                return playerId !== 999999 && playerId !== '999999';
+            });
+
+            if (realMetrics.length === 0) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AdminApiService] Skipped saving ${metrics.length} test metrics`);
+                }
+                return; // No real metrics to save
+            }
+
             await axios.post(
                 `${this.adminApiUrl}/api/bots/metrics`,
-                { metrics },
+                { metrics: realMetrics },
                 {
                     headers: {
                         Authorization: `Bearer ${botServiceToken}`,
@@ -637,7 +650,12 @@ export class AdminApiService {
             );
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[AdminApiService] Saved ${metrics.length} metrics`);
+                const filteredCount = metrics.length - realMetrics.length;
+                if (filteredCount > 0) {
+                    console.log(`[AdminApiService] Saved ${realMetrics.length} metrics (filtered ${filteredCount} test metrics)`);
+                } else {
+                    console.log(`[AdminApiService] Saved ${realMetrics.length} metrics`);
+                }
             }
         } catch (error: any) {
             // Fire-and-forget: don't throw, just log
@@ -722,6 +740,8 @@ export class AdminApiService {
         metricsBefore?: any;
         metricsAfter?: any;
         deployed?: boolean;
+        recommendations?: any[];
+        testRunId?: string;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {

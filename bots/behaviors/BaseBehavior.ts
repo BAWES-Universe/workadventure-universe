@@ -335,6 +335,11 @@ export abstract class BaseBehavior {
                                 console.error(`[Behavior] Error ending conversation:`, error);
                             }
                         });
+                        
+                        // Clear repetition tracking for this conversation
+                        if (this.responseProcessor && previousClosestPlayerId) {
+                            (this.responseProcessor as any).clearRecentResponses(botId, previousClosestPlayerId);
+                        }
                     }, 2000); // 2 second delay to capture any final messages
                 }
             }

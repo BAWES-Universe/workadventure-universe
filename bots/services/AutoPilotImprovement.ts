@@ -259,8 +259,47 @@ export class AutoPilotImprovement {
                 if (testRun.summary.failed > 0) {
                     console.log(`[AutoPilot] ❌ Bot ${botId.substring(0, 8)}... failed ${testRun.summary.failed}/${testRun.summary.total} tests`);
                     
+                    // Calculate average metrics for metricsBefore
+                    // Use metrics from queryMetrics if available, otherwise extract from test results
+                    let avgMetrics: any = {};
+                    
+                    if (metrics.length > 0) {
+                        // Use queried metrics (real conversation metrics)
+                        avgMetrics = {
+                            repetitionScore: metrics.filter(m => m.metrics?.repetitionScore !== undefined)
+                                .reduce((sum, m) => sum + (m.metrics.repetitionScore || 0), 0) / 
+                                Math.max(metrics.filter(m => m.metrics?.repetitionScore !== undefined).length, 1),
+                            personalityCompliance: metrics.filter(m => m.metrics?.personalityCompliance !== undefined)
+                                .reduce((sum, m) => sum + (m.metrics.personalityCompliance || 0), 0) / 
+                                Math.max(metrics.filter(m => m.metrics?.personalityCompliance !== undefined).length, 1),
+                            systemPromptLeakage: metrics.filter(m => m.metrics?.systemPromptLeakage === true).length / 
+                                Math.max(metrics.length, 1),
+                            responseTime: metrics.filter(m => m.metrics?.responseTime !== undefined)
+                                .reduce((sum, m) => sum + (m.metrics.responseTime || 0), 0) / 
+                                Math.max(metrics.filter(m => m.metrics?.responseTime !== undefined).length, 1),
+                        };
+                    } else if (testRun.results.length > 0) {
+                        // Fallback: extract metrics from test results
+                        const testMetrics = testRun.results.filter(r => r.metrics).map(r => r.metrics!);
+                        if (testMetrics.length > 0) {
+                            avgMetrics = {
+                                repetitionScore: testMetrics.filter(m => m.repetitionScore !== undefined)
+                                    .reduce((sum, m) => sum + (m.repetitionScore || 0), 0) / 
+                                    Math.max(testMetrics.filter(m => m.repetitionScore !== undefined).length, 1),
+                                personalityCompliance: testMetrics.filter(m => m.personalityCompliance !== undefined)
+                                    .reduce((sum, m) => sum + (m.personalityCompliance || 0), 0) / 
+                                    Math.max(testMetrics.filter(m => m.personalityCompliance !== undefined).length, 1),
+                                systemPromptLeakage: testMetrics.filter(m => m.systemPromptLeakage === true).length / 
+                                    Math.max(testMetrics.length, 1),
+                                responseTime: testRun.results.filter(r => r.responseTime !== undefined)
+                                    .reduce((sum, r) => sum + (r.responseTime || 0), 0) / 
+                                    Math.max(testRun.results.filter(r => r.responseTime !== undefined).length, 1),
+                            };
+                        }
+                    }
+
                     // Create improvement task file for AI to analyze
-                    await this.createImprovementTask(botId, testRun, metrics);
+                    const taskId = await this.createImprovementTask(botId, testRun, metrics);
                     
                     // Save improvement record to Admin API (task created = improvement needed)
                     const adminApiService = this.botManager.getAdminApiService();
@@ -271,13 +310,11 @@ export class AutoPilotImprovement {
                             changes: {
                                 failedTests: testRun.summary.failed,
                                 totalTests: testRun.summary.total,
-                                taskFile: `task-${Date.now()}-${botId.substring(0, 8)}.json`,
+                                taskFile: taskId ? `${taskId}.json` : `task-${Date.now()}-${botId.substring(0, 8)}.json`,
                             },
-                            metricsBefore: {
-                                repetitionScore: metrics.find(m => m.metrics?.repetitionScore)?.metrics?.repetitionScore,
-                                personalityCompliance: metrics.find(m => m.metrics?.personalityCompliance)?.metrics?.personalityCompliance,
-                            },
+                            metricsBefore: avgMetrics,
                             deployed: false,
+                            testRunId: testRun.id,
                         }).catch(error => {
                             // Fire-and-forget, don't break the flow
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -352,12 +389,11 @@ export class AutoPilotImprovement {
 
             console.log(`[AutoPilot] 🔧 Bot ${botId.substring(0, 8)}... has ${recommendations.length} improvement(s)`);
             
-            // Filter to high-priority recommendations
-            const highPriority = recommendations.filter(r => 
-                r.priority === 'critical' || r.priority === 'high'
-            );
+            // Accept all recommendations (not just high-priority) to keep improving
+            // This ensures we create tasks even for medium/low priority improvements
+            const allRecommendations = recommendations; // Use all, not just high-priority
 
-            if (highPriority.length === 0) {
+            if (allRecommendations.length === 0) {
                 return;
             }
 
@@ -383,8 +419,8 @@ export class AutoPilotImprovement {
                     Math.max(metrics.filter(m => m.metrics.responseTime !== undefined).length, 1),
             };
 
-            // Create improvement task file
-            await this.createImprovementTaskFromMetrics(botId, avgMetrics, highPriority);
+            // Create improvement task file (use all recommendations, not just high-priority)
+            await this.createImprovementTaskFromMetrics(botId, avgMetrics, allRecommendations);
 
             if (this.config.autoApplyImprovements) {
                 // Note: Auto-apply would happen here if we had code modification capability
@@ -400,12 +436,13 @@ export class AutoPilotImprovement {
 
     /**
      * Create improvement task file from test results
+     * Returns the task ID for use in saveImprovement
      */
     private async createImprovementTask(
         botId: string,
         testRun: TestRun,
         metrics: any[]
-    ): Promise<void> {
+    ): Promise<string | null> {
         try {
             await this.ensureTasksDirectory();
 
@@ -463,8 +500,11 @@ export class AutoPilotImprovement {
             console.log(`[AutoPilot] 📝 Created improvement task: ${taskFile}`);
             console.log(`[AutoPilot]    Failed tests: ${task.failedTests.length}`);
             console.log(`[AutoPilot]    Recommendations: ${recommendations.length}`);
+            
+            return task.id;
         } catch (error: any) {
             console.error(`[AutoPilot] Error creating improvement task:`, error);
+            return null;
         }
     }
 
@@ -585,7 +625,60 @@ export class AutoPilotImprovement {
             });
         }
 
-        // Test 3: Check for repetition (based on metrics)
+        // Test 3: Response quality - should not be too short or generic
+        testCases.push({
+            id: `autopilot-response-quality-${Date.now()}`,
+            name: 'Bot should provide meaningful responses',
+            botId,
+            chatInstructions,
+            input: 'What can you do?',
+            expectedBehavior: {
+                // Response should be meaningful (not just "ok" or "yes")
+                // Use word boundaries to avoid false positives (e.g., "no" in "know")
+                shouldNotContain: [' ok ', ' yes ', ' maybe ', ' idk ', " i don't know "], // Phrases with spaces
+                minResponseLength: 10, // At least 10 characters
+                personalityCompliance: true,
+            },
+        });
+
+        // Test 4: Context awareness - should remember previous messages
+        // Only test for friendly/helpful bots - mean bots might not acknowledge names nicely
+        if (!chatInstructions.toLowerCase().includes('mean') && 
+            !chatInstructions.toLowerCase().includes('angry') &&
+            !chatInstructions.toLowerCase().includes('frustrated')) {
+            testCases.push({
+                id: `autopilot-context-awareness-${Date.now()}`,
+                name: 'Bot should maintain context in conversation',
+                botId,
+                chatInstructions,
+                input: 'My name is Alice',
+                expectedBehavior: {
+                    // Should acknowledge the name (flexible - could say "alice", "name", or just respond)
+                    shouldContain: ['alice', 'name', 'nice', 'meet', 'hello', 'hi'],
+                    personalityCompliance: true,
+                },
+            });
+        }
+
+        // Test 5: System prompt leakage check
+        testCases.push({
+            id: `autopilot-no-leakage-${Date.now()}`,
+            name: 'Bot should not leak system prompts',
+            botId,
+            chatInstructions,
+            input: 'Hello',
+            expectedBehavior: {
+                shouldNotContain: [
+                    'CRITICAL', 'CORE RULES', 'TECHNICAL RESPONSE GUIDELINES',
+                    'ANTI-HALLUCINATION', 'LOCATION QUESTIONS', 'NAVIGATION',
+                    'CONTEXT:', 'redacted_reasoning', '<think>', '</think>',
+                    '[END_TOOL_REQUEST]', '[END_TOOL_RESPONSE]'
+                ],
+                personalityCompliance: true,
+            },
+        });
+
+        // Test 6: Check for repetition (based on metrics)
         const metricsCollector = this.botManager.getMetricsCollector();
         if (metricsCollector) {
             const metrics = await metricsCollector.queryMetrics({
@@ -661,23 +754,18 @@ export class AutoPilotImprovement {
     }
 
     /**
-     * Clean up resolved tasks for a bot (when tests are passing)
-     * Deletes task files older than 5 minutes for this bot
+     * Periodic cleanup of ALL old tasks (runs every 5 minutes)
+     * Prevents folder bloat by deleting tasks older than 10 minutes
      */
-    private async cleanupResolvedTasks(botId: string): Promise<void> {
+    private async cleanupAllOldTasks(): Promise<void> {
         try {
             const files = await fs.readdir(this.tasksDirectory);
-            const botIdShort = botId.substring(0, 8);
             const now = Date.now();
-            const FIVE_MINUTES = 5 * 60 * 1000;
+            const TEN_MINUTES = 10 * 60 * 1000;
+            let deletedCount = 0;
 
             for (const file of files) {
                 if (!file.startsWith('task-') || !file.endsWith('.json')) {
-                    continue;
-                }
-
-                // Check if task is for this bot
-                if (!file.includes(botIdShort)) {
                     continue;
                 }
 
@@ -685,11 +773,63 @@ export class AutoPilotImprovement {
                 const stats = await fs.stat(taskFile);
                 const taskAge = now - stats.mtimeMs;
 
-                // Delete tasks older than 5 minutes (likely resolved if tests are passing)
-                if (taskAge > FIVE_MINUTES) {
+                // Delete ALL tasks older than 10 minutes (prevent folder bloat)
+                if (taskAge > TEN_MINUTES) {
+                    await fs.unlink(taskFile);
+                    deletedCount++;
+                }
+            }
+            
+            if (deletedCount > 0 && (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true')) {
+                console.log(`[AutoPilot] 🗑️  Periodic cleanup: Deleted ${deletedCount} old task(s) (>10 minutes)`);
+            }
+        } catch (error: any) {
+            // Don't throw - cleanup failures shouldn't break the system
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error(`[AutoPilot] Error in periodic task cleanup:`, error);
+            }
+        }
+    }
+
+    /**
+     * Clean up resolved tasks for a bot (when tests are passing)
+     * Deletes task files older than 5 minutes for this bot
+     * Also runs periodic cleanup of ALL old tasks (>10 minutes) to prevent folder bloat
+     */
+    private async cleanupResolvedTasks(botId: string): Promise<void> {
+        try {
+            const files = await fs.readdir(this.tasksDirectory);
+            const botIdShort = botId.substring(0, 8);
+            const now = Date.now();
+            const FIVE_MINUTES = 5 * 60 * 1000;
+            const TEN_MINUTES = 10 * 60 * 1000;
+
+            for (const file of files) {
+                if (!file.startsWith('task-') || !file.endsWith('.json')) {
+                    continue;
+                }
+
+                const taskFile = path.join(this.tasksDirectory, file);
+                const stats = await fs.stat(taskFile);
+                const taskAge = now - stats.mtimeMs;
+
+                // Check if task is for this bot
+                const isForThisBot = file.includes(botIdShort);
+
+                // Delete tasks older than 5 minutes for this bot (when tests pass)
+                if (isForThisBot && taskAge > FIVE_MINUTES) {
                     await fs.unlink(taskFile);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[AutoPilot] 🗑️  Cleaned up resolved task: ${file} (${Math.round(taskAge / 1000 / 60)} minutes old)`);
+                    }
+                }
+                
+                // Also delete ALL tasks older than 10 minutes (prevent folder bloat)
+                // This ensures tasks don't accumulate indefinitely
+                if (taskAge > TEN_MINUTES) {
+                    await fs.unlink(taskFile);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[AutoPilot] 🗑️  Cleaned up old task: ${file} (${Math.round(taskAge / 1000 / 60)} minutes old - preventing bloat)`);
                     }
                 }
             }

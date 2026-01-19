@@ -743,33 +743,25 @@ export class SocialBehavior extends BaseBehavior {
                     let processedMessage = fullMessage;
                     
                     if (this.responseProcessor && fullMessage.trim()) {
+                        // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
+                        const tokenUsage = tokensUsed > 0 ? {
+                            prompt: chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7),
+                            completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
+                            total: tokensUsed
+                        } : undefined;
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
                             fullMessage,
-                            chatInstructions
+                            chatInstructions,
+                            responseTime,
+                            tokenUsage
                         );
                         processedMessage = processed.cleaned;
                     }
                     
-                    // Record metrics
-                    if (this.metricsCollector) {
-                        // Record response time
-                        this.metricsCollector.recordResponseTime(botId, responseTime, {
-                            playerId,
-                            spaceName,
-                        });
-                        
-                        // Record token usage
-                        if (tokensUsed > 0) {
-                            const promptTokens = chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7);
-                            const completionTokens = chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3);
-                            this.metricsCollector.recordTokenUsage(botId, promptTokens, completionTokens, {
-                                playerId,
-                                spaceName,
-                            });
-                        }
-                    }
+                    // Metrics are now recorded in ResponseProcessor (combined into one record)
+                    // No need to record separately here - prevents duplicate metrics
                     
                     // Send processed message
                     if (processedMessage.trim()) {

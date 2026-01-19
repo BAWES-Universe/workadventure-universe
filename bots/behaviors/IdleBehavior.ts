@@ -424,44 +424,86 @@ export class IdleBehavior extends BaseBehavior {
                     
                     if (this.responseProcessor && fullMessage.trim()) {
                         const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
+                        const tokenUsage = tokensUsed > 0 ? {
+                            prompt: chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7),
+                            completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
+                            total: tokensUsed
+                        } : undefined;
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
                             fullMessage,
-                            chatInstructions
+                            chatInstructions,
+                            responseTime,
+                            tokenUsage
                         );
                         processedMessage = processed.cleaned;
                         
-                        // If exact duplicate detected (repetitionScore === 1.0), regenerate response
+                        // If exact duplicate detected (repetitionScore === 1.0), block and regenerate
                         if (processed.metrics.repetitionScore >= 1.0 && processed.issues.includes('BLOCKED: Exact duplicate')) {
-                            // Log the issue but still send the response (with a note)
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn(`[IdleBehavior] Exact duplicate detected for bot ${botId}, player ${playerId}. Response: "${fullMessage.substring(0, 50)}..."`);
+                                console.warn(`[IdleBehavior] ⚠️ Exact duplicate detected for bot ${botId}, player ${playerId}. Blocking response: "${fullMessage.substring(0, 50)}..."`);
                             }
-                            // For now, we'll still send it but the system prompt should prevent this
-                            // In the future, we could trigger a regeneration here
+                            
+                            // BLOCK the duplicate - don't send it
+                            // Instead, generate a new response with explicit anti-repetition instruction
+                            const antiRepetitionPrompt = `${botConfig.chatInstructions || 'You are a helpful bot.'}\n\nCRITICAL: You just said "${fullMessage.substring(0, 100)}". DO NOT repeat this. Give a DIFFERENT response.`;
+                            
+                            // Regenerate with anti-repetition prompt
+                            let regeneratedMessage = '';
+                            try {
+                                for await (const chunk of this.aiService.generateBotResponseStream(
+                                    botId,
+                                    playerId,
+                                    playerMessage + ' [Please give a different response - you just repeated yourself]',
+                                    antiRepetitionPrompt,
+                                    botConfig.aiProviderRef,
+                                    spaceName,
+                                    context,
+                                    this.bot,
+                                    this.adminApiService
+                                )) {
+                                    if (chunk.content) {
+                                        regeneratedMessage += chunk.content;
+                                    }
+                                    if (chunk.done) break;
+                                }
+                                
+                                // Process the regenerated response
+                                if (regeneratedMessage.trim() && this.responseProcessor) {
+                                    const reprocessed = this.responseProcessor.processResponse(
+                                        botId,
+                                        playerId,
+                                        regeneratedMessage,
+                                        botConfig.chatInstructions || 'You are a helpful bot.'
+                                    );
+                                    processedMessage = reprocessed.cleaned;
+                                    
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.log(`[IdleBehavior] ✅ Regenerated response after blocking duplicate`);
+                                    }
+                                } else {
+                                    // Fallback if regeneration fails
+                                    processedMessage = "I apologize for the repetition. Let me think of a better response.";
+                                }
+                            } catch (error) {
+                                console.error(`[IdleBehavior] Error regenerating response after duplicate:`, error);
+                                processedMessage = "I apologize for the repetition. Let me think of a better response.";
+                            }
+                        } else if (processed.metrics.repetitionScore > 0.8) {
+                            // High repetition (but not exact duplicate) - warn but allow
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[IdleBehavior] ⚠️ High repetition detected (${(processed.metrics.repetitionScore * 100).toFixed(1)}%) for bot ${botId}, player ${playerId}`);
+                            }
                         }
                     }
                     
-                    // Record metrics
-                    if (this.metricsCollector) {
-                        // Record response time
-                        this.metricsCollector.recordResponseTime(botId, responseTime, {
-                            playerId,
-                            spaceName,
-                        });
-                        
-                        // Record token usage
-                        if (tokensUsed > 0) {
-                            // Extract prompt/completion tokens if available, otherwise estimate
-                            const promptTokens = chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7);
-                            const completionTokens = chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3);
-                            this.metricsCollector.recordTokenUsage(botId, promptTokens, completionTokens, {
-                                playerId,
-                                spaceName,
-                            });
-                        }
-                    }
+                    // Record metrics (skip for test conversations - playerId 999999 is used for tests)
+                    // ResponseProcessor already records responseQuality which includes these metrics
+                    // We only need to record responseTime and tokenUsage if they're not already in responseQuality
+                    // For now, skip individual metrics - they're already captured in recordResponseQuality
+                    // This prevents duplicate metrics (3 per response -> 1 per response)
                     
                     // Send processed message
                     if (processedMessage.trim()) {

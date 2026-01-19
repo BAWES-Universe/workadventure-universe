@@ -18,6 +18,8 @@ export interface TestCase {
         shouldNotContain?: string[]; // Response should NOT contain these strings
         personalityCompliance?: boolean; // Whether response should match chat instructions
         maxResponseTime?: number; // Maximum response time in ms
+        minResponseLength?: number; // Minimum response length in characters
+        maxRepetitionScore?: number; // Maximum allowed repetition score (0-1)
     };
     metadata?: Record<string, any>;
 }
