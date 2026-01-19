@@ -54,8 +54,13 @@ export interface RelationshipContext {
 }
 
 export interface BotPlayerMemory {
-    playerId: number; // Keep playerId for backward compatibility, but refers to person
-    playerName?: string; // Keep playerName for backward compatibility, but refers to person
+    // UUID matching fields (for persistence across sessions)
+    userUuid: string; // REQUIRED - WorkAdventure UUID
+    userId?: string; // Optional - User.id if authenticated (set by Admin API after UUID matching)
+    isGuest?: boolean; // Optional - true if not authenticated (defaults to true)
+    
+    // Internal tracking (not persisted to Admin API)
+    playerId: number; // Internal use only - for in-memory tracking
     
     // Conversation history (last N messages)
     conversationHistory: ConversationMessage[];

@@ -883,7 +883,7 @@ export class BotAPI {
                 const { botId } = req.params;
                 const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
                 const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
-                const playerId = req.query.playerId ? parseInt(req.query.playerId as string, 10) : undefined;
+                const userId = req.query.userId ? (req.query.userId as string) : undefined; // Changed from playerId (number) to userId (string)
                 const startDate = req.query.startDate ? parseInt(req.query.startDate as string, 10) : undefined;
                 const endDate = req.query.endDate ? parseInt(req.query.endDate as string, 10) : undefined;
 
@@ -897,7 +897,7 @@ export class BotAPI {
                     botId,
                     limit,
                     offset,
-                    playerId,
+                    userId,
                     startDate,
                     endDate,
                 });

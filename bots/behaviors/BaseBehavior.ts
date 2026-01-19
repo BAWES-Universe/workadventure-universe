@@ -38,6 +38,8 @@ export abstract class BaseBehavior {
     
     // UUID tracking - map userId (number) to UUID (string) for conversation storage
     protected userIdToUuid: Map<number, string> = new Map();
+    // Authentication tracking - map userId (number) to isLogged (boolean)
+    protected userIdToIsLogged: Map<number, boolean> = new Map();
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     protected closestPlayerId: number | null = null;
@@ -867,6 +869,19 @@ export abstract class BaseBehavior {
         // Track UUID for conversation storage (REQUIRED by Admin API)
         if (user.uuid) {
             this.userIdToUuid.set(user.id, user.uuid);
+        }
+        
+        // Track authentication status (for isGuest determination)
+        if (user.isLogged !== undefined) {
+            this.userIdToIsLogged.set(user.id, user.isLogged);
+        }
+        
+        // Also track UUID in PersistentMemory for memory/emotion persistence
+        if (user.uuid && this.conversationMemory && 'setUserUuid' in this.conversationMemory) {
+            const botId = this.bot?.getBotId();
+            if (botId) {
+                (this.conversationMemory as any).setUserUuid(botId, user.id, user.uuid, user.isLogged || false);
+            }
         }
 
         // Track this user as engaged

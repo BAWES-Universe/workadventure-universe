@@ -633,11 +633,15 @@ export class SocialBehavior extends BaseBehavior {
         // Get UUID (REQUIRED by Admin API) - use tracked UUID or fallback to numeric ID as string
         const userUuid = this.userIdToUuid.get(senderId) || String(senderId);
         
+        // Get authentication status (for isGuest determination)
+        const isLogged = this.userIdToIsLogged.get(senderId) ?? false;
+        
         // Start conversation in storage (if available) - userUuid is REQUIRED
         if (this.conversationStorage) {
             this.conversationStorage.startConversation(botId, userUuid, {
                 name: userName,
                 uuid: userUuid,
+                isLogged: isLogged,
             });
         }
         

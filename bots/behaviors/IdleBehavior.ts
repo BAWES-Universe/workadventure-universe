@@ -317,6 +317,9 @@ export class IdleBehavior extends BaseBehavior {
         // Get UUID (REQUIRED by Admin API) - use tracked UUID or fallback to numeric ID as string
         const userUuid = this.userIdToUuid.get(senderId) || String(senderId);
         
+        // Get authentication status (for isGuest determination)
+        const isLogged = this.userIdToIsLogged.get(senderId) ?? false;
+        
         // Start conversation in memory if needed
         if (this.conversationMemory) {
             this.conversationMemory.startConversation(botId, senderId);
@@ -329,6 +332,7 @@ export class IdleBehavior extends BaseBehavior {
             this.conversationStorage.startConversation(botId, userUuid, {
                 name: userName,
                 uuid: userUuid,
+                isLogged: isLogged,
             });
             this.conversationStorage.addMessage(botId, userUuid, message, 'person');
         }

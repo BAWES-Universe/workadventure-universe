@@ -30,6 +30,8 @@ export class PersistentMemory extends ConversationMemory {
     private immediateSaveEnabled: boolean;
     private pendingSaves: Map<string, BotPlayerMemory> = new Map(); // key: "botId_playerId"
     private emotionAnalyzer: EmotionAnalyzer | null = null;
+    // UUID tracking - map "botId_playerId" to { userUuid, isLogged }
+    private uuidTracking: Map<string, { userUuid: string; isLogged: boolean }> = new Map();
 
     constructor(config: PersistentMemoryConfig = {}) {
         super(config.maxHistorySize || 50, config.maxMemories || 1000);
@@ -52,6 +54,22 @@ export class PersistentMemory extends ConversationMemory {
      */
     setEmotionAnalyzer(emotionAnalyzer: EmotionAnalyzer): void {
         this.emotionAnalyzer = emotionAnalyzer;
+    }
+
+    /**
+     * Set UUID tracking info for a user (called by behaviors when user joins)
+     * This allows memory saves to include userUuid and isGuest
+     */
+    setUserUuid(botId: string, playerId: number, userUuid: string, isLogged: boolean): void {
+        const key = `${botId}_${playerId}`;
+        this.uuidTracking.set(key, { userUuid, isLogged });
+        
+        // Also update the memory object if it exists
+        const memory = this.getMemory(botId, playerId);
+        if (memory) {
+            memory.userUuid = userUuid; // REQUIRED - update to actual UUID
+            memory.isGuest = !isLogged;
+        }
     }
 
     /**
@@ -224,6 +242,22 @@ export class PersistentMemory extends ConversationMemory {
         }
         this.pendingSaves.delete(key);
 
+        // Add UUID info to memory before saving (REQUIRED for Admin API)
+        const uuidInfo = this.uuidTracking.get(key);
+        if (uuidInfo) {
+            memory.userUuid = uuidInfo.userUuid; // REQUIRED
+            memory.isGuest = !uuidInfo.isLogged;
+        } else {
+            // Fallback to numeric ID as string if UUID not tracked yet (shouldn't happen in normal flow)
+            memory.userUuid = String(playerId);
+            memory.isGuest = true;
+        }
+        
+        // Ensure userUuid is set (REQUIRED)
+        if (!memory.userUuid) {
+            memory.userUuid = String(playerId);
+        }
+
         // Save to storage (periodic save for conversation history)
         try {
             await this.memoryStorage.saveMemory(botId, memory, 'periodic');
@@ -243,6 +277,18 @@ export class PersistentMemory extends ConversationMemory {
      */
     private async saveMemoryImmediately(botId: string, memory: BotPlayerMemory): Promise<void> {
         try {
+            // Add UUID info to memory before saving (for Admin API UUID matching)
+            const key = `${botId}_${memory.playerId}`;
+            const uuidInfo = this.uuidTracking.get(key);
+            if (uuidInfo) {
+                memory.userUuid = uuidInfo.userUuid;
+                memory.isGuest = !uuidInfo.isLogged;
+            } else {
+                // Fallback to numeric ID as string if UUID not tracked yet
+                memory.userUuid = String(memory.playerId);
+                memory.isGuest = true;
+            }
+            
             // Use "immediate" saveType for emotion-only updates
             await this.memoryStorage.saveMemory(botId, memory, 'immediate');
             

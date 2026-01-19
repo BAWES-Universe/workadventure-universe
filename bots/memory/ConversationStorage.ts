@@ -36,12 +36,9 @@ export interface ConversationQuery {
     botId: string;
     limit?: number;
     offset?: number;
-    userId?: string; // Changed from playerId: number
+    userId?: string; // Query by userUuid or userId
     startDate?: number;
     endDate?: number;
-    // Backward compatibility
-    /** @deprecated Use userId instead */
-    playerId?: number;
 }
 
 export interface ConversationStats {
@@ -224,8 +221,6 @@ export class ConversationStorage {
             if (query.limit) params.limit = query.limit;
             if (query.offset) params.offset = query.offset;
             if (query.userId) params.userId = query.userId;
-            // Backward compatibility
-            if (query.playerId) params.userId = String(query.playerId);
             if (query.startDate) params.startDate = query.startDate;
             if (query.endDate) params.endDate = query.endDate;
 
