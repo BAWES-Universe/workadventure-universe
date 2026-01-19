@@ -44,7 +44,9 @@ export class ResponseProcessor {
         botId: string,
         playerId: number,
         response: string,
-        chatInstructions: string
+        chatInstructions: string,
+        responseTime?: number,
+        tokenUsage?: { prompt: number; completion: number; total: number }
     ): ProcessedResponse {
         // Clean system prompt leakage
         const cleaned = this.cleanSystemPromptLeakage(response);

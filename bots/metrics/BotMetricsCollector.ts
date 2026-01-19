@@ -139,23 +139,40 @@ export class BotMetricsCollector {
 
     /**
      * Record a complete response quality metric
+     * Note: tokenUsage in ResponseQualityMetrics is a NUMBER (total), not an object
      */
     recordResponseQuality(quality: ResponseQualityMetrics): void {
+        // Build metrics object - include ALL fields even if 0 to ensure Admin API receives them
+        const metricsObj: any = {};
+        
+        // Always include responseTime (even if 0)
+        metricsObj.responseTime = quality.metrics.responseTime ?? 0;
+        
+        // tokenUsage in ResponseQualityMetrics is a number (total), convert to object format
+        if (quality.metrics.tokenUsage !== undefined && quality.metrics.tokenUsage > 0) {
+            metricsObj.tokenUsage = {
+                prompt: 0, // We don't have breakdown, only total from ResponseProcessor
+                completion: 0,
+                total: quality.metrics.tokenUsage,
+            };
+        }
+        
+        // Always include repetitionScore (even if 0)
+        metricsObj.repetitionScore = quality.metrics.repetitionScore ?? 0;
+        
+        // Always include systemPromptLeakage (even if false)
+        metricsObj.systemPromptLeakage = quality.metrics.systemPromptLeakage ?? false;
+        
+        // Always include personalityCompliance (even if 0)
+        metricsObj.personalityCompliance = quality.metrics.personalityCompliance ?? 0;
+        
+        // Always include conversationQuality (even if 0)
+        metricsObj.conversationQuality = quality.metrics.overallQuality ?? 0;
+        
         this.recordMetric({
             botId: quality.botId,
             timestamp: quality.timestamp,
-            metrics: {
-                responseTime: quality.metrics.responseTime,
-                tokenUsage: {
-                    prompt: 0, // Will be filled by token usage metric
-                    completion: quality.metrics.tokenUsage,
-                    total: quality.metrics.tokenUsage,
-                },
-                repetitionScore: quality.metrics.repetitionScore,
-                systemPromptLeakage: quality.metrics.systemPromptLeakage,
-                personalityCompliance: quality.metrics.personalityCompliance,
-                conversationQuality: quality.metrics.overallQuality,
-            },
+            metrics: metricsObj,
             metadata: {
                 playerId: quality.playerId,
                 responseId: quality.responseId,

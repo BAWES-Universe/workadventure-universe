@@ -472,11 +472,14 @@ export class IdleBehavior extends BaseBehavior {
                                 
                                 // Process the regenerated response
                                 if (regeneratedMessage.trim() && this.responseProcessor) {
+                                    // Use the same responseTime and tokenUsage from the original response
                                     const reprocessed = this.responseProcessor.processResponse(
                                         botId,
                                         playerId,
                                         regeneratedMessage,
-                                        botConfig.chatInstructions || 'You are a helpful bot.'
+                                        botConfig.chatInstructions || 'You are a helpful bot.',
+                                        responseTime, // Use original response time
+                                        tokenUsage    // Use original token usage
                                     );
                                     processedMessage = reprocessed.cleaned;
                                     
