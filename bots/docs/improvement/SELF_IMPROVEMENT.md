@@ -6,6 +6,8 @@ This document explains how the self-improvement system works, how to use improve
 
 The self-improvement system automatically analyzes bot metrics, identifies issues, and generates improvement recommendations. It can run improvement cycles, test fixes, and compare metrics before/after.
 
+**⚠️ IMPORTANT: This system ONLY runs in development mode. It is completely disabled in production to keep the production environment lightweight.**
+
 ## How It Works
 
 ### 1. Metrics Analysis
@@ -107,5 +109,10 @@ POST /api/bots/improve/cycle
 
 ## Development vs Production
 
-- **Development**: Full self-improvement system with automated cycles
-- **Production**: Recommendations available, but cycles require manual approval
+- **Development**: Full self-improvement system with automated cycles, testing, and improvement tasks
+- **Production**: **NO self-improvement system** - completely disabled to keep production lightweight
+  - No AutoPilot
+  - No AutoImprovement
+  - No SelfImprovementLoop
+  - No test runner
+  - Only metrics collection and conversation storage for admin viewing
