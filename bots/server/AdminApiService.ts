@@ -729,9 +729,9 @@ export class AdminApiService {
     }
 
     /**
-     * Save improvement cycle to Admin API
-     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
-     * Fire-and-forget (doesn't throw errors)
+     * @deprecated This method is no longer used - improvements endpoint was removed
+     * Task files in bots/improvement-tasks/ are now the source of truth
+     * This method is kept for backward compatibility but does nothing
      */
     async saveImprovement(improvement: {
         botId: string;
@@ -743,44 +743,11 @@ export class AdminApiService {
         recommendations?: any[];
         testRunId?: string;
     }): Promise<void> {
-        if (!this.isConfigured()) {
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn('[AdminApiService] Admin API not configured, skipping improvement save');
-            }
-            return;
+        // No-op: Improvements endpoint was removed, task files are now the source of truth
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[AdminApiService] saveImprovement called but ignored (endpoint removed, using task files instead)`);
         }
-
-        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
-        if (!botServiceToken) {
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, skipping improvement save');
-            }
-            return;
-        }
-
-        try {
-            await axios.post(
-                `${this.adminApiUrl}/api/bots/improvements`,
-                improvement,
-                {
-                    headers: {
-                        Authorization: `Bearer ${botServiceToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                }
-            );
-
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[AdminApiService] Saved improvement: ${improvement.improvementType} for bot ${improvement.botId}`);
-            }
-        } catch (error: any) {
-            // Fire-and-forget: don't throw, just log
-            console.error('[AdminApiService] Error saving improvement:', error);
-            if (error.response) {
-                console.error('[AdminApiService] Error response status:', error.response.status);
-                console.error('[AdminApiService] Error response data:', error.response.data);
-            }
-        }
+        return;
     }
 
     /**
