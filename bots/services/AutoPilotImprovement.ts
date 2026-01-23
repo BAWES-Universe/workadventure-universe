@@ -1,16 +1,19 @@
 /**
- * AutoPilotImprovement - Fully autonomous continuous improvement system
+ * AutoPilotImprovement - On-demand testing and improvement system
  * 
- * This system:
- * 1. Automatically creates test scenarios based on bot behavior
- * 2. Runs tests continuously (every 30 seconds)
- * 3. Detects failures and issues immediately
- * 4. Creates improvement task files for AI analysis
- * 5. Triggers immediate re-test after improvements
- * 6. Iterates until perfect
+ * This system provides:
+ * 1. On-demand test execution via API (POST /api/test/run)
+ * 2. Conversation simulation (POST /api/test/conversation)
+ * 3. Test result analysis and metrics collection
  * 
- * The AI (Auto) analyzes task files and improves code/system prompts.
- * This system just runs tests and creates tasks - the AI does the improving.
+ * The AI assistant (Cursor) drives testing by calling the API endpoints.
+ * No automatic intervals - all testing is triggered on-demand.
+ * 
+ * Workflow:
+ * 1. AI calls POST /api/test/run with test cases
+ * 2. This system executes tests and returns results
+ * 3. AI analyzes results and makes code changes if needed
+ * 4. AI calls POST /api/test/run again to verify fixes
  */
 
 import type { BotManager } from '../server/BotManager';
@@ -72,7 +75,6 @@ export class AutoPilotImprovement {
     private config: AutoPilotConfig;
     private testInterval: NodeJS.Timeout | null = null;
     private improvementInterval: NodeJS.Timeout | null = null;
-    private isRunning: boolean = false;
     private botIterations: Map<string, number> = new Map(); // botId -> iteration count
     private lastTestRun: Map<string, number> = new Map(); // botId -> last test timestamp
     private tasksDirectory: string;
@@ -127,7 +129,8 @@ export class AutoPilotImprovement {
     }
 
     /**
-     * Start the autopilot system
+     * Start the autopilot system (no-op for on-demand mode)
+     * Testing is now done on-demand via API calls, not intervals.
      */
     start(): void {
         if (!this.config.enabled) {
@@ -135,38 +138,13 @@ export class AutoPilotImprovement {
             return;
         }
 
-        if (this.testInterval || this.improvementInterval) {
-            console.warn('[AutoPilot] Already running');
-            return;
-        }
-
-        console.log('[AutoPilot] 🚀 Starting fully autonomous improvement system');
-        console.log(`[AutoPilot] Test interval: ${this.config.testIntervalMs / 1000}s (FAST ITERATION)`);
-        console.log(`[AutoPilot] Improvement interval: ${this.config.improvementIntervalMs / 1000}s`);
-        console.log(`[AutoPilot] Tasks directory: ${this.tasksDirectory}`);
-        console.log(`[AutoPilot] Auto-apply: ${this.config.autoApplyImprovements}`);
-
-        // Run immediately
-        this.runTestCycle().catch(error => {
-            console.error('[AutoPilot] Error in initial test cycle:', error);
-        });
-
-        // Then run on intervals
-        this.testInterval = setInterval(() => {
-            this.runTestCycle().catch(error => {
-                console.error('[AutoPilot] Error in test cycle:', error);
-            });
-        }, this.config.testIntervalMs);
-
-        this.improvementInterval = setInterval(() => {
-            this.runImprovementCycle().catch(error => {
-                console.error('[AutoPilot] Error in improvement cycle:', error);
-            });
-        }, this.config.improvementIntervalMs);
+        console.log('[AutoPilot] ✅ Ready for on-demand testing via API');
+        console.log('[AutoPilot] Use POST /api/test/run to execute tests');
+        console.log('[AutoPilot] Use POST /api/test/conversation to simulate conversations');
     }
 
     /**
-     * Stop the autopilot system
+     * Stop the autopilot system (no-op for on-demand mode)
      */
     stop(): void {
         if (this.testInterval) {
@@ -181,14 +159,39 @@ export class AutoPilotImprovement {
     }
 
     /**
-     * Run test cycle - automatically test all bots (runs every 30 seconds)
+     * Check if the autopilot is ready (for on-demand mode, always true if enabled)
      */
-    private async runTestCycle(): Promise<void> {
-        if (this.isRunning) {
+    isReady(): boolean {
+        return this.config.enabled;
+    }
+
+    /**
+     * Check if the autopilot is running (for backward compatibility with API)
+     * In on-demand mode, this returns true if enabled
+     */
+    isRunning(): boolean {
+        return this.config.enabled;
+    }
+
+    /**
+     * Check if a test is currently running
+     */
+    isTestRunning(): boolean {
+        return this._isRunning;
+    }
+
+    // Internal flag to track test execution
+    private _isRunning: boolean = false;
+
+    /**
+     * Run test cycle for all bots (called on-demand via API)
+     */
+    async runTestCycle(): Promise<void> {
+        if (this._isRunning) {
             return;
         }
 
-        this.isRunning = true;
+        this._isRunning = true;
 
         try {
             const bots = this.botManager.getAllBots();
@@ -312,7 +315,7 @@ export class AutoPilotImprovement {
         } catch (error: any) {
             console.error('[AutoPilot] Error in test cycle:', error);
         } finally {
-            this.isRunning = false;
+            this._isRunning = false;
         }
     }
 

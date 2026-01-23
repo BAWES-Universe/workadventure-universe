@@ -248,14 +248,12 @@ export class PersistentMemory extends ConversationMemory {
             memory.userUuid = uuidInfo.userUuid; // REQUIRED
             memory.isGuest = !uuidInfo.isLogged;
         } else {
-            // Fallback to numeric ID as string if UUID not tracked yet (shouldn't happen in normal flow)
-            memory.userUuid = String(playerId);
-            memory.isGuest = true;
-        }
-        
-        // Ensure userUuid is set (REQUIRED)
-        if (!memory.userUuid) {
-            memory.userUuid = String(playerId);
+            // UUID should be available from InitSpaceUsersMessage or addSpaceUserMessage
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[PersistentMemory] UUID not found for player ${playerId} when saving memory. Skipping save.`);
+            }
+            // Don't save without UUID - memory cannot be stored correctly
+            return;
         }
 
         // Save to storage (periodic save for conversation history)
@@ -284,9 +282,12 @@ export class PersistentMemory extends ConversationMemory {
                 memory.userUuid = uuidInfo.userUuid;
                 memory.isGuest = !uuidInfo.isLogged;
             } else {
-                // Fallback to numeric ID as string if UUID not tracked yet
-                memory.userUuid = String(memory.playerId);
-                memory.isGuest = true;
+                // UUID should be available from InitSpaceUsersMessage or addSpaceUserMessage
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[PersistentMemory] UUID not found for player ${memory.playerId} when saving memory immediately. Skipping save.`);
+                }
+                // Don't save without UUID - memory cannot be stored correctly
+                return;
             }
             
             // Use "immediate" saveType for emotion-only updates

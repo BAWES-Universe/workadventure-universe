@@ -56,6 +56,15 @@ export class SocialBehavior extends BaseBehavior {
     setConversationMemory(memory: ConversationMemory): void {
         this.conversationMemory = memory;
     }
+    
+    /**
+     * Set user UUID in conversation memory (called from BaseBehavior when user joins space)
+     */
+    protected setUserUuidInMemory(botId: string, userId: number, userUuid: string, isLogged: boolean): void {
+        if (this.conversationMemory && 'setUserUuid' in this.conversationMemory) {
+            (this.conversationMemory as any).setUserUuid(botId, userId, userUuid, isLogged);
+        }
+    }
 
     update(deltaTime: number): void {
         if (!this.bot) return;
@@ -630,8 +639,13 @@ export class SocialBehavior extends BaseBehavior {
         const playerInfo = this.bot.getPlayerInfo(senderId);
         const userName = playerInfo?.name;
         
-        // Get UUID (REQUIRED by Admin API) - use tracked UUID or fallback to numeric ID as string
-        const userUuid = this.userIdToUuid.get(senderId) || String(senderId);
+        // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
+        const userUuid = this.userIdToUuid.get(senderId);
+        if (!userUuid) {
+            console.warn(`[SocialBehavior] UUID not found for user ${senderId} (${userName}). This should not happen if InitSpaceUsersMessage is working correctly.`);
+            // Don't proceed without UUID - conversation cannot be stored correctly
+            return;
+        }
         
         // Get authentication status (for isGuest determination)
         const isLogged = this.userIdToIsLogged.get(senderId) ?? false;
@@ -787,8 +801,10 @@ export class SocialBehavior extends BaseBehavior {
                         }
                         // Store in conversation storage
                         if (this.conversationStorage) {
-                            const userUuid = this.userIdToUuid.get(playerId) || String(playerId);
-                            this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot');
+                            const userUuid = this.userIdToUuid.get(playerId);
+                            if (userUuid) {
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot');
+                            }
                         }
                     }
                     break;

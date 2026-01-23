@@ -1,115 +1,88 @@
-# AutoPilot Continuous Improvement Workflow
+# AutoPilot On-Demand Testing Workflow
 
 ## Overview
 
-The AutoPilot system runs **continuously** (every 30 seconds) to test bots, detect issues, and create improvement task files. **You (the AI assistant) analyze these tasks and improve the code/system prompts.**
+The AutoPilot system provides **on-demand testing** via API endpoints. **The AI assistant (Cursor) drives testing by calling the API directly**, analyzing results in real-time, and making code improvements immediately.**
 
 ## How It Works
 
-### 1. Continuous Testing (Every 30 Seconds)
+### 1. On-Demand Testing (API-Driven)
 
-AutoPilot automatically:
-- Runs test scenarios on all active bots
-- Detects test failures
-- Collects metrics (repetition, personality compliance, etc.)
-- Creates improvement task files when issues are found
+The AI assistant calls test endpoints directly:
+- `POST /api/test/run` - Run specific test cases
+- `POST /api/test/conversation` - Simulate multi-turn conversations
+- `GET /api/test/status` - Check test runner availability
 
-### 2. Task File Creation
+**No automatic intervals** - all testing is triggered on-demand by the AI assistant.
 
-When tests fail or metrics show issues, AutoPilot creates a task file:
+### 2. Test Execution & Analysis
 
-**Location:** `bots/improvement-tasks/task-{timestamp}-{botId}.json`
+When the AI assistant calls the test API:
 
-**Task File Structure:**
+**Test API Response:**
 ```json
 {
-  "id": "task-1234567890-abc12345",
   "botId": "bot-123",
-  "timestamp": 1234567890,
-  "testResults": {
-    "summary": {
-      "total": 3,
-      "passed": 1,
-      "failed": 2
-    },
-    "results": [...]
+  "testSuiteId": "test-run-1234567890",
+  "status": "passed",
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0
   },
-  "metrics": {
-    "repetitionScore": 0.45,
-    "personalityCompliance": 0.72,
-    "systemPromptLeakage": 0.1
-  },
-  "failedTests": [
+  "results": [
     {
-      "testCaseId": "test-1",
-      "name": "Bot should not repeat responses",
-      "input": "Hello",
-      "actualResponse": "Hello! How can I help you?",
-      "errors": ["Repetition score too high: 0.45"]
-    }
-  ],
-  "recommendations": [
-    {
-      "type": "repetition_fix",
-      "priority": "high",
-      "description": "High repetition detected (average: 45%)",
-      "suggestedChanges": {
-        "prompt": "Add explicit instruction to vary responses..."
+      "testCaseId": "greeting",
+      "status": "passed",
+      "passed": true,
+      "response": "Hello! How can I assist you today?",
+      "responseTime": 2281,
+      "metrics": {
+        "repetitionScore": 0,
+        "systemPromptLeakage": false,
+        "personalityCompliance": 1
       }
     }
   ],
-  "priority": "high",
-  "botConfig": {
-    "chatInstructions": "You are a helpful bot.",
-    "behaviorType": "idle"
-  }
+  "duration": 6979
 }
 ```
 
-### 3. AI Analysis & Improvement
+### 3. AI-Driven Workflow
 
-**You (the AI assistant) should:**
+**The AI assistant (Cursor) workflow:**
 
-1. **Monitor task files:**
+1. **Call test API:**
    ```bash
-   ls -lt bots/improvement-tasks/*.json | head -5
+   curl -X POST http://bot-server.workadventure.localhost/api/test/run \
+     -H "Content-Type: application/json" \
+     -d '{"botId": "bot-123"}'
    ```
 
-2. **Read task files:**
-   ```bash
-   cat bots/improvement-tasks/task-*.json | jq .
-   ```
-
-3. **Analyze the issues:**
-   - Review failed tests
+2. **Analyze results directly:**
+   - Review test results in the API response
    - Check metrics (repetition, personality compliance, etc.)
-   - Understand root causes
+   - Identify issues immediately
 
-4. **Improve the code:**
-   - **System prompts** in `AIService.ts` (lines 246-283)
+3. **Make code improvements:**
+   - **System prompts** in `AIService.ts`
    - **Code logic** in `ResponseProcessor.ts`, `RepetitionDetector.ts`, etc.
-   - **Test case generation** in `AutoPilotImprovement.ts`
+   - Fix issues based on test results
 
-5. **Apply improvements:**
-   - Modify code files directly
-   - System automatically re-tests in 30 seconds
-   - Verify improvements worked
-
-6. **Task cleanup (automatic):**
-   - When tests pass, AutoPilot automatically deletes task files older than 5 minutes
-   - This prevents folder bloat while keeping recent issues visible
-   - You can also manually clean up: `bash bots/scripts/cleanup-resolved-tasks.sh`
+4. **Verify fixes immediately:**
+   - Call test API again with same test cases
+   - Compare results before/after
+   - Iterate until tests pass
 
 ### 4. Fast Iteration Loop
 
 ```
-Every 30 seconds:
-  1. AutoPilot runs tests
-  2. If failures → creates task file
-  3. You see task file → analyze & improve code
-  4. System re-tests in 30 seconds
-  5. If fixed → resolve task
-  6. If still failing → iterate again
+1. AI calls POST /api/test/run
+2. AI analyzes results
+3. AI makes code changes if needed
+4. AI calls POST /api/test/run again (verify fix)
+5. Repeat until perfect
 ```
 
 ## What Gets Improved
@@ -152,23 +125,38 @@ systemPrompt += `\n\n- **CRITICAL: Vary responses - never repeat the same answer
 
 ## Workflow Steps
 
-### Step 1: Check for New Tasks
+### Step 1: Run Tests On-Demand
 
 ```bash
-# List recent task files
-ls -lt bots/improvement-tasks/*.json | head -5
+# Run default tests
+curl -X POST http://bot-server.workadventure.localhost/api/test/run \
+  -H "Content-Type: application/json" \
+  -d '{"botId": "bot-123"}'
 
-# Read a task file
-cat bots/improvement-tasks/task-*.json | jq .
+# Run custom test cases
+curl -X POST http://bot-server.workadventure.localhost/api/test/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "botId": "bot-123",
+    "testCases": [
+      {
+        "id": "greeting",
+        "input": "Hello!",
+        "expectedBehavior": {
+          "shouldContain": ["hello", "hi", "hey"]
+        }
+      }
+    ]
+  }'
 ```
 
-### Step 2: Analyze the Issue
+### Step 2: Analyze Results
 
-Look at:
+Look at the API response:
 - **Failed tests**: What exactly failed?
 - **Metrics**: What's wrong? (repetition, personality, etc.)
-- **Recommendations**: What does the system suggest?
-- **Bot config**: What's the bot's personality/instructions?
+- **Response quality**: Check actual bot responses
+- **Response time**: Performance issues?
 
 ### Step 3: Identify Root Cause
 
@@ -180,7 +168,7 @@ Look at:
 ### Step 4: Improve the Code
 
 **For system prompts:**
-- Edit `bots/ai/AIService.ts` lines 246-283
+- Edit `bots/ai/AIService.ts`
 - Strengthen rules that are failing
 - Add explicit instructions for detected issues
 
@@ -189,19 +177,19 @@ Look at:
 - Fix the algorithm/logic
 - Add better detection/cleaning
 
-### Step 5: Verify Improvement
-
-- Wait 30 seconds (next test cycle)
-- Check if tests pass
-- Check if metrics improved
-- If still failing, iterate again
-
-### Step 6: Resolve Task
+### Step 5: Verify Improvement Immediately
 
 ```bash
-# Delete task file when fixed
-rm bots/improvement-tasks/task-{id}.json
+# Run tests again to verify fix
+curl -X POST http://bot-server.workadventure.localhost/api/test/run \
+  -H "Content-Type: application/json" \
+  -d '{"botId": "bot-123"}'
 ```
+
+Compare results:
+- Did tests pass?
+- Did metrics improve?
+- If still failing, iterate again
 
 ## Best Practices
 
@@ -235,25 +223,31 @@ Tasks are prioritized:
 
 ### Scenario: Bot Repeating Responses
 
-1. **Task file created:**
+1. **AI calls test API:**
+   ```bash
+   curl -X POST http://bot-server.workadventure.localhost/api/test/run \
+     -H "Content-Type: application/json" \
+     -d '{"botId": "bot-123"}'
+   ```
+
+2. **API response shows issue:**
    ```json
    {
-     "failedTests": [{
-       "name": "Bot should not repeat responses",
-       "errors": ["Repetition score: 0.45 (max: 0.2)"]
-     }],
-     "metrics": {
-       "repetitionScore": 0.45
-     }
+     "results": [{
+       "testCaseId": "greeting",
+       "metrics": {
+         "repetitionScore": 0.45
+       }
+     }]
    }
    ```
 
-2. **You analyze:**
+3. **AI analyzes:**
    - Repetition is high (0.45, should be < 0.2)
    - System prompt says "vary responses" but it's not strong enough
 
-3. **You improve:**
-   - Edit `AIService.ts` line 254
+4. **AI improves code:**
+   - Edit `AIService.ts`
    - Strengthen the repetition rule:
    ```typescript
    // Before:
@@ -263,108 +257,125 @@ Tasks are prioritized:
    "- **CRITICAL: Vary responses - never repeat the same answer. Check conversation history - if you said something similar in the last 3 messages, say it completely differently or skip redundant information.**"
    ```
 
-4. **System re-tests in 30 seconds:**
-   - Tests pass → resolve task
+5. **AI verifies fix immediately:**
+   ```bash
+   curl -X POST http://bot-server.workadventure.localhost/api/test/run \
+     -H "Content-Type: application/json" \
+     -d '{"botId": "bot-123"}'
+   ```
+   - Tests pass → fix verified
    - Tests still fail → iterate again
 
-## Configuration
+## API Endpoints
 
-### Environment Variables
+### Test Status
 
 ```bash
-# Test interval (default: 30 seconds)
-AUTOPILOT_TEST_INTERVAL_MS=30000
-
-# Improvement check interval (default: 1 minute)
-AUTOPILOT_IMPROVEMENT_INTERVAL_MS=60000
-
-# Tasks directory (default: bots/improvement-tasks)
-IMPROVEMENT_TASKS_DIR=./bots/improvement-tasks
-
-# Auto-apply (default: true in dev)
-AUTOPILOT_AUTO_APPLY=true
-
-# Max iterations per bot (default: 50)
-AUTOPILOT_MAX_ITERATIONS=50
+GET /api/test/status
 ```
 
-### Docker Compose
+Returns:
+```json
+{
+  "testRunnerAvailable": true,
+  "autoPilotAvailable": true,
+  "autoPilotRunning": true,
+  "environment": "development",
+  "capabilities": {
+    "runTests": true,
+    "runConversation": true,
+    "replayConversation": true
+  }
+}
+```
 
-Already configured in `docker-compose.bots.yaml`:
-- `NODE_ENV: development` ✓
-- AutoPilot starts automatically ✓
+### Run Tests
+
+```bash
+POST /api/test/run
+Content-Type: application/json
+
+{
+  "botId": "bot-123",
+  "testCases": [  // Optional - uses defaults if not provided
+    {
+      "id": "greeting",
+      "input": "Hello!",
+      "expectedBehavior": {
+        "shouldContain": ["hello", "hi", "hey"]
+      }
+    }
+  ]
+}
+```
+
+### Simulate Conversation
+
+```bash
+POST /api/test/conversation
+Content-Type: application/json
+
+{
+  "botId": "bot-123",
+  "messages": ["Hello!", "I'm hungry", "Do you remember?"],
+  "userName": "Test User"
+}
+```
 
 ## Monitoring
 
-### Check Task Files
+### Check Test Status
 
 ```bash
-# List all tasks
-ls -lt bots/improvement-tasks/*.json
-
-# Count pending tasks
-ls bots/improvement-tasks/*.json | wc -l
-
-# View latest task
-cat $(ls -t bots/improvement-tasks/*.json | head -1) | jq .
+curl http://bot-server.workadventure.localhost/api/test/status
 ```
 
 ### Check Logs
 
 ```bash
-# Watch AutoPilot activity
-docker-compose logs -f bot-server | grep AutoPilot
-```
-
-### Check Test Results
-
-```bash
-# View recent test runs
-docker-compose logs bot-server | grep "AutoPilot.*test"
+# Watch bot server logs
+docker logs -f workadventure-universe-bot-server-1 | grep -i "test\|autopilot"
 ```
 
 ## Troubleshooting
 
-### No Task Files Created
+### Test API Not Available
 
-1. Check if AutoPilot is running:
+1. Check if bot server is running:
    ```bash
-   docker-compose logs bot-server | grep "AutoPilot.*Starting"
+   docker ps | grep bot-server
    ```
 
-2. Check if bots are active:
+2. Check if in development mode:
    ```bash
-   curl http://localhost:3001/api/bots
+   curl http://bot-server.workadventure.localhost/api/test/status
    ```
 
-3. Check if bots have enough metrics (need at least 5)
+3. Check logs:
+   ```bash
+   docker logs workadventure-universe-bot-server-1 | grep -i "autopilot"
+   ```
 
-### Tasks Not Being Resolved
+### Tests Failing
 
-- Tasks are just files - delete them when fixed:
-  ```bash
-  rm bots/improvement-tasks/task-*.json
-  ```
-
-### Tests Not Running
-
-- Check test interval (should be 30 seconds)
-- Check if bots are active
-- Check if metrics threshold is met
+- Review test results in API response
+- Check bot configuration
+- Verify bot is active and responding
 
 ## Key Points
 
-1. **Fast iteration**: Tests run every 30 seconds
-2. **Task files**: Issues are written to files for you to analyze
-3. **You improve**: AI assistant (you) reads tasks and improves code
-4. **Auto re-test**: System automatically re-tests after code changes
-5. **Continuous loop**: Never stops improving
+1. **On-demand testing**: Tests run only when AI assistant calls the API
+2. **Immediate feedback**: Results returned instantly in API response
+3. **AI-driven**: The AI assistant (Cursor) controls when and what to test
+4. **Fast iteration**: Test → Analyze → Fix → Verify in seconds
+5. **No noise**: No automatic intervals creating unnecessary test runs
 
 ## Next Steps
 
-1. **Start the system**: Already running in docker-compose
-2. **Monitor tasks**: Check `bots/improvement-tasks/` directory
-3. **Improve code**: When tasks appear, analyze and fix
-4. **Iterate**: System re-tests automatically, keep improving
+1. **System is ready**: AutoPilot is running and ready for API calls
+2. **AI calls API**: The AI assistant calls test endpoints when needed
+3. **Analyze results**: Review test results directly in API response
+4. **Improve code**: Make fixes based on test results
+5. **Verify immediately**: Call test API again to confirm fixes
 
-The system is **fully autonomous** - it just needs you to improve the code when tasks are created!
+The system is **efficient and intelligent** - tests run only when needed, and results are analyzed immediately!

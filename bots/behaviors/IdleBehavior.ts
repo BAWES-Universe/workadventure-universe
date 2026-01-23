@@ -34,6 +34,15 @@ export class IdleBehavior extends BaseBehavior {
     setConversationMemory(memory: ConversationMemory): void {
         this.conversationMemory = memory;
     }
+    
+    /**
+     * Set user UUID in conversation memory (called from BaseBehavior when user joins space)
+     */
+    protected setUserUuidInMemory(botId: string, userId: number, userUuid: string, isLogged: boolean): void {
+        if (this.conversationMemory && 'setUserUuid' in this.conversationMemory) {
+            (this.conversationMemory as any).setUserUuid(botId, userId, userUuid, isLogged);
+        }
+    }
 
     update(deltaTime: number): void {
         if (!this.bot) return;
@@ -314,8 +323,20 @@ export class IdleBehavior extends BaseBehavior {
         const playerInfo = this.bot.getPlayerInfo(senderId);
         const userName = playerInfo?.name;
         
-        // Get UUID (REQUIRED by Admin API) - use tracked UUID or fallback to numeric ID as string
-        const userUuid = this.userIdToUuid.get(senderId) || String(senderId);
+        // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
+        let userUuid = this.userIdToUuid.get(senderId);
+        
+        // Log UUID tracking status for debugging
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] UUID lookup: senderId=${senderId}, uuid=${userUuid || 'NOT FOUND'}, mapSize=${this.userIdToUuid.size}`);
+        }
+        
+        if (!userUuid) {
+            // UUID not tracked yet - proceed anyway but log warning
+            // This can happen if initSpaceUsersMessage hasn't been processed yet
+            console.warn(`[IdleBehavior] UUID not found for user ${senderId} (${userName}). Proceeding without conversation storage.`);
+            // Continue to generate response - just skip storage
+        }
         
         // Get authentication status (for isGuest determination)
         const isLogged = this.userIdToIsLogged.get(senderId) ?? false;
@@ -327,14 +348,21 @@ export class IdleBehavior extends BaseBehavior {
             this.conversationMemory.extractPersonalInfo(botId, senderId, message);
         }
         
-        // Start conversation in storage (if available) - userUuid is REQUIRED
-        if (this.conversationStorage) {
+        // Start conversation in storage (if available and UUID is known)
+        if (this.conversationStorage && userUuid) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] Starting conversation storage: botId=${botId}, userUuid=${userUuid}`);
+            }
             this.conversationStorage.startConversation(botId, userUuid, {
                 name: userName,
                 uuid: userUuid,
                 isLogged: isLogged,
             });
             this.conversationStorage.addMessage(botId, userUuid, message, 'person');
+        } else if (!this.conversationStorage) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] conversationStorage is null - conversations will not be persisted`);
+            }
         }
 
         // Start typing indicator
@@ -531,8 +559,10 @@ export class IdleBehavior extends BaseBehavior {
                         }
                         // Store bot's message in conversation storage
                         if (this.conversationStorage) {
-                            const userUuid = this.userIdToUuid.get(playerId) || String(playerId);
-                            this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot');
+                            const userUuid = this.userIdToUuid.get(playerId);
+                            if (userUuid) {
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot');
+                            }
                         }
                     }
                     break;
@@ -595,8 +625,10 @@ export class IdleBehavior extends BaseBehavior {
                             this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                             // Store bot's message in conversation storage
                             if (this.conversationStorage) {
-                                const userUuid = this.userIdToUuid.get(playerId) || String(playerId);
-                                this.conversationStorage.addMessage(botId, userUuid, fullMessage.trim(), 'bot');
+                                const userUuid = this.userIdToUuid.get(playerId);
+                                if (userUuid) {
+                                    this.conversationStorage.addMessage(botId, userUuid, fullMessage.trim(), 'bot');
+                                }
                             }
                         }
                     }

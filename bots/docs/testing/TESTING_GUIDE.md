@@ -68,30 +68,69 @@ const navigationTest: TestCase = {
 
 ## Running Tests
 
-### Run Test Suite
+### On-Demand Testing (Recommended)
+
+The testing system is now **on-demand** - tests are run via API calls by the AI assistant.
+
+### Run Tests via API
+
+```bash
+# Run default tests
+POST /api/test/run
+Content-Type: application/json
+
+{
+  "botId": "bot-123"
+}
+
+# Run custom test cases
+POST /api/test/run
+Content-Type: application/json
+
+{
+  "botId": "bot-123",
+  "testCases": [
+    {
+      "id": "greeting",
+      "input": "Hello!",
+      "expectedBehavior": {
+        "shouldContain": ["hello", "hi", "hey"]
+      }
+    }
+  ]
+}
+```
+
+### Simulate Multi-Turn Conversations
+
+```bash
+POST /api/test/conversation
+Content-Type: application/json
+
+{
+  "botId": "bot-123",
+  "messages": ["Hello!", "I'm hungry", "Do you remember?"],
+  "userName": "Test User"
+}
+```
+
+### Check Test Status
+
+```bash
+GET /api/test/status
+```
+
+### Programmatic Usage
 
 ```typescript
+const testRunner = botManager.getTestRunner();
 const testSuite: TestSuite = {
     id: 'suite-1',
     name: 'Personality Compliance Tests',
     testCases: [testCase1, testCase2, testCase3],
-    botId: 'bot-123',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
 };
 
-const testRunner = botManager.getTestRunner();
 const testRun = await testRunner.runTestSuite(testSuite, 'bot-123');
-```
-
-### Via API
-
-```bash
-POST /api/bots/test/run-suite
-{
-  "testSuite": { ... },
-  "botId": "bot-123"
-}
 ```
 
 ## Interpreting Results

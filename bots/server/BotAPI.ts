@@ -1168,6 +1168,159 @@ export class BotAPI {
                 res.status(500).json({ error: error.message });
             }
         });
+
+        // ========================================
+        // ON-DEMAND TEST API (DEVELOPMENT ONLY)
+        // These endpoints allow the AI assistant to run tests directly
+        // ========================================
+
+        // Run specific test cases on demand
+        this.app.post('/api/test/run', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Test endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const { botId, testCases } = req.body;
+
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
+                    return;
+                }
+
+                const testRunner = this.botManager.getTestRunner();
+                if (!testRunner) {
+                    res.status(503).json({ error: 'Test runner not available (only in development mode)' });
+                    return;
+                }
+
+                // If no test cases provided, run default tests
+                const cases = testCases && testCases.length > 0 ? testCases : [
+                    { id: 'greeting', input: 'Hello!', expectedBehavior: { shouldContain: ['hello', 'hi', 'hey', 'greetings'] } },
+                    { id: 'location', input: 'Where are we?', expectedBehavior: { shouldContain: ['universe', 'world', 'room', 'area'] } },
+                    { id: 'memory', input: "I'm hungry", expectedBehavior: { shouldNotContain: ['[', ']', '<', '>'] } },
+                ];
+
+                // Create test suite object
+                const testSuiteId = `ondemand-${Date.now()}`;
+                const testSuite = {
+                    id: testSuiteId,
+                    name: `On-demand Test Suite`,
+                    testCases: cases,
+                };
+
+                // Run the tests
+                const results = await testRunner.runTestSuite(testSuite, botId);
+
+                res.json({
+                    botId,
+                    testSuiteId: results.id,
+                    status: results.status,
+                    summary: results.summary,
+                    results: results.results,
+                    duration: results.duration,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error running tests:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Simulate a full conversation (multi-turn)
+        this.app.post('/api/test/conversation', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Test endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const { botId, messages, userName = 'Test User' } = req.body;
+
+                if (!botId || !messages || !Array.isArray(messages) || messages.length === 0) {
+                    res.status(400).json({ error: 'Missing botId or messages array' });
+                    return;
+                }
+
+                const testRunner = this.botManager.getTestRunner();
+                if (!testRunner) {
+                    res.status(503).json({ error: 'Test runner not available (only in development mode)' });
+                    return;
+                }
+
+                // Convert messages to test cases with context preservation
+                const testCases = messages.map((msg: string, index: number) => ({
+                    id: `turn-${index + 1}`,
+                    input: msg,
+                    expectedBehavior: {
+                        shouldNotContain: ['[', ']', '<think>', '</think>', 'END_TOOL'],
+                    },
+                }));
+
+                // Create test suite object
+                const testSuiteId = `conversation-${Date.now()}`;
+                const testSuite = {
+                    id: testSuiteId,
+                    name: `Conversation Test with ${userName}`,
+                    testCases: testCases,
+                };
+
+                // Run as a single conversation (preserves context)
+                const results = await testRunner.runTestSuite(testSuite, botId);
+
+                // Extract the conversation flow
+                const conversationFlow = results.results.map((r: any) => ({
+                    turn: r.testCaseId,
+                    userMessage: r.input,
+                    botResponse: r.response, // Use 'response' field from test results
+                    passed: r.passed,
+                    responseTime: r.responseTime,
+                }));
+
+                res.json({
+                    botId,
+                    testSuiteId: results.id,
+                    status: results.status,
+                    summary: results.summary,
+                    conversationFlow,
+                    duration: results.duration,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error running conversation test:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get test runner status and capabilities
+        this.app.get('/api/test/status', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Test endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const testRunner = this.botManager.getTestRunner();
+                const autoPilot = this.botManager.getAutoPilot();
+
+                res.json({
+                    testRunnerAvailable: !!testRunner,
+                    autoPilotAvailable: !!autoPilot,
+                    autoPilotRunning: autoPilot?.isRunning() ?? false,
+                    environment: process.env.NODE_ENV,
+                    capabilities: {
+                        runTests: !!testRunner,
+                        runConversation: !!testRunner,
+                        replayConversation: !!this.botManager.getConversationReplay(),
+                    },
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting test status:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
     }
 
     /**

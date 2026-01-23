@@ -4,9 +4,10 @@
  * Features:
  * - Store recent conversations (no automatic cleanup)
  * - Manual admin control only
- * - Store essential data: botId, playerId, messages array, timestamps
- * - Support querying by bot, player, date range
+ * - Store essential data: botId, userUuid, messages array, timestamps
+ * - Support querying by bot, user, date range
  * - Track conversation metadata (start time, end time, message count)
+ * - Uses userUuid (WorkAdventure UUID) as primary identifier
  */
 
 import { AdminApiService } from '../server/AdminApiService';
@@ -51,7 +52,7 @@ export interface ConversationStats {
 
 export class ConversationStorage {
     private adminApiService: AdminApiService;
-    private activeConversations: Map<string, ConversationRecord> = new Map(); // key: "botId_playerId"
+    private activeConversations: Map<string, ConversationRecord> = new Map(); // key: "botId_userUuid"
 
     constructor(adminApiService: AdminApiService) {
         this.adminApiService = adminApiService;
@@ -72,7 +73,7 @@ export class ConversationStorage {
             isLogged?: boolean;
         }
     ): void {
-        // Use provided UUID or fallback to the passed userUuid
+        // Use provided UUID or the passed userUuid
         const finalUserUuid = userInfo?.uuid || userUuid;
         const key = `${botId}_${finalUserUuid}`;
         
@@ -94,6 +95,10 @@ export class ConversationStorage {
             endedAt: now,
             messageCount: 0,
         });
+        
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[ConversationStorage] Started conversation: botId=${botId}, userUuid=${finalUserUuid}, userName=${userInfo?.name}, isGuest=${isGuest}`);
+        }
     }
 
     /**
@@ -110,7 +115,7 @@ export class ConversationStorage {
         const conversation = this.activeConversations.get(key);
 
         if (!conversation) {
-            // Start conversation if it doesn't exist (userUuid is required)
+            // Start conversation if it doesn't exist
             this.startConversation(botId, userUuid);
             const newConversation = this.activeConversations.get(key);
             if (newConversation) {
@@ -132,6 +137,10 @@ export class ConversationStorage {
         });
         conversation.messageCount++;
         conversation.endedAt = Date.now();
+        
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[ConversationStorage] Added ${sender} message to conversation: botId=${botId}, userUuid=${userUuid}, totalMessages=${conversation.messageCount}`);
+        }
     }
 
     /**

@@ -109,10 +109,25 @@ POST /api/bots/improve/cycle
 
 ## Development vs Production
 
-- **Development**: Full self-improvement system with automated cycles, testing, and improvement tasks
+- **Development**: Full self-improvement system with on-demand testing via API
+  - AutoPilot ready for API calls
+  - Test runner available via `/api/test/*` endpoints
+  - AI assistant drives testing workflow
+  - Metrics collection and conversation storage
 - **Production**: **NO self-improvement system** - completely disabled to keep production lightweight
   - No AutoPilot
   - No AutoImprovement
   - No SelfImprovementLoop
   - No test runner
+  - Test API endpoints return 403 Forbidden
   - Only metrics collection and conversation storage for admin viewing
+
+## On-Demand Testing
+
+The testing system is now **on-demand** - tests are executed only when the AI assistant calls the API:
+
+- `POST /api/test/run` - Run test cases
+- `POST /api/test/conversation` - Simulate conversations
+- `GET /api/test/status` - Check availability
+
+See [On-Demand Testing Guide](../testing/ON_DEMAND_TESTING.md) for details.
