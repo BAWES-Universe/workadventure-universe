@@ -32,6 +32,8 @@ export class PersistentMemory extends ConversationMemory {
     private emotionAnalyzer: EmotionAnalyzer | null = null;
     // UUID tracking - map "botId_playerId" to { userUuid, isLogged }
     private uuidTracking: Map<string, { userUuid: string; isLogged: boolean }> = new Map();
+    // Temporary storage for loaded memories (keyed by userUuid) - restored when user joins
+    private loadedMemoriesByUuid: Map<string, BotPlayerMemory> = new Map(); // key: "botId_userUuid"
 
     constructor(config: PersistentMemoryConfig = {}) {
         super(config.maxHistorySize || 50, config.maxMemories || 1000);
@@ -59,12 +61,60 @@ export class PersistentMemory extends ConversationMemory {
     /**
      * Set UUID tracking info for a user (called by behaviors when user joins)
      * This allows memory saves to include userUuid and isGuest
+     * NOW ALSO: Restores memory if it was loaded for this userUuid (lazy restoration)
      */
     setUserUuid(botId: string, playerId: number, userUuid: string, isLogged: boolean): void {
         const key = `${botId}_${playerId}`;
         this.uuidTracking.set(key, { userUuid, isLogged });
         
-        // Also update the memory object if it exists
+        // Check if we have a loaded memory for this userUuid (lazy restoration)
+        const loadedMemoryKey = `${botId}_${userUuid}`;
+        const loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
+        
+        if (loadedMemory) {
+            // Restore memory to current playerId
+            const existing = this.getMemory(botId, playerId);
+            if (existing) {
+                // Merge: keep current memory but restore loaded data (preserve any new messages)
+                // Only restore if existing memory is empty or very new
+                const existingIsNew = existing.conversationHistory.length === 0 || 
+                                     (Date.now() - existing.createdAt) < 5000; // Less than 5 seconds old
+                
+                if (existingIsNew) {
+                    // Replace with loaded memory (user just joined, no conversation yet)
+                    Object.assign(existing, loadedMemory);
+                    existing.playerId = playerId; // Update to current playerId
+                } else {
+                    // Merge: keep conversation history, restore emotions and personal info
+                    existing.emotions = loadedMemory.emotions;
+                    existing.personalInfo = loadedMemory.personalInfo;
+                    existing.relationship = loadedMemory.relationship;
+                    // Keep existing conversationHistory (current session)
+                }
+            } else {
+                // Create new memory with loaded data
+                super.addMessage(botId, playerId, '', 'person');
+                const newMemory = this.getMemory(botId, playerId);
+                if (newMemory) {
+                    Object.assign(newMemory, loadedMemory);
+                    newMemory.playerId = playerId; // Update to current playerId
+                    // Remove dummy message
+                    if (newMemory.conversationHistory.length > 0 && 
+                        newMemory.conversationHistory[0]?.message === '') {
+                        newMemory.conversationHistory.shift();
+                    }
+                }
+            }
+            
+            // Remove from loaded memories (already restored)
+            this.loadedMemoriesByUuid.delete(loadedMemoryKey);
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[PersistentMemory] ✅ Restored memory for userUuid ${userUuid} to playerId ${playerId}`);
+            }
+        }
+        
+        // Also update the memory object if it exists (existing behavior)
         const memory = this.getMemory(botId, playerId);
         if (memory) {
             memory.userUuid = userUuid; // REQUIRED - update to actual UUID
@@ -329,41 +379,30 @@ export class PersistentMemory extends ConversationMemory {
 
     /**
      * Load memories for a bot from storage
-     * Note: This restores memories by triggering getOrCreateMemory through addMessage,
-     * then updating the memory with loaded data
+     * NOW: Stores memories temporarily by userUuid, to be restored when user joins (lazy restoration)
+     * This allows memory to persist across playerId changes (e.g., guest reloads)
      */
     async loadMemories(botId: string): Promise<void> {
         try {
             const memories = await this.memoryStorage.loadMemories(botId);
             
-            // Restore memories to in-memory store
-            // We trigger getOrCreateMemory by calling addMessage with a dummy message,
-            // then replace the memory with the loaded data
+            // Store memories temporarily by userUuid (not playerId)
+            // They will be restored when setUserUuid is called (when user joins)
+            let storedCount = 0;
             for (const memory of memories) {
-                // Check if memory already exists
-                const existing = this.getMemory(botId, memory.playerId);
-                if (existing) {
-                    // Update existing memory with loaded data
-                    Object.assign(existing, memory);
+                if (memory.userUuid) {
+                    const loadedMemoryKey = `${botId}_${memory.userUuid}`;
+                    this.loadedMemoriesByUuid.set(loadedMemoryKey, memory);
+                    storedCount++;
                 } else {
-                    // Trigger memory creation by adding a dummy message (will be removed)
-                    // This ensures getOrCreateMemory is called
-                    super.addMessage(botId, memory.playerId, '', 'person');
-                    const newMemory = this.getMemory(botId, memory.playerId);
-                    if (newMemory) {
-                        // Replace with loaded memory data
-                        Object.assign(newMemory, memory);
-                        // Remove the dummy message we added
-                        if (newMemory.conversationHistory.length > 0 && 
-                            newMemory.conversationHistory[0].message === '') {
-                            newMemory.conversationHistory.shift();
-                        }
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.warn(`[PersistentMemory] Loaded memory without userUuid, skipping (playerId: ${memory.playerId})`);
                     }
                 }
             }
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[PersistentMemory] Loaded ${memories.length} memories for bot ${botId}`);
+                console.log(`[PersistentMemory] Loaded ${storedCount} memories for bot ${botId} (will restore when users join)`);
             }
         } catch (error) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
