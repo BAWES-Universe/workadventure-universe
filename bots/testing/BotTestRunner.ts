@@ -247,7 +247,7 @@ export class BotTestRunner {
                     });
                     await this.conversationStorage.addMessage(botId, testUserUuid, testCase.input, 'person');
                     await this.conversationStorage.addMessage(botId, testUserUuid, cleanedResponse, 'bot');
-                    await this.conversationStorage.endConversation(botId, testUserUuid);
+                    await this.conversationStorage.endConversation(botId, testUserUuid, 'manual');
                 } catch (error) {
                     // Don't fail test if logging fails
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

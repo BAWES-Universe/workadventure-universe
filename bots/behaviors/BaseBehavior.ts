@@ -346,7 +346,7 @@ export abstract class BaseBehavior {
                     setTimeout(() => {
                         const userUuid = this.userIdToUuid.get(previousClosestPlayerId);
                         if (userUuid && this.conversationStorage) {
-                            this.conversationStorage.endConversation(botId, userUuid).catch(error => {
+                            this.conversationStorage.endConversation(botId, userUuid, 'timeout').catch(error => {
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.error(`[Behavior] Error ending conversation:`, error);
                                 }
@@ -967,7 +967,7 @@ export abstract class BaseBehavior {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Behavior] Ending conversation for user ${userId} (${userUuid}) who left space`);
             }
-            this.conversationStorage.endConversation(botId, userUuid).catch(error => {
+            this.conversationStorage.endConversation(botId, userUuid, 'user_left').catch(error => {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.error(`[Behavior] Error ending conversation on space leave:`, error);
                 }

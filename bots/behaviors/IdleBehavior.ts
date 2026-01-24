@@ -358,7 +358,11 @@ export class IdleBehavior extends BaseBehavior {
                 uuid: userUuid,
                 isLogged: isLogged,
             });
-            this.conversationStorage.addMessage(botId, userUuid, message, 'person');
+            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[IdleBehavior] Error adding person message to conversation storage:', error);
+                }
+            });
         } else if (!this.conversationStorage) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[IdleBehavior] conversationStorage is null - conversations will not be persisted`);
@@ -561,7 +565,11 @@ export class IdleBehavior extends BaseBehavior {
                         if (this.conversationStorage) {
                             const userUuid = this.userIdToUuid.get(playerId);
                             if (userUuid) {
-                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot');
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot').catch(error => {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error('[IdleBehavior] Error adding bot message to conversation storage:', error);
+                                    }
+                                });
                             }
                         }
                     }
@@ -627,7 +635,11 @@ export class IdleBehavior extends BaseBehavior {
                             if (this.conversationStorage) {
                                 const userUuid = this.userIdToUuid.get(playerId);
                                 if (userUuid) {
-                                    this.conversationStorage.addMessage(botId, userUuid, fullMessage.trim(), 'bot');
+                                    this.conversationStorage.addMessage(botId, userUuid, fullMessage.trim(), 'bot').catch(error => {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.error('[IdleBehavior] Error adding bot message to conversation storage:', error);
+                                        }
+                                    });
                                 }
                             }
                         }

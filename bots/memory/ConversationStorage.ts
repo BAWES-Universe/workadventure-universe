@@ -1,14 +1,14 @@
 /**
- * ConversationStorage - Real-time conversation storage for admin viewing
+ * ConversationStorage - Real-time conversation storage with Admin API deduplication
  * 
  * Features:
- * - Store conversations immediately with debounced saves (like PersistentMemory)
- * - Real-time visibility in Admin API (no waiting for conversation end)
- * - Store essential data: botId, userUuid, messages array, timestamps  
- * - Support querying by bot, user, date range
- * - Track conversation metadata (start time, end time, message count)
+ * - Immediate conversation creation and updates (no duplicates)
+ * - Tracks conversation IDs from Admin API
+ * - Uses POST (create) then PUT (update) pattern
+ * - Real-time visibility in Admin API 
+ * - Support for conversation lifecycle (active/completed)
+ * - Store essential data: botId, userUuid, messages array, timestamps
  * - Uses userUuid (WorkAdventure UUID) as primary identifier
- * - Simple and consistent with memory storage patterns
  */
 
 import { AdminApiService } from '../server/AdminApiService';
@@ -31,7 +31,17 @@ export interface ConversationRecord {
     startedAt: number;
     endedAt: number;
     messageCount: number;
+    endReason?: 'user_left' | 'bot_restart' | 'manual' | 'timeout'; // Why conversation ended
     createdAt?: number;
+}
+
+export interface ConversationCreateResponse {
+    conversationId: string;
+    status: 'created' | 'updated';
+}
+
+export interface ConversationUpdateResponse {
+    status: 'updated';
 }
 
 export interface ConversationQuery {
@@ -54,15 +64,14 @@ export interface ConversationStats {
 export class ConversationStorage {
     private adminApiService: AdminApiService;
     private activeConversations: Map<string, ConversationRecord> = new Map(); // key: "botId_userUuid"
-    private debouncedSaves: Map<string, NodeJS.Timeout> = new Map();
-    private readonly DEBOUNCE_DELAY = 5000; // 5 seconds
+    private conversationIds: Map<string, string> = new Map(); // key: "botId_userUuid" → conversationId
 
     constructor(adminApiService: AdminApiService) {
         this.adminApiService = adminApiService;
     }
 
     /**
-     * Start tracking a conversation
+     * Start tracking a conversation (prepare for first message)
      * @param userUuid - REQUIRED - WorkAdventure UUID (string) - primary identifier
      * @param userInfo - Optional user information (name, uuid, isLogged)
      * Note: userId (User.id) will be set by Admin API when storing if user is authenticated
@@ -95,7 +104,7 @@ export class ConversationStorage {
             isGuest: isGuest,
             messages: [],
             startedAt: now,
-            endedAt: now,
+            endedAt: now, // Active conversation: endedAt = startedAt
             messageCount: 0,
         });
         
@@ -105,140 +114,61 @@ export class ConversationStorage {
     }
 
     /**
-     * Add a message to an active conversation
+     * Add a message to an active conversation (immediate save to Admin API)
      * @param userUuid - REQUIRED - User UUID (string) - WorkAdventure UUID
      */
-    addMessage(
+    async addMessage(
         botId: string,
         userUuid: string,
         message: string,
         sender: 'bot' | 'person'
-    ): void {
+    ): Promise<void> {
         const key = `${botId}_${userUuid}`;
-        const conversation = this.activeConversations.get(key);
+        let conversation = this.activeConversations.get(key);
 
         if (!conversation) {
             // Start conversation if it doesn't exist
             this.startConversation(botId, userUuid);
-            const newConversation = this.activeConversations.get(key);
-            if (newConversation) {
-                newConversation.messages.push({
-                    sender,
-                    message,
-                    timestamp: Date.now(),
-                });
-                newConversation.messageCount++;
-                newConversation.endedAt = Date.now();
-                
-                // Schedule debounced save for new conversation too
-                this.scheduleDebouncedSave(key, newConversation);
+            conversation = this.activeConversations.get(key);
+            if (!conversation) {
+                console.error(`[ConversationStorage] Failed to create conversation for botId=${botId}, userUuid=${userUuid}`);
+                return;
             }
-            return;
         }
 
+        // Add message to local conversation
+        const now = Date.now();
         conversation.messages.push({
             sender,
             message,
-            timestamp: Date.now(),
+            timestamp: now,
         });
         conversation.messageCount++;
-        conversation.endedAt = Date.now();
-        
+        conversation.endedAt = now; // Keep as active (endedAt = startedAt for active conversations)
+
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[ConversationStorage] Added ${sender} message to conversation: botId=${botId}, userUuid=${userUuid}, totalMessages=${conversation.messageCount}`);
         }
 
-        // Schedule debounced save (like PersistentMemory does)
-        this.scheduleDebouncedSave(key, conversation);
-    }
-
-    /**
-     * Schedule a debounced save for the conversation (like PersistentMemory)
-     */
-    private scheduleDebouncedSave(key: string, conversation: ConversationRecord): void {
-        // Clear existing debounced save
-        const existingTimer = this.debouncedSaves.get(key);
-        if (existingTimer) {
-            clearTimeout(existingTimer);
-        }
-
-        // Schedule new debounced save
-        const timer = setTimeout(() => {
-            this.storeConversation(conversation).catch(error => {
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.error(`[ConversationStorage] Error in debounced save:`, error);
-                }
-            });
-            this.debouncedSaves.delete(key);
-        }, this.DEBOUNCE_DELAY);
-
-        this.debouncedSaves.set(key, timer);
-    }
-
-    /**
-     * End a conversation (simplified - just mark as ended, let debounced save handle storage)
-     * @param userUuid - REQUIRED - User UUID (string) - WorkAdventure UUID
-     */
-    async endConversation(botId: string, userUuid: string): Promise<void> {
-        const key = `${botId}_${userUuid}`;
-        const conversation = this.activeConversations.get(key);
-
-        if (!conversation) {
-            return;
-        }
-
-        conversation.endedAt = Date.now();
+        // Immediately save to Admin API
+        const conversationId = this.conversationIds.get(key);
         
-        // Force immediate save on conversation end
-        this.storeConversation(conversation).catch(error => {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error(`[ConversationStorage] Error storing conversation on end:`, error);
-            }
-        });
-
-        // Clean up
-        this.activeConversations.delete(key);
-        const existingTimer = this.debouncedSaves.get(key);
-        if (existingTimer) {
-            clearTimeout(existingTimer);
-            this.debouncedSaves.delete(key);
+        if (!conversationId) {
+            // First message - create conversation
+            await this.createConversation(key, conversation);
+        } else {
+            // Subsequent message - update conversation
+            await this.updateConversation(conversationId, conversation);
         }
     }
 
     /**
-     * Cleanup method - flush all pending saves and store active conversations
+     * Create a new conversation in Admin API (first message)
      */
-    async cleanup(): Promise<void> {
-        // Clear all debounced timers and save immediately
-        for (const [key, timer] of this.debouncedSaves) {
-            clearTimeout(timer);
-            
-            const conversation = this.activeConversations.get(key);
-            if (conversation && conversation.messages.length > 0) {
-                try {
-                    await this.storeConversation(conversation);
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[ConversationStorage] Stored conversation on cleanup: botId=${conversation.botId}, userUuid=${conversation.userUuid}, messages=${conversation.messageCount}`);
-                    }
-                } catch (error) {
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.error(`[ConversationStorage] Error storing conversation on cleanup:`, error);
-                    }
-                }
-            }
-        }
-
-        this.debouncedSaves.clear();
-        this.activeConversations.clear();
-    }
-
-    /**
-     * Store conversation to Admin API
-     */
-    private async storeConversation(conversation: ConversationRecord): Promise<void> {
+    private async createConversation(key: string, conversation: ConversationRecord): Promise<void> {
         if (!this.adminApiService.isConfigured()) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn('[ConversationStorage] Admin API not configured, skipping conversation storage');
+                console.warn('[ConversationStorage] Admin API not configured, skipping conversation creation');
             }
             return;
         }
@@ -251,7 +181,7 @@ export class ConversationStorage {
         }
 
         try {
-            await axios.post(
+            const response = await axios.post<ConversationCreateResponse>(
                 `${adminApiUrl}/api/bots/${conversation.botId}/conversations`,
                 conversation,
                 {
@@ -262,15 +192,111 @@ export class ConversationStorage {
                 }
             );
 
+            // Store conversation ID for future updates
+            this.conversationIds.set(key, response.data.conversationId);
+
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[ConversationStorage] Stored conversation for bot ${conversation.botId}, userUuid ${conversation.userUuid}`);
+                console.log(`[ConversationStorage] Created conversation: botId=${conversation.botId}, userUuid=${conversation.userUuid}, conversationId=${response.data.conversationId}, status=${response.data.status}`);
             }
         } catch (error: any) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[ConversationStorage] Error storing conversation:', error);
+                console.error('[ConversationStorage] Error creating conversation:', error);
             }
         }
     }
+
+    /**
+     * Update an existing conversation in Admin API
+     */
+    private async updateConversation(conversationId: string, conversation: ConversationRecord): Promise<void> {
+        if (!this.adminApiService.isConfigured()) {
+            return;
+        }
+
+        const adminApiUrl = this.adminApiService['adminApiUrl'] || process.env.ADMIN_API_URL;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+
+        if (!adminApiUrl || !botServiceToken) {
+            return;
+        }
+
+        try {
+            await axios.put<ConversationUpdateResponse>(
+                `${adminApiUrl}/api/bots/${conversation.botId}/conversations/${conversationId}`,
+                conversation,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[ConversationStorage] Updated conversation: conversationId=${conversationId}, messages=${conversation.messageCount}`);
+            }
+        } catch (error: any) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error(`[ConversationStorage] Error updating conversation ${conversationId}:`, error);
+            }
+        }
+    }
+
+    /**
+     * End a conversation and mark as completed
+     * @param userUuid - REQUIRED - User UUID (string) - WorkAdventure UUID
+     * @param endReason - Why the conversation ended
+     */
+    async endConversation(botId: string, userUuid: string, endReason: 'user_left' | 'bot_restart' | 'manual' | 'timeout' = 'manual'): Promise<void> {
+        const key = `${botId}_${userUuid}`;
+        const conversation = this.activeConversations.get(key);
+        const conversationId = this.conversationIds.get(key);
+
+        if (!conversation || !conversationId) {
+            // Clean up if no active conversation
+            this.activeConversations.delete(key);
+            this.conversationIds.delete(key);
+            return;
+        }
+
+        // Mark conversation as completed (endedAt > startedAt)
+        conversation.endedAt = Date.now();
+        conversation.endReason = endReason;
+
+        // Final update to Admin API
+        await this.updateConversation(conversationId, conversation);
+
+        // Clean up local tracking
+        this.activeConversations.delete(key);
+        this.conversationIds.delete(key);
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[ConversationStorage] Ended conversation: conversationId=${conversationId}, reason=${endReason}`);
+        }
+    }
+
+    /**
+     * Cleanup method - end all active conversations
+     */
+    async cleanup(): Promise<void> {
+        // End all active conversations with bot_restart reason
+        const endPromises: Promise<void>[] = [];
+        
+        for (const [key, conversation] of this.activeConversations) {
+            if (conversation.messages.length > 0) {
+                const [botId, userUuid] = key.split('_', 2);
+                endPromises.push(this.endConversation(botId, userUuid, 'bot_restart'));
+            }
+        }
+
+        // Wait for all conversations to end
+        await Promise.all(endPromises);
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[ConversationStorage] Cleanup completed, ended ${endPromises.length} conversations`);
+        }
+    }
+
 
     /**
      * Get conversations from Admin API

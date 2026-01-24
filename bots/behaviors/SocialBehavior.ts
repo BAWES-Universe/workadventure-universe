@@ -664,7 +664,11 @@ export class SocialBehavior extends BaseBehavior {
         
         // Store player's message in conversation storage
         if (this.conversationStorage) {
-            this.conversationStorage.addMessage(botId, userUuid, message, 'person');
+            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[SocialBehavior] Error adding person message to conversation storage:', error);
+                }
+            });
         }
         
         // Extract personal information from message
@@ -803,7 +807,11 @@ export class SocialBehavior extends BaseBehavior {
                         if (this.conversationStorage) {
                             const userUuid = this.userIdToUuid.get(playerId);
                             if (userUuid) {
-                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot');
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot').catch(error => {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error('[SocialBehavior] Error adding bot message to conversation storage:', error);
+                                    }
+                                });
                             }
                         }
                     }
