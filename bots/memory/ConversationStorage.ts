@@ -65,6 +65,7 @@ export class ConversationStorage {
     private adminApiService: AdminApiService;
     private activeConversations: Map<string, ConversationRecord> = new Map(); // key: "botId_userUuid"
     private conversationIds: Map<string, string> = new Map(); // key: "botId_userUuid" → conversationId
+    private creationLocks: Map<string, Promise<void>> = new Map(); // Prevent concurrent conversation creation
 
     constructor(adminApiService: AdminApiService) {
         this.adminApiService = adminApiService;
@@ -151,13 +152,43 @@ export class ConversationStorage {
         }
 
         // Immediately save to Admin API
-        const conversationId = this.conversationIds.get(key);
+        await this.saveToAdminAPI(key, conversation);
+    }
+
+    /**
+     * Save conversation to Admin API (handles race conditions)
+     */
+    private async saveToAdminAPI(key: string, conversation: ConversationRecord): Promise<void> {
+        let conversationId = this.conversationIds.get(key);
         
         if (!conversationId) {
-            // First message - create conversation
-            await this.createConversation(key, conversation);
-        } else {
-            // Subsequent message - update conversation
+            // Check if another call is already creating this conversation
+            const existingCreation = this.creationLocks.get(key);
+            if (existingCreation) {
+                // Wait for the other call to finish creating
+                await existingCreation;
+                // Try to get the conversationId that was created
+                conversationId = this.conversationIds.get(key);
+            }
+            
+            // If still no conversationId, create it ourselves
+            if (!conversationId) {
+                const creationPromise = this.createConversation(key, conversation);
+                this.creationLocks.set(key, creationPromise);
+                
+                try {
+                    await creationPromise;
+                } finally {
+                    // Always clean up the lock
+                    this.creationLocks.delete(key);
+                }
+                
+                conversationId = this.conversationIds.get(key);
+            }
+        }
+        
+        // Now update the conversation if we have an ID
+        if (conversationId) {
             await this.updateConversation(conversationId, conversation);
         }
     }
@@ -279,6 +310,12 @@ export class ConversationStorage {
      * Cleanup method - end all active conversations
      */
     async cleanup(): Promise<void> {
+        // Wait for any pending creations to complete
+        const pendingCreations = Array.from(this.creationLocks.values());
+        if (pendingCreations.length > 0) {
+            await Promise.all(pendingCreations);
+        }
+        
         // End all active conversations with bot_restart reason
         const endPromises: Promise<void>[] = [];
         
@@ -291,6 +328,9 @@ export class ConversationStorage {
 
         // Wait for all conversations to end
         await Promise.all(endPromises);
+
+        // Clear all maps
+        this.creationLocks.clear();
 
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[ConversationStorage] Cleanup completed, ended ${endPromises.length} conversations`);
