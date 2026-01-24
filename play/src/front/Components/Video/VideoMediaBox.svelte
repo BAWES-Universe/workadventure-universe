@@ -35,6 +35,9 @@
 
     let name = videoBox.spaceUser.name;
 
+    // Check if this is a bot (bot UUIDs start with "bot-")
+    const isBot = extendedSpaceUser.uuid?.startsWith("bot-") ?? false;
+
     let showUserSubMenu = false;
 
     $: hasVideoStore = streamable?.hasVideo;
@@ -253,6 +256,28 @@
                     </div>
                 {/if}
             </CenteredVideo>
+        {:else if isBot}
+            <!-- Bot without WebRTC - show avatar only -->
+            <div class="w-full h-full flex items-center justify-center">
+                <UserName
+                    name={name ?? "unknown"}
+                    picture={pictureStore}
+                    isPlayingAudio={false}
+                    isCameraDisabled={true}
+                    isBlocked={false}
+                    position="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2"
+                    grayscale={false}
+                >
+                    {#if extendedSpaceUser && extendedSpaceUser.spaceUserId !== "local"}
+                        <div
+                            class="flex items-center justify-center picture-in-picture:hidden"
+                            bind:this={userMenuButton}
+                        >
+                            <UpDownChevron enabled={showUserSubMenu} on:click={toggleUserMenu} />
+                        </div>
+                    {/if}
+                </UserName>
+            </div>
         {/if}
     </div>
 
