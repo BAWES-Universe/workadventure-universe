@@ -96,10 +96,25 @@ export class MemoryStorage {
         let retries = 0;
         while (retries < this.maxRetries) {
             try {
+                const serializedMemories = memories.map(mem => this.serializeMemory(mem));
+                
+                // Debug: Log what we're sending (dev only)
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    for (const mem of serializedMemories) {
+                        console.log(`[MemoryStorage] Saving memory for userUuid=${mem.userUuid}, saveType=${saveType}:`);
+                        console.log(`  - conversationHistory: ${mem.conversationHistory?.length || 0} messages`);
+                        console.log(`  - personalInfo.name: ${mem.personalInfo?.name || 'not set'}`);
+                        console.log(`  - personalInfo.birthday: ${mem.personalInfo?.birthday || 'not set'}`);
+                        console.log(`  - personalInfo.facts: ${mem.personalInfo?.facts?.length || 0} facts`);
+                        console.log(`  - relationship.totalConversations: ${mem.relationship?.totalConversations || 0}`);
+                        console.log(`  - relationship.importantEvents: ${mem.relationship?.importantEvents?.length || 0} events`);
+                    }
+                }
+                
                 await axios.post(
                     `${this.adminApiUrl}/api/bots/memory/${botId}`,
                     {
-                        memories: memories.map(mem => this.serializeMemory(mem)),
+                        memories: serializedMemories,
                         timestamp: Date.now(),
                         saveType: saveType, // "immediate" for emotions, "periodic" for full saves
                     },

@@ -190,19 +190,31 @@ export class ConversationMemory {
         const memory = this.getOrCreateMemory(botId, playerId);
         const lowerMessage = message.toLowerCase();
 
-        // Extract birthday
-        const birthdayPatterns = [
-            /(?:my|it'?s) (?:birthday|bday) (?:is|on|was)? ?([a-z]+ \d{1,2}|january \d{1,2}|february \d{1,2}|march \d{1,2}|april \d{1,2}|may \d{1,2}|june \d{1,2}|july \d{1,2}|august \d{1,2}|september \d{1,2}|october \d{1,2}|november \d{1,2}|december \d{1,2})/i,
-            /(?:my|it'?s) (?:birthday|bday) (?:is|on|was)? ?(\d{1,2}\/\d{1,2}|\d{1,2}-\d{1,2})/,
-        ];
+        // Extract birthday - check for simple "its my birthday" first
+        if (/(?:it'?s|today'?s?) (?:my )?birthday/i.test(lowerMessage) || 
+            /(?:my )?birthday (?:is )?today/i.test(lowerMessage)) {
+            // Today is their birthday!
+            const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+            memory.personalInfo.birthday = today;
+            memory.personalInfo.lastInfoUpdate = Date.now();
+            memory.personalInfo.facts.set('birthday_today', 'true');
+            memory.personalInfo.facts.set('birthday_mentioned_at', Date.now().toString());
+            this.addImportantEvent(memory, 'birthday_today', `Player said today is their birthday!`);
+        } else {
+            // Check for specific date mentions
+            const birthdayPatterns = [
+                /(?:my|it'?s) (?:birthday|bday) (?:is|on|was)? ?([a-z]+ \d{1,2}|january \d{1,2}|february \d{1,2}|march \d{1,2}|april \d{1,2}|may \d{1,2}|june \d{1,2}|july \d{1,2}|august \d{1,2}|september \d{1,2}|october \d{1,2}|november \d{1,2}|december \d{1,2})/i,
+                /(?:my|it'?s) (?:birthday|bday) (?:is|on|was)? ?(\d{1,2}\/\d{1,2}|\d{1,2}-\d{1,2})/,
+            ];
 
-        for (const pattern of birthdayPatterns) {
-            const match = message.match(pattern);
-            if (match && match[1]) {
-                memory.personalInfo.birthday = match[1];
-                memory.personalInfo.lastInfoUpdate = Date.now();
-                this.addImportantEvent(memory, 'birthday_mentioned', `Player mentioned birthday: ${match[1]}`);
-                break;
+            for (const pattern of birthdayPatterns) {
+                const match = message.match(pattern);
+                if (match && match[1]) {
+                    memory.personalInfo.birthday = match[1];
+                    memory.personalInfo.lastInfoUpdate = Date.now();
+                    this.addImportantEvent(memory, 'birthday_mentioned', `Player mentioned birthday: ${match[1]}`);
+                    break;
+                }
             }
         }
 
@@ -425,11 +437,20 @@ export class ConversationMemory {
         context.push(`- Total conversations: ${memory.relationship.totalConversations}`);
         context.push(`- Total messages: ${memory.relationship.totalMessages}`);
 
-        // Emotional state
+        // Emotional state (only include if there's something notable)
         const emotions = memory.emotions;
-        context.push(`\nEmotional State:`);
-        context.push(`- Bot's feelings: ${this.describeEmotion(emotions.botEmotion)}`);
-        context.push(`- Person's feelings (inferred): ${this.describeEmotion(emotions.personEmotion)}`);
+        const botFeelingsDesc = this.describeEmotion(emotions.botEmotion);
+        const personFeelingsDesc = this.describeEmotion(emotions.personEmotion);
+        
+        if (botFeelingsDesc || personFeelingsDesc) {
+            context.push(`\nEmotional State:`);
+            if (botFeelingsDesc) {
+                context.push(`- Bot's feelings: ${botFeelingsDesc}`);
+            }
+            if (personFeelingsDesc) {
+                context.push(`- Person's feelings (inferred): ${personFeelingsDesc}`);
+            }
+        }
 
         // Personal information
         let hasPersonalInfo = false;
@@ -495,28 +516,35 @@ export class ConversationMemory {
 
     /**
      * Describe emotional state in natural language
+     * Returns empty string if emotions are at default/neutral values
+     * IMPORTANT: Do NOT return "neutral" as the AI will literally say "I'm neutral"
      */
     private describeEmotion(emotion: EmotionalState['botEmotion'] | EmotionalState['personEmotion']): string {
         const parts: string[] = [];
 
+        if (emotion.anger > 30) {
+            parts.push(`slightly irritated (${Math.round(emotion.anger)}%)`);
+        }
         if (emotion.anger > 50) {
+            parts.pop(); // Remove "slightly irritated"
             parts.push(`angry (${Math.round(emotion.anger)}%)`);
         }
-        if (emotion.happiness > 60) {
+        if (emotion.happiness > 65) {
             parts.push(`happy (${Math.round(emotion.happiness)}%)`);
-        } else if (emotion.happiness < 40) {
+        } else if (emotion.happiness < 35) {
             parts.push(`unhappy (${Math.round(emotion.happiness)}%)`);
         }
-        if ('familiarity' in emotion && emotion.familiarity > 50) {
-            parts.push(`familiar (${Math.round(emotion.familiarity)}%)`);
+        if ('familiarity' in emotion && emotion.familiarity > 40) {
+            parts.push(`familiar with this person (${Math.round(emotion.familiarity)}%)`);
         }
-        if ('trust' in emotion && emotion.trust > 60) {
+        if ('trust' in emotion && emotion.trust > 65) {
             parts.push(`trusting (${Math.round(emotion.trust)}%)`);
-        } else if ('trust' in emotion && emotion.trust < 40) {
-            parts.push(`distrustful (${Math.round(emotion.trust)}%)`);
+        } else if ('trust' in emotion && emotion.trust < 35) {
+            parts.push(`wary (${Math.round(emotion.trust)}%)`);
         }
 
-        return parts.length > 0 ? parts.join(', ') : 'neutral';
+        // Return empty string for neutral state - never return "neutral" as text
+        return parts.length > 0 ? parts.join(', ') : '';
     }
 
     /**
