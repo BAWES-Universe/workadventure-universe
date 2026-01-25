@@ -128,6 +128,11 @@ export class ConversationMemory {
         if (sender === 'person') {
             this.updateEmotionsFromMessage(memory, message);
         }
+        
+        // Extract personal information (birthday, name, preferences, facts)
+        if (sender === 'person') {
+            this.extractPersonalInfo(botId, playerId, message);
+        }
     }
 
     /**

@@ -123,7 +123,7 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
-     * Override addMessage to add debounced save, immediate emotion save, and AI analysis
+     * Override addMessage to add debounced save, immediate save for important changes, and AI analysis
      */
     addMessage(
         botId: string,
@@ -132,7 +132,7 @@ export class PersistentMemory extends ConversationMemory {
         sender: 'bot' | 'person',
         spaceName?: string
     ): void {
-        // Get emotions before update
+        // Get state before update
         const memory = this.getOrCreateMemory(botId, playerId);
         const oldEmotions = {
             personAnger: memory.emotions.personEmotion.anger,
@@ -140,27 +140,62 @@ export class PersistentMemory extends ConversationMemory {
             botAnger: memory.emotions.botEmotion.anger,
             botHappiness: memory.emotions.botEmotion.happiness,
         };
+        const oldPersonalInfo = {
+            birthday: memory.personalInfo.birthday,
+            name: memory.personalInfo.name,
+            factsCount: memory.personalInfo.facts.size,
+            preferencesCount: memory.personalInfo.preferences?.length || 0,
+        };
+        const oldImportantEventsCount = memory.relationship.importantEvents.length;
 
-        // Call parent implementation (updates emotions via keywords)
+        // Call parent implementation (updates emotions, extracts personal info)
         super.addMessage(botId, playerId, message, sender, spaceName);
 
-        // Get updated emotions
+        // Get updated state
         const updatedMemory = this.getOrCreateMemory(botId, playerId);
         const newEmotions = updatedMemory.emotions;
+        const newPersonalInfo = updatedMemory.personalInfo;
+        const newImportantEventsCount = updatedMemory.relationship.importantEvents.length;
 
-        // If emotions changed, trigger immediate save
-        if (
+        // Check if emotions changed
+        const emotionsChanged = (
             oldEmotions.personAnger !== newEmotions.personEmotion.anger ||
             oldEmotions.personHappiness !== newEmotions.personEmotion.happiness ||
             oldEmotions.botAnger !== newEmotions.botEmotion.anger ||
             oldEmotions.botHappiness !== newEmotions.botEmotion.happiness
-        ) {
-            // Trigger immediate save by calling updateEmotions (which saves immediately)
-            this.updateEmotions(botId, playerId, {
-                botEmotion: newEmotions.botEmotion,
-                personEmotion: newEmotions.personEmotion,
-                lastEmotionUpdate: newEmotions.lastEmotionUpdate,
-            });
+        );
+
+        // Check if personal info changed (birthday, name, facts, preferences, important events)
+        const personalInfoChanged = (
+            oldPersonalInfo.birthday !== newPersonalInfo.birthday ||
+            oldPersonalInfo.name !== newPersonalInfo.name ||
+            oldPersonalInfo.factsCount !== newPersonalInfo.facts.size ||
+            oldPersonalInfo.preferencesCount !== (newPersonalInfo.preferences?.length || 0) ||
+            oldImportantEventsCount !== newImportantEventsCount
+        );
+
+        // If emotions OR personal info changed, trigger immediate save
+        if (emotionsChanged || personalInfoChanged) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                if (personalInfoChanged) {
+                    console.log(`[PersistentMemory] Personal info changed for player ${playerId}:`);
+                    if (oldPersonalInfo.birthday !== newPersonalInfo.birthday) {
+                        console.log(`  - birthday: ${oldPersonalInfo.birthday || 'not set'} -> ${newPersonalInfo.birthday || 'not set'}`);
+                    }
+                    if (oldPersonalInfo.name !== newPersonalInfo.name) {
+                        console.log(`  - name: ${oldPersonalInfo.name || 'not set'} -> ${newPersonalInfo.name || 'not set'}`);
+                    }
+                    if (oldPersonalInfo.factsCount !== newPersonalInfo.facts.size) {
+                        console.log(`  - facts: ${oldPersonalInfo.factsCount} -> ${newPersonalInfo.facts.size}`);
+                    }
+                    if (oldImportantEventsCount !== newImportantEventsCount) {
+                        console.log(`  - importantEvents: ${oldImportantEventsCount} -> ${newImportantEventsCount}`);
+                    }
+                }
+            }
+            
+            // Save immediately (includes full memory with personal info)
+            this.saveMemoryImmediately(botId, updatedMemory);
         }
 
         // Schedule AI analysis (runs 10s after last message, debounced)
