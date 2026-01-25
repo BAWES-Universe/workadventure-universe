@@ -20,18 +20,39 @@ export class BotMetricsCollector {
     private flushInterval: number = 30000; // 30 seconds
     private flushTimer: NodeJS.Timeout | null = null;
     private isFlushing: boolean = false;
+    private readonly enabled: boolean;
 
     constructor(adminApiService: AdminApiService, bufferSize: number = 100, flushInterval: number = 30000) {
         this.adminApiService = adminApiService;
         this.bufferSize = bufferSize;
         this.flushInterval = flushInterval;
-        this.startFlushTimer();
+        
+        // Only enable detailed metrics collection in development
+        // Production uses BotsAiUsage table for cost/usage tracking instead
+        // Set ENABLE_BOT_METRICS=true to force in production if needed
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        const metricsEnabled = process.env.ENABLE_BOT_METRICS === 'true';
+        this.enabled = isDevelopment || metricsEnabled;
+        
+        if (this.enabled) {
+            this.startFlushTimer();
+        }
+    }
+
+    /**
+     * Check if metrics collection is enabled
+     */
+    isEnabled(): boolean {
+        return this.enabled;
     }
 
     /**
      * Record a metric (non-blocking)
+     * No-op in production unless ENABLE_BOT_METRICS=true
      */
     recordMetric(metric: BotMetrics): void {
+        if (!this.enabled) return;
+        
         this.metricsBuffer.push(metric);
 
         // Flush if buffer is full
@@ -226,24 +247,10 @@ export class BotMetricsCollector {
 
     /**
      * Flush metrics buffer to Admin API (non-blocking)
-     * 
-     * NOTE: Detailed quality metrics (repetition, personality, etc.) are only saved in development.
-     * Production should use BotsAiUsage table for cost/usage tracking instead.
-     * Set ENABLE_BOT_METRICS=true to force metrics in production if needed.
+     * Only called in development (or if ENABLE_BOT_METRICS=true)
      */
     private async flushMetrics(): Promise<void> {
         if (this.isFlushing || this.metricsBuffer.length === 0) {
-            return;
-        }
-
-        // Only save detailed metrics in development mode (or if explicitly enabled)
-        // Production uses BotsAiUsage table for cost/usage tracking
-        const isDevelopment = process.env.NODE_ENV === 'development';
-        const metricsEnabled = process.env.ENABLE_BOT_METRICS === 'true';
-        
-        if (!isDevelopment && !metricsEnabled) {
-            // Clear buffer without saving in production
-            this.metricsBuffer = [];
             return;
         }
 
