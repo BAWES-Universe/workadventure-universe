@@ -53,6 +53,12 @@ export class BotTestRunner {
         const testRunId = `test-run-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const startedAt = Date.now();
         const results: TestResult[] = [];
+        const testPlayerId = 999999;
+
+        // Clear all context at the start of a new test suite
+        // This ensures each test suite starts fresh
+        this.conversationMemory.clearMemory(botId, testPlayerId);
+        this.responseProcessor.clearRecentResponses(botId, testPlayerId);
 
         console.log(`[BotTestRunner] Starting test suite "${testSuite.name}" (${testSuite.testCases.length} tests)`);
 
@@ -138,17 +144,19 @@ export class BotTestRunner {
             // Use test player ID
             const testPlayerId = 999999; // Use a test player ID
             
-            // For realistic memory tests, DON'T clear memory - preserve context from previous test cases
-            // This allows multi-turn conversations to test memory
+            // Determine if we should preserve context from previous test cases
+            // - preserveContext flag: Explicit flag for multi-turn conversation tests
+            // - realistic memory tests: Tests that need to check memory recall
+            const preserveContext = testCase.metadata?.preserveContext === true;
             const isMemoryTest = testCase.metadata?.type === 'realistic' && 
                                  (testCase.metadata?.expectedMemory?.includes('remember') ||
                                   testCase.input.toLowerCase().includes('remember'));
             
-            if (!isMemoryTest) {
-                // Clear conversation memory for non-memory tests
+            if (!preserveContext && !isMemoryTest) {
+                // Clear conversation memory for isolated tests
                 this.conversationMemory.clearMemory(botId, testPlayerId);
             } else {
-                // For memory tests, ensure conversation is started
+                // For conversation/memory tests, ensure conversation is started (preserve context)
                 this.conversationMemory.startConversation(botId, testPlayerId);
             }
 
@@ -188,7 +196,7 @@ export class BotTestRunner {
             
             if (fullMessage.trim()) {
                 // Process response to get actual metrics (not hardcoded zeros!)
-                const processed = this.responseProcessor.processResponse(
+                let processed = this.responseProcessor.processResponse(
                     botId,
                     testPlayerId,
                     fullMessage,
@@ -199,6 +207,48 @@ export class BotTestRunner {
                 cleanedResponse = processed.cleaned;
                 repetitionScore = processed.metrics.repetitionScore;
                 systemPromptLeakage = processed.metrics.systemPromptLeakage;
+                
+                // Block and regenerate if exact duplicate detected
+                if (repetitionScore >= 1.0) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.warn(`[BotTestRunner] ⚠️ Exact duplicate detected, regenerating with anti-repetition prompt`);
+                    }
+                    
+                    // Regenerate with explicit anti-repetition instruction
+                    const antiRepetitionPrompt = `${chatInstructions}\n\nCRITICAL: You just said "${fullMessage.substring(0, 100)}". DO NOT repeat this. Say something COMPLETELY DIFFERENT.`;
+                    let regeneratedMessage = '';
+                    
+                    for await (const chunk of this.aiService.generateBotResponseStream(
+                        botId,
+                        testPlayerId,
+                        testCase.input + ' [Give a DIFFERENT response than before]',
+                        antiRepetitionPrompt,
+                        botConfig.aiProviderRef,
+                        `test-space-${botId}`,
+                        context,
+                        undefined, // No bot instance in test
+                        this.adminApiService
+                    )) {
+                        if (chunk.content) {
+                            regeneratedMessage += chunk.content;
+                        }
+                        if (chunk.done) break;
+                    }
+                    
+                    if (regeneratedMessage.trim()) {
+                        processed = this.responseProcessor.processResponse(
+                            botId,
+                            testPlayerId,
+                            regeneratedMessage,
+                            chatInstructions,
+                            responseTime,
+                            undefined
+                        );
+                        cleanedResponse = processed.cleaned;
+                        repetitionScore = processed.metrics.repetitionScore;
+                        systemPromptLeakage = processed.metrics.systemPromptLeakage;
+                    }
+                }
                 
                 // Add bot response to memory (for multi-turn conversation tests)
                 this.conversationMemory.addMessage(botId, testPlayerId, cleanedResponse, 'bot');

@@ -1251,11 +1251,15 @@ export class BotAPI {
                 }
 
                 // Convert messages to test cases with context preservation
+                // Mark all conversation turns as preserveContext to maintain context across turns
                 const testCases = messages.map((msg: string, index: number) => ({
                     id: `turn-${index + 1}`,
                     input: msg,
                     expectedBehavior: {
                         shouldNotContain: ['[', ']', '<think>', '</think>', 'END_TOOL'],
+                    },
+                    metadata: {
+                        preserveContext: true, // Don't clear memory between turns
                     },
                 }));
 
