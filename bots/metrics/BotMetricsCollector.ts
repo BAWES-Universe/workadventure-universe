@@ -226,9 +226,24 @@ export class BotMetricsCollector {
 
     /**
      * Flush metrics buffer to Admin API (non-blocking)
+     * 
+     * NOTE: Detailed quality metrics (repetition, personality, etc.) are only saved in development.
+     * Production should use BotsAiUsage table for cost/usage tracking instead.
+     * Set ENABLE_BOT_METRICS=true to force metrics in production if needed.
      */
     private async flushMetrics(): Promise<void> {
         if (this.isFlushing || this.metricsBuffer.length === 0) {
+            return;
+        }
+
+        // Only save detailed metrics in development mode (or if explicitly enabled)
+        // Production uses BotsAiUsage table for cost/usage tracking
+        const isDevelopment = process.env.NODE_ENV === 'development';
+        const metricsEnabled = process.env.ENABLE_BOT_METRICS === 'true';
+        
+        if (!isDevelopment && !metricsEnabled) {
+            // Clear buffer without saving in production
+            this.metricsBuffer = [];
             return;
         }
 
