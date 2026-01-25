@@ -257,28 +257,17 @@ export class BotMetricsCollector {
         this.isFlushing = true;
         const metricsToFlush = this.metricsBuffer.splice(0, this.bufferSize);
 
-        // Filter out test metrics (playerId 999999 is used for AutoPilot tests)
-        const realMetrics = metricsToFlush.filter(metric => {
-            const playerId = metric.metadata?.playerId;
-            return playerId !== 999999 && playerId !== '999999';
-        });
-
-        if (realMetrics.length === 0) {
+        if (metricsToFlush.length === 0) {
             this.isFlushing = false;
-            return; // No real metrics to save
+            return;
         }
 
         try {
-            // Send to Admin API (only real user conversation metrics)
-            await this.adminApiService.saveBotMetrics(realMetrics);
+            // Send to Admin API (all metrics - tests only run in dev anyway)
+            await this.adminApiService.saveBotMetrics(metricsToFlush);
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                const filteredCount = metricsToFlush.length - realMetrics.length;
-                if (filteredCount > 0) {
-                    console.log(`[BotMetricsCollector] Flushed ${realMetrics.length} metrics (filtered ${filteredCount} test metrics)`);
-                } else {
-                    console.log(`[BotMetricsCollector] Flushed ${realMetrics.length} metrics`);
-                }
+                console.log(`[BotMetricsCollector] Flushed ${metricsToFlush.length} metrics`);
             }
         } catch (error) {
             // Put metrics back in buffer if flush failed

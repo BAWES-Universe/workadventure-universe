@@ -101,6 +101,24 @@ export class BotTestRunner {
 
         console.log(`[BotTestRunner] Test suite "${testSuite.name}" completed: ${summary.passed}/${summary.total} passed`);
 
+        // Save test results to Admin API (dev only - tests are blocked in production)
+        this.adminApiService.saveTestResults({
+            testId: testRun.id,
+            botId,
+            testSuite: testRun.testSuiteId,
+            results: testRun.results,
+            passed: testRun.status === 'passed',
+            summary: testRun.summary,
+            startedAt: testRun.startedAt,
+            completedAt: testRun.completedAt,
+            duration: testRun.duration,
+        }).catch(error => {
+            // Fire-and-forget, don't break the flow
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[BotTestRunner] Error saving test results to Admin API:', error);
+            }
+        });
+
         return testRun;
     }
 
