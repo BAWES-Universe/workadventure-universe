@@ -174,15 +174,26 @@ export class ResponseProcessor {
     private calculateRepetitionScore(botId: string, playerId: number, response: string): number {
         const key = `${botId}_${playerId}`;
         const recent = this.recentResponses.get(key) || [];
+        
+        // Debug logging for repetition detection
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[ResponseProcessor] Checking repetition for ${key}: ${recent.length} recent responses stored`);
+        }
+        
         if (recent.length === 0) {
             return 0;
         }
 
         // First check for exact duplicates (normalized - trim and lowercase)
         const normalizedResponse = response.trim().toLowerCase();
-        for (const recentResponse of recent) {
-            const normalizedRecent = recentResponse.trim().toLowerCase();
+        for (let i = 0; i < recent.length; i++) {
+            const normalizedRecent = recent[i].trim().toLowerCase();
             if (normalizedResponse === normalizedRecent) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[ResponseProcessor] 🚨 EXACT DUPLICATE DETECTED! Response matches recent[${i}]`);
+                    console.log(`  Current: "${response.substring(0, 50)}..."`);
+                    console.log(`  Recent:  "${recent[i].substring(0, 50)}..."`);
+                }
                 return 1.0; // Exact duplicate
             }
         }

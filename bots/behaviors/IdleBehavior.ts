@@ -468,6 +468,11 @@ export class IdleBehavior extends BaseBehavior {
                     // Process response through ResponseProcessor (for metrics and quality checks)
                     let processedMessage = fullMessage;
                     
+                    // Debug: Check if responseProcessor exists
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[IdleBehavior] ResponseProcessor available: ${!!this.responseProcessor}, fullMessage length: ${fullMessage.length}`);
+                    }
+                    
                     if (this.responseProcessor && fullMessage.trim()) {
                         const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
                         // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
