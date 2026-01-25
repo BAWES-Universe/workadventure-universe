@@ -90,6 +90,27 @@ export class ConversationMemory {
         this.maxMemories = maxMemories;
     }
 
+    /**
+     * Clean bot message before storing (remove think tags, tool markers, etc.)
+     */
+    private cleanBotMessage(message: string): string {
+        let cleaned = message;
+        
+        // Remove <think>...</think> tags and their content
+        cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+        
+        // Remove tool markers
+        cleaned = cleaned.replace(/\[END_TOOL_REQUEST\]/g, '');
+        cleaned = cleaned.replace(/\[END_TOOL_RESPONSE\]/g, '');
+        cleaned = cleaned.replace(/\[get_\w+\]/g, '');
+        cleaned = cleaned.replace(/\[People on map:.*?\]/g, '');
+        
+        // Clean up extra whitespace
+        cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+        cleaned = cleaned.trim();
+        
+        return cleaned;
+    }
 
     /**
      * Add a message to conversation history
@@ -104,9 +125,15 @@ export class ConversationMemory {
         const memory = this.getOrCreateMemory(botId, playerId);
         const now = Date.now();
 
+        // Clean bot messages before storing (remove think tags and other artifacts)
+        let cleanedMessage = message;
+        if (sender === 'bot') {
+            cleanedMessage = this.cleanBotMessage(message);
+        }
+
         // Add message to history
         memory.conversationHistory.push({
-            message,
+            message: cleanedMessage,
             sender,
             timestamp: now,
             spaceName,
@@ -196,8 +223,12 @@ export class ConversationMemory {
         const lowerMessage = message.toLowerCase();
 
         // Extract birthday - check for simple "its my birthday" first
-        if (/(?:it'?s|today'?s?) (?:my )?birthday/i.test(lowerMessage) || 
-            /(?:my )?birthday (?:is )?today/i.test(lowerMessage)) {
+        // Only trigger once per conversation (check if already set today)
+        const alreadyKnowsBirthdayToday = memory.personalInfo.facts.get('birthday_today') === 'true';
+        
+        if (!alreadyKnowsBirthdayToday && (
+            /(?:it'?s|today'?s?) (?:my )?birthday/i.test(lowerMessage) || 
+            /(?:my )?birthday (?:is )?today/i.test(lowerMessage))) {
             // Today is their birthday!
             const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
             memory.personalInfo.birthday = today;
@@ -205,7 +236,7 @@ export class ConversationMemory {
             memory.personalInfo.facts.set('birthday_today', 'true');
             memory.personalInfo.facts.set('birthday_mentioned_at', Date.now().toString());
             this.addImportantEvent(memory, 'birthday_today', `Player said today is their birthday!`);
-        } else {
+        } else if (!alreadyKnowsBirthdayToday) {
             // Check for specific date mentions
             const birthdayPatterns = [
                 /(?:my|it'?s) (?:birthday|bday) (?:is|on|was)? ?([a-z]+ \d{1,2}|january \d{1,2}|february \d{1,2}|march \d{1,2}|april \d{1,2}|may \d{1,2}|june \d{1,2}|july \d{1,2}|august \d{1,2}|september \d{1,2}|october \d{1,2}|november \d{1,2}|december \d{1,2})/i,
