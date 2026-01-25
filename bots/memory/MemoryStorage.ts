@@ -102,12 +102,13 @@ export class MemoryStorage {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     for (const mem of serializedMemories) {
                         console.log(`[MemoryStorage] Saving memory for userUuid=${mem.userUuid}, saveType=${saveType}:`);
-                        console.log(`  - conversationHistory: ${mem.conversationHistory?.length || 0} messages`);
-                        console.log(`  - personalInfo.name: ${mem.personalInfo?.name || 'not set'}`);
-                        console.log(`  - personalInfo.birthday: ${mem.personalInfo?.birthday || 'not set'}`);
-                        console.log(`  - personalInfo.facts: ${mem.personalInfo?.facts?.length || 0} facts`);
-                        console.log(`  - relationship.totalConversations: ${mem.relationship?.totalConversations || 0}`);
-                        console.log(`  - relationship.importantEvents: ${mem.relationship?.importantEvents?.length || 0} events`);
+                        console.log(`  - memories.conversationHistory: ${mem.memories?.conversationHistory?.length || 0} messages`);
+                        console.log(`  - memories.personalInfo.name: ${mem.memories?.personalInfo?.name || 'not set'}`);
+                        console.log(`  - memories.personalInfo.birthday: ${mem.memories?.personalInfo?.birthday || 'not set'}`);
+                        console.log(`  - memories.personalInfo.facts: ${mem.memories?.personalInfo?.facts?.length || 0} facts`);
+                        console.log(`  - memories.relationship.totalConversations: ${mem.memories?.relationship?.totalConversations || 0}`);
+                        console.log(`  - memories.relationship.importantEvents: ${mem.memories?.relationship?.importantEvents?.length || 0} events`);
+                        console.log(`  - emotions: ${mem.emotions ? 'present' : 'missing'}`);
                     }
                 }
                 
@@ -189,31 +190,70 @@ export class MemoryStorage {
 
     /**
      * Serialize memory for storage (convert Maps to objects)
+     * Admin API expects nested structure: { userUuid, memories: {...}, emotions: {...} }
      */
     private serializeMemory(memory: BotPlayerMemory): any {
         return {
-            ...memory,
-            personalInfo: {
-                ...memory.personalInfo,
-                facts: Array.from(memory.personalInfo.facts.entries()),
+            // Top-level identification
+            userUuid: memory.userUuid,
+            userId: memory.userId,
+            userName: memory.playerName,
+            isGuest: memory.isGuest,
+            
+            // Nested memories object (what Admin API looks for)
+            memories: {
+                personalInfo: {
+                    ...memory.personalInfo,
+                    facts: Array.from(memory.personalInfo.facts.entries()),
+                },
+                relationship: memory.relationship,
+                conversationHistory: memory.conversationHistory,
+                lastUpdated: memory.lastUpdated,
+                createdAt: memory.createdAt,
             },
+            
+            // Emotions at top level (matches Admin API expectation)
+            emotions: memory.emotions,
+            lastEmotionUpdate: memory.emotions.lastEmotionUpdate,
         };
     }
 
     /**
      * Deserialize memory from storage (convert objects back to Maps)
+     * Handles both nested format (from Admin API) and flat format (legacy)
      */
     private deserializeMemory(data: any): BotPlayerMemory {
+        // Handle nested format from Admin API: { userUuid, memories: {...}, emotions: {...} }
+        const memoryData = data.memories || data; // Use nested memories if present, otherwise assume flat
+        const emotions = data.emotions || memoryData.emotions;
+        const personalInfo = memoryData.personalInfo || {};
+        
         return {
-            ...data,
+            userUuid: data.userUuid || memoryData.userUuid || '',
+            userId: data.userId || memoryData.userId,
+            isGuest: data.isGuest ?? memoryData.isGuest ?? true,
+            playerId: memoryData.playerId || 0,
+            playerName: data.userName || memoryData.playerName,
+            conversationHistory: memoryData.conversationHistory || [],
+            maxHistorySize: memoryData.maxHistorySize || 50,
             personalInfo: {
-                ...data.personalInfo,
-                facts: new Map(data.personalInfo.facts || []),
+                ...personalInfo,
+                facts: new Map(personalInfo.facts || []),
+            },
+            relationship: memoryData.relationship || {
+                firstMet: Date.now(),
+                lastMet: Date.now(),
+                totalConversations: 0,
+                totalMessages: 0,
+                importantEvents: [],
             },
             emotions: {
-                ...data.emotions,
-                lastEmotionUpdate: data.emotions.lastEmotionUpdate || Date.now(),
+                botEmotion: emotions?.botEmotion || { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                personEmotion: emotions?.personEmotion || { anger: 0, happiness: 50, trust: 50 },
+                lastEmotionUpdate: emotions?.lastEmotionUpdate || data.lastEmotionUpdate || Date.now(),
             },
+            lastUpdated: memoryData.lastUpdated || Date.now(),
+            createdAt: memoryData.createdAt || Date.now(),
         };
     }
 
