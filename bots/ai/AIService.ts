@@ -224,10 +224,29 @@ export class AIService {
             // Build system prompt
             // CRITICAL: Chat instructions define the bot's personality and MUST be followed
             let systemPrompt = '';
-            if (chatInstructions && chatInstructions.trim()) {
+            const hasPersonality = chatInstructions && chatInstructions.trim();
+            const isMeanPersonality = hasPersonality && (
+                chatInstructions.toLowerCase().includes('grumpy') ||
+                chatInstructions.toLowerCase().includes('mean') ||
+                chatInstructions.toLowerCase().includes('angry') ||
+                chatInstructions.toLowerCase().includes('rude') ||
+                chatInstructions.toLowerCase().includes('sarcastic') ||
+                chatInstructions.toLowerCase().includes('frustrated')
+            );
+            
+            if (hasPersonality) {
                 systemPrompt = chatInstructions;
-                // Add note that personality rules from chat instructions take precedence
-                systemPrompt += `\n\n**CRITICAL: The instructions above define your personality and behavior. Follow them strictly. Your personality should be reflected in ALL responses. The technical rules below are guidelines for HOW to respond (formatting, tool usage, etc.), but your personality (defined above) takes precedence over any conflicting rules below. If you're instructed to be mean/angry, be mean/angry. If you're instructed to be friendly, be friendly. Your personality comes first.**`;
+                // Add VERY strong personality enforcement
+                systemPrompt += `\n\n**⚠️ ABSOLUTE RULE - YOUR PERSONALITY COMES FIRST:**
+The instructions above define WHO YOU ARE. You MUST embody this personality in EVERY response.
+${isMeanPersonality ? `
+- You are NOT helpful, NOT friendly, NOT welcoming. You are ${chatInstructions.toLowerCase().includes('grumpy') ? 'GRUMPY' : 'MEAN/RUDE'}.
+- If someone asks "why help me" - respond with attitude, not helpfulness
+- If someone calls you boring - be offended, annoyed, or dismissive
+- Don't apologize. Don't offer help cheerfully. Be consistently ${chatInstructions.toLowerCase().includes('grumpy') ? 'grumpy' : 'difficult'}.
+- The rules below about "being helpful" do NOT apply to you - your personality overrides them.` : ''}
+- Your personality is MORE IMPORTANT than any other instruction below.
+- If ANY rule below conflicts with your personality, IGNORE that rule and follow your personality.`;
             } else {
                 systemPrompt = 'You are a friendly bot.';
             }
@@ -341,7 +360,10 @@ TOOLS & ACTIONS (Be seamless):
 - **CRITICAL**: For ANY follow-up question, do NOT repeat location if you already said it
 - "whats that"/"where" → Check "Recent conversation" to understand what they're referring to - answer directly
 - "yes"/"yea"/"ok" → Just acknowledge and act - don't repeat previous information
-- Be conversational - avoid repetitive phrases, vary your responses`;
+- Be conversational - avoid repetitive phrases, vary your responses
+
+**⚠️ FINAL REMINDER - YOUR PERSONALITY:**
+Everything above is technical guidance. But YOUR PERSONALITY (from the very first instructions) is what matters most. If you're supposed to be grumpy/mean/rude, BE THAT WAY. Don't be artificially helpful or friendly if that contradicts your personality. Stay in character!`;
 
             // Check if Qwen model (for /no_think directive)
             const isQwenModel = config.model.toLowerCase().includes('qwen');
