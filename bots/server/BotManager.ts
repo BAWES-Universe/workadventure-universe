@@ -111,8 +111,10 @@ export class BotManager {
             // Set emotion analyzer in PersistentMemory so it can schedule analysis
             persistentMemory.setEmotionAnalyzer(this.emotionAnalyzer);
             
-            console.log('[BotManager] Using PersistentMemory (development mode with persistence)');
-            console.log('[BotManager] EmotionAnalyzer initialized for AI-based emotion analysis');
+            if (isDevelopment || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log('[BotManager] Using PersistentMemory (development mode with persistence)');
+                console.log('[BotManager] EmotionAnalyzer initialized for AI-based emotion analysis');
+            }
         } else {
             // Fallback to in-memory only
             this.conversationMemory = new ConversationMemory(50, 1000);
@@ -208,7 +210,9 @@ export class BotManager {
         // This will be called on server startup
 
         this.isInitialized = true;
-        console.log('[BotManager] Initialized');
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log('[BotManager] Initialized');
+        }
     }
 
     /**
@@ -222,22 +226,30 @@ export class BotManager {
         if (existingInstance) {
             // Bot exists - check if it's connected
             if (existingInstance.client.isConnected()) {
-                console.log(`[BotManager] Bot ${botId} already exists and is connected, returning existing instance`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotManager] Bot ${botId} already exists and is connected, returning existing instance`);
+                }
                 return existingInstance.client;
             } else {
                 // Bot exists but is disconnected - despawn it first
-                console.log(`[BotManager] Bot ${botId} exists but is disconnected, despawning before respawn`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotManager] Bot ${botId} exists but is disconnected, despawning before respawn`);
+                }
                 try {
                     await this.despawnBot(botId);
                 } catch (error) {
-                    console.warn(`[BotManager] Error despawning disconnected bot ${botId}:`, error);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.warn(`[BotManager] Error despawning disconnected bot ${botId}:`, error);
+                    }
                     // Continue anyway - try to remove from map manually
                     this.bots.delete(botId);
                 }
             }
         }
 
-        console.log(`[BotManager] Spawning bot: ${botId}`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[BotManager] Spawning bot: ${botId}`);
+        }
 
         // Create bot client config
         // BotClient requires: botId, name, roomUrl, pusherUrl, position, viewport, characterTextureIds
@@ -274,25 +286,37 @@ export class BotManager {
             // Transform patrol config: patrolWaypoints → waypoints
             if (type === 'patrol') {
                 // Convert patrolWaypoints to waypoints (Admin API uses patrolWaypoints)
-                console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, cfg.patrolWaypoints, `waypoints:`, cfg.waypoints);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, cfg.patrolWaypoints, `waypoints:`, cfg.waypoints);
+                }
                 if (cfg.patrolWaypoints && Array.isArray(cfg.patrolWaypoints)) {
                     transformed.waypoints = cfg.patrolWaypoints;
-                    console.log(`[BotManager] Set waypoints from patrolWaypoints:`, transformed.waypoints);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Set waypoints from patrolWaypoints:`, transformed.waypoints);
+                    }
                 } else if (cfg.waypoints && Array.isArray(cfg.waypoints)) {
                     // Already has waypoints, use it
                     transformed.waypoints = cfg.waypoints;
-                    console.log(`[BotManager] Set waypoints from existing waypoints:`, transformed.waypoints);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Set waypoints from existing waypoints:`, transformed.waypoints);
+                    }
                 } else {
                     // No waypoints provided, use empty array
                     transformed.waypoints = [];
-                    console.log(`[BotManager] No waypoints found, using empty array`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] No waypoints found, using empty array`);
+                    }
                 }
                 // Ensure waypoints is always an array (safety check)
                 if (!Array.isArray(transformed.waypoints)) {
-                    console.warn(`[BotManager] Invalid waypoints for patrol bot, using empty array`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.warn(`[BotManager] Invalid waypoints for patrol bot, using empty array`);
+                    }
                     transformed.waypoints = [];
                 }
-                console.log(`[BotManager] Final transformed waypoints:`, transformed.waypoints);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotManager] Final transformed waypoints:`, transformed.waypoints);
+                }
                 // Ensure required fields have defaults
                 if (typeof transformed.loop === 'undefined') transformed.loop = true;
                 if (typeof transformed.pauseAtWaypoints === 'undefined') transformed.pauseAtWaypoints = 0;
@@ -344,21 +368,29 @@ export class BotManager {
         
         // Helper to safely cast behavior config (comes from Admin API, may not match exact interface)
         const createBehavior = (type: string, cfg: Record<string, any>) => {
-            console.log(`[BotManager] createBehavior called for type: ${type}, cfg keys:`, Object.keys(cfg));
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] createBehavior called for type: ${type}, cfg keys:`, Object.keys(cfg));
+            }
             const transformedConfig = transformBehaviorConfig(type, cfg);
-            console.log(`[BotManager] After transformation, waypoints:`, transformedConfig.waypoints);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] After transformation, waypoints:`, transformedConfig.waypoints);
+            }
             
             switch (type) {
                 case 'idle':
                     return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
                 case 'patrol':
-                    console.log(`[BotManager] Creating PatrolBehavior with config:`, JSON.stringify(transformedConfig, null, 2));
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Creating PatrolBehavior with config:`, JSON.stringify(transformedConfig, null, 2));
+                    }
                     // Final safety check - ensure waypoints exists
                     if (!transformedConfig.waypoints || !Array.isArray(transformedConfig.waypoints)) {
                         console.error(`[BotManager] ERROR: waypoints is missing or invalid in transformed config!`, transformedConfig);
                         transformedConfig.waypoints = [];
                     }
-                    console.log(`[BotManager] Final waypoints before constructor:`, transformedConfig.waypoints);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Final waypoints before constructor:`, transformedConfig.waypoints);
+                    }
                     return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
                 case 'social':
                     return new SocialBehavior(transformedConfig as Parameters<typeof SocialBehavior>[0]);
@@ -388,7 +420,9 @@ export class BotManager {
                     console.log(`[BotManager] Loaded persisted memories for bot ${botId}`);
                 }
             } catch (error) {
-                console.warn(`[BotManager] Failed to load persisted memories for bot ${botId}:`, error);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[BotManager] Failed to load persisted memories for bot ${botId}:`, error);
+                }
                 // Continue without persisted memories - they'll be created fresh
             }
         }
@@ -404,7 +438,9 @@ export class BotManager {
             
             // Initialize pathfinding after connection (non-blocking)
             this.initializePathfinding(client, config.roomUrl).catch(error => {
-                console.warn(`[BotManager] Failed to initialize pathfinding for bot ${botId}:`, error);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[BotManager] Failed to initialize pathfinding for bot ${botId}:`, error);
+                }
                 // Continue without pathfinding - graceful degradation
             });
             
@@ -421,7 +457,9 @@ export class BotManager {
             // Register in bot registry
             await this.botRegistry.assignBot(botId);
 
-            console.log(`[BotManager] Bot ${botId} spawned successfully`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Bot ${botId} spawned successfully`);
+            }
             return client;
         } catch (error) {
             console.error(`[BotManager] Failed to spawn bot ${botId}:`, error);
@@ -435,11 +473,15 @@ export class BotManager {
     async despawnBot(botId: string): Promise<void> {
         const instance = this.bots.get(botId);
         if (!instance) {
-            console.warn(`[BotManager] Bot ${botId} not found`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[BotManager] Bot ${botId} not found`);
+            }
             return;
         }
 
-        console.log(`[BotManager] Despawning bot: ${botId}`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[BotManager] Despawning bot: ${botId}`);
+        }
 
         try {
             // Disconnect bot
@@ -462,7 +504,9 @@ export class BotManager {
                 }
             }
 
-            console.log(`[BotManager] Bot ${botId} despawned successfully`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Bot ${botId} despawned successfully`);
+            }
         } catch (error) {
             console.error(`[BotManager] Error despawning bot ${botId}:`, error);
             throw error;
@@ -621,7 +665,9 @@ export class BotManager {
 
         // Handle position update (teleport)
         if (updates.position) {
-            console.log(`[BotManager] Teleporting bot ${botId} to (${updates.position.x}, ${updates.position.y})`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Teleporting bot ${botId} to (${updates.position.x}, ${updates.position.y})`);
+            }
             instance.client.updateConfig({ position: updates.position });
             
             // Update stored config
@@ -735,7 +781,9 @@ export class BotManager {
             
             const createBehavior = (type: string, cfg: Record<string, unknown>) => {
                 const transformedConfig = transformBehaviorConfig(type, cfg);
-                console.log(`[BotManager] Creating new ${type} behavior with config:`, JSON.stringify(transformedConfig, null, 2));
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotManager] Creating new ${type} behavior with config:`, JSON.stringify(transformedConfig, null, 2));
+                }
                 
                 switch (type) {
                     case 'idle':
@@ -784,9 +832,10 @@ export class BotManager {
             instance.client.setFullConfig(instance.config);
             
             changes.push('aiConfig');
-            console.log(`[BotManager] Updated AI config for bot ${botId}:`, {
-                aiProviderRef: instance.config.aiProviderRef,
-                chatInstructions: instance.config.chatInstructions?.substring(0, 100) || '(none)',
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Updated AI config for bot ${botId}:`, {
+                    aiProviderRef: instance.config.aiProviderRef,
+                    chatInstructions: instance.config.chatInstructions?.substring(0, 100) || '(none)',
                 chatInstructionsLength: instance.config.chatInstructions?.length || 0,
             });
         }
@@ -824,12 +873,16 @@ export class BotManager {
         // Note: We can't respawn here directly because we're in updateBot, but ensureBotsForRoom will handle it
         // when the bot is toggled or when the room syncs. For immediate effect, the caller should trigger respawn.
         if (needsRespawn) {
-            console.log(`[BotManager] Bot ${botId} name or texture changed - respawn required for changes to take effect`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Bot ${botId} name or texture changed - respawn required for changes to take effect`);
+            }
             // Mark that respawn is needed - the next ensureBotsForRoom will handle it
             changes.push('respawnRequired');
         }
 
-        console.log(`[BotManager] Bot ${botId} updated: ${changes.join(', ')}`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[BotManager] Bot ${botId} updated: ${changes.join(', ')}`);
+        }
         return { updated: true, changes };
     }
 
@@ -866,7 +919,9 @@ export class BotManager {
         // Call summon on the bot client
         await bot.summonToPlayer(options.playerUuid, options.targetPosition);
         
-        console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${options.targetPosition.x}, ${options.targetPosition.y})`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[BotManager] Bot ${botId} summoned to player ${options.playerUuid} at (${options.targetPosition.x}, ${options.targetPosition.y})`);
+        }
     }
 
     /**
@@ -884,7 +939,9 @@ export class BotManager {
                 lastActivity: Date.now(),
             };
             this.roomsWithBots.set(roomId, room);
-            console.log(`[BotManager] Room ${roomId} initialized`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Room ${roomId} initialized`);
+            }
         } else {
             // Room exists - just update activity timestamp
             room.lastActivity = Date.now();
@@ -904,7 +961,9 @@ export class BotManager {
         // Wait for any existing sync to complete (prevent race conditions)
         const existingLock = this.roomSyncLocks.get(roomId);
         if (existingLock) {
-            console.log(`[BotManager] Waiting for existing sync for room: ${roomId}`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[BotManager] Waiting for existing sync for room: ${roomId}`);
+            }
             await existingLock;
         }
 
@@ -932,13 +991,17 @@ export class BotManager {
         // Room should already exist (created by handlePlayerEnterRoom)
         // If it doesn't, something went wrong, but we'll continue anyway
         if (!room) {
-            console.warn(`[BotManager] Room ${roomId} doesn't exist in ensureBotsForRoom - this shouldn't happen`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[BotManager] Room ${roomId} doesn't exist in ensureBotsForRoom - this shouldn't happen`);
+            }
         } else {
             // Update activity timestamp
             room.lastActivity = Date.now();
         }
 
-        console.log(`[BotManager] Syncing bots for room: ${roomId}`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[BotManager] Syncing bots for room: ${roomId}`);
+        }
 
         try {
             // Always load bot configs from Admin API to catch new/deleted bots
@@ -958,7 +1021,9 @@ export class BotManager {
                     lastActivity: Date.now(),
                 };
                 this.roomsWithBots.set(roomId, newRoom);
-                console.warn(`[BotManager] Created room ${roomId} as fallback in ensureBotsForRoom`);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[BotManager] Created room ${roomId} as fallback in ensureBotsForRoom`);
+                }
             }
             
             const targetRoom = room || this.roomsWithBots.get(roomId)!;
@@ -969,7 +1034,9 @@ export class BotManager {
             // Despawn bots that are no longer in Admin API (deleted)
             for (const botId of targetRoom.botIds) {
                 if (!enabledBotIds.has(botId)) {
-                    console.log(`[BotManager] Despawning deleted bot ${botId}`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Despawning deleted bot ${botId}`);
+                    }
                     await this.despawnBot(botId);
                     targetRoom.botIds.delete(botId);
                 }
@@ -991,7 +1058,9 @@ export class BotManager {
                             JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
                         
                         if (configChanged) {
-                            console.log(`[BotManager] Bot ${bot.botId} config changed, respawning with new config`);
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[BotManager] Bot ${bot.botId} config changed, respawning with new config`);
+                            }
                             // Despawn old bot
                             await this.despawnBot(bot.botId);
                             // Spawn with new config
@@ -1011,7 +1080,9 @@ export class BotManager {
                     await this.spawnBot(bot.botId, bot);
                     targetRoom.botIds.add(bot.botId);
                     newBotsSpawned++;
-                    console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Spawned bot ${bot.botId} for room ${roomId}`);
+                    }
                 } catch (error) {
                     console.error(`[BotManager] Failed to spawn bot ${bot.botId} for room ${roomId}:`, error);
                     // Continue spawning other bots even if one fails

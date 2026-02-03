@@ -44,7 +44,9 @@ export class MemoryStorage {
      */
     startAutoSave(saveCallback: () => BotPlayerMemory[]): void {
         if (!this.isConfigured()) {
-            console.warn('[MemoryStorage] Admin API not configured, auto-save disabled');
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] Admin API not configured, auto-save disabled');
+            }
             return;
         }
 
@@ -59,7 +61,9 @@ export class MemoryStorage {
             }
         }, this.saveInterval);
 
-        console.log(`[MemoryStorage] Auto-save started (interval: ${this.saveInterval}ms)`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[MemoryStorage] Auto-save started (interval: ${this.saveInterval}ms)`);
+        }
     }
 
     /**
@@ -82,14 +86,18 @@ export class MemoryStorage {
         }
 
         if (!botId) {
-            console.warn('[MemoryStorage] botId is required');
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] botId is required');
+            }
             return;
         }
 
         // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
         const authToken = this.botServiceToken || this.adminApiToken;
         if (!authToken) {
-            console.warn('[MemoryStorage] No authentication token available');
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] No authentication token available');
+            }
             return;
         }
 
@@ -130,6 +138,7 @@ export class MemoryStorage {
             } catch (error: any) {
                 retries++;
                 if (retries >= this.maxRetries) {
+                    // Always log critical errors (max retries exceeded)
                     console.error(`[MemoryStorage] Failed to save memories after ${this.maxRetries} retries:`, error);
                     // Don't throw - memory persistence shouldn't break bot functionality
                 } else {
