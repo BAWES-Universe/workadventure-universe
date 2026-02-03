@@ -1306,7 +1306,7 @@ export class PatrolBehavior extends BaseBehavior {
                             completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
                             total: tokensUsed
                         } : undefined;
-                        const processed = this.responseProcessor.processResponse(
+                        let processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
                             fullMessage,
@@ -1375,21 +1375,35 @@ export class PatrolBehavior extends BaseBehavior {
                                         }
                                     }
                                 } else {
-                                    // Fallback if regeneration fails
-                                    processedMessage = "Let me think about that differently...";
-                                    break;
+                                    // Fallback if regeneration fails - don't break, try again
+                                    continue;
                                 }
                             } catch (error) {
                                 console.error(`[PatrolBehavior] Error regenerating response after duplicate:`, error);
-                                processedMessage = "Let me think about that differently...";
-                                break;
+                                // Don't break, try again if attempts remaining
+                                continue;
                             }
                         }
                         
-                        // If still duplicate after max attempts, use a fallback
+                        // If still duplicate after max attempts, use a varied fallback
                         if (currentRepetitionScore >= 1.0 && regenerationAttempts >= maxRegenerationAttempts) {
-                            console.warn(`[PatrolBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback`);
-                            processedMessage = "Let me think about that differently...";
+                            console.warn(`[PatrolBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
+                            // Use varied fallbacks to avoid repetition loop
+                            const fallbacks = [
+                                "Hmm, let me approach this differently.",
+                                "Interesting point. Let me think...",
+                                "That's something to consider.",
+                                "I hear you.",
+                                "Alright then.",
+                                "Fair enough.",
+                                "I see what you mean.",
+                                "Got it.",
+                            ];
+                            processedMessage = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+                            // Clear recent responses to break the repetition cycle
+                            if (this.responseProcessor) {
+                                this.responseProcessor.clearRecentResponses(botId, playerId);
+                            }
                         }
                         
                         if (processed.metrics.repetitionScore > 0.8 && processed.metrics.repetitionScore < 1.0) {

@@ -276,10 +276,23 @@ export class BotTestRunner {
                     }
                 }
                 
-                // If still duplicate after max attempts, use a fallback response
+                // If still duplicate after max attempts, use a varied fallback and clear context
                 if (repetitionScore >= 1.0) {
-                    console.warn(`[BotTestRunner] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback`);
-                    cleanedResponse = "Let me think about that differently...";
+                    console.warn(`[BotTestRunner] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
+                    // Use varied fallbacks to avoid repetition loop
+                    const fallbacks = [
+                        "Hmm, let me approach this differently.",
+                        "Interesting point. Let me think...",
+                        "That's something to consider.",
+                        "I hear you.",
+                        "Alright then.",
+                        "Fair enough.",
+                        "I see what you mean.",
+                        "Got it.",
+                    ];
+                    cleanedResponse = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+                    // Clear recent responses to break the repetition cycle
+                    this.responseProcessor.clearRecentResponses(botId, testPlayerId);
                 }
                 
                 // Add bot response to memory (for multi-turn conversation tests)
