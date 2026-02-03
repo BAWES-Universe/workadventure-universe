@@ -176,15 +176,23 @@ export class MemoryStorage {
             });
 
             if (response.data && response.data.memories) {
-                return response.data.memories.map((mem: any) => this.deserializeMemory(mem));
+                const deserialized = response.data.memories.map((mem: any) => this.deserializeMemory(mem));
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[MemoryStorage] Loaded ${deserialized.length} memories for bot ${botId}`);
+                }
+                return deserialized;
             }
 
             return [];
         } catch (error: any) {
-            if (error.response?.status === 404 || error.response?.status === 405) {
-                // 404 = No memories yet, 405 = Admin API doesn't support GET (needs implementation)
-                if (process.env.NODE_ENV === 'development' && error.response?.status === 405) {
-                    console.warn('[MemoryStorage] Admin API returned 405 - GET /api/bots/memory/:botId not implemented yet');
+            if (error.response?.status === 404) {
+                // 404 = No memories yet (though Admin API should return 200 with empty array)
+                return [];
+            }
+            if (error.response?.status === 405) {
+                // 405 = Method not allowed (shouldn't happen now, but keep for backwards compatibility)
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn('[MemoryStorage] Admin API returned 405 - endpoint may not be available');
                 }
                 return [];
             }

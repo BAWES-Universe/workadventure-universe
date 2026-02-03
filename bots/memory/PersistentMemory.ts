@@ -445,8 +445,12 @@ export class PersistentMemory extends ConversationMemory {
                 }
             }
             
-            if ((process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') && storedCount > 0) {
-                console.log(`[PersistentMemory] Loaded ${storedCount} memories for bot ${botId} (will restore when users join)`);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                if (storedCount > 0) {
+                    console.log(`[PersistentMemory] Loaded ${storedCount} memories for bot ${botId} (will restore when users join)`);
+                } else {
+                    console.log(`[PersistentMemory] No persisted memories found for bot ${botId} (will create fresh when users interact)`);
+                }
             }
         } catch (error) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
