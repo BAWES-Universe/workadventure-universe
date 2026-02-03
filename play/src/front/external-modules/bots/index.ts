@@ -754,7 +754,7 @@ let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
 let emotionsComponentInstance: SvelteComponent<any> | null = null;
 let emotionsContainerElement: HTMLElement | null = null;
 
-// Cleanup emotions display - removes ALL emotion containers (in case of duplicates)
+// Cleanup emotions display
 function cleanupEmotionsDisplay(): void {
     // Destroy tracked component instance
     if (emotionsComponentInstance) {
@@ -767,21 +767,12 @@ function cleanupEmotionsDisplay(): void {
         emotionsComponentInstance = null;
     }
 
-    // Remove ALL emotion containers from DOM (in case of duplicates or stale elements)
+    // Remove ALL emotion containers from DOM (in case of duplicates)
     const menuElement = document.querySelector('[data-testid="actions-menu"]');
     if (menuElement) {
         const allEmotionContainers = menuElement.querySelectorAll("[data-bot-emotions]");
         allEmotionContainers.forEach((container) => {
             if (container instanceof HTMLElement) {
-                // Try to destroy any Svelte component that might be mounted
-                try {
-                    // @ts-ignore - accessing internal Svelte instance
-                    if (container._svelteComponent) {
-                        container._svelteComponent.$destroy?.();
-                    }
-                } catch {
-                    // Ignore errors
-                }
                 container.remove();
             }
         });
@@ -824,17 +815,9 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         return;
     }
 
-    // Check if already injected for this specific bot
-    const existingContainer = menuElement.querySelector(`[data-bot-emotions="${botId}"]`);
-    if (existingContainer) {
-        return; // Already injected for this bot
-    }
-
-    // Also check for any emotion containers (cleanup might have missed some)
-    const anyEmotionContainer = menuElement.querySelector("[data-bot-emotions]");
-    if (anyEmotionContainer) {
-        // Clean up any stale containers before injecting
-        cleanupEmotionsDisplay();
+    // Check if already injected (simple check - if any emotion container exists, return)
+    if (menuElement.querySelector("[data-bot-emotions]")) {
+        return;
     }
 
     // Find insertion point - before the action buttons section
@@ -899,10 +882,6 @@ function setupWokaMenuHook() {
             void cleanupEmotionsDisplay();
             return;
         }
-
-        // Clean up any existing emotions display before injecting new one
-        // This handles switching between bots or reopening the same bot
-        cleanupEmotionsDisplay();
 
         // Inject emotions display for bots
         if (menuData.userUuid?.startsWith("bot-")) {
