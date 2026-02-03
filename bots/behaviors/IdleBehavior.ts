@@ -491,15 +491,22 @@ export class IdleBehavior extends BaseBehavior {
                         );
                         processedMessage = processed.cleaned;
                         
-                        // If exact duplicate detected (repetitionScore === 1.0), block and regenerate
-                        if (processed.metrics.repetitionScore >= 1.0 && processed.issues.includes('BLOCKED: Exact duplicate')) {
+                        // If exact duplicate detected (repetitionScore === 1.0), block and regenerate (up to 3 attempts)
+                        let regenerationAttempts = 0;
+                        const maxRegenerationAttempts = 3;
+                        let currentRepetitionScore = processed.metrics.repetitionScore;
+                        let currentMessage = fullMessage;
+                        
+                        while (currentRepetitionScore >= 1.0 && processed.issues.includes('BLOCKED: Exact duplicate') && regenerationAttempts < maxRegenerationAttempts) {
+                            regenerationAttempts++;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn(`[IdleBehavior] ⚠️ Exact duplicate detected for bot ${botId}, player ${playerId}. Blocking response: "${fullMessage.substring(0, 50)}..."`);
+                                console.warn(`[IdleBehavior] ⚠️ Exact duplicate detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
                             }
                             
                             // BLOCK the duplicate - don't send it
                             // Instead, generate a new response with explicit anti-repetition instruction
-                            const antiRepetitionPrompt = `${botConfig.chatInstructions || 'You are a helpful bot.'}\n\nCRITICAL: You just said "${fullMessage.substring(0, 100)}". DO NOT repeat this. Give a DIFFERENT response.`;
+                            const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
+                            const antiRepetitionPrompt = `${botConfig.chatInstructions || 'You are a helpful bot.'}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
                             
                             // Regenerate with anti-repetition prompt
                             let regeneratedMessage = '';
@@ -507,7 +514,7 @@ export class IdleBehavior extends BaseBehavior {
                                 for await (const chunk of this.aiService.generateBotResponseStream(
                                     botId,
                                     playerId,
-                                    playerMessage + ' [Please give a different response - you just repeated yourself]',
+                                    playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response - attempt ${regenerationAttempts}]`,
                                     antiRepetitionPrompt,
                                     botConfig.aiProviderRef,
                                     spaceName,
@@ -533,19 +540,34 @@ export class IdleBehavior extends BaseBehavior {
                                         tokenUsage    // Use original token usage
                                     );
                                     processedMessage = reprocessed.cleaned;
+                                    currentRepetitionScore = reprocessed.metrics.repetitionScore;
+                                    currentMessage = regeneratedMessage;
+                                    processed = reprocessed; // Update processed for next iteration check
                                     
-                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                        console.log(`[IdleBehavior] ✅ Regenerated response after blocking duplicate`);
+                                    if (currentRepetitionScore < 1.0) {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.log(`[IdleBehavior] ✅ Regenerated response after blocking duplicate (attempt ${regenerationAttempts})`);
+                                        }
                                     }
                                 } else {
                                     // Fallback if regeneration fails
-                                    processedMessage = "I apologize for the repetition. Let me think of a better response.";
+                                    processedMessage = "Let me think about that differently...";
+                                    break;
                                 }
                             } catch (error) {
                                 console.error(`[IdleBehavior] Error regenerating response after duplicate:`, error);
-                                processedMessage = "I apologize for the repetition. Let me think of a better response.";
+                                processedMessage = "Let me think about that differently...";
+                                break;
                             }
-                        } else if (processed.metrics.repetitionScore > 0.8) {
+                        }
+                        
+                        // If still duplicate after max attempts, use a fallback
+                        if (currentRepetitionScore >= 1.0 && regenerationAttempts >= maxRegenerationAttempts) {
+                            console.warn(`[IdleBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback`);
+                            processedMessage = "Let me think about that differently...";
+                        }
+                        
+                        if (processed.metrics.repetitionScore > 0.8 && processed.metrics.repetitionScore < 1.0) {
                             // High repetition (but not exact duplicate) - warn but allow
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[IdleBehavior] ⚠️ High repetition detected (${(processed.metrics.repetitionScore * 100).toFixed(1)}%) for bot ${botId}, player ${playerId}`);

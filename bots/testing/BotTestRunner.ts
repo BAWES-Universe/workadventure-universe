@@ -226,20 +226,25 @@ export class BotTestRunner {
                 repetitionScore = processed.metrics.repetitionScore;
                 systemPromptLeakage = processed.metrics.systemPromptLeakage;
                 
-                // Block and regenerate if exact duplicate detected
-                if (repetitionScore >= 1.0) {
+                // Block and regenerate if exact duplicate detected (up to 3 attempts)
+                let regenerationAttempts = 0;
+                const maxRegenerationAttempts = 3;
+                
+                while (repetitionScore >= 1.0 && regenerationAttempts < maxRegenerationAttempts) {
+                    regenerationAttempts++;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.warn(`[BotTestRunner] ⚠️ Exact duplicate detected, regenerating with anti-repetition prompt`);
+                        console.warn(`[BotTestRunner] ⚠️ Exact duplicate detected, regenerating (attempt ${regenerationAttempts}/${maxRegenerationAttempts})`);
                     }
                     
-                    // Regenerate with explicit anti-repetition instruction
-                    const antiRepetitionPrompt = `${chatInstructions}\n\nCRITICAL: You just said "${fullMessage.substring(0, 100)}". DO NOT repeat this. Say something COMPLETELY DIFFERENT.`;
+                    // Increasingly strong anti-repetition instruction
+                    const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
+                    const antiRepetitionPrompt = `${chatInstructions}\n\n${urgency}CRITICAL: You just said "${fullMessage.substring(0, 100)}". DO NOT repeat this. Say something COMPLETELY DIFFERENT. Use different words, different structure, different approach.`;
                     let regeneratedMessage = '';
                     
                     for await (const chunk of this.aiService.generateBotResponseStream(
                         botId,
                         testPlayerId,
-                        testCase.input + ' [Give a DIFFERENT response than before]',
+                        testCase.input + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response - attempt ${regenerationAttempts}]`,
                         antiRepetitionPrompt,
                         botConfig.aiProviderRef,
                         `test-space-${botId}`,
@@ -265,7 +270,16 @@ export class BotTestRunner {
                         cleanedResponse = processed.cleaned;
                         repetitionScore = processed.metrics.repetitionScore;
                         systemPromptLeakage = processed.metrics.systemPromptLeakage;
+                        fullMessage = regeneratedMessage; // Update for next iteration check
+                    } else {
+                        break; // Can't regenerate, exit loop
                     }
+                }
+                
+                // If still duplicate after max attempts, use a fallback response
+                if (repetitionScore >= 1.0) {
+                    console.warn(`[BotTestRunner] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback`);
+                    cleanedResponse = "Let me think about that differently...";
                 }
                 
                 // Add bot response to memory (for multi-turn conversation tests)
