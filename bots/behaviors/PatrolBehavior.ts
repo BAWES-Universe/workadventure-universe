@@ -1315,6 +1315,67 @@ export class PatrolBehavior extends BaseBehavior {
                             tokenUsage
                         );
                         processedMessage = processed.cleaned;
+                        
+                        // If exact duplicate detected (repetitionScore === 1.0), block and regenerate
+                        if (processed.metrics.repetitionScore >= 1.0 && processed.issues.includes('BLOCKED: Exact duplicate')) {
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[PatrolBehavior] ⚠️ Exact duplicate detected for bot ${botId}, player ${playerId}. Blocking response: "${fullMessage.substring(0, 50)}..."`);
+                            }
+                            
+                            // BLOCK the duplicate - don't send it
+                            // Instead, generate a new response with explicit anti-repetition instruction
+                            const antiRepetitionPrompt = `${chatInstructions}\n\nCRITICAL: You just said "${fullMessage.substring(0, 100)}". DO NOT repeat this. Give a DIFFERENT response.`;
+                            
+                            // Regenerate with anti-repetition prompt
+                            let regeneratedMessage = '';
+                            try {
+                                for await (const chunk of this.aiService.generateBotResponseStream(
+                                    botId,
+                                    playerId,
+                                    playerMessage + ' [Please give a different response - you just repeated yourself]',
+                                    antiRepetitionPrompt,
+                                    botConfig.aiProviderRef,
+                                    spaceName,
+                                    context,
+                                    this.bot,
+                                    this.adminApiService
+                                )) {
+                                    if (chunk.content) {
+                                        regeneratedMessage += chunk.content;
+                                    }
+                                    if (chunk.done) break;
+                                }
+                                
+                                // Process the regenerated response
+                                if (regeneratedMessage.trim() && this.responseProcessor) {
+                                    // Use the same responseTime and tokenUsage from the original response
+                                    const reprocessed = this.responseProcessor.processResponse(
+                                        botId,
+                                        playerId,
+                                        regeneratedMessage,
+                                        chatInstructions,
+                                        responseTime, // Use original response time
+                                        tokenUsage    // Use original token usage
+                                    );
+                                    processedMessage = reprocessed.cleaned;
+                                    
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.log(`[PatrolBehavior] ✅ Regenerated response after blocking duplicate`);
+                                    }
+                                } else {
+                                    // Fallback if regeneration fails
+                                    processedMessage = "I apologize for the repetition. Let me think of a better response.";
+                                }
+                            } catch (error) {
+                                console.error(`[PatrolBehavior] Error regenerating response after duplicate:`, error);
+                                processedMessage = "I apologize for the repetition. Let me think of a better response.";
+                            }
+                        } else if (processed.metrics.repetitionScore > 0.8) {
+                            // High repetition (but not exact duplicate) - warn but allow
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[PatrolBehavior] ⚠️ High repetition detected (${(processed.metrics.repetitionScore * 100).toFixed(1)}%) for bot ${botId}, player ${playerId}`);
+                            }
+                        }
                     }
                     
                     // Metrics are now recorded in ResponseProcessor (combined into one record)
