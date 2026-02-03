@@ -811,6 +811,21 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         return;
     }
 
+    // Fetch emotions from API FIRST, before mounting component
+    // This prevents the visual "jump" from default values to actual values
+    const botServerUrl = getBotServerUrl();
+    let emotionsData = null;
+
+    try {
+        const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`);
+        if (response.ok) {
+            const data = await response.json();
+            emotionsData = data.emotions;
+        }
+    } catch (error) {
+        console.error("[Bot Extension] Error fetching bot emotions:", error);
+    }
+
     // Create container for emotions display
     const container = document.createElement("div");
     container.setAttribute("data-bot-emotions", botId);
@@ -823,40 +838,17 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         // Dynamically import the component (Svelte 4 style)
         const BotEmotionsDisplay = (await import("./components/BotEmotionsDisplay.svelte")).default;
 
-        // Mount component with loading state initially (Svelte 4 constructor)
+        // Mount component with actual emotions (or null if fetch failed)
+        // This way tweened values initialize with correct values, no animation from defaults
         const componentInstance = new BotEmotionsDisplay({
             target: container,
             props: {
-                emotions: null,
+                emotions: emotionsData,
                 botName: menuData.wokaName || "Bot",
-                loading: true,
+                loading: false, // Already fetched, not loading
             },
         });
         emotionsComponentInstance = componentInstance;
-
-        // Fetch emotions from API
-        const botServerUrl = getBotServerUrl();
-        try {
-            const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`);
-            const emotionsData = response.ok ? (await response.json()).emotions : null;
-
-            // Update props with $set (Svelte 4)
-            if (componentInstance) {
-                componentInstance.$set({
-                    emotions: emotionsData,
-                    loading: false,
-                });
-            }
-        } catch (error) {
-            console.error("[Bot Extension] Error fetching bot emotions:", error);
-            // Update to show error state
-            if (componentInstance) {
-                componentInstance.$set({
-                    emotions: null,
-                    loading: false,
-                });
-            }
-        }
     } catch (error) {
         console.error("[Bot Extension] Error mounting emotions component:", error);
     }

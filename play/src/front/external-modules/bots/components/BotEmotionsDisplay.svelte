@@ -19,23 +19,58 @@
     export let botName: string = "Bot";
     export let loading: boolean = false;
 
-    // Tweened values for smooth animations
-    const botHappiness = tweened(50, { duration: 800, easing: cubicOut });
-    const botTrust = tweened(50, { duration: 800, easing: cubicOut });
-    const botFamiliarity = tweened(0, { duration: 800, easing: cubicOut });
-    const botAnger = tweened(0, { duration: 800, easing: cubicOut });
-    const playerHappiness = tweened(50, { duration: 800, easing: cubicOut });
-    const playerTrust = tweened(50, { duration: 800, easing: cubicOut });
-    const playerAnger = tweened(0, { duration: 800, easing: cubicOut });
+    // Initialize tweened values with actual emotions if provided, otherwise defaults
+    // This prevents animation from defaults when emotions are loaded before mount
+    const initialBotHappiness = emotions?.botEmotion?.happiness ?? 50;
+    const initialBotTrust = emotions?.botEmotion?.trust ?? 50;
+    const initialBotFamiliarity = emotions?.botEmotion?.familiarity ?? 0;
+    const initialBotAnger = emotions?.botEmotion?.anger ?? 0;
+    const initialPlayerHappiness = emotions?.personEmotion?.happiness ?? 50;
+    const initialPlayerTrust = emotions?.personEmotion?.trust ?? 50;
+    const initialPlayerAnger = emotions?.personEmotion?.anger ?? 0;
+
+    // Tweened values for smooth animations - initialize with actual values if available
+    const botHappiness = tweened(initialBotHappiness, { duration: 800, easing: cubicOut });
+    const botTrust = tweened(initialBotTrust, { duration: 800, easing: cubicOut });
+    const botFamiliarity = tweened(initialBotFamiliarity, { duration: 800, easing: cubicOut });
+    const botAnger = tweened(initialBotAnger, { duration: 800, easing: cubicOut });
+    const playerHappiness = tweened(initialPlayerHappiness, { duration: 800, easing: cubicOut });
+    const playerTrust = tweened(initialPlayerTrust, { duration: 800, easing: cubicOut });
+    const playerAnger = tweened(initialPlayerAnger, { duration: 800, easing: cubicOut });
+
+    // Track if this is the first time emotions are set (to avoid animation on initial mount)
+    let emotionsInitialized = false;
 
     $: if (emotions) {
-        void botHappiness.set(emotions.botEmotion.happiness);
-        void botTrust.set(emotions.botEmotion.trust);
-        void botFamiliarity.set(emotions.botEmotion.familiarity);
-        void botAnger.set(emotions.botEmotion.anger);
-        void playerHappiness.set(emotions.personEmotion.happiness);
-        void playerTrust.set(emotions.personEmotion.trust);
-        void playerAnger.set(emotions.personEmotion.anger);
+        // Check if values have actually changed (to avoid unnecessary animations)
+        const botHapChanged = $botHappiness !== emotions.botEmotion.happiness;
+        const botTrustChanged = $botTrust !== emotions.botEmotion.trust;
+        const botFamChanged = $botFamiliarity !== emotions.botEmotion.familiarity;
+        const botAngChanged = $botAnger !== emotions.botEmotion.anger;
+        const playerHapChanged = $playerHappiness !== emotions.personEmotion.happiness;
+        const playerTrustChanged = $playerTrust !== emotions.personEmotion.trust;
+        const playerAngChanged = $playerAnger !== emotions.personEmotion.anger;
+
+        const hasChanges =
+            botHapChanged ||
+            botTrustChanged ||
+            botFamChanged ||
+            botAngChanged ||
+            playerHapChanged ||
+            playerTrustChanged ||
+            playerAngChanged;
+
+        // Only update if values changed, or if this is first initialization
+        if (hasChanges || !emotionsInitialized) {
+            if (botHapChanged || !emotionsInitialized) void botHappiness.set(emotions.botEmotion.happiness);
+            if (botTrustChanged || !emotionsInitialized) void botTrust.set(emotions.botEmotion.trust);
+            if (botFamChanged || !emotionsInitialized) void botFamiliarity.set(emotions.botEmotion.familiarity);
+            if (botAngChanged || !emotionsInitialized) void botAnger.set(emotions.botEmotion.anger);
+            if (playerHapChanged || !emotionsInitialized) void playerHappiness.set(emotions.personEmotion.happiness);
+            if (playerTrustChanged || !emotionsInitialized) void playerTrust.set(emotions.personEmotion.trust);
+            if (playerAngChanged || !emotionsInitialized) void playerAnger.set(emotions.personEmotion.anger);
+            emotionsInitialized = true;
+        }
     }
 
     function getGradient(value: number, type: "positive" | "negative" | "familiarity"): string {
