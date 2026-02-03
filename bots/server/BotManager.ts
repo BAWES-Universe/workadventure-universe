@@ -377,6 +377,20 @@ export class BotManager {
             behavior.setConversationMemory(this.conversationMemory);
         }
 
+        // Load persisted memories for this bot from Admin API
+        // This is critical for restoring emotional state, wounds, etc. after server restart
+        if ('loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function') {
+            try {
+                await (this.conversationMemory as any).loadMemories(botId);
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[BotManager] Loaded persisted memories for bot ${botId}`);
+                }
+            } catch (error) {
+                console.warn(`[BotManager] Failed to load persisted memories for bot ${botId}:`, error);
+                // Continue without persisted memories - they'll be created fresh
+            }
+        }
+
         // Store full config in client so behaviors can access it without HTTP requests
         client.setFullConfig(config);
 

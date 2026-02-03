@@ -71,6 +71,15 @@ export class PersistentMemory extends ConversationMemory {
         const loadedMemoryKey = `${botId}_${userUuid}`;
         const loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
         
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[PersistentMemory] setUserUuid called: botId=${botId}, playerId=${playerId}, userUuid=${userUuid}, isLogged=${isLogged}`);
+            console.log(`[PersistentMemory] Available memories: ${Array.from(this.loadedMemoriesByUuid.keys()).join(', ') || 'none'}`);
+            console.log(`[PersistentMemory] Looking for key: ${loadedMemoryKey}, found: ${loadedMemory ? 'YES' : 'NO'}`);
+            if (loadedMemory) {
+                console.log(`[PersistentMemory] Memory has ${loadedMemory.emotions?.wounds?.length || 0} wounds, familiarity: ${loadedMemory.emotions?.botEmotion?.familiarity || 0}`);
+            }
+        }
+        
         if (loadedMemory) {
             // Restore memory to current playerId
             const existing = this.getMemory(botId, playerId);
