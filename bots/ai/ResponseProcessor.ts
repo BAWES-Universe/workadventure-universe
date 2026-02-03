@@ -143,6 +143,17 @@ export class ResponseProcessor {
         // Only remove "I'll check" if it's followed by tool-related text or at the start of response
         cleaned = cleaned.replace(/^I'll check.*?\./gi, ''); // Remove "I'll check..." at start
         cleaned = cleaned.replace(/Let me (check|look|find).*?\(tool call/gi, ''); // Remove "Let me check/look/find..." only if followed by tool call
+        
+        // Remove internal reasoning that leaked without tags
+        // Patterns like "Okay, let's see..." or "Let me think of a natural way to respond" followed by reasoning
+        cleaned = cleaned.replace(/Okay, let's see\.\.\.[\s\S]*?(?:I'll go with that\.|Let's go with that\.|That sounds good\.)/gi, '');
+        cleaned = cleaned.replace(/Let me think of[\s\S]*?(?:I'll go with that\.|Let's go with that\.|That sounds good\.)/gi, '');
+        cleaned = cleaned.replace(/I should [^\.]+without repeating[\s\S]*?(?:I'll go with that\.|Let's go with that\.|straightforward)/gi, '');
+        // Remove any remaining reasoning that starts with "I should" and ends with self-conclusion
+        cleaned = cleaned.replace(/I should[\s\S]*?(?:I'll go with|How about\.\.\.|That sounds good)/gi, '');
+        // Remove "I could say something like" reasoning
+        cleaned = cleaned.replace(/I could say something like[\s\S]*?(?:I'll go with|sounds good)/gi, '');
+        
         // Remove reasoning tags - handle all variations
         // CRITICAL: Remove these BEFORE any other processing to prevent leakage
         // Handle complete tags first (most common) - use non-greedy matching
@@ -160,6 +171,11 @@ export class ResponseProcessor {
         cleaned = cleaned.replace(/^\n+/, ''); // Remove leading newlines
         cleaned = cleaned.replace(/\n+$/, ''); // Remove trailing newlines
 
+        // Remove system prompt leakage patterns
+        cleaned = cleaned.replace(/You're not following instructions\.?/gi, '');
+        cleaned = cleaned.replace(/I'm not a robot\.?/gi, '');
+        cleaned = cleaned.replace(/following the rules?\.?/gi, '');
+        
         // If the message still contains instruction-like text, take only the first "real" line
         if (cleaned.includes('\n') && (cleaned.includes('CRITICAL') || cleaned.includes('RULES') || cleaned.includes('GUIDELINES'))) {
             cleaned = cleaned.split('\n')[0].trim();
