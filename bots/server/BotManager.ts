@@ -379,7 +379,9 @@ export class BotManager {
 
         // Load persisted memories for this bot from Admin API
         // This is critical for restoring emotional state, wounds, etc. after server restart
-        if ('loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function') {
+        const hasLoadMemories = 'loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function';
+        
+        if (hasLoadMemories) {
             try {
                 await (this.conversationMemory as any).loadMemories(botId);
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

@@ -151,19 +151,20 @@ export class MemoryStorage {
         // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
         const authToken = this.botServiceToken || this.adminApiToken;
         if (!authToken) {
-            console.warn('[MemoryStorage] No authentication token available');
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] No authentication token available');
+            }
             return [];
         }
 
+        const url = `${this.adminApiUrl}/api/bots/memory/${botId}`;
+
         try {
-            const response = await axios.get(
-                `${this.adminApiUrl}/api/bots/memory/${botId}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${authToken}`,
-                    },
-                }
-            );
+            const response = await axios.get(url, {
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
 
             if (response.data && response.data.memories) {
                 return response.data.memories.map((mem: any) => this.deserializeMemory(mem));
@@ -171,11 +172,16 @@ export class MemoryStorage {
 
             return [];
         } catch (error: any) {
-            if (error.response?.status === 404) {
-                // No memories yet, that's okay
+            if (error.response?.status === 404 || error.response?.status === 405) {
+                // 404 = No memories yet, 405 = Admin API doesn't support GET (needs implementation)
+                if (process.env.NODE_ENV === 'development' && error.response?.status === 405) {
+                    console.warn('[MemoryStorage] Admin API returned 405 - GET /api/bots/memory/:botId not implemented yet');
+                }
                 return [];
             }
-            console.error('[MemoryStorage] Error loading memories:', error);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[MemoryStorage] Error loading memories:', error.message);
+            }
             return [];
         }
     }
