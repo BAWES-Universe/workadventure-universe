@@ -254,7 +254,7 @@
                         d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                     />
                 </svg>
-                <span class="text-xs font-medium text-white/80">How you feel about {botName}</span>
+                <span class="text-xs font-medium text-white/80">How {botName} perceives your feelings</span>
             </div>
 
             <div class="space-y-2">

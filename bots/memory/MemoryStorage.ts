@@ -250,6 +250,8 @@ export class MemoryStorage {
             emotions: {
                 botEmotion: emotions?.botEmotion || { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
                 personEmotion: emotions?.personEmotion || { anger: 0, happiness: 50, trust: 50 },
+                wounds: emotions?.wounds || [],
+                recentSentiment: emotions?.recentSentiment || 0,
                 lastEmotionUpdate: emotions?.lastEmotionUpdate || data.lastEmotionUpdate || Date.now(),
             },
             lastUpdated: memoryData.lastUpdated || Date.now(),
