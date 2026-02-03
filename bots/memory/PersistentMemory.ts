@@ -456,6 +456,29 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
+     * Get memory by userUuid - checks both active memories AND pre-loaded memories
+     * This is useful for API endpoints that need to access emotions before user enters proximity
+     */
+    getMemoryByUserUuid(botId: string, userUuid: string): BotPlayerMemory | null {
+        // First check active memories
+        const activeMemories = this.getAllMemories();
+        for (const memory of activeMemories.values()) {
+            if (memory.userUuid === userUuid) {
+                return memory;
+            }
+        }
+        
+        // Then check pre-loaded memories (not yet restored to active)
+        const loadedMemoryKey = `${botId}_${userUuid}`;
+        const loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
+        if (loadedMemory) {
+            return loadedMemory;
+        }
+        
+        return null;
+    }
+
+    /**
      * Get memory storage instance (for external access)
      */
     getMemoryStorage(): MemoryStorage {

@@ -295,15 +295,24 @@ export class BotAPI {
                     return;
                 }
 
-                // Find memory by userUuid
-                const memories = conversationMemory.getAllMemories?.();
+                // Find memory by userUuid - check both active and pre-loaded memories
                 let emotions = null;
 
-                if (memories) {
-                    for (const memory of memories.values()) {
-                        if (memory.userUuid === userUuid) {
-                            emotions = memory.emotions;
-                            break;
+                // First try the optimized method that checks both active and pre-loaded memories
+                if ('getMemoryByUserUuid' in conversationMemory && typeof (conversationMemory as any).getMemoryByUserUuid === 'function') {
+                    const memory = (conversationMemory as any).getMemoryByUserUuid(botId, userUuid);
+                    if (memory) {
+                        emotions = memory.emotions;
+                    }
+                } else {
+                    // Fallback: search active memories only
+                    const memories = conversationMemory.getAllMemories?.();
+                    if (memories) {
+                        for (const memory of memories.values()) {
+                            if (memory.userUuid === userUuid) {
+                                emotions = memory.emotions;
+                                break;
+                            }
                         }
                     }
                 }
