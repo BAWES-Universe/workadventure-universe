@@ -839,6 +839,7 @@ export class BotManager {
                     chatInstructionsLength: instance.config.chatInstructions?.length || 0,
                 });
             }
+        }
 
         // Handle other configuration updates (name, description, enabled, etc.)
         // Name and characterTextureIds require respawn (part of WebSocket connection)
