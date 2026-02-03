@@ -192,25 +192,37 @@ export class ConversationMemory {
             emotions.botEmotion.anger = Math.max(0, emotions.botEmotion.anger - (decayRate * 2));
         }
 
-        // Detect happiness - expanded keywords
+        // Detect happiness - expanded keywords with context awareness
         const happyKeywords = [
             'happy', 'glad', 'love', 'great', 'awesome', 'thanks', 'thank you',
-            'good', 'nice', 'wonderful', 'amazing', 'excellent', 'fantastic', 'brilliant'
+            'good', 'nice', 'wonderful', 'amazing', 'excellent', 'fantastic', 'brilliant',
+            'appreciate', 'grateful', 'pleased', 'delighted', 'joy', 'excited', 'thrilled'
         ];
         const happyLevel = happyKeywords.filter(keyword => lowerMessage.includes(keyword)).length;
         if (happyLevel > 0) {
             emotions.personEmotion.happiness = Math.min(100, emotions.personEmotion.happiness + (happyLevel * 10));
             emotions.botEmotion.happiness = Math.min(100, emotions.botEmotion.happiness + (happyLevel * 5));
+            // Positive interactions increase trust
+            emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + (happyLevel * 2));
         } else {
-            // Decay happiness slightly
+            // Decay happiness slightly over time
             const timeSinceUpdate = now - emotions.lastEmotionUpdate;
             const decayRate = timeSinceUpdate / (1000 * 60 * 60 * 24); // Decay per day
             emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - (decayRate * 1));
             emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - (decayRate * 1));
         }
 
-        // Increase familiarity with each message
-        emotions.botEmotion.familiarity = Math.min(100, emotions.botEmotion.familiarity + 1);
+        // Detect trust indicators
+        const trustKeywords = ['trust', 'believe', 'rely', 'depend', 'confide', 'share'];
+        const trustLevel = trustKeywords.filter(keyword => lowerMessage.includes(keyword)).length;
+        if (trustLevel > 0) {
+            emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + (trustLevel * 15));
+            emotions.personEmotion.trust = Math.min(100, emotions.personEmotion.trust + (trustLevel * 10));
+        }
+
+        // Increase familiarity with each message (more gradual for natural relationship building)
+        const familiarityIncrease = Math.min(2, Math.max(0.5, 100 / (memory.relationship.totalMessages + 1))); // Slower increase as relationship grows
+        emotions.botEmotion.familiarity = Math.min(100, emotions.botEmotion.familiarity + familiarityIncrease);
 
         emotions.lastEmotionUpdate = now;
     }
@@ -264,7 +276,6 @@ export class ConversationMemory {
             const match = message.match(pattern);
             if (match && match[1] && match[1].length > 1 && match[1].length < 20) {
                 memory.personalInfo.name = match[1];
-                memory.playerName = match[1];
                 memory.personalInfo.lastInfoUpdate = Date.now();
                 break;
             }
@@ -385,6 +396,7 @@ export class ConversationMemory {
         if (!this.memories.has(key)) {
             const now = Date.now();
             this.memories.set(key, {
+                userUuid: `temp-${playerId}`, // Temporary UUID - will be set by PersistentMemory if available
                 playerId,
                 conversationHistory: [],
                 maxHistorySize: this.maxHistorySize,
@@ -458,6 +470,7 @@ export class ConversationMemory {
 
     /**
      * Get conversation context for AI (formatted for prompt)
+     * Returns natural, human-like context that feels like remembering a friend
      */
     getConversationContext(botId: string, playerId: number): string {
         const memory = this.getMemory(botId, playerId);
@@ -466,88 +479,199 @@ export class ConversationMemory {
         }
 
         const context: string[] = [];
-
-        // Relationship info
-        context.push(`Relationship with ${memory.playerName || `person ${playerId}`}:`);
-        context.push(`- First met: ${new Date(memory.relationship.firstMet).toLocaleDateString()}`);
-        context.push(`- Total conversations: ${memory.relationship.totalConversations}`);
-        context.push(`- Total messages: ${memory.relationship.totalMessages}`);
-
-        // Emotional state (only include if there's something notable)
+        const playerName = memory.personalInfo.name || `this person`;
         const emotions = memory.emotions;
-        const botFeelingsDesc = this.describeEmotion(emotions.botEmotion);
-        const personFeelingsDesc = this.describeEmotion(emotions.personEmotion);
+        const relationship = memory.relationship;
+        const personalInfo = memory.personalInfo;
+
+        // Build natural relationship narrative
+        const daysSinceFirstMet = Math.floor((Date.now() - relationship.firstMet) / (1000 * 60 * 60 * 24));
+        const daysSinceLastMet = Math.floor((Date.now() - relationship.lastMet) / (1000 * 60 * 60 * 24));
+        
+        // Natural relationship context based on history
+        if (relationship.totalConversations === 1) {
+            context.push(`You just met ${playerName} for the first time.`);
+        } else if (daysSinceLastMet > 30) {
+            context.push(`You haven't seen ${playerName} in over a month. You've talked ${relationship.totalConversations} times before.`);
+        } else if (daysSinceLastMet > 7) {
+            context.push(`You haven't seen ${playerName} in ${daysSinceLastMet} days. You've talked ${relationship.totalConversations} times before.`);
+        } else if (daysSinceLastMet > 1) {
+            context.push(`You last saw ${playerName} ${daysSinceLastMet} days ago. You've had ${relationship.totalConversations} conversations together.`);
+        } else if (relationship.totalConversations > 10) {
+            context.push(`You know ${playerName} very well - you've talked ${relationship.totalConversations} times.`);
+        } else if (relationship.totalConversations > 5) {
+            context.push(`You know ${playerName} well - you've talked ${relationship.totalConversations} times.`);
+        } else if (relationship.totalMessages > 20) {
+            context.push(`You've had several conversations with ${playerName} - ${relationship.totalMessages} messages exchanged.`);
+        } else {
+            context.push(`You've talked with ${playerName} ${relationship.totalConversations} times before.`);
+        }
+
+        // Natural personal information recall
+        const personalDetails: string[] = [];
+        if (personalInfo.name) {
+            personalDetails.push(`Their name is ${personalInfo.name}`);
+        }
+        if (personalInfo.birthday) {
+            const today = new Date();
+            const birthdayDate = this.parseBirthdayDate(personalInfo.birthday);
+            if (birthdayDate && this.isBirthdayToday(birthdayDate, today)) {
+                personalDetails.push(`Today is their birthday!`);
+            } else {
+                personalDetails.push(`Their birthday is ${personalInfo.birthday}`);
+            }
+        }
+        if (personalInfo.preferences && personalInfo.preferences.length > 0) {
+            personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
+        }
+
+        // Natural facts recall (especially current state)
+        const currentState = personalInfo.facts.get('current_state');
+        if (currentState) {
+            personalDetails.push(`They mentioned they're ${currentState} right now`);
+        }
+
+        // Add other notable facts naturally
+        const otherFacts: string[] = [];
+        for (const [key, value] of personalInfo.facts.entries()) {
+            if (key !== 'current_state' && !key.endsWith('_mentioned_at') && !key.startsWith('birthday_')) {
+                otherFacts.push(`${key}: ${value}`);
+            }
+        }
+        if (otherFacts.length > 0) {
+            personalDetails.push(`You remember: ${otherFacts.join(', ')}`);
+        }
+
+        if (personalDetails.length > 0) {
+            context.push(`\nWhat you know about them: ${personalDetails.join('. ')}.`);
+        }
+
+        // Natural emotion expression
+        const botFeelingsDesc = this.describeEmotionNatural(emotions.botEmotion);
+        const personFeelingsDesc = this.describeEmotionNatural(emotions.personEmotion);
         
         if (botFeelingsDesc || personFeelingsDesc) {
-            context.push(`\nEmotional State:`);
+            const emotionParts: string[] = [];
             if (botFeelingsDesc) {
-                context.push(`- Bot's feelings: ${botFeelingsDesc}`);
+                emotionParts.push(`You feel ${botFeelingsDesc}`);
             }
             if (personFeelingsDesc) {
-                context.push(`- Person's feelings (inferred): ${personFeelingsDesc}`);
+                emotionParts.push(`They seem ${personFeelingsDesc}`);
+            }
+            if (emotionParts.length > 0) {
+                context.push(`\nEmotional context: ${emotionParts.join(', ')}.`);
             }
         }
 
-        // Personal information
-        let hasPersonalInfo = false;
-        if (memory.personalInfo.birthday) {
-            if (!hasPersonalInfo) {
-                context.push(`\nPersonal Information:`);
-                hasPersonalInfo = true;
-            }
-            context.push(`- Birthday: ${memory.personalInfo.birthday}`);
-        }
-        if (memory.personalInfo.name) {
-            if (!hasPersonalInfo) {
-                context.push(`\nPersonal Information:`);
-                hasPersonalInfo = true;
-            }
-            context.push(`- Name: ${memory.personalInfo.name}`);
-        }
-        if (memory.personalInfo.preferences && memory.personalInfo.preferences.length > 0) {
-            if (!hasPersonalInfo) {
-                context.push(`\nPersonal Information:`);
-                hasPersonalInfo = true;
-            }
-            context.push(`- Preferences: ${memory.personalInfo.preferences.join(', ')}`);
-        }
-
-        // Facts (emotional/physical states, etc.)
-        if (memory.personalInfo.facts.size > 0) {
-            if (!hasPersonalInfo) {
-                context.push(`\nPersonal Information:`);
-            }
-            context.push(`\nRemembered Facts:`);
-            for (const [key, value] of memory.personalInfo.facts.entries()) {
-                if (key === 'current_state') {
-                    context.push(`- Currently: ${value}`);
-                } else if (key.endsWith('_mentioned_at')) {
-                    // Skip timestamp keys in context (they're metadata)
-                } else {
-                    context.push(`- ${key}: ${value}`);
-                }
-            }
-        }
-
-        // Recent conversation history
-        const recentHistory = memory.conversationHistory.slice(-10); // Last 10 messages
+        // Recent conversation (natural flow with timestamps for context)
+        const recentHistory = memory.conversationHistory.slice(-8); // Last 8 messages for more natural context
         if (recentHistory.length > 0) {
-            context.push(`\nRecent Conversation:`);
-            recentHistory.forEach(msg => {
-                const sender = msg.sender === 'bot' ? 'Bot' : 'Person';
-                context.push(`${sender}: ${msg.message}`);
+            context.push(`\nRecent conversation:`);
+            recentHistory.forEach((msg, index) => {
+                const sender = msg.sender === 'bot' ? 'You' : 'They';
+                const timeAgo = Math.floor((Date.now() - msg.timestamp) / 1000); // seconds ago
+                let timeDesc = '';
+                if (timeAgo < 60) {
+                    timeDesc = ` (just now)`;
+                } else if (timeAgo < 3600) {
+                    const minutesAgo = Math.floor(timeAgo / 60);
+                    timeDesc = ` (${minutesAgo} minute${minutesAgo > 1 ? 's' : ''} ago)`;
+                } else {
+                    const hoursAgo = Math.floor(timeAgo / 3600);
+                    timeDesc = ` (${hoursAgo} hour${hoursAgo > 1 ? 's' : ''} ago)`;
+                }
+                context.push(`${sender}: "${msg.message}"${timeDesc}`);
             });
         }
 
-        // Important events
+        // Important events (natural memory)
         if (memory.relationship.importantEvents.length > 0) {
-            context.push(`\nImportant Events:`);
-            memory.relationship.importantEvents.slice(-5).forEach(event => {
-                context.push(`- ${event.description} (${new Date(event.timestamp).toLocaleDateString()})`);
-            });
+            const recentEvents = memory.relationship.importantEvents.slice(-3); // Last 3 events
+            if (recentEvents.length > 0) {
+                context.push(`\nNotable moments: ${recentEvents.map(e => e.description).join('; ')}.`);
+            }
         }
 
         return context.join('\n');
+    }
+
+    /**
+     * Parse birthday string to Date object
+     */
+    private parseBirthdayDate(birthdayStr: string): Date | null {
+        try {
+            // Try parsing formats like "January 15" or "1/15"
+            const parts = birthdayStr.split(/[\s\/-]+/);
+            if (parts.length >= 2) {
+                const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+                const monthStr = parts[0].toLowerCase();
+                const monthIndex = monthNames.findIndex(m => m.startsWith(monthStr));
+                if (monthIndex >= 0) {
+                    const day = parseInt(parts[1]);
+                    if (day >= 1 && day <= 31) {
+                        const date = new Date();
+                        date.setMonth(monthIndex);
+                        date.setDate(day);
+                        return date;
+                    }
+                }
+            }
+        } catch (e) {
+            // Ignore parsing errors
+        }
+        return null;
+    }
+
+    /**
+     * Check if birthday is today
+     */
+    private isBirthdayToday(birthdayDate: Date, today: Date): boolean {
+        return birthdayDate.getMonth() === today.getMonth() && birthdayDate.getDate() === today.getDate();
+    }
+
+    /**
+     * Describe emotional state in natural, human-like language
+     */
+    private describeEmotionNatural(emotion: EmotionalState['botEmotion'] | EmotionalState['personEmotion']): string {
+        const parts: string[] = [];
+
+        // Anger
+        if (emotion.anger > 70) {
+            parts.push(`quite angry`);
+        } else if (emotion.anger > 50) {
+            parts.push(`frustrated`);
+        } else if (emotion.anger > 30) {
+            parts.push(`a bit annoyed`);
+        }
+
+        // Happiness
+        if (emotion.happiness > 80) {
+            parts.push(`really happy`);
+        } else if (emotion.happiness > 65) {
+            parts.push(`happy`);
+        } else if (emotion.happiness < 30) {
+            parts.push(`a bit down`);
+        }
+
+        // Trust (only for bot emotion)
+        if ('trust' in emotion) {
+            if (emotion.trust > 75) {
+                parts.push(`trusting`);
+            } else if (emotion.trust < 30) {
+                parts.push(`wary`);
+            }
+        }
+
+        // Familiarity (only for bot emotion)
+        if ('familiarity' in emotion) {
+            if (emotion.familiarity > 60) {
+                parts.push(`comfortable with them`);
+            } else if (emotion.familiarity < 20) {
+                parts.push(`still getting to know them`);
+            }
+        }
+
+        return parts.length > 0 ? parts.join(', ') : '';
     }
 
     /**
