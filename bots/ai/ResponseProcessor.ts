@@ -197,9 +197,10 @@ export class ResponseProcessor {
         const key = `${botId}_${playerId}`;
         const recent = this.recentResponses.get(key) || [];
         
-        // Debug logging for repetition detection
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[ResponseProcessor] Checking repetition for ${key}: ${recent.length} recent responses stored`);
+        // Debug logging for repetition detection (always log for debugging)
+        console.log(`[ResponseProcessor] Checking repetition for ${key}: ${recent.length} recent responses stored`);
+        if (recent.length > 0) {
+            console.log(`[ResponseProcessor] Recent responses:`, recent.map(r => r.substring(0, 50) + '...'));
         }
         
         if (recent.length === 0) {
@@ -211,20 +212,28 @@ export class ResponseProcessor {
         for (let i = 0; i < recent.length; i++) {
             const normalizedRecent = recent[i].trim().toLowerCase();
             if (normalizedResponse === normalizedRecent) {
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[ResponseProcessor] 🚨 EXACT DUPLICATE DETECTED! Response matches recent[${i}]`);
-                    console.log(`  Current: "${response.substring(0, 50)}..."`);
-                    console.log(`  Recent:  "${recent[i].substring(0, 50)}..."`);
-                }
+                console.log(`[ResponseProcessor] 🚨 EXACT DUPLICATE DETECTED! Response matches recent[${i}]`);
+                console.log(`  Current: "${response.substring(0, 100)}..."`);
+                console.log(`  Recent:  "${recent[i].substring(0, 100)}..."`);
                 return 1.0; // Exact duplicate
             }
         }
 
         // Then check similarity for near-duplicates
         let maxSimilarity = 0;
-        for (const recentResponse of recent) {
-            const similarity = this.calculateSimilarity(response, recentResponse);
-            maxSimilarity = Math.max(maxSimilarity, similarity);
+        let mostSimilarIndex = -1;
+        for (let i = 0; i < recent.length; i++) {
+            const similarity = this.calculateSimilarity(response, recent[i]);
+            if (similarity > maxSimilarity) {
+                maxSimilarity = similarity;
+                mostSimilarIndex = i;
+            }
+        }
+        
+        if (maxSimilarity > 0.8) {
+            console.log(`[ResponseProcessor] ⚠️ High similarity detected (${(maxSimilarity * 100).toFixed(1)}%)`);
+            console.log(`  Current: "${response.substring(0, 100)}..."`);
+            console.log(`  Similar: "${recent[mostSimilarIndex].substring(0, 100)}..."`);
         }
 
         return maxSimilarity;

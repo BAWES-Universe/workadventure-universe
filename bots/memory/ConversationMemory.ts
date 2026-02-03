@@ -252,7 +252,8 @@ export class ConversationMemory {
      * Returns a score from -100 to +100
      */
     private analyzeSentiment(message: string): { score: number; intensity: number; isInsult: boolean; insultSeverity: number } {
-        const words = message.toLowerCase().split(/\s+/);
+        const lowerMessage = message.toLowerCase();
+        const words = lowerMessage.split(/\s+/);
         let totalScore = 0;
         let wordCount = 0;
         let maxNegative = 0;
@@ -260,6 +261,27 @@ export class ConversationMemory {
         let isNegated = false;
         const negationWindow = 3; // Words affected by negation
         let wordsUntilNegationEnds = 0;
+
+        // Check for negative question patterns (why u so mean, why u repeating, etc.)
+        // These indicate frustration/negativity even without strong sentiment words
+        const negativeQuestionPatterns = [
+            /why (?:u|you|are) (?:so |really |very )?(?:mean|rude|cruel|nasty|annoying|repeating|stuck|broken|bad|wrong)/i,
+            /why (?:are|is) (?:u|you) (?:so |really |very )?(?:mean|rude|cruel|nasty|annoying|repeating|stuck|broken|bad|wrong)/i,
+            /(?:u|you) (?:stuck|broken|dead|frozen|not working)/i,
+            /(?:what|why) (?:the|is) (?:problem|wrong|issue)/i,
+        ];
+        
+        let hasNegativeQuestion = false;
+        for (const pattern of negativeQuestionPatterns) {
+            if (pattern.test(message)) {
+                hasNegativeQuestion = true;
+                // Add negative score for frustration/negativity
+                totalScore -= 25; // Significant negative score for frustrated questions
+                wordCount++;
+                maxNegative = Math.min(maxNegative, -25);
+                break;
+            }
+        }
 
         for (let i = 0; i < words.length; i++) {
             const word = words[i].replace(/[.,!?;:'"()]/g, '');
@@ -292,6 +314,17 @@ export class ConversationMemory {
                 if (wordsUntilNegationEnds === 0) {
                     isNegated = false;
                 }
+            }
+        }
+        
+        // Add sentiment for words not in dictionary but indicate negativity
+        const negativeIndicators = ['repeating', 'stuck', 'broken', 'dead', 'frozen', 'not working', 'chill', 'wtf'];
+        for (const indicator of negativeIndicators) {
+            if (lowerMessage.includes(indicator) && !hasNegativeQuestion) {
+                // Only add if not already caught by negative question pattern
+                totalScore -= 15;
+                wordCount++;
+                maxNegative = Math.min(maxNegative, -15);
             }
         }
 
@@ -431,7 +464,7 @@ export class ConversationMemory {
 
         // Calculate emotion changes based on sentiment
         if (sentiment.score < -20) {
-            // Negative sentiment - person seems upset/angry
+            // Strongly negative sentiment - person seems upset/angry
             const angerIncrease = Math.abs(sentiment.score) * 0.5 * woundMod.negativeBoost;
             emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + angerIncrease);
             emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - angerIncrease * 0.5);
@@ -451,6 +484,20 @@ export class ConversationMemory {
                 emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - angerIncrease * 0.2);
                 emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - (Math.abs(sentiment.score) * 0.1));
             }
+        } else if (sentiment.score < 0) {
+            // Mildly negative sentiment (between -20 and 0) - still indicates frustration/negativity
+            // This catches messages like "why u so mean", "why u repeating", "U STUCK?" that don't have strong sentiment words
+            const negativity = Math.abs(sentiment.score);
+            const angerIncrease = negativity * 0.3 * woundMod.negativeBoost;
+            emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + angerIncrease);
+            emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - angerIncrease * 0.3);
+            // Even mild negativity should decrease trust (person is frustrated with bot)
+            emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - negativity * 0.15);
+            
+            // Bot also responds to mild negativity
+            emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + angerIncrease * 0.2);
+            emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - angerIncrease * 0.15);
+            emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - negativity * 0.08);
         } else if (sentiment.score > 20) {
             // Positive sentiment - person seems happy
             const happyIncrease = sentiment.score * 0.3 * woundMod.positiveReduction;
