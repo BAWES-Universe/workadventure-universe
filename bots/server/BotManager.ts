@@ -836,9 +836,9 @@ export class BotManager {
                 console.log(`[BotManager] Updated AI config for bot ${botId}:`, {
                     aiProviderRef: instance.config.aiProviderRef,
                     chatInstructions: instance.config.chatInstructions?.substring(0, 100) || '(none)',
-                chatInstructionsLength: instance.config.chatInstructions?.length || 0,
-            });
-        }
+                    chatInstructionsLength: instance.config.chatInstructions?.length || 0,
+                });
+            }
 
         // Handle other configuration updates (name, description, enabled, etc.)
         // Name and characterTextureIds require respawn (part of WebSocket connection)
@@ -886,12 +886,10 @@ export class BotManager {
         return { updated: true, changes };
     }
 
-    /**
-     * Get bot status
-     */
-    getBotStatus(botId: string): BotInstance['status'] | null {
+    getBotStatus(botId: string): 'connecting' | 'connected' | 'disconnected' | 'error' | null {
         const instance = this.bots.get(botId);
-        return instance?.status || null;
+        if (!instance) return null;
+        return instance.status;
     }
 
     /**
