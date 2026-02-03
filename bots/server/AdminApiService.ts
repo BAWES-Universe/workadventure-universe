@@ -688,9 +688,10 @@ export class AdminApiService {
         completedAt?: number;
         duration?: number;
     }): Promise<void> {
-        if (!this.isConfigured()) {
+        // Check only adminApiUrl (not adminApiToken - test results use BOT_SERVICE_TOKEN)
+        if (!this.adminApiUrl) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.warn('[AdminApiService] Admin API not configured, skipping test results save');
+                console.warn('[AdminApiService] Admin API URL not configured, skipping test results save');
             }
             return;
         }
