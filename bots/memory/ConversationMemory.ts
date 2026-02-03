@@ -435,12 +435,16 @@ export class ConversationMemory {
             const angerIncrease = Math.abs(sentiment.score) * 0.5 * woundMod.negativeBoost;
             emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + angerIncrease);
             emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - angerIncrease * 0.5);
+            // Person being hostile = they don't trust the bot
+            emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - angerIncrease * 0.3);
             
             // Bot also gets upset when insulted/mistreated
             if (sentiment.isInsult) {
                 emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + (sentiment.insultSeverity * 8));
                 emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - (sentiment.insultSeverity * 5));
                 emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - (sentiment.insultSeverity * 10));
+                // Insults also show the person doesn't trust/respect the bot
+                emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - (sentiment.insultSeverity * 8));
             } else {
                 // General negativity also affects trust (less than insults but still matters)
                 emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + angerIncrease * 0.3);
@@ -452,6 +456,8 @@ export class ConversationMemory {
             const happyIncrease = sentiment.score * 0.3 * woundMod.positiveReduction;
             emotions.personEmotion.happiness = Math.min(100, emotions.personEmotion.happiness + happyIncrease);
             emotions.personEmotion.anger = Math.max(0, emotions.personEmotion.anger - happyIncrease * 0.3);
+            // Positive interaction = person trusts the bot more
+            emotions.personEmotion.trust = Math.min(100, emotions.personEmotion.trust + happyIncrease * 0.2);
             
             // Bot responds positively (but reduced if wounds exist)
             emotions.botEmotion.happiness = Math.min(100, emotions.botEmotion.happiness + happyIncrease * 0.5);
@@ -461,10 +467,11 @@ export class ConversationMemory {
                 emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + happyIncrease * 0.2);
             }
         } else {
-            // Neutral sentiment - slight decay toward baseline
+            // Neutral sentiment - slight decay toward baseline (50 is neutral)
             const decayRate = 0.5;
             emotions.personEmotion.anger = Math.max(0, emotions.personEmotion.anger - decayRate);
             emotions.personEmotion.happiness = this.decayToward(emotions.personEmotion.happiness, 50, decayRate);
+            emotions.personEmotion.trust = this.decayToward(emotions.personEmotion.trust, 50, decayRate * 0.2); // Trust decays slowly to neutral
             emotions.botEmotion.anger = Math.max(0, emotions.botEmotion.anger - decayRate * 0.5);
         }
 
