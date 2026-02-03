@@ -152,7 +152,7 @@
         <h4
             class="text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400 uppercase tracking-wider"
         >
-            Emotional Bond
+            Emotional State
         </h4>
     </div>
 
