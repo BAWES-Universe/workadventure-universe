@@ -442,8 +442,10 @@ export class ConversationMemory {
                 emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - (sentiment.insultSeverity * 5));
                 emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - (sentiment.insultSeverity * 10));
             } else {
+                // General negativity also affects trust (less than insults but still matters)
                 emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + angerIncrease * 0.3);
                 emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - angerIncrease * 0.2);
+                emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - (Math.abs(sentiment.score) * 0.1));
             }
         } else if (sentiment.score > 20) {
             // Positive sentiment - person seems happy
@@ -469,19 +471,37 @@ export class ConversationMemory {
         // Apply trust penalty from wounds
         emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - woundMod.trustPenalty * 0.1);
 
-        // Detect trust indicators (explicit trust keywords still work but affected by wounds)
-        const trustKeywords = ['trust', 'believe', 'rely', 'depend', 'confide', 'share', 'honest'];
+        // Detect trust indicators - ONLY if sentiment is positive and no insult detected
+        // "I don't trust you" should NOT increase trust!
         const lowerMessage = message.toLowerCase();
-        const trustLevel = trustKeywords.filter(keyword => lowerMessage.includes(keyword)).length;
-        if (trustLevel > 0 && !sentiment.isInsult) {
-            const trustIncrease = trustLevel * 10 * woundMod.positiveReduction;
-            emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + trustIncrease);
-            emotions.personEmotion.trust = Math.min(100, emotions.personEmotion.trust + trustLevel * 8);
+        if (sentiment.score > 10 && !sentiment.isInsult) {
+            const trustKeywords = ['trust', 'believe', 'rely', 'depend', 'confide', 'share', 'honest'];
+            // Check that trust keyword isn't negated
+            const trustLevel = trustKeywords.filter(keyword => {
+                if (!lowerMessage.includes(keyword)) return false;
+                // Check for negation before the keyword
+                const keywordIndex = lowerMessage.indexOf(keyword);
+                const precedingText = lowerMessage.substring(Math.max(0, keywordIndex - 15), keywordIndex);
+                const hasNegation = ConversationMemory.NEGATION_WORDS.some(neg => precedingText.includes(neg));
+                return !hasNegation;
+            }).length;
+            
+            if (trustLevel > 0) {
+                const trustIncrease = trustLevel * 10 * woundMod.positiveReduction;
+                emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + trustIncrease);
+                emotions.personEmotion.trust = Math.min(100, emotions.personEmotion.trust + trustLevel * 8);
+            }
         }
 
-        // Increase familiarity with each message (more gradual for natural relationship building)
-        const familiarityIncrease = Math.min(2, Math.max(0.5, 100 / (memory.relationship.totalMessages + 1)));
-        emotions.botEmotion.familiarity = Math.min(100, emotions.botEmotion.familiarity + familiarityIncrease);
+        // Increase familiarity ONLY for neutral or positive interactions
+        // Being insulted doesn't make you more familiar in a good way
+        if (sentiment.score >= -10 && !sentiment.isInsult) {
+            const familiarityIncrease = Math.min(2, Math.max(0.5, 100 / (memory.relationship.totalMessages + 1)));
+            emotions.botEmotion.familiarity = Math.min(100, emotions.botEmotion.familiarity + familiarityIncrease);
+        } else if (sentiment.isInsult || sentiment.score < -30) {
+            // Severe negativity can DECREASE familiarity (feeling like you don't know this person anymore)
+            emotions.botEmotion.familiarity = Math.max(0, emotions.botEmotion.familiarity - 2);
+        }
 
         emotions.lastEmotionUpdate = now;
     }
