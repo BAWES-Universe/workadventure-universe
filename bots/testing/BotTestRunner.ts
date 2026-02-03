@@ -226,14 +226,16 @@ export class BotTestRunner {
                 repetitionScore = processed.metrics.repetitionScore;
                 systemPromptLeakage = processed.metrics.systemPromptLeakage;
                 
-                // Block and regenerate if exact duplicate detected (up to 3 attempts)
+                // Block and regenerate if high repetition detected (up to 3 attempts)
+                // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
                 let regenerationAttempts = 0;
                 const maxRegenerationAttempts = 3;
+                const repetitionThreshold = 0.85; // Block at 85% similarity, not just exact duplicates
                 
-                while (repetitionScore >= 1.0 && regenerationAttempts < maxRegenerationAttempts) {
+                while (repetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
                     regenerationAttempts++;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.warn(`[BotTestRunner] ⚠️ Exact duplicate detected, regenerating (attempt ${regenerationAttempts}/${maxRegenerationAttempts})`);
+                        console.warn(`[BotTestRunner] ⚠️ High repetition (${(repetitionScore * 100).toFixed(0)}%) detected, regenerating (attempt ${regenerationAttempts}/${maxRegenerationAttempts})`);
                     }
                     
                     // Increasingly strong anti-repetition instruction
@@ -276,8 +278,8 @@ export class BotTestRunner {
                     }
                 }
                 
-                // If still duplicate after max attempts, use a varied fallback and clear context
-                if (repetitionScore >= 1.0) {
+                // If still too similar after max attempts, use a varied fallback and clear context
+                if (repetitionScore >= repetitionThreshold) {
                     console.warn(`[BotTestRunner] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
                     // Use varied fallbacks to avoid repetition loop
                     const fallbacks = [

@@ -1316,16 +1316,18 @@ export class PatrolBehavior extends BaseBehavior {
                         );
                         processedMessage = processed.cleaned;
                         
-                        // If exact duplicate detected (repetitionScore === 1.0), block and regenerate (up to 3 attempts)
+                        // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
+                        // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
                         let regenerationAttempts = 0;
                         const maxRegenerationAttempts = 3;
+                        const repetitionThreshold = 0.85; // Block at 85% similarity, not just exact duplicates
                         let currentRepetitionScore = processed.metrics.repetitionScore;
                         let currentMessage = fullMessage;
                         
-                        while (currentRepetitionScore >= 1.0 && processed.issues.includes('BLOCKED: Exact duplicate') && regenerationAttempts < maxRegenerationAttempts) {
+                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
                             regenerationAttempts++;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn(`[PatrolBehavior] ⚠️ Exact duplicate detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
+                                console.warn(`[PatrolBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
                             }
                             
                             // BLOCK the duplicate - don't send it
@@ -1385,8 +1387,8 @@ export class PatrolBehavior extends BaseBehavior {
                             }
                         }
                         
-                        // If still duplicate after max attempts, use a varied fallback
-                        if (currentRepetitionScore >= 1.0 && regenerationAttempts >= maxRegenerationAttempts) {
+                        // If still too similar after max attempts, use a varied fallback
+                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
                             console.warn(`[PatrolBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
                             // Use varied fallbacks to avoid repetition loop
                             const fallbacks = [
