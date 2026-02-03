@@ -388,6 +388,13 @@ export class ConversationMemory {
     }
 
     /**
+     * Get all memories (for API access - e.g., emotions endpoint)
+     */
+    getAllMemories(): Map<string, BotPlayerMemory> {
+        return new Map(this.memories);
+    }
+
+    /**
      * Get or create memory (internal use)
      */
     private getOrCreateMemory(botId: string, playerId: number): BotPlayerMemory {

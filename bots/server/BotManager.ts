@@ -462,6 +462,22 @@ export class BotManager {
     }
 
     /**
+     * Get bot instance with conversation memory access
+     * Used for emotions API endpoint
+     */
+    getBotInstance(botId: string): { getConversationMemory: () => ConversationMemory | PersistentMemory | null } | null {
+        const instance = this.bots.get(botId);
+        if (!instance) {
+            return null;
+        }
+        
+        // Return an object that provides access to conversation memory
+        return {
+            getConversationMemory: () => this.conversationMemory,
+        };
+    }
+
+    /**
      * Get all bot instances
      */
     getAllBots(): BotClient[] {

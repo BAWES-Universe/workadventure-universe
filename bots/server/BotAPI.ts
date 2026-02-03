@@ -252,6 +252,78 @@ export class BotAPI {
             }
         });
 
+        // Get bot emotions for a specific player (no auth required - public endpoint)
+        // This allows players to see how a bot feels about them
+        this.app.get('/api/bots/:botId/emotions/:userUuid', async (req: Request, res: Response) => {
+            try {
+                const { botId, userUuid } = req.params;
+
+                if (!botId || !userUuid) {
+                    res.status(400).json({ error: 'Missing botId or userUuid' });
+                    return;
+                }
+
+                // Get bot instance
+                const botInstance = this.botManager.getBotInstance(botId);
+                if (!botInstance) {
+                    // Bot not found - return default emotions
+                    res.json({
+                        botId,
+                        userUuid,
+                        emotions: {
+                            botEmotion: { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                            personEmotion: { anger: 0, happiness: 50, trust: 50 },
+                            lastEmotionUpdate: Date.now(),
+                        },
+                    });
+                    return;
+                }
+
+                // Get conversation memory from bot
+                const conversationMemory = botInstance.getConversationMemory?.();
+                if (!conversationMemory) {
+                    // Memory not available - return default emotions
+                    res.json({
+                        botId,
+                        userUuid,
+                        emotions: {
+                            botEmotion: { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                            personEmotion: { anger: 0, happiness: 50, trust: 50 },
+                            lastEmotionUpdate: Date.now(),
+                        },
+                    });
+                    return;
+                }
+
+                // Find memory by userUuid
+                const memories = conversationMemory.getAllMemories?.();
+                let emotions = null;
+
+                if (memories) {
+                    for (const memory of memories.values()) {
+                        if (memory.userUuid === userUuid) {
+                            emotions = memory.emotions;
+                            break;
+                        }
+                    }
+                }
+
+                if (!emotions) {
+                    // No memory exists yet - return default
+                    emotions = {
+                        botEmotion: { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                        personEmotion: { anger: 0, happiness: 50, trust: 50 },
+                        lastEmotionUpdate: Date.now(),
+                    };
+                }
+
+                res.json({ botId, userUuid, emotions });
+            } catch (error: any) {
+                console.error('[BotAPI] Error fetching emotions:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // Spawn a specific bot immediately (called when bot is created in editor)
         this.app.post('/api/bots/spawn', async (req: Request, res: Response) => {
             try {
