@@ -137,6 +137,12 @@ export class ResponseProcessor {
         cleaned = cleaned.replace(/CONTEXT:.*?(?=\n|$)/gs, '');
         cleaned = cleaned.replace(/^- .*?(?=\n|$)/gm, ''); // Remove bullet points that might be part of instructions
         cleaned = cleaned.replace(/\s*\[END_TOOL_REQUEST\].*?\[END_TOOL_RESPONSE\]\s*/gs, ''); // Remove tool markers
+        // Remove tool call mentions (e.g., "(tool call: get_people_on_map)" or "I'll check" followed by tool mentions)
+        cleaned = cleaned.replace(/\(tool call[^)]*\)/gi, ''); // Remove (tool call: ...)
+        cleaned = cleaned.replace(/tool call[^\.]*\./gi, ''); // Remove "tool call..." sentences
+        // Only remove "I'll check" if it's followed by tool-related text or at the start of response
+        cleaned = cleaned.replace(/^I'll check.*?\./gi, ''); // Remove "I'll check..." at start
+        cleaned = cleaned.replace(/Let me (check|look|find).*?\(tool call/gi, ''); // Remove "Let me check/look/find..." only if followed by tool call
         // Remove reasoning tags - handle all variations
         // CRITICAL: Remove these BEFORE any other processing to prevent leakage
         // Handle complete tags first (most common) - use non-greedy matching
