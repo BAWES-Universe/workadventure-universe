@@ -156,7 +156,9 @@ export class ResponseProcessor {
         
         // Remove emotion update blocks (unified AI emotion system)
         // CRITICAL: Remove these BEFORE any other processing to prevent leakage
+        // Handle both complete blocks and incomplete blocks (missing closing tag)
         cleaned = cleaned.replace(/\[EMOTION_UPDATE\]\s*[\s\S]*?\[\/EMOTION_UPDATE\]/gi, '');
+        cleaned = cleaned.replace(/\[EMOTION_UPDATE\]\s*[\s\S]*$/gi, ''); // Remove incomplete blocks at end of response
         
         // Remove reasoning tags - handle all variations
         // CRITICAL: Remove these BEFORE any other processing to prevent leakage

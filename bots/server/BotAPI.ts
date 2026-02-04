@@ -1356,13 +1356,23 @@ export class BotAPI {
                 const results = await testRunner.runTestSuite(testSuite, botId);
 
                 // Extract the conversation flow
-                const conversationFlow = results.results.map((r: any) => ({
-                    turn: r.testCaseId,
-                    userMessage: r.input,
-                    botResponse: r.response, // Use 'response' field from test results
-                    passed: r.passed,
-                    responseTime: r.responseTime,
-                }));
+                // Safety: Remove emotion blocks in case they leaked through (handle both complete and incomplete blocks)
+                const conversationFlow = results.results.map((r: any) => {
+                    let botResponse = r.response || '';
+                    // Remove complete emotion blocks
+                    botResponse = botResponse.replace(/\[EMOTION_UPDATE\]\s*[\s\S]*?\[\/EMOTION_UPDATE\]/gi, '');
+                    // Remove incomplete emotion blocks (missing closing tag)
+                    botResponse = botResponse.replace(/\[EMOTION_UPDATE\]\s*[\s\S]*$/gi, '');
+                    botResponse = botResponse.trim();
+                    return {
+                        turn: r.testCaseId,
+                        userMessage: r.input || testSuite.testCases.find((tc: any) => tc.id === r.testCaseId)?.input,
+                        botResponse,
+                        passed: r.passed,
+                        responseTime: r.responseTime,
+                        emotions: r.emotions, // Include emotions separately
+                    };
+                });
 
                 res.json({
                     botId,
