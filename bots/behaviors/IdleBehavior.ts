@@ -6,6 +6,7 @@ import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
+import { parseEmotionsFromResponse } from '../ai/EmotionParser';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
@@ -465,15 +466,21 @@ export class IdleBehavior extends BaseBehavior {
                     // Calculate response time (use latency from metadata if available, otherwise calculate)
                     const responseTime = latency || (Date.now() - startTime);
                     
-                    // Process response through ResponseProcessor (for metrics and quality checks)
-                    let processedMessage = fullMessage;
+                    // Parse emotions from AI response (unified emotion system)
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let processedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
                     
                     // Debug: Check if responseProcessor exists
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] ResponseProcessor available: ${!!this.responseProcessor}, fullMessage length: ${fullMessage.length}`);
                     }
                     
-                    if (this.responseProcessor && fullMessage.trim()) {
+                    if (this.responseProcessor && processedMessage.trim()) {
                         const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
                         // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
                         const tokenUsage = tokensUsed > 0 ? {
@@ -481,10 +488,12 @@ export class IdleBehavior extends BaseBehavior {
                             completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
                             total: tokensUsed
                         } : undefined;
+                        
+                        // Note: Emotions already parsed above, use processedMessage (cleaned response)
                         let processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
-                            fullMessage,
+                            processedMessage,
                             chatInstructions,
                             responseTime,
                             tokenUsage

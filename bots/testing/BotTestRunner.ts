@@ -17,6 +17,7 @@ import { ResponseProcessor } from '../ai/ResponseProcessor';
 import { ConversationMonitor } from '../monitoring/ConversationMonitor';
 import { PersonalityComplianceValidator } from '../ai/PersonalityComplianceValidator';
 import type { ConversationStorage } from '../memory/ConversationStorage';
+import { parseEmotionsFromResponse } from '../ai/EmotionParser';
 
 export class BotTestRunner {
     private aiService: AIService;
@@ -205,19 +206,26 @@ export class BotTestRunner {
                 }
             }
 
-            // Clean response using ResponseProcessor (removes reasoning tags, system prompt leakage, etc.)
-            let cleanedResponse = fullMessage;
+            // Parse emotions from AI response (unified emotion system)
+            const parsedResponse = parseEmotionsFromResponse(fullMessage);
+            let cleanedResponse = parsedResponse.cleanedResponse;
+            
+            // Update emotions from AI analysis
+            if (parsedResponse.emotions) {
+                this.conversationMemory.updateEmotionsFromAI(botId, testPlayerId, parsedResponse.emotions);
+            }
+            
             let repetitionScore = 0;
             let systemPromptLeakage = false;
             let personalityCompliance = 0;
             const responseTime = Date.now() - startTime;
             
-            if (fullMessage.trim()) {
+            if (cleanedResponse.trim()) {
                 // Process response to get actual metrics (not hardcoded zeros!)
                 let processed = this.responseProcessor.processResponse(
                     botId,
                     testPlayerId,
-                    fullMessage,
+                    cleanedResponse,
                     chatInstructions,
                     responseTime, // Pass response time
                     undefined // Token usage not available in test context
@@ -331,6 +339,28 @@ export class BotTestRunner {
                 personalityCompliance: personalityCompliance,
             };
 
+            // Validate emotions against expectations if provided
+            if (testCase.expectedEmotions && parsedResponse.emotions) {
+                const aiEmotions = parsedResponse.emotions;
+                const expected = testCase.expectedEmotions;
+                
+                if (expected.personSentimentMin !== undefined && aiEmotions.personSentiment < expected.personSentimentMin) {
+                    errors.push(`Sentiment too low: ${aiEmotions.personSentiment} < ${expected.personSentimentMin}`);
+                }
+                if (expected.personSentimentMax !== undefined && aiEmotions.personSentiment > expected.personSentimentMax) {
+                    errors.push(`Sentiment too high: ${aiEmotions.personSentiment} > ${expected.personSentimentMax}`);
+                }
+                if (expected.isInsult !== undefined && aiEmotions.isInsult !== expected.isInsult) {
+                    errors.push(`Insult detection wrong: expected ${expected.isInsult}, got ${aiEmotions.isInsult}`);
+                }
+                if (expected.insultSeverityMin !== undefined && aiEmotions.insultSeverity < expected.insultSeverityMin) {
+                    errors.push(`Insult severity too low: ${aiEmotions.insultSeverity} < ${expected.insultSeverityMin}`);
+                }
+                if (expected.context !== undefined && aiEmotions.context !== expected.context) {
+                    errors.push(`Context mismatch: expected "${expected.context}", got "${aiEmotions.context}"`);
+                }
+            }
+
             const passed = errors.length === 0;
 
             // Log test conversation to Admin API
@@ -362,6 +392,7 @@ export class BotTestRunner {
                 toolsCalled,
                 errors: errors.length > 0 ? errors : undefined,
                 metrics,
+                emotions: parsedResponse.emotions || undefined,
                 timestamp: Date.now(),
             };
         } catch (error: any) {

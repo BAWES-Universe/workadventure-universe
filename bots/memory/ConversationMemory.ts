@@ -163,10 +163,8 @@ export class ConversationMemory {
         memory.relationship.lastMet = now;
         memory.lastUpdated = now;
 
-        // Update emotions based on message content
-        if (sender === 'person') {
-            this.updateEmotionsFromMessage(memory, message);
-        }
+        // NOTE: Emotions are now updated via updateEmotionsFromAI() after AI response
+        // This provides more accurate sentiment analysis from the AI
         
         // Extract personal information (birthday, name, preferences, facts)
         if (sender === 'person') {
@@ -174,232 +172,12 @@ export class ConversationMemory {
         }
     }
 
-    // Sentiment word dictionary with weights (-10 to +10)
-    private static readonly SENTIMENT_WORDS: { [word: string]: number } = {
-        // Extremely negative (-10 to -7) - These create emotional wounds
-        'hate': -10, 'despise': -10, 'loathe': -9, 'detest': -9,
-        'disgusting': -9, 'repulsive': -9, 'vile': -9, 'pathetic': -8,
-        'worthless': -10, 'useless': -8, 'garbage': -8, 'trash': -8,
-        'idiot': -9, 'moron': -9, 'stupid': -8, 'dumb': -7, 'fool': -7,
-        'ugly': -8, 'hideous': -8, 'revolting': -8,
-        'die': -10, 'kill': -9, 'murder': -9, 'destroy': -7,
-        'worst': -8, 'terrible': -7, 'horrible': -7, 'awful': -7,
-        
-        // Strongly negative (-6 to -4)
-        'angry': -6, 'mad': -5, 'annoyed': -4, 'frustrated': -5, 'upset': -5,
-        'sucks': -6, 'suck': -6, 'bad': -4, 'poor': -3, 'lame': -4,
-        'boring': -4, 'dull': -3, 'disappointing': -5, 'disappointed': -5,
-        'wrong': -3, 'fail': -4, 'failed': -4, 'failure': -5,
-        'rude': -6, 'mean': -5, 'cruel': -7, 'nasty': -6,
-        'annoying': -5, 'irritating': -5, 'obnoxious': -6,
-        'fake': -5, 'liar': -7, 'lying': -6, 'cheat': -7,
-        'leave': -3, 'go away': -5, 'shut up': -6, 'whatever': -3,
-        
-        // Mildly negative (-3 to -1)
-        'meh': -2, 'fine': -1, 'alright': 0,
-        'tired': -2, 'bored': -2, 'sad': -3, 'unhappy': -4,
-        'confused': -2, 'worried': -2, 'nervous': -2,
-        'no': -1, 'nope': -2, 'nah': -1,
-        
-        // Mildly positive (+1 to +3)
-        'yes': 1, 'yeah': 1, 'yep': 1, 'sure': 1, 'okay': 1,
-        'nice': 2, 'good': 2, 'cool': 2,
-        'interesting': 2, 'helpful': 3, 'useful': 3,
-        'like': 2, 'enjoy': 3, 'fun': 3,
-        'please': 2, 'thanks': 3, 'thank': 3,
-        
-        // Strongly positive (+4 to +6)
-        'great': 5, 'awesome': 5, 'amazing': 5, 'excellent': 5,
-        'wonderful': 5, 'fantastic': 5, 'brilliant': 5, 'perfect': 6,
-        'love': 6, 'adore': 6, 'appreciate': 5, 'grateful': 5,
-        'happy': 5, 'glad': 4, 'pleased': 4, 'delighted': 5,
-        'excited': 5, 'thrilled': 6, 'joy': 6, 'joyful': 6,
-        'beautiful': 5, 'gorgeous': 5, 'stunning': 5,
-        'smart': 4, 'clever': 4, 'intelligent': 4, 'wise': 4,
-        'kind': 5, 'sweet': 4, 'caring': 5, 'thoughtful': 5,
-        'friend': 4, 'buddy': 3, 'pal': 3,
-        
-        // Extremely positive (+7 to +10)
-        'best': 7, 'incredible': 7, 'outstanding': 7, 'exceptional': 7,
-        'phenomenal': 8, 'magnificent': 8, 'spectacular': 8,
-        'trust': 6, 'believe': 4, 'faith': 5,
-        'hero': 8, 'legend': 7, 'genius': 7,
-    };
-
-    // Negation words that flip sentiment
-    private static readonly NEGATION_WORDS = [
-        'not', "n't", 'no', 'never', 'neither', 'nobody', 'nothing',
-        'nowhere', 'hardly', 'barely', 'scarcely', "don't", "doesn't",
-        "didn't", "won't", "wouldn't", "couldn't", "shouldn't", "can't",
-        "isn't", "aren't", "wasn't", "weren't", "haven't", "hasn't"
-    ];
-
-    // Insult patterns that create emotional wounds
-    private static readonly INSULT_PATTERNS = [
-        /you(?:'re| are)? (?:a |an )?(?:idiot|moron|stupid|dumb|fool|loser|pathetic|worthless|useless|garbage|trash)/i,
-        /(?:hate|despise|loathe|detest) you/i,
-        /(?:shut up|go away|leave me alone|get lost|piss off|f\*\*k off|screw you)/i,
-        /you (?:suck|stink|blow)/i,
-        /(?:worst|terrible|horrible|awful) (?:bot|ai|assistant|thing)/i,
-        /(?:i |you )(?:wish you|hope you|want you to) (?:die|disappear|go away|leave)/i,
-        /you'?re? (?:so |really |very )?(?:annoying|irritating|boring|useless|pathetic)/i,
-        /(?:nobody|no one) (?:likes|loves|cares about|wants) you/i,
-        /you (?:mean |are )?nothing/i,
-    ];
-
-    /**
-     * Analyze sentiment of a message with context awareness
-     * Returns a score from -100 to +100
-     */
-    private analyzeSentiment(message: string): { score: number; intensity: number; isInsult: boolean; insultSeverity: number } {
-        const lowerMessage = message.toLowerCase();
-        const words = lowerMessage.split(/\s+/);
-        let totalScore = 0;
-        let wordCount = 0;
-        let maxNegative = 0;
-        let maxPositive = 0;
-        let isNegated = false;
-        const negationWindow = 3; // Words affected by negation
-        let wordsUntilNegationEnds = 0;
-
-        // Check for negative question patterns (why u so mean, why u repeating, etc.)
-        // These indicate frustration/negativity even without strong sentiment words
-        const negativeQuestionPatterns = [
-            /why (?:u|you|are) (?:so |really |very )?(?:mean|rude|cruel|nasty|annoying|repeating|stuck|broken|bad|wrong)/i,
-            /why (?:are|is) (?:u|you) (?:so |really |very )?(?:mean|rude|cruel|nasty|annoying|repeating|stuck|broken|bad|wrong)/i,
-            /(?:u|you) (?:stuck|broken|dead|frozen|not working)/i,
-            /(?:what|why) (?:the|is) (?:problem|wrong|issue)/i,
-        ];
-        
-        let hasNegativeQuestion = false;
-        for (const pattern of negativeQuestionPatterns) {
-            if (pattern.test(message)) {
-                hasNegativeQuestion = true;
-                // Add negative score for frustration/negativity
-                totalScore -= 25; // Significant negative score for frustrated questions
-                wordCount++;
-                maxNegative = Math.min(maxNegative, -25);
-                break;
-            }
-        }
-
-        for (let i = 0; i < words.length; i++) {
-            const word = words[i].replace(/[.,!?;:'"()]/g, '');
-            
-            // Check for negation
-            if (ConversationMemory.NEGATION_WORDS.some(neg => word.includes(neg) || words[i].includes(neg))) {
-                isNegated = true;
-                wordsUntilNegationEnds = negationWindow;
-                continue;
-            }
-
-            // Get sentiment score
-            let score = ConversationMemory.SENTIMENT_WORDS[word];
-            if (score !== undefined) {
-                // Apply negation
-                if (isNegated && wordsUntilNegationEnds > 0) {
-                    score = -score * 0.7; // Negation flips but slightly reduces intensity
-                }
-                
-                totalScore += score;
-                wordCount++;
-                
-                if (score < maxNegative) maxNegative = score;
-                if (score > maxPositive) maxPositive = score;
-            }
-
-            // Decrement negation window
-            if (wordsUntilNegationEnds > 0) {
-                wordsUntilNegationEnds--;
-                if (wordsUntilNegationEnds === 0) {
-                    isNegated = false;
-                }
-            }
-        }
-        
-        // Add sentiment for words not in dictionary but indicate negativity
-        const negativeIndicators = ['repeating', 'stuck', 'broken', 'dead', 'frozen', 'not working', 'chill', 'wtf'];
-        for (const indicator of negativeIndicators) {
-            if (lowerMessage.includes(indicator) && !hasNegativeQuestion) {
-                // Only add if not already caught by negative question pattern
-                totalScore -= 15;
-                wordCount++;
-                maxNegative = Math.min(maxNegative, -15);
-            }
-        }
-
-        // Check for insult patterns
-        let isInsult = false;
-        let insultSeverity = 0;
-        for (const pattern of ConversationMemory.INSULT_PATTERNS) {
-            if (pattern.test(message)) {
-                isInsult = true;
-                // More severe insults get higher severity
-                if (/hate|despise|loathe|die|kill/i.test(message)) {
-                    insultSeverity = Math.max(insultSeverity, 10);
-                } else if (/idiot|moron|stupid|pathetic|worthless/i.test(message)) {
-                    insultSeverity = Math.max(insultSeverity, 8);
-                } else if (/shut up|go away|leave/i.test(message)) {
-                    insultSeverity = Math.max(insultSeverity, 6);
-                } else if (/annoying|boring|useless/i.test(message)) {
-                    insultSeverity = Math.max(insultSeverity, 4);
-                } else {
-                    insultSeverity = Math.max(insultSeverity, 3);
-                }
-                break;
-            }
-        }
-
-        // Calculate final score (normalize to -100 to +100)
-        const normalizedScore = wordCount > 0 ? (totalScore / wordCount) * 10 : 0;
-        const clampedScore = Math.max(-100, Math.min(100, normalizedScore));
-        
-        // Intensity is the magnitude of the strongest emotion
-        const intensity = Math.max(Math.abs(maxNegative), Math.abs(maxPositive));
-
-        return { score: clampedScore, intensity, isInsult, insultSeverity };
-    }
-
-    /**
-     * Create an emotional wound from a severe negative interaction
-     */
-    private createEmotionalWound(memory: BotPlayerMemory, message: string, severity: number): void {
-        if (!memory.emotions.wounds) {
-            memory.emotions.wounds = [];
-        }
-
-        // Determine wound type
-        let woundType: EmotionalWound['type'] = 'disrespect';
-        const lowerMessage = message.toLowerCase();
-        
-        if (/hate|despise|loathe|detest/i.test(lowerMessage)) {
-            woundType = 'cruelty';
-        } else if (/idiot|moron|stupid|dumb|pathetic|worthless|useless/i.test(lowerMessage)) {
-            woundType = 'insult';
-        } else if (/liar|lying|cheat|fake|betrayed/i.test(lowerMessage)) {
-            woundType = 'betrayal';
-        } else if (/leave|go away|abandon|left me/i.test(lowerMessage)) {
-            woundType = 'abandonment';
-        }
-
-        const wound: EmotionalWound = {
-            type: woundType,
-            severity: Math.min(10, severity),
-            timestamp: Date.now(),
-            trigger: message.substring(0, 100), // Store first 100 chars
-            healed: 0,
-        };
-
-        memory.emotions.wounds.push(wound);
-        
-        // Add to important events
-        this.addImportantEvent(memory, `emotional_wound_${woundType}`, 
-            `Person caused emotional wound (${woundType}): "${message.substring(0, 50)}..."`);
-
-        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[ConversationMemory] ⚠️ Emotional wound created: ${woundType} (severity: ${severity})`);
-        }
-    }
+    // NOTE: Rule-based sentiment analysis has been replaced by unified AI emotion analysis.
+    // Emotion detection is now done by the AI itself when generating responses.
+    // The AI outputs emotion data in [EMOTION_UPDATE] blocks which are parsed and processed
+    // via updateEmotionsFromAI() method.
+    // Old rule-based code (SENTIMENT_WORDS, NEGATION_WORDS, INSULT_PATTERNS, analyzeSentiment,
+    // createEmotionalWound, updateEmotionsFromMessage) has been removed in favor of this approach.
 
     /**
      * Calculate emotion modifier based on active wounds
@@ -431,133 +209,6 @@ export class ConversationMemory {
             negativeBoost: 1 + (woundFactor * 0.5),     // Boost negative emotions by up to 50%
             trustPenalty: woundFactor * 30,             // Permanent trust penalty based on wounds
         };
-    }
-
-    /**
-     * Update emotional state based on message sentiment analysis
-     */
-    private updateEmotionsFromMessage(memory: BotPlayerMemory, message: string): void {
-        const emotions = memory.emotions;
-        const now = Date.now();
-
-        // Initialize wounds array if missing
-        if (!emotions.wounds) {
-            emotions.wounds = [];
-        }
-        if (emotions.recentSentiment === undefined) {
-            emotions.recentSentiment = 0;
-        }
-
-        // Analyze sentiment with context
-        const sentiment = this.analyzeSentiment(message);
-        
-        // Get wound modifier (makes emotions "sticky" after negative experiences)
-        const woundMod = this.getWoundModifier(memory);
-
-        // Update rolling sentiment (weighted average - recent messages matter more)
-        emotions.recentSentiment = (emotions.recentSentiment * 0.6) + (sentiment.score * 0.4);
-
-        // Create emotional wound if this is a severe insult
-        if (sentiment.isInsult && sentiment.insultSeverity >= 4) {
-            this.createEmotionalWound(memory, message, sentiment.insultSeverity);
-        }
-
-        // Calculate emotion changes based on sentiment
-        if (sentiment.score < -20) {
-            // Strongly negative sentiment - person seems upset/angry
-            const angerIncrease = Math.abs(sentiment.score) * 0.5 * woundMod.negativeBoost;
-            emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + angerIncrease);
-            emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - angerIncrease * 0.5);
-            // Person being hostile = they don't trust the bot
-            emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - angerIncrease * 0.3);
-            
-            // Bot also gets upset when insulted/mistreated
-            if (sentiment.isInsult) {
-                emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + (sentiment.insultSeverity * 8));
-                emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - (sentiment.insultSeverity * 5));
-                emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - (sentiment.insultSeverity * 10));
-                // Insults also show the person doesn't trust/respect the bot
-                emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - (sentiment.insultSeverity * 8));
-            } else {
-                // General negativity also affects trust (less than insults but still matters)
-                emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + angerIncrease * 0.3);
-                emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - angerIncrease * 0.2);
-                emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - (Math.abs(sentiment.score) * 0.1));
-            }
-        } else if (sentiment.score < 0) {
-            // Mildly negative sentiment (between -20 and 0) - still indicates frustration/negativity
-            // This catches messages like "why u so mean", "why u repeating", "U STUCK?" that don't have strong sentiment words
-            const negativity = Math.abs(sentiment.score);
-            const angerIncrease = negativity * 0.3 * woundMod.negativeBoost;
-            emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + angerIncrease);
-            emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - angerIncrease * 0.3);
-            // Even mild negativity should decrease trust (person is frustrated with bot)
-            emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - negativity * 0.15);
-            
-            // Bot also responds to mild negativity
-            emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + angerIncrease * 0.2);
-            emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - angerIncrease * 0.15);
-            emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - negativity * 0.08);
-        } else if (sentiment.score > 20) {
-            // Positive sentiment - person seems happy
-            const happyIncrease = sentiment.score * 0.3 * woundMod.positiveReduction;
-            emotions.personEmotion.happiness = Math.min(100, emotions.personEmotion.happiness + happyIncrease);
-            emotions.personEmotion.anger = Math.max(0, emotions.personEmotion.anger - happyIncrease * 0.3);
-            // Positive interaction = person trusts the bot more
-            emotions.personEmotion.trust = Math.min(100, emotions.personEmotion.trust + happyIncrease * 0.2);
-            
-            // Bot responds positively (but reduced if wounds exist)
-            emotions.botEmotion.happiness = Math.min(100, emotions.botEmotion.happiness + happyIncrease * 0.5);
-            
-            // Trust only improves if there are no active wounds
-            if (woundMod.trustPenalty < 10) {
-                emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + happyIncrease * 0.2);
-            }
-        } else {
-            // Neutral sentiment - slight decay toward baseline (50 is neutral)
-            const decayRate = 0.5;
-            emotions.personEmotion.anger = Math.max(0, emotions.personEmotion.anger - decayRate);
-            emotions.personEmotion.happiness = this.decayToward(emotions.personEmotion.happiness, 50, decayRate);
-            emotions.personEmotion.trust = this.decayToward(emotions.personEmotion.trust, 50, decayRate * 0.2); // Trust decays slowly to neutral
-            emotions.botEmotion.anger = Math.max(0, emotions.botEmotion.anger - decayRate * 0.5);
-        }
-
-        // Apply trust penalty from wounds
-        emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - woundMod.trustPenalty * 0.1);
-
-        // Detect trust indicators - ONLY if sentiment is positive and no insult detected
-        // "I don't trust you" should NOT increase trust!
-        const lowerMessage = message.toLowerCase();
-        if (sentiment.score > 10 && !sentiment.isInsult) {
-            const trustKeywords = ['trust', 'believe', 'rely', 'depend', 'confide', 'share', 'honest'];
-            // Check that trust keyword isn't negated
-            const trustLevel = trustKeywords.filter(keyword => {
-                if (!lowerMessage.includes(keyword)) return false;
-                // Check for negation before the keyword
-                const keywordIndex = lowerMessage.indexOf(keyword);
-                const precedingText = lowerMessage.substring(Math.max(0, keywordIndex - 15), keywordIndex);
-                const hasNegation = ConversationMemory.NEGATION_WORDS.some(neg => precedingText.includes(neg));
-                return !hasNegation;
-            }).length;
-            
-            if (trustLevel > 0) {
-                const trustIncrease = trustLevel * 10 * woundMod.positiveReduction;
-                emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + trustIncrease);
-                emotions.personEmotion.trust = Math.min(100, emotions.personEmotion.trust + trustLevel * 8);
-            }
-        }
-
-        // Increase familiarity ONLY for neutral or positive interactions
-        // Being insulted doesn't make you more familiar in a good way
-        if (sentiment.score >= -10 && !sentiment.isInsult) {
-            const familiarityIncrease = Math.min(2, Math.max(0.5, 100 / (memory.relationship.totalMessages + 1)));
-            emotions.botEmotion.familiarity = Math.min(100, emotions.botEmotion.familiarity + familiarityIncrease);
-        } else if (sentiment.isInsult || sentiment.score < -30) {
-            // Severe negativity can DECREASE familiarity (feeling like you don't know this person anymore)
-            emotions.botEmotion.familiarity = Math.max(0, emotions.botEmotion.familiarity - 2);
-        }
-
-        emotions.lastEmotionUpdate = now;
     }
 
     /**
@@ -822,6 +473,160 @@ export class ConversationMemory {
         };
         memory.emotions.lastEmotionUpdate = Date.now();
         memory.lastUpdated = Date.now();
+    }
+
+    /**
+     * Update emotions from AI analysis (unified emotion system)
+     * This is the primary emotion update method - called after AI generates response
+     */
+    updateEmotionsFromAI(
+        botId: string,
+        playerId: number,
+        aiEmotions: {
+            personSentiment: number;      // -100 to 100
+            isInsult: boolean;
+            insultSeverity: number;       // 1-10 or 0
+            context: string;              // sarcastic, joking, sincere, frustrated, angry, neutral
+        }
+    ): void {
+        const memory = this.getOrCreateMemory(botId, playerId);
+        const emotions = memory.emotions;
+        const now = Date.now();
+
+        // Initialize wounds array if missing
+        if (!emotions.wounds) {
+            emotions.wounds = [];
+        }
+
+        // Get wound modifier (makes emotions "sticky" after negative experiences)
+        const woundMod = this.getWoundModifier(memory);
+
+        // Create emotional wound if this is a severe insult
+        if (aiEmotions.isInsult && aiEmotions.insultSeverity >= 4) {
+            this.createEmotionalWoundFromAI(memory, aiEmotions.insultSeverity, aiEmotions.context);
+        }
+
+        // Update person emotions based on AI-detected sentiment
+        const sentiment = aiEmotions.personSentiment;
+        
+        // Handle sarcasm: if context is sarcastic, the actual sentiment is opposite of literal
+        // AI should already account for this, but we add a note for debugging
+        if (aiEmotions.context === 'sarcastic') {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[ConversationMemory] Sarcasm detected - AI sentiment: ${sentiment}`);
+            }
+        }
+
+        if (sentiment < -30) {
+            // Strongly negative sentiment - person is upset/angry
+            const angerIncrease = Math.abs(sentiment) * 0.5 * woundMod.negativeBoost;
+            emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + angerIncrease);
+            emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - angerIncrease * 0.5);
+            emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - angerIncrease * 0.3);
+            
+            // Bot also gets upset when mistreated
+            if (aiEmotions.isInsult) {
+                emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + (aiEmotions.insultSeverity * 8));
+                emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - (aiEmotions.insultSeverity * 5));
+                emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - (aiEmotions.insultSeverity * 10));
+            } else {
+                emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + angerIncrease * 0.3);
+                emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - angerIncrease * 0.2);
+                emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - Math.abs(sentiment) * 0.1);
+            }
+        } else if (sentiment < 0) {
+            // Mildly negative sentiment
+            const negativity = Math.abs(sentiment);
+            const angerIncrease = negativity * 0.3 * woundMod.negativeBoost;
+            emotions.personEmotion.anger = Math.min(100, emotions.personEmotion.anger + angerIncrease);
+            emotions.personEmotion.happiness = Math.max(0, emotions.personEmotion.happiness - angerIncrease * 0.3);
+            emotions.personEmotion.trust = Math.max(0, emotions.personEmotion.trust - negativity * 0.15);
+            
+            emotions.botEmotion.anger = Math.min(100, emotions.botEmotion.anger + angerIncrease * 0.2);
+            emotions.botEmotion.happiness = Math.max(0, emotions.botEmotion.happiness - angerIncrease * 0.15);
+            emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - negativity * 0.08);
+        } else if (sentiment > 30) {
+            // Positive sentiment - person is happy
+            const happyIncrease = sentiment * 0.3 * woundMod.positiveReduction;
+            emotions.personEmotion.happiness = Math.min(100, emotions.personEmotion.happiness + happyIncrease);
+            emotions.personEmotion.anger = Math.max(0, emotions.personEmotion.anger - happyIncrease * 0.3);
+            emotions.personEmotion.trust = Math.min(100, emotions.personEmotion.trust + happyIncrease * 0.2);
+            
+            emotions.botEmotion.happiness = Math.min(100, emotions.botEmotion.happiness + happyIncrease * 0.5);
+            
+            // Trust only improves if there are no active wounds
+            if (woundMod.trustPenalty < 10) {
+                emotions.botEmotion.trust = Math.min(100, emotions.botEmotion.trust + happyIncrease * 0.2);
+            }
+        } else {
+            // Neutral sentiment - slight decay toward baseline
+            const decayRate = 0.5;
+            emotions.personEmotion.anger = Math.max(0, emotions.personEmotion.anger - decayRate);
+            emotions.personEmotion.happiness = this.decayToward(emotions.personEmotion.happiness, 50, decayRate);
+            emotions.personEmotion.trust = this.decayToward(emotions.personEmotion.trust, 50, decayRate * 0.2);
+            emotions.botEmotion.anger = Math.max(0, emotions.botEmotion.anger - decayRate * 0.5);
+        }
+
+        // Apply trust penalty from wounds
+        emotions.botEmotion.trust = Math.max(0, emotions.botEmotion.trust - woundMod.trustPenalty * 0.1);
+
+        // Increase familiarity for non-hostile interactions
+        if (sentiment >= -20 && !aiEmotions.isInsult) {
+            const familiarityIncrease = Math.min(2, Math.max(0.5, 100 / (memory.relationship.totalMessages + 1)));
+            emotions.botEmotion.familiarity = Math.min(100, emotions.botEmotion.familiarity + familiarityIncrease);
+        } else if (aiEmotions.isInsult || sentiment < -50) {
+            // Severe negativity decreases familiarity
+            emotions.botEmotion.familiarity = Math.max(0, emotions.botEmotion.familiarity - 2);
+        }
+
+        emotions.lastEmotionUpdate = now;
+        memory.lastUpdated = now;
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[ConversationMemory] AI emotions updated for ${botId}_${playerId}:`, {
+                sentiment,
+                isInsult: aiEmotions.isInsult,
+                context: aiEmotions.context,
+                botEmotion: emotions.botEmotion,
+                personEmotion: emotions.personEmotion,
+            });
+        }
+    }
+
+    /**
+     * Create emotional wound from AI-detected insult
+     */
+    private createEmotionalWoundFromAI(memory: BotPlayerMemory, severity: number, context: string): void {
+        if (!memory.emotions.wounds) {
+            memory.emotions.wounds = [];
+        }
+
+        // Determine wound type from context
+        let woundType: EmotionalWound['type'] = 'insult';
+        if (context.includes('cruel') || context.includes('angry')) {
+            woundType = 'cruelty';
+        } else if (context.includes('abandon') || context.includes('leave')) {
+            woundType = 'abandonment';
+        } else if (context.includes('betray') || context.includes('lie')) {
+            woundType = 'betrayal';
+        }
+
+        const wound: EmotionalWound = {
+            type: woundType,
+            severity: Math.min(10, severity),
+            timestamp: Date.now(),
+            trigger: `AI-detected ${context} insult (severity: ${severity})`,
+            healed: 0,
+        };
+
+        memory.emotions.wounds.push(wound);
+        
+        this.addImportantEvent(memory, `emotional_wound_${woundType}`, 
+            `AI detected ${woundType} (severity: ${severity})`);
+
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[ConversationMemory] ⚠️ AI emotional wound created: ${woundType} (severity: ${severity})`);
+        }
     }
 
     /**

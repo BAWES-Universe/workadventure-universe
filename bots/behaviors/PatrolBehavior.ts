@@ -11,6 +11,7 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
+import { parseEmotionsFromResponse } from '../ai/EmotionParser';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
     type: 'patrol';
@@ -1295,10 +1296,16 @@ export class PatrolBehavior extends BaseBehavior {
                     // Calculate response time (use latency from metadata if available, otherwise calculate)
                     const responseTime = latency || (Date.now() - startTime);
                     
-                    // Process response through ResponseProcessor (for metrics and quality checks)
-                    let processedMessage = fullMessage;
+                    // Parse emotions from AI response (unified emotion system)
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let processedMessage = parsedResponse.cleanedResponse;
                     
-                    if (this.responseProcessor && fullMessage.trim()) {
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    if (this.responseProcessor && processedMessage.trim()) {
                         const chatInstructions = botConfig.chatInstructions || 'You are a helpful patrol bot.';
                         // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
                         const tokenUsage = tokensUsed > 0 ? {
@@ -1306,10 +1313,12 @@ export class PatrolBehavior extends BaseBehavior {
                             completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
                             total: tokensUsed
                         } : undefined;
+                        
+                        // Note: Emotions already parsed above, use processedMessage (cleaned response)
                         let processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
-                            fullMessage,
+                            processedMessage,
                             chatInstructions,
                             responseTime,
                             tokenUsage

@@ -20,7 +20,6 @@ import { ConversationStorage } from '../memory/ConversationStorage';
 import { ConversationCleanup } from '../memory/ConversationCleanup';
 import { AutoImprovement } from '../improvement/AutoImprovement';
 import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
-import { EmotionAnalyzer } from '../memory/EmotionAnalyzer';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 
 export interface BotInstance {
@@ -58,7 +57,6 @@ export class BotManager {
     private conversationAnalytics: ConversationAnalytics | null = null;
     private testRunner: BotTestRunner | null = null;
     private conversationReplay: ConversationReplay | null = null;
-    private emotionAnalyzer: EmotionAnalyzer | null = null;
     private autoPilot: AutoPilotImprovement | null = null;
     private isInitialized = false;
     private roomsWithBots: Map<string, RoomState> = new Map();
@@ -92,7 +90,7 @@ export class BotManager {
             });
             this.conversationMemory = persistentMemory;
             
-            // Initialize AI service first (needed for EmotionAnalyzer)
+            // Initialize AI service
             const adminApiUrl = process.env.ADMIN_API_URL || '';
             this.aiService = new AIService(
                 this.conversationMemory,
@@ -101,19 +99,12 @@ export class BotManager {
                 this.mapDataService
             );
             
-            // Initialize EmotionAnalyzer for AI-based emotion analysis
-            this.emotionAnalyzer = new EmotionAnalyzer(
-                persistentMemory,
-                this.aiService,
-                this.adminApiService
-            );
-            
-            // Set emotion analyzer in PersistentMemory so it can schedule analysis
-            persistentMemory.setEmotionAnalyzer(this.emotionAnalyzer);
+            // Note: Emotion analysis is now unified into the AI response itself
+            // The AI outputs emotion data with each response, eliminating the need for separate EmotionAnalyzer
             
             if (isDevelopment || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log('[BotManager] Using PersistentMemory (development mode with persistence)');
-                console.log('[BotManager] EmotionAnalyzer initialized for AI-based emotion analysis');
+                console.log('[BotManager] Unified AI emotion analysis enabled');
             }
         } else {
             // Fallback to in-memory only

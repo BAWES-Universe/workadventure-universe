@@ -5,12 +5,11 @@
  * - Immediate persistence on emotion changes
  * - Debounced saves for conversation history
  * - Track conversation purposes
- * - AI-driven emotion updates (via EmotionAnalyzer)
+ * - AI-driven emotion updates (unified in AI response, not separate EmotionAnalyzer)
  */
 
 import { ConversationMemory, type BotPlayerMemory, type EmotionalState } from './ConversationMemory';
 import { MemoryStorage } from './MemoryStorage';
-import type { EmotionAnalyzer } from './EmotionAnalyzer';
 
 export type ConversationPurpose = 'navigation' | 'information' | 'social' | 'support' | 'entertainment' | 'unknown';
 
@@ -29,7 +28,6 @@ export class PersistentMemory extends ConversationMemory {
     private debounceInterval: number;
     private immediateSaveEnabled: boolean;
     private pendingSaves: Map<string, BotPlayerMemory> = new Map(); // key: "botId_playerId"
-    private emotionAnalyzer: EmotionAnalyzer | null = null;
     // UUID tracking - map "botId_playerId" to { userUuid, isLogged }
     private uuidTracking: Map<string, { userUuid: string; isLogged: boolean }> = new Map();
     // Temporary storage for loaded memories (keyed by userUuid) - restored when user joins
@@ -49,13 +47,6 @@ export class PersistentMemory extends ConversationMemory {
             saveInterval: 5 * 60 * 1000, // 5 minutes (not used for debounced saves)
             maxRetries: 3,
         });
-    }
-
-    /**
-     * Set emotion analyzer (called by BotManager)
-     */
-    setEmotionAnalyzer(emotionAnalyzer: EmotionAnalyzer): void {
-        this.emotionAnalyzer = emotionAnalyzer;
     }
 
     /**
@@ -207,10 +198,8 @@ export class PersistentMemory extends ConversationMemory {
             this.saveMemoryImmediately(botId, updatedMemory);
         }
 
-        // Schedule AI analysis (runs 10s after last message, debounced)
-        if (this.emotionAnalyzer && sender === 'person') {
-            this.emotionAnalyzer.scheduleAnalysis(botId, playerId);
-        }
+        // Note: AI emotion analysis is now unified into the AI response itself
+        // The AI outputs emotion data with each response, eliminating the need for separate analysis scheduling
 
         // Schedule debounced save for conversation history
         this.scheduleDebouncedSave(botId, playerId);

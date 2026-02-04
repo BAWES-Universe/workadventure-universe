@@ -20,14 +20,14 @@ The conversation memory system allows bots to maintain persistent memory of past
 - **Conversation Purpose Tracking**: Tracks conversation purposes (navigation, information, social, support, entertainment)
 - **Automatic Memory Loading**: Loads memories from Admin API on bot startup
 
-### EmotionAnalyzer
+### Unified AI Emotion Analysis
 
-**EmotionAnalyzer** (`bots/memory/EmotionAnalyzer.ts`) provides:
+Emotion analysis is now unified into the AI response generation itself. See [EMOTION_ANALYSIS.md](./EMOTION_ANALYSIS.md) for details.
 
-- **AI-Driven Emotion Analysis**: Uses AI to analyze conversations and verify emotions match actual conversation tone
-- **Background Emotion Updates**: Updates emotions in the background after conversations
-- **Debounced Analysis**: Analyzes emotions 10 seconds after the last message to avoid excessive AI calls
-- **Heuristic Fallback**: Uses keyword-based analysis when AI is not available
+Key points:
+- **Zero Extra Latency**: Emotions are analyzed in the same AI call that generates the response
+- **Higher Accuracy**: AI understands context, sarcasm, and nuance
+- **Emotional Wounds**: Severe insults create persistent wounds that affect future interactions
 
 ### Conversation Storage
 

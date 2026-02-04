@@ -21,6 +21,14 @@ export interface TestCase {
         minResponseLength?: number; // Minimum response length in characters
         maxRepetitionScore?: number; // Maximum allowed repetition score (0-1)
     };
+    expectedEmotions?: {
+        // Expected emotion values detected from input
+        personSentimentMin?: number; // Minimum expected sentiment (-100 to 100)
+        personSentimentMax?: number; // Maximum expected sentiment (-100 to 100)
+        isInsult?: boolean; // Expected insult detection
+        insultSeverityMin?: number; // Minimum expected insult severity (0-10)
+        context?: string; // Expected context (sarcastic, joking, etc.)
+    };
     metadata?: Record<string, any>;
 }
 
@@ -36,6 +44,13 @@ export interface TestResult {
         repetitionScore?: number;
         systemPromptLeakage?: boolean;
         personalityCompliance?: number;
+    };
+    // AI-detected emotions from the response
+    emotions?: {
+        personSentiment: number;
+        isInsult: boolean;
+        insultSeverity: number;
+        context: string;
     };
     timestamp: number;
 }
