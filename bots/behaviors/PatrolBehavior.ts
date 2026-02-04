@@ -1364,20 +1364,28 @@ export class PatrolBehavior extends BaseBehavior {
                                     if (chunk.done) break;
                                 }
                                 
+                                // Parse emotions from regenerated response
+                                const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
+                                
+                                // Update emotions from regenerated response
+                                if (regeneratedParsed.emotions && this.conversationMemory) {
+                                    this.conversationMemory.updateEmotionsFromAI(botId, playerId, regeneratedParsed.emotions);
+                                }
+                                
                                 // Process the regenerated response
-                                if (regeneratedMessage.trim() && this.responseProcessor) {
+                                if (regeneratedParsed.cleanedResponse.trim() && this.responseProcessor) {
                                     // Use the same responseTime and tokenUsage from the original response
                                     const reprocessed = this.responseProcessor.processResponse(
                                         botId,
                                         playerId,
-                                        regeneratedMessage,
+                                        regeneratedParsed.cleanedResponse,
                                         chatInstructions,
                                         responseTime, // Use original response time
                                         tokenUsage    // Use original token usage
                                     );
                                     processedMessage = reprocessed.cleaned;
                                     currentRepetitionScore = reprocessed.metrics.repetitionScore;
-                                    currentMessage = regeneratedMessage;
+                                    currentMessage = regeneratedParsed.cleanedResponse;
                                     processed = reprocessed; // Update processed for next iteration check
                                     
                                     if (currentRepetitionScore < 1.0) {

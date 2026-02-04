@@ -154,6 +154,10 @@ export class ResponseProcessor {
         // Remove "I could say something like" reasoning
         cleaned = cleaned.replace(/I could say something like[\s\S]*?(?:I'll go with|sounds good)/gi, '');
         
+        // Remove emotion update blocks (unified AI emotion system)
+        // CRITICAL: Remove these BEFORE any other processing to prevent leakage
+        cleaned = cleaned.replace(/\[EMOTION_UPDATE\]\s*[\s\S]*?\[\/EMOTION_UPDATE\]/gi, '');
+        
         // Remove reasoning tags - handle all variations
         // CRITICAL: Remove these BEFORE any other processing to prevent leakage
         // Handle complete tags first (most common) - use non-greedy matching

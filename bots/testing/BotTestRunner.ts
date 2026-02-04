@@ -268,11 +268,19 @@ export class BotTestRunner {
                         if (chunk.done) break;
                     }
                     
-                    if (regeneratedMessage.trim()) {
+                    // Parse emotions from regenerated response
+                    const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
+                    
+                    // Update emotions from regenerated response
+                    if (regeneratedParsed.emotions) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, testPlayerId, regeneratedParsed.emotions);
+                    }
+                    
+                    if (regeneratedParsed.cleanedResponse.trim()) {
                         processed = this.responseProcessor.processResponse(
                             botId,
                             testPlayerId,
-                            regeneratedMessage,
+                            regeneratedParsed.cleanedResponse,
                             chatInstructions,
                             responseTime,
                             undefined
@@ -280,7 +288,7 @@ export class BotTestRunner {
                         cleanedResponse = processed.cleaned;
                         repetitionScore = processed.metrics.repetitionScore;
                         systemPromptLeakage = processed.metrics.systemPromptLeakage;
-                        fullMessage = regeneratedMessage; // Update for next iteration check
+                        fullMessage = regeneratedParsed.cleanedResponse; // Update for next iteration check
                     } else {
                         break; // Can't regenerate, exit loop
                     }
