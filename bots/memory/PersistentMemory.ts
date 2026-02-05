@@ -248,6 +248,33 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
+     * Override updateEmotionsFromAI to ensure AI emotion updates are saved immediately
+     */
+    updateEmotionsFromAI(
+        botId: string,
+        playerId: number,
+        aiEmotions: {
+            personSentiment: number;      // -100 to 100
+            isInsult: boolean;
+            insultSeverity: number;       // 1-10 or 0
+            context: string;              // sarcastic, joking, sincere, frustrated, angry, neutral
+        }
+    ): void {
+        // Call parent implementation (updates emotions in memory)
+        super.updateEmotionsFromAI(botId, playerId, aiEmotions);
+        
+        // Get updated memory and save immediately
+        const memory = this.getMemory(botId, playerId);
+        if (memory && this.immediateSaveEnabled) {
+            this.saveMemoryImmediately(botId, memory).catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[PersistentMemory] Error saving AI emotions immediately:', error);
+                }
+            });
+        }
+    }
+
+    /**
      * Set conversation purpose
      */
     setConversationPurpose(

@@ -69,10 +69,10 @@ export class BotManager {
         this.botRegistry = botRegistry;
         this.mapDataService = new MapDataService();
         
-        // Initialize conversation memory - use PersistentMemory in development for testing
+        // Initialize conversation memory - use PersistentMemory when Admin API is configured (both dev and production)
         const isDevelopment = process.env.NODE_ENV === 'development';
-        if (isDevelopment && adminApiService.isConfigured()) {
-            // Use PersistentMemory with MemoryStorage for persistence
+        if (adminApiService.isConfigured()) {
+            // Use PersistentMemory with MemoryStorage for persistence (works in both dev and production)
             const memoryStorage = new MemoryStorage({
                 adminApiUrl: process.env.ADMIN_API_URL,
                 adminApiToken: process.env.ADMIN_API_TOKEN,
@@ -103,13 +103,13 @@ export class BotManager {
             // The AI outputs emotion data with each response, eliminating the need for separate EmotionAnalyzer
             
             if (isDevelopment || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log('[BotManager] Using PersistentMemory (development mode with persistence)');
+                console.log('[BotManager] Using PersistentMemory (with persistence enabled)');
                 console.log('[BotManager] Unified AI emotion analysis enabled');
             }
         } else {
-            // Fallback to in-memory only
+            // Fallback to in-memory only (Admin API not configured)
             this.conversationMemory = new ConversationMemory(50, 1000);
-            if (isDevelopment) {
+            if (isDevelopment || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log('[BotManager] Using ConversationMemory (Admin API not configured)');
             }
         }
