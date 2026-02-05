@@ -925,11 +925,32 @@ export class PatrolBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    if (fullMessage.trim()) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, followerPlayer.userId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            followerPlayer.userId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
+                    if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -1009,11 +1030,32 @@ export class PatrolBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    if (fullMessage.trim()) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, followerPlayer.userId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            followerPlayer.userId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
+                    if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -1076,12 +1118,33 @@ export class PatrolBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
                     // Send response
-                    if (fullMessage.trim()) {
+                    if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName) {
-                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     }
                     // After greeting, send goodbye message and return
@@ -1144,12 +1207,33 @@ export class PatrolBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
                     // Send response
-                    if (fullMessage.trim()) {
+                    if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName) {
-                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;
@@ -1504,10 +1588,31 @@ export class PatrolBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    if (fullMessage.trim()) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
+                    if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;

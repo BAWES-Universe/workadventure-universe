@@ -687,15 +687,36 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    if (fullMessage.trim()) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
+                    if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                             // Store bot's message in conversation storage
                             if (this.conversationStorage) {
                                 const userUuid = this.userIdToUuid.get(playerId);
                                 if (userUuid) {
-                                    this.conversationStorage.addMessage(botId, userUuid, fullMessage.trim(), 'bot').catch(error => {
+                                    this.conversationStorage.addMessage(botId, userUuid, cleanedMessage.trim(), 'bot').catch(error => {
                                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                             console.error('[IdleBehavior] Error adding bot message to conversation storage:', error);
                                         }
@@ -764,12 +785,33 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
                     // Send response
-                    if (fullMessage.trim()) {
+                    if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     }
                     // After greeting, send goodbye message and return
@@ -860,12 +902,34 @@ export class IdleBehavior extends BaseBehavior {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendAreaArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
                     }
-                    if (fullMessage.trim()) {
+                    
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, followerUserId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            followerUserId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
+                    if (cleanedMessage.trim()) {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[IdleBehavior] sendAreaArrivalMessage: Sending message to space: "${fullMessage.trim()}"`);
+                            console.log(`[IdleBehavior] sendAreaArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
                         }
-                        this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                        this.conversationMemory.addMessage(botId, followerUserId, fullMessage.trim(), 'bot', spaceName);
+                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.warn(`[IdleBehavior] sendAreaArrivalMessage: Generated message is empty`);
@@ -965,12 +1029,34 @@ export class IdleBehavior extends BaseBehavior {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendPersonArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
                     }
-                    if (fullMessage.trim()) {
+                    
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, followerUserId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            followerUserId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
+                    if (cleanedMessage.trim()) {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message to space: "${fullMessage.trim()}"`);
+                            console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
                         }
-                        this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                        this.conversationMemory.addMessage(botId, followerUserId, fullMessage.trim(), 'bot', spaceName);
+                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.warn(`[IdleBehavior] sendPersonArrivalMessage: Generated message is empty`);
@@ -1041,12 +1127,33 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
                     // Send response
-                    if (fullMessage.trim()) {
+                    if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot.sendChatMessage(spaceName, fullMessage.trim());
+                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;
