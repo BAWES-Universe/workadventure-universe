@@ -184,6 +184,28 @@ export class WebRTCCommunicationStrategy implements ICommunicationStrategy {
     }
 
     private shouldEstablishConnection(user1: SpaceUser, user2: SpaceUser): boolean {
+        // Skip WebRTC for bots - they only do text chat
+        // Check both tags and uuid prefix (bot uuids start with "bot-")
+        const user1IsBot = user1.tags?.includes("bot") || user1.uuid?.startsWith("bot-") || false;
+        const user2IsBot = user2.tags?.includes("bot") || user2.uuid?.startsWith("bot-") || false;
+
+        if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+            console.log(
+                `[WebRTC] shouldEstablishConnection: user1=${user1.name} uuid=${user1.uuid} tags=[${user1.tags?.join(
+                    ","
+                )}] isBot=${user1IsBot}, user2=${user2.name} uuid=${user2.uuid} tags=[${user2.tags?.join(
+                    ","
+                )}] isBot=${user2IsBot}`
+            );
+        }
+
+        if (user1IsBot || user2IsBot) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.log(`[WebRTC] Skipping connection - bot detected`);
+            }
+            return false;
+        }
+
         const hasExisting = this.hasExistingConnection(user1.spaceUserId, user2.spaceUserId);
         // Only establish if we need media connection AND don't already have one
         return !hasExisting;

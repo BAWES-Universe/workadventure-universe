@@ -11,6 +11,7 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
+import { parseEmotionsFromResponse } from '../ai/EmotionParser';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
     type: 'patrol';
@@ -31,7 +32,7 @@ export class PatrolBehavior extends BaseBehavior {
     private targetWaypoint: PositionInterface | null = null;
     private currentSpaceName: string | null = null;
     private spaceLeftTime: number = 0;
-    private conversationMemory: ConversationMemory;
+    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
     private readonly RESUME_DELAY = 500;
     private lastPathfindingLog: number = 0; // Rate limit pathfinding logs
     private lastMoveAttemptLog: number = 0; // Rate limit move attempt logs
@@ -42,11 +43,24 @@ export class PatrolBehavior extends BaseBehavior {
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
-        this.conversationMemory = new ConversationMemory(
-            config.conversationHistorySize || 50,
-            1000 // Max 1000 player memories per bot
-        );
+        // ConversationMemory will be set by BotManager via setConversationMemory
         this.updateTargetWaypoint();
+    }
+    
+    /**
+     * Set conversation memory (called by BotManager to share the persistent memory instance)
+     */
+    setConversationMemory(memory: ConversationMemory): void {
+        this.conversationMemory = memory;
+    }
+    
+    /**
+     * Set user UUID in conversation memory (called from BaseBehavior when user joins space)
+     */
+    protected setUserUuidInMemory(botId: string, userId: number, userUuid: string, isLogged: boolean): void {
+        if (this.conversationMemory && 'setUserUuid' in this.conversationMemory) {
+            (this.conversationMemory as any).setUserUuid(botId, userId, userUuid, isLogged);
+        }
     }
 
     update(deltaTime: number): void {
@@ -889,7 +903,7 @@ export class PatrolBehavior extends BaseBehavior {
         
         try {
             // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -915,7 +929,7 @@ export class PatrolBehavior extends BaseBehavior {
                         // Send message to space - all followers in the space will receive it
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -973,7 +987,7 @@ export class PatrolBehavior extends BaseBehavior {
         
         try {
             // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -999,7 +1013,7 @@ export class PatrolBehavior extends BaseBehavior {
                         // Send message to space - all followers in the space will receive it
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -1034,7 +1048,7 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         // Get conversation context
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
         
@@ -1067,7 +1081,7 @@ export class PatrolBehavior extends BaseBehavior {
                         if (this.bot && this.currentSpaceName === spaceName) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     // After greeting, send goodbye message and return
@@ -1103,7 +1117,7 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         // Get conversation context (includes memory, emotions, relationship history)
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
@@ -1135,7 +1149,7 @@ export class PatrolBehavior extends BaseBehavior {
                         if (this.bot && this.currentSpaceName === spaceName) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;
@@ -1160,6 +1174,48 @@ export class PatrolBehavior extends BaseBehavior {
         if (config.respondToPlayers === false) {
             return;
         }
+
+        // Start conversation in memory if needed
+        this.conversationMemory?.startConversation(botId, senderId);
+        
+        // Get user info from bot's player map
+        const playerInfo = this.bot.getPlayerInfo(senderId);
+        const userName = playerInfo?.name;
+        
+        // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
+        const userUuid = this.userIdToUuid.get(senderId);
+        if (!userUuid) {
+            console.warn(`[PatrolBehavior] UUID not found for user ${senderId} (${userName}). This should not happen if InitSpaceUsersMessage is working correctly.`);
+            // Don't proceed without UUID - conversation cannot be stored correctly
+            return;
+        }
+        
+        // Get authentication status (for isGuest determination)
+        const isLogged = this.userIdToIsLogged.get(senderId) ?? false;
+        
+        // Start conversation in storage (if available) - userUuid is REQUIRED
+        if (this.conversationStorage) {
+            this.conversationStorage.startConversation(botId, userUuid, {
+                name: userName,
+                uuid: userUuid,
+                isLogged: isLogged,
+            });
+        }
+        
+        // Store player's message in memory
+        this.conversationMemory?.addMessage(botId, senderId, message, 'person', spaceName);
+        
+        // Store player's message in conversation storage
+        if (this.conversationStorage) {
+            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[PatrolBehavior] Error adding person message to conversation storage:', error);
+                }
+            });
+        }
+        
+        // Extract personal information from message
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, message);
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);
@@ -1198,10 +1254,13 @@ export class PatrolBehavior extends BaseBehavior {
         }
 
         // Get conversation context (includes memory, emotions, relationship history)
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate streaming response
         let fullMessage = '';
+        const startTime = Date.now(); // Track response time BEFORE streaming starts
+        let tokensUsed = 0;
+        let latency = 0;
         
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -1219,15 +1278,182 @@ export class PatrolBehavior extends BaseBehavior {
                     fullMessage += chunk.content;
                 }
                 
+                // Extract token usage and latency from chunk metadata
+                if (chunk.tokensUsed) {
+                    tokensUsed = chunk.tokensUsed;
+                }
+                if (chunk.metadata?.tokensUsed) {
+                    tokensUsed = chunk.metadata.tokensUsed;
+                }
+                if (chunk.metadata?.latency) {
+                    latency = chunk.metadata.latency;
+                }
+                
                 if (chunk.done) {
                     // Stop typing indicator
                     this.bot.stopTyping(spaceName);
                     
-                    // Send complete message
-                    if (fullMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, fullMessage);
+                    // Calculate response time (use latency from metadata if available, otherwise calculate)
+                    const responseTime = latency || (Date.now() - startTime);
+                    
+                    // Parse emotions from AI response (unified emotion system)
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let processedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    if (this.responseProcessor && processedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful patrol bot.';
+                        // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
+                        const tokenUsage = tokensUsed > 0 ? {
+                            prompt: chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7),
+                            completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
+                            total: tokensUsed
+                        } : undefined;
+                        
+                        // Note: Emotions already parsed above, use processedMessage (cleaned response)
+                        let processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            processedMessage,
+                            chatInstructions,
+                            responseTime,
+                            tokenUsage
+                        );
+                        processedMessage = processed.cleaned;
+                        
+                        // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
+                        // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
+                        let regenerationAttempts = 0;
+                        const maxRegenerationAttempts = 3;
+                        const repetitionThreshold = 0.85; // Block at 85% similarity, not just exact duplicates
+                        let currentRepetitionScore = processed.metrics.repetitionScore;
+                        let currentMessage = fullMessage;
+                        
+                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
+                            regenerationAttempts++;
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[PatrolBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
+                            }
+                            
+                            // BLOCK the duplicate - don't send it
+                            // Instead, generate a new response with explicit anti-repetition instruction
+                            const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
+                            const antiRepetitionPrompt = `${chatInstructions}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
+                            
+                            // Regenerate with anti-repetition prompt
+                            let regeneratedMessage = '';
+                            try {
+                                for await (const chunk of this.aiService.generateBotResponseStream(
+                                    botId,
+                                    playerId,
+                                    playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response - attempt ${regenerationAttempts}]`,
+                                    antiRepetitionPrompt,
+                                    botConfig.aiProviderRef,
+                                    spaceName,
+                                    context,
+                                    this.bot,
+                                    this.adminApiService
+                                )) {
+                                    if (chunk.content) {
+                                        regeneratedMessage += chunk.content;
+                                    }
+                                    if (chunk.done) break;
+                                }
+                                
+                                // Parse emotions from regenerated response
+                                const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
+                                
+                                // Update emotions from regenerated response
+                                if (regeneratedParsed.emotions && this.conversationMemory) {
+                                    this.conversationMemory.updateEmotionsFromAI(botId, playerId, regeneratedParsed.emotions);
+                                }
+                                
+                                // Process the regenerated response
+                                if (regeneratedParsed.cleanedResponse.trim() && this.responseProcessor) {
+                                    // Use the same responseTime and tokenUsage from the original response
+                                    const reprocessed = this.responseProcessor.processResponse(
+                                        botId,
+                                        playerId,
+                                        regeneratedParsed.cleanedResponse,
+                                        chatInstructions,
+                                        responseTime, // Use original response time
+                                        tokenUsage    // Use original token usage
+                                    );
+                                    processedMessage = reprocessed.cleaned;
+                                    currentRepetitionScore = reprocessed.metrics.repetitionScore;
+                                    currentMessage = regeneratedParsed.cleanedResponse;
+                                    processed = reprocessed; // Update processed for next iteration check
+                                    
+                                    if (currentRepetitionScore < 1.0) {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.log(`[PatrolBehavior] ✅ Regenerated response after blocking duplicate (attempt ${regenerationAttempts})`);
+                                        }
+                                    }
+                                } else {
+                                    // Fallback if regeneration fails - don't break, try again
+                                    continue;
+                                }
+                            } catch (error) {
+                                console.error(`[PatrolBehavior] Error regenerating response after duplicate:`, error);
+                                // Don't break, try again if attempts remaining
+                                continue;
+                            }
+                        }
+                        
+                        // If still too similar after max attempts, use a varied fallback
+                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
+                            console.warn(`[PatrolBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
+                            // Use varied fallbacks to avoid repetition loop
+                            const fallbacks = [
+                                "Hmm, let me approach this differently.",
+                                "Interesting point. Let me think...",
+                                "That's something to consider.",
+                                "I hear you.",
+                                "Alright then.",
+                                "Fair enough.",
+                                "I see what you mean.",
+                                "Got it.",
+                            ];
+                            processedMessage = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+                            // Clear recent responses to break the repetition cycle
+                            if (this.responseProcessor) {
+                                this.responseProcessor.clearRecentResponses(botId, playerId);
+                            }
+                        }
+                        
+                        if (processed.metrics.repetitionScore > 0.8 && processed.metrics.repetitionScore < 1.0) {
+                            // High repetition (but not exact duplicate) - warn but allow
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[PatrolBehavior] ⚠️ High repetition detected (${(processed.metrics.repetitionScore * 100).toFixed(1)}%) for bot ${botId}, player ${playerId}`);
+                            }
+                        }
+                    }
+                    
+                    // Metrics are now recorded in ResponseProcessor (combined into one record)
+                    // No need to record separately here - prevents duplicate metrics
+                    
+                    // Send processed message
+                    if (processedMessage.trim()) {
+                        this.bot.sendChatMessage(spaceName, processedMessage);
                         // Store bot's message in memory
-                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
+                        }
+                        // Store in conversation storage
+                        if (this.conversationStorage) {
+                            const userUuid = this.userIdToUuid.get(playerId);
+                            if (userUuid) {
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot').catch(error => {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error('[PatrolBehavior] Error adding bot message to conversation storage:', error);
+                                    }
+                                });
+                            }
+                        }
                     }
                     break;
                 }
@@ -1255,7 +1481,7 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
@@ -1281,7 +1507,7 @@ export class PatrolBehavior extends BaseBehavior {
                     if (fullMessage.trim()) {
                         if (this.bot) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;

@@ -589,6 +589,224 @@ export class AdminApiService {
     }
 
     /**
+     * Save bot metrics to Admin API
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     * Fire-and-forget (doesn't throw errors)
+     */
+    async saveBotMetrics(metrics: Array<{
+        botId: string;
+        timestamp: number;
+        metrics: {
+            responseTime?: number;
+            tokenUsage?: {
+                prompt: number;
+                completion: number;
+                total: number;
+            };
+            repetitionScore?: number;
+            systemPromptLeakage?: boolean;
+            personalityCompliance?: number;
+            conversationQuality?: number;
+            errorCount?: number;
+        };
+        metadata?: Record<string, any>;
+    }>): Promise<void> {
+        if (!this.isConfigured()) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] Admin API not configured, skipping metrics save');
+            }
+            return;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, skipping metrics save');
+            return;
+        }
+
+        try {
+            // Filter out test metrics one more time (defense in depth)
+            const realMetrics = metrics.filter(metric => {
+                const playerId = metric.metadata?.playerId;
+                return playerId !== 999999 && playerId !== '999999';
+            });
+
+            if (realMetrics.length === 0) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AdminApiService] Skipped saving ${metrics.length} test metrics`);
+                }
+                return; // No real metrics to save
+            }
+
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/metrics`,
+                { metrics: realMetrics },
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                const filteredCount = metrics.length - realMetrics.length;
+                if (filteredCount > 0) {
+                    console.log(`[AdminApiService] Saved ${realMetrics.length} metrics (filtered ${filteredCount} test metrics)`);
+                } else {
+                    console.log(`[AdminApiService] Saved ${realMetrics.length} metrics`);
+                }
+            }
+        } catch (error: any) {
+            // Fire-and-forget: don't throw, just log
+            console.error('[AdminApiService] Error saving bot metrics:', error);
+            if (error.response) {
+                console.error('[AdminApiService] Error response status:', error.response.status);
+                console.error('[AdminApiService] Error response data:', error.response.data);
+            }
+        }
+    }
+
+    /**
+     * Save test results to Admin API
+     * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
+     * Fire-and-forget (doesn't throw errors)
+     */
+    async saveTestResults(testResult: {
+        testId: string;
+        botId: string;
+        testSuite: string;
+        results: any;
+        passed: boolean;
+        summary?: {
+            total: number;
+            passed: number;
+            failed: number;
+            skipped: number;
+        };
+        startedAt?: number;
+        completedAt?: number;
+        duration?: number;
+    }): Promise<void> {
+        // Check only adminApiUrl (not adminApiToken - test results use BOT_SERVICE_TOKEN)
+        if (!this.adminApiUrl) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] Admin API URL not configured, skipping test results save');
+            }
+            return;
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, skipping test results save');
+            }
+            return;
+        }
+
+        try {
+            await axios.post(
+                `${this.adminApiUrl}/api/bots/test/results`,
+                testResult,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                }
+            );
+
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[AdminApiService] Saved test result: ${testResult.testId}`);
+            }
+        } catch (error: any) {
+            // Fire-and-forget: don't throw, just log
+            console.error('[AdminApiService] Error saving test results:', error);
+            if (error.response) {
+                console.error('[AdminApiService] Error response status:', error.response.status);
+                console.error('[AdminApiService] Error response data:', error.response.data);
+            }
+        }
+    }
+
+    /**
+     * @deprecated This method is no longer used - improvements endpoint was removed
+     * Task files in bots/improvement-tasks/ are now the source of truth
+     * This method is kept for backward compatibility but does nothing
+     */
+    async saveImprovement(improvement: {
+        botId: string;
+        improvementType: string;
+        changes: any;
+        metricsBefore?: any;
+        metricsAfter?: any;
+        deployed?: boolean;
+        recommendations?: any[];
+        testRunId?: string;
+    }): Promise<void> {
+        // No-op: Improvements endpoint was removed, task files are now the source of truth
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[AdminApiService] saveImprovement called but ignored (endpoint removed, using task files instead)`);
+        }
+        return;
+    }
+
+    /**
+     * Get bot metrics from Admin API
+     */
+    async getBotMetrics(botId: string, query?: {
+        metricType?: string;
+        startTime?: number;
+        endTime?: number;
+        limit?: number;
+        offset?: number;
+    }): Promise<Array<{
+        botId: string;
+        timestamp: number;
+        metrics: Record<string, any>;
+        metadata?: Record<string, any>;
+    }>> {
+        if (!this.isConfigured()) {
+            return [];
+        }
+
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!botServiceToken) {
+            console.warn('[AdminApiService] BOT_SERVICE_TOKEN not set, cannot get metrics');
+            return [];
+        }
+
+        try {
+            const params: Record<string, any> = { botId };
+            if (query) {
+                if (query.metricType) params.metricType = query.metricType;
+                if (query.startTime) params.startTime = query.startTime;
+                if (query.endTime) params.endTime = query.endTime;
+                if (query.limit) params.limit = query.limit;
+                if (query.offset) params.offset = query.offset;
+            }
+
+            const response = await axios.get(
+                `${this.adminApiUrl}/api/bots/${botId}/metrics`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${botServiceToken}`,
+                    },
+                    params,
+                }
+            );
+
+            return response.data || [];
+        } catch (error: any) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                return [];
+            }
+            console.error('[AdminApiService] Error getting bot metrics:', error);
+            return [];
+        }
+    }
+
+    /**
      * Get room metadata (universe, world, room names)
      * Calls the Admin API's /api/room/info endpoint or extracts from URL
      * Results are cached for 5 minutes to improve performance

@@ -9,6 +9,39 @@ The conversation memory system allows bots to maintain persistent memory of past
 - **Personal Information**: Birthday, name, preferences, facts mentioned by player
 - **Relationship Context**: How they met, important events, conversation statistics
 
+## Enhanced Features (New)
+
+### PersistentMemory
+
+**PersistentMemory** (`bots/memory/PersistentMemory.ts`) extends `ConversationMemory` with:
+
+- **Immediate Emotion Persistence**: Emotion changes are saved immediately to Admin API
+- **Debounced Conversation History Saves**: Conversation history is saved with a 30-second debounce to reduce API calls
+- **Conversation Purpose Tracking**: Tracks conversation purposes (navigation, information, social, support, entertainment)
+- **Automatic Memory Loading**: Loads memories from Admin API on bot startup
+
+### Unified AI Emotion Analysis
+
+Emotion analysis is now unified into the AI response generation itself. See [EMOTION_ANALYSIS.md](./EMOTION_ANALYSIS.md) for details.
+
+Key points:
+- **Zero Extra Latency**: Emotions are analyzed in the same AI call that generates the response
+- **Higher Accuracy**: AI understands context, sarcasm, and nuance
+- **Emotional Wounds**: Severe insults create persistent wounds that affect future interactions
+
+### Conversation Storage
+
+**ConversationStorage** (`bots/memory/ConversationStorage.ts`) provides:
+
+- **Production Conversation Viewing**: Stores recent conversations for admin viewing
+- **Manual Cleanup Only**: No automatic cleanup - admins control data retention
+- **Query Support**: Query conversations by bot, player, date range
+
+**ConversationCleanup** (`bots/memory/ConversationCleanup.ts`) provides:
+
+- **Manual Cleanup Methods**: Cleanup old conversations, keep only last N conversations
+- **Admin-Controlled**: All cleanup operations require admin API calls
+
 ## Key Features
 
 ### Per-Bot, Per-Player Memory

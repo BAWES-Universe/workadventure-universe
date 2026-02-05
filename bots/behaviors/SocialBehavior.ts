@@ -9,6 +9,7 @@ import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
 import { movementLogger } from '../utils/MovementLogger';
 import { BotClient } from '../client/BotClient';
+import { parseEmotionsFromResponse } from '../ai/EmotionParser';
 
 export interface SocialBehaviorConfig extends BehaviorConfig {
     type: 'social';
@@ -42,15 +43,28 @@ export class SocialBehavior extends BaseBehavior {
     private lastWanderFailure: number = 0; // Track when pathfinding failed
     private wanderInProgress: boolean = false; // Prevent multiple concurrent calls
     private readonly WANDER_FAILURE_COOLDOWN = 2000; // 2 seconds before retrying after failure
-    private conversationMemory: ConversationMemory;
+    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
     private currentSpaceName: string | null = null; // Track current space to prevent wandering
 
     constructor(config: SocialBehaviorConfig) {
         super(config);
-        this.conversationMemory = new ConversationMemory(
-            config.conversationHistorySize || 50,
-            1000 // Max 1000 player memories per bot
-        );
+        // ConversationMemory will be set by BotManager via setConversationMemory
+    }
+    
+    /**
+     * Set conversation memory (called by BotManager to share the persistent memory instance)
+     */
+    setConversationMemory(memory: ConversationMemory): void {
+        this.conversationMemory = memory;
+    }
+    
+    /**
+     * Set user UUID in conversation memory (called from BaseBehavior when user joins space)
+     */
+    protected setUserUuidInMemory(botId: string, userId: number, userUuid: string, isLogged: boolean): void {
+        if (this.conversationMemory && 'setUserUuid' in this.conversationMemory) {
+            (this.conversationMemory as any).setUserUuid(botId, userId, userUuid, isLogged);
+        }
     }
 
     update(deltaTime: number): void {
@@ -300,7 +314,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.justCompletedLeading = null;
                 
                 // Start conversation in memory
-                this.conversationMemory.startConversation(botId, targetPersonId);
+                this.conversationMemory?.startConversation(botId, targetPersonId);
                 
                 // Start conversation
                 this.activeConversations.set(targetPersonId, {
@@ -330,7 +344,7 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             // Start conversation in memory
-            this.conversationMemory.startConversation(botId, this.targetPlayerId);
+            this.conversationMemory?.startConversation(botId, this.targetPlayerId);
 
             // Start conversation
             this.activeConversations.set(this.targetPlayerId, {
@@ -443,7 +457,7 @@ export class SocialBehavior extends BaseBehavior {
             try {
                 this.bot.sendChatMessage(spaceName, greeting);
                 // Record bot's message in memory
-                this.conversationMemory.addMessage(botId, playerId, greeting, 'bot', spaceName);
+                this.conversationMemory?.addMessage(botId, playerId, greeting, 'bot', spaceName);
             } catch (error) {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.warn(`[SocialBehavior] Error sending greeting (attempt ${attempt + 1}), will retry:`, error);
@@ -477,7 +491,7 @@ export class SocialBehavior extends BaseBehavior {
         const currentTime = Date.now();
         
         // Start conversation in memory (this creates memory if it doesn't exist)
-        this.conversationMemory.startConversation(botId, playerId);
+        this.conversationMemory?.startConversation(botId, playerId);
         
         // Start conversation tracking
         this.activeConversations.set(playerId, {
@@ -622,11 +636,44 @@ export class SocialBehavior extends BaseBehavior {
         
         conversation.lastMessageTime = Date.now();
         
+        // Get user info from bot's player map
+        const playerInfo = this.bot.getPlayerInfo(senderId);
+        const userName = playerInfo?.name;
+        
+        // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
+        const userUuid = this.userIdToUuid.get(senderId);
+        if (!userUuid) {
+            console.warn(`[SocialBehavior] UUID not found for user ${senderId} (${userName}). This should not happen if InitSpaceUsersMessage is working correctly.`);
+            // Don't proceed without UUID - conversation cannot be stored correctly
+            return;
+        }
+        
+        // Get authentication status (for isGuest determination)
+        const isLogged = this.userIdToIsLogged.get(senderId) ?? false;
+        
+        // Start conversation in storage (if available) - userUuid is REQUIRED
+        if (this.conversationStorage) {
+            this.conversationStorage.startConversation(botId, userUuid, {
+                name: userName,
+                uuid: userUuid,
+                isLogged: isLogged,
+            });
+        }
+        
         // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
+        this.conversationMemory?.addMessage(botId, senderId, message, 'person', spaceName);
+        
+        // Store player's message in conversation storage
+        if (this.conversationStorage) {
+            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[SocialBehavior] Error adding person message to conversation storage:', error);
+                }
+            });
+        }
         
         // Extract personal information from message
-        this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, message);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);
@@ -683,10 +730,13 @@ export class SocialBehavior extends BaseBehavior {
         });
 
         // Get conversation context
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate streaming response
         let fullMessage = '';
+        const startTime = Date.now(); // Track response time BEFORE streaming starts
+        let tokensUsed = 0;
+        let latency = 0;
         
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -704,16 +754,182 @@ export class SocialBehavior extends BaseBehavior {
                     fullMessage += chunk.content;
                 }
                 
+                // Extract token usage and latency from chunk metadata
+                if (chunk.tokensUsed) {
+                    tokensUsed = chunk.tokensUsed;
+                }
+                if (chunk.metadata?.tokensUsed) {
+                    tokensUsed = chunk.metadata.tokensUsed;
+                }
+                if (chunk.metadata?.latency) {
+                    latency = chunk.metadata.latency;
+                }
+                
                 if (chunk.done) {
                     // Stop typing indicator
                     this.bot.stopTyping(spaceName);
                     
-                    // Send complete message (WorkAdventure chat requires complete messages)
-                    if (fullMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, fullMessage);
+                    // Calculate response time (use latency from metadata if available, otherwise calculate)
+                    const responseTime = latency || (Date.now() - startTime);
+                    
+                    // Parse emotions from AI response (unified emotion system)
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let processedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    if (this.responseProcessor && processedMessage.trim()) {
+                        // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
+                        const tokenUsage = tokensUsed > 0 ? {
+                            prompt: chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7),
+                            completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
+                            total: tokensUsed
+                        } : undefined;
+                        
+                        // Note: Emotions already parsed above, use processedMessage (cleaned response)
+                        let processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            processedMessage,
+                            chatInstructions,
+                            responseTime,
+                            tokenUsage
+                        );
+                        processedMessage = processed.cleaned;
+                        
+                        // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
+                        // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
+                        let regenerationAttempts = 0;
+                        const maxRegenerationAttempts = 3;
+                        const repetitionThreshold = 0.85; // Block at 85% similarity, not just exact duplicates
+                        let currentRepetitionScore = processed.metrics.repetitionScore;
+                        let currentMessage = fullMessage;
+                        
+                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
+                            regenerationAttempts++;
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[SocialBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
+                            }
+                            
+                            // BLOCK the duplicate - don't send it
+                            // Instead, generate a new response with explicit anti-repetition instruction
+                            const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
+                            const antiRepetitionPrompt = `${chatInstructions}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
+                            
+                            // Regenerate with anti-repetition prompt
+                            let regeneratedMessage = '';
+                            try {
+                                for await (const chunk of this.aiService.generateBotResponseStream(
+                                    botId,
+                                    playerId,
+                                    playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response - attempt ${regenerationAttempts}]`,
+                                    antiRepetitionPrompt,
+                                    botConfig.aiProviderRef,
+                                    spaceName,
+                                    context,
+                                    this.bot,
+                                    this.adminApiService
+                                )) {
+                                    if (chunk.content) {
+                                        regeneratedMessage += chunk.content;
+                                    }
+                                    if (chunk.done) break;
+                                }
+                                
+                                // Parse emotions from regenerated response
+                                const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
+                                
+                                // Update emotions from regenerated response
+                                if (regeneratedParsed.emotions && this.conversationMemory) {
+                                    this.conversationMemory.updateEmotionsFromAI(botId, playerId, regeneratedParsed.emotions);
+                                }
+                                
+                                // Process the regenerated response
+                                if (regeneratedParsed.cleanedResponse.trim() && this.responseProcessor) {
+                                    // Use the same responseTime and tokenUsage from the original response
+                                    const reprocessed = this.responseProcessor.processResponse(
+                                        botId,
+                                        playerId,
+                                        regeneratedParsed.cleanedResponse,
+                                        chatInstructions,
+                                        responseTime, // Use original response time
+                                        tokenUsage    // Use original token usage
+                                    );
+                                    processedMessage = reprocessed.cleaned;
+                                    currentRepetitionScore = reprocessed.metrics.repetitionScore;
+                                    currentMessage = regeneratedParsed.cleanedResponse;
+                                    processed = reprocessed; // Update processed for next iteration check
+                                    
+                                    if (currentRepetitionScore < 1.0) {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.log(`[SocialBehavior] ✅ Regenerated response after blocking duplicate (attempt ${regenerationAttempts})`);
+                                        }
+                                    }
+                                } else {
+                                    // Fallback if regeneration fails - don't break, try again
+                                    continue;
+                                }
+                            } catch (error) {
+                                console.error(`[SocialBehavior] Error regenerating response after duplicate:`, error);
+                                // Don't break, try again if attempts remaining
+                                continue;
+                            }
+                        }
+                        
+                        // If still too similar after max attempts, use a varied fallback
+                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
+                            console.warn(`[SocialBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
+                            // Use varied fallbacks to avoid repetition loop
+                            const fallbacks = [
+                                "Hmm, let me approach this differently.",
+                                "Interesting point. Let me think...",
+                                "That's something to consider.",
+                                "I hear you.",
+                                "Alright then.",
+                                "Fair enough.",
+                                "I see what you mean.",
+                                "Got it.",
+                            ];
+                            processedMessage = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+                            // Clear recent responses to break the repetition cycle
+                            if (this.responseProcessor) {
+                                this.responseProcessor.clearRecentResponses(botId, playerId);
+                            }
+                        }
+                        
+                        if (processed.metrics.repetitionScore > 0.8 && processed.metrics.repetitionScore < 1.0) {
+                            // High repetition (but not exact duplicate) - warn but allow
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[SocialBehavior] ⚠️ High repetition detected (${(processed.metrics.repetitionScore * 100).toFixed(1)}%) for bot ${botId}, player ${playerId}`);
+                            }
+                        }
+                    }
+                    
+                    // Metrics are now recorded in ResponseProcessor (combined into one record)
+                    // No need to record separately here - prevents duplicate metrics
+                    
+                    // Send processed message
+                    if (processedMessage.trim()) {
+                        this.bot.sendChatMessage(spaceName, processedMessage);
                         
                         // Store in memory
-                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
+                        }
+                        // Store in conversation storage
+                        if (this.conversationStorage) {
+                            const userUuid = this.userIdToUuid.get(playerId);
+                            if (userUuid) {
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot').catch(error => {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error('[SocialBehavior] Error adding bot message to conversation storage:', error);
+                                    }
+                                });
+                            }
+                        }
                     }
                     break;
                 }
@@ -770,7 +986,7 @@ export class SocialBehavior extends BaseBehavior {
         
         try {
             // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -796,7 +1012,7 @@ export class SocialBehavior extends BaseBehavior {
                         // Send message to space - all followers in the space will receive it
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -854,7 +1070,7 @@ export class SocialBehavior extends BaseBehavior {
         
         try {
             // Get conversation context (use first follower for context, but message goes to all)
-            const context = this.conversationMemory.getConversationContext(botId, followerPlayer.userId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -880,7 +1096,7 @@ export class SocialBehavior extends BaseBehavior {
                         // Send message to space - all followers in the space will receive it
                         this.bot.sendChatMessage(spaceName, fullMessage.trim());
                         // Store in memory for the first follower (representative of the group)
-                        this.conversationMemory.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
+                        this.conversationMemory?.addMessage(botId, followerPlayer.userId, fullMessage.trim(), 'bot', spaceName);
                     }
                     break;
                 }
@@ -909,7 +1125,7 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
@@ -935,7 +1151,7 @@ export class SocialBehavior extends BaseBehavior {
                     if (fullMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;
@@ -970,7 +1186,7 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // Get conversation context
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
         
@@ -1006,7 +1222,7 @@ export class SocialBehavior extends BaseBehavior {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
                             // Record bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     // After greeting, send goodbye message and return
@@ -1044,7 +1260,7 @@ export class SocialBehavior extends BaseBehavior {
         // Get conversation context (includes memory, emotions, relationship history)
         // This context includes previous conversations, emotional state, and relationship history
         // The AI will use this to remember bad interactions and respond appropriately
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
@@ -1080,7 +1296,7 @@ export class SocialBehavior extends BaseBehavior {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
                             // Record bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            this.conversationMemory?.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
                         }
                     }
                     break;

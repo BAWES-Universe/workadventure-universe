@@ -6,6 +6,7 @@ import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
+import { parseEmotionsFromResponse } from '../ai/EmotionParser';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
@@ -21,14 +22,27 @@ export interface IdleBehaviorConfig extends BehaviorConfig {
 export class IdleBehavior extends BaseBehavior {
     private lastAnimationTime: number = 0;
     private greetedPlayers: Set<number> = new Set();
-    private conversationMemory: ConversationMemory;
+    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
 
     constructor(config: IdleBehaviorConfig) {
         super(config);
-        this.conversationMemory = new ConversationMemory(
-            config.conversationHistorySize || 50,
-            1000 // Max 1000 player memories per bot
-        );
+        // ConversationMemory will be set by BotManager via setConversationMemory
+    }
+    
+    /**
+     * Set conversation memory (called by BotManager to share the persistent memory instance)
+     */
+    setConversationMemory(memory: ConversationMemory): void {
+        this.conversationMemory = memory;
+    }
+    
+    /**
+     * Set user UUID in conversation memory (called from BaseBehavior when user joins space)
+     */
+    protected setUserUuidInMemory(botId: string, userId: number, userUuid: string, isLogged: boolean): void {
+        if (this.conversationMemory && 'setUserUuid' in this.conversationMemory) {
+            (this.conversationMemory as any).setUserUuid(botId, userId, userUuid, isLogged);
+        }
     }
 
     update(deltaTime: number): void {
@@ -306,14 +320,55 @@ export class IdleBehavior extends BaseBehavior {
             console.log(`[IdleBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
         }
 
+        // Get user info from bot's player map
+        const playerInfo = this.bot.getPlayerInfo(senderId);
+        const userName = playerInfo?.name;
+        
+        // Get UUID (REQUIRED by Admin API) - should be available from InitSpaceUsersMessage or addSpaceUserMessage
+        let userUuid = this.userIdToUuid.get(senderId);
+        
+        // Log UUID tracking status for debugging
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[IdleBehavior] UUID lookup: senderId=${senderId}, uuid=${userUuid || 'NOT FOUND'}, mapSize=${this.userIdToUuid.size}`);
+        }
+        
+        if (!userUuid) {
+            // UUID not tracked yet - proceed anyway but log warning
+            // This can happen if initSpaceUsersMessage hasn't been processed yet
+            console.warn(`[IdleBehavior] UUID not found for user ${senderId} (${userName}). Proceeding without conversation storage.`);
+            // Continue to generate response - just skip storage
+        }
+        
+        // Get authentication status (for isGuest determination)
+        const isLogged = this.userIdToIsLogged.get(senderId) ?? false;
+        
         // Start conversation in memory if needed
-        this.conversationMemory.startConversation(botId, senderId);
+        if (this.conversationMemory) {
+            this.conversationMemory.startConversation(botId, senderId);
+            this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
+            this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+        }
         
-        // Store player's message in memory
-        this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
-        
-        // Extract personal information from message
-        this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+        // Start conversation in storage (if available and UUID is known)
+        if (this.conversationStorage && userUuid) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] Starting conversation storage: botId=${botId}, userUuid=${userUuid}`);
+            }
+            this.conversationStorage.startConversation(botId, userUuid, {
+                name: userName,
+                uuid: userUuid,
+                isLogged: isLogged,
+            });
+            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[IdleBehavior] Error adding person message to conversation storage:', error);
+                }
+            });
+        } else if (!this.conversationStorage) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] conversationStorage is null - conversations will not be persisted`);
+            }
+        }
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);
@@ -369,10 +424,13 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Get conversation context (includes memory, emotions, relationship history)
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate streaming response
         let fullMessage = '';
+        const startTime = Date.now(); // Track response time BEFORE streaming starts
+        let tokensUsed = 0;
+        let latency = 0;
         
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -390,15 +448,190 @@ export class IdleBehavior extends BaseBehavior {
                     fullMessage += chunk.content;
                 }
                 
+                // Extract token usage and latency from chunk metadata
+                if (chunk.tokensUsed) {
+                    tokensUsed = chunk.tokensUsed;
+                }
+                if (chunk.metadata?.tokensUsed) {
+                    tokensUsed = chunk.metadata.tokensUsed;
+                }
+                if (chunk.metadata?.latency) {
+                    latency = chunk.metadata.latency;
+                }
+                
                 if (chunk.done) {
                     // Stop typing indicator
                     this.bot.stopTyping(spaceName);
                     
-                    // Send complete message
-                    if (fullMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, fullMessage);
+                    // Calculate response time (use latency from metadata if available, otherwise calculate)
+                    const responseTime = latency || (Date.now() - startTime);
+                    
+                    // Parse emotions from AI response (unified emotion system)
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let processedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    }
+                    
+                    // Debug: Check if responseProcessor exists
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[IdleBehavior] ResponseProcessor available: ${!!this.responseProcessor}, fullMessage length: ${fullMessage.length}`);
+                    }
+                    
+                    if (this.responseProcessor && processedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
+                        const tokenUsage = tokensUsed > 0 ? {
+                            prompt: chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7),
+                            completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
+                            total: tokensUsed
+                        } : undefined;
+                        
+                        // Note: Emotions already parsed above, use processedMessage (cleaned response)
+                        let processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            processedMessage,
+                            chatInstructions,
+                            responseTime,
+                            tokenUsage
+                        );
+                        processedMessage = processed.cleaned;
+                        
+                        // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
+                        // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
+                        let regenerationAttempts = 0;
+                        const maxRegenerationAttempts = 3;
+                        const repetitionThreshold = 0.85; // Block at 85% similarity, not just exact duplicates
+                        let currentRepetitionScore = processed.metrics.repetitionScore;
+                        let currentMessage = fullMessage;
+                        
+                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
+                            regenerationAttempts++;
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[IdleBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
+                            }
+                            
+                            // BLOCK the duplicate - don't send it
+                            // Instead, generate a new response with explicit anti-repetition instruction
+                            const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
+                            const antiRepetitionPrompt = `${botConfig.chatInstructions || 'You are a helpful bot.'}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
+                            
+                            // Regenerate with anti-repetition prompt
+                            let regeneratedMessage = '';
+                            try {
+                                for await (const chunk of this.aiService.generateBotResponseStream(
+                                    botId,
+                                    playerId,
+                                    playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response - attempt ${regenerationAttempts}]`,
+                                    antiRepetitionPrompt,
+                                    botConfig.aiProviderRef,
+                                    spaceName,
+                                    context,
+                                    this.bot,
+                                    this.adminApiService
+                                )) {
+                                    if (chunk.content) {
+                                        regeneratedMessage += chunk.content;
+                                    }
+                                    if (chunk.done) break;
+                                }
+                                
+                                // Parse emotions from regenerated response
+                                const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
+                                
+                                // Update emotions from regenerated response
+                                if (regeneratedParsed.emotions && this.conversationMemory) {
+                                    this.conversationMemory.updateEmotionsFromAI(botId, playerId, regeneratedParsed.emotions);
+                                }
+                                
+                                // Process the regenerated response
+                                if (regeneratedParsed.cleanedResponse.trim() && this.responseProcessor) {
+                                    // Use the same responseTime and tokenUsage from the original response
+                                    const reprocessed = this.responseProcessor.processResponse(
+                                        botId,
+                                        playerId,
+                                        regeneratedParsed.cleanedResponse,
+                                        botConfig.chatInstructions || 'You are a helpful bot.',
+                                        responseTime, // Use original response time
+                                        tokenUsage    // Use original token usage
+                                    );
+                                    processedMessage = reprocessed.cleaned;
+                                    currentRepetitionScore = reprocessed.metrics.repetitionScore;
+                                    currentMessage = regeneratedParsed.cleanedResponse;
+                                    processed = reprocessed; // Update processed for next iteration check
+                                    
+                                    if (currentRepetitionScore < 1.0) {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.log(`[IdleBehavior] ✅ Regenerated response after blocking duplicate (attempt ${regenerationAttempts})`);
+                                        }
+                                    }
+                                } else {
+                                    // Fallback if regeneration fails - don't break, try again
+                                    continue;
+                                }
+                            } catch (error) {
+                                console.error(`[IdleBehavior] Error regenerating response after duplicate:`, error);
+                                // Don't break, try again if attempts remaining
+                                continue;
+                            }
+                        }
+                        
+                        // If still too similar after max attempts, use a varied fallback
+                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
+                            console.warn(`[IdleBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
+                            // Use varied fallbacks to avoid repetition loop
+                            const fallbacks = [
+                                "Hmm, let me approach this differently.",
+                                "Interesting point. Let me think...",
+                                "That's something to consider.",
+                                "I hear you.",
+                                "Alright then.",
+                                "Fair enough.",
+                                "I see what you mean.",
+                                "Got it.",
+                            ];
+                            processedMessage = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+                            // Clear recent responses to break the repetition cycle
+                            if (this.responseProcessor) {
+                                this.responseProcessor.clearRecentResponses(botId, playerId);
+                            }
+                        }
+                        
+                        if (processed.metrics.repetitionScore > 0.8 && processed.metrics.repetitionScore < 1.0) {
+                            // High repetition (but not exact duplicate) - warn but allow
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[IdleBehavior] ⚠️ High repetition detected (${(processed.metrics.repetitionScore * 100).toFixed(1)}%) for bot ${botId}, player ${playerId}`);
+                            }
+                        }
+                    }
+                    
+                    // Record metrics (skip for test conversations - playerId 999999 is used for tests)
+                    // ResponseProcessor already records responseQuality which includes these metrics
+                    // We only need to record responseTime and tokenUsage if they're not already in responseQuality
+                    // For now, skip individual metrics - they're already captured in recordResponseQuality
+                    // This prevents duplicate metrics (3 per response -> 1 per response)
+                    
+                    // Send processed message
+                    if (processedMessage.trim()) {
+                        this.bot.sendChatMessage(spaceName, processedMessage);
                         // Store bot's message in memory
-                        this.conversationMemory.addMessage(botId, playerId, fullMessage, 'bot', spaceName);
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
+                        }
+                        // Store bot's message in conversation storage
+                        if (this.conversationStorage) {
+                            const userUuid = this.userIdToUuid.get(playerId);
+                            if (userUuid) {
+                                this.conversationStorage.addMessage(botId, userUuid, processedMessage, 'bot').catch(error => {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error('[IdleBehavior] Error adding bot message to conversation storage:', error);
+                                    }
+                                });
+                            }
+                        }
                     }
                     break;
                 }
@@ -431,7 +664,7 @@ export class IdleBehavior extends BaseBehavior {
             return;
         }
 
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
@@ -458,6 +691,17 @@ export class IdleBehavior extends BaseBehavior {
                         if (this.bot) {
                             this.bot.sendChatMessage(spaceName, fullMessage.trim());
                             this.conversationMemory.addMessage(botId, playerId, fullMessage.trim(), 'bot', spaceName);
+                            // Store bot's message in conversation storage
+                            if (this.conversationStorage) {
+                                const userUuid = this.userIdToUuid.get(playerId);
+                                if (userUuid) {
+                                    this.conversationStorage.addMessage(botId, userUuid, fullMessage.trim(), 'bot').catch(error => {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.error('[IdleBehavior] Error adding bot message to conversation storage:', error);
+                                        }
+                                    });
+                                }
+                            }
                         }
                     }
                     break;
@@ -492,7 +736,7 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Get conversation context
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
         
@@ -769,7 +1013,7 @@ export class IdleBehavior extends BaseBehavior {
         }
 
         // Get conversation context (includes memory, emotions, relationship history)
-        const context = this.conversationMemory.getConversationContext(botId, playerId);
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';

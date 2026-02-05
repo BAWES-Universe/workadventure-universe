@@ -8,6 +8,9 @@ import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { AIService } from '../ai/AIService';
 import type { AdminApiService } from '../server/AdminApiService';
+import type { ConversationStorage } from '../memory/ConversationStorage';
+import type { ResponseProcessor } from '../ai/ResponseProcessor';
+import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 
 export interface BehaviorConfig {
     type: string;
@@ -23,6 +26,8 @@ export abstract class BaseBehavior {
     protected config: BehaviorConfig;
     protected aiService: AIService | null = null;
     protected adminApiService: AdminApiService | null = null;
+    protected conversationStorage: ConversationStorage | null = null;
+    protected responseProcessor: ResponseProcessor | null = null;
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
@@ -30,6 +35,14 @@ export abstract class BaseBehavior {
     
     // Proximity tracking - players nearby (based on userMovedMessage)
     protected nearbyPlayers: Map<number, PositionInterface> = new Map();
+    
+    // UUID tracking - map userId (number) to UUID (string) for conversation storage
+    protected userIdToUuid: Map<number, string> = new Map();
+    // Authentication tracking - map userId (number) to isLogged (boolean)
+    protected userIdToIsLogged: Map<number, boolean> = new Map();
+    // Pending UUID tracking - map spaceUserId (string) to userId (number) for users we've seen but don't have UUID yet
+    // This helps match addSpaceUserMessage when it arrives after a chat message
+    protected pendingSpaceUserIdToUserId: Map<string, number> = new Map();
     protected readonly PROXIMITY_RADIUS = 64; // Pixels - react when player is inside bubble
     protected readonly DISENGAGE_RADIUS = 80; // Slightly larger to prevent flickering at edge
     protected closestPlayerId: number | null = null;
@@ -81,12 +94,26 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * Set AI service and Admin API service (called by BotManager)
+     * Set AI service, Admin API service, ConversationStorage, ResponseProcessor, and MetricsCollector (called by BotManager)
      */
-    setServices(aiService: AIService, adminApiService: AdminApiService): void {
+    setServices(aiService: AIService, adminApiService: AdminApiService, conversationStorage?: ConversationStorage, responseProcessor?: ResponseProcessor | null, metricsCollector?: BotMetricsCollector | null): void {
         this.aiService = aiService;
         this.adminApiService = adminApiService;
+        this.conversationStorage = conversationStorage || null;
+        this.responseProcessor = responseProcessor || null;
+        this.metricsCollector = metricsCollector || null;
     }
+    
+    /**
+     * Set conversation memory (optional - behaviors can override to use shared memory)
+     */
+    setConversationMemory?(memory: ConversationMemory): void;
+    
+    /**
+     * Helper method to set user UUID in conversation memory (behaviors can override)
+     * This is called when a user joins a space to ensure UUID tracking
+     */
+    protected setUserUuidInMemory?(botId: string, userId: number, userUuid: string, isLogged: boolean): void;
 
     /**
      * Update behavior (called every frame/tick)
@@ -306,10 +333,36 @@ export abstract class BaseBehavior {
             }
         } else {
             // No longer engaged
+            const previousClosestPlayerId = this.closestPlayerId;
             this.closestPlayerId = null;
             
             if (wasEngaged) {
                 console.log(`[Behavior] No longer engaged - all players left proximity/space`);
+                
+                // End conversation in storage if player left (with a small delay to ensure all messages are stored)
+                if (previousClosestPlayerId && this.conversationStorage && this.bot) {
+                    const botId = this.bot.getBotId();
+                    // Delay to ensure any pending messages are stored
+                    setTimeout(() => {
+                        const userUuid = this.userIdToUuid.get(previousClosestPlayerId);
+                        if (userUuid && this.conversationStorage) {
+                            this.conversationStorage.endConversation(botId, userUuid, 'timeout').catch(error => {
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.error(`[Behavior] Error ending conversation:`, error);
+                                }
+                            });
+                        } else if (!userUuid) {
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[Behavior] Cannot end conversation: UUID not found for user ${previousClosestPlayerId}`);
+                            }
+                        }
+                        
+                        // Clear repetition tracking for this conversation
+                        if (this.responseProcessor && previousClosestPlayerId) {
+                            (this.responseProcessor as any).clearRecentResponses(botId, previousClosestPlayerId);
+                        }
+                    }, 2000); // 2 second delay to capture any final messages
+                }
             }
         }
     }
@@ -822,19 +875,46 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      * @param user User that joined
      */
-    onSpaceUserJoined(spaceName: string, user: SpaceUser): void {
+    onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): void {
         // Skip if it's the bot itself
         if (user.id === this.bot?.getUserId()) {
             return;
         }
 
-        // Track this user as engaged
-        const userPosition = user.characterPosition ? {
-            x: user.characterPosition.x,
-            y: user.characterPosition.y,
-        } : undefined;
+        // Track UUID for conversation storage (REQUIRED by Admin API)
+        if (user.uuid) {
+            this.userIdToUuid.set(user.id, user.uuid);
+        }
         
-        this.engagedWithUsers.set(user.id, { spaceName, position: userPosition });
+        // Track authentication status (for isGuest determination)
+        if (user.isLogged !== undefined) {
+            this.userIdToIsLogged.set(user.id, user.isLogged);
+        }
+        
+        // Check if this spaceUserId was pending (we saw a chat message before addSpaceUserMessage)
+        if (user.spaceUserId && this.pendingSpaceUserIdToUserId.has(user.spaceUserId)) {
+            const pendingUserId = this.pendingSpaceUserIdToUserId.get(user.spaceUserId);
+            if (pendingUserId === user.id && user.uuid) {
+                // This matches a pending user - UUID is now available
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] ✅ Matched pending spaceUserId ${user.spaceUserId} to userId ${user.id} with UUID ${user.uuid}`);
+                }
+            }
+            // Clean up pending entry
+            this.pendingSpaceUserIdToUserId.delete(user.spaceUserId);
+        }
+        
+        // Also track UUID in PersistentMemory for memory/emotion persistence
+        if (user.uuid) {
+            const botId = this.bot?.getBotId();
+            if (botId && this.setUserUuidInMemory) {
+                this.setUserUuidInMemory(botId, user.id, user.uuid, user.isLogged || false);
+            }
+        }
+
+        // Track this user as engaged
+        // Note: SpaceUser doesn't have position info - we'll get it from room player data if needed
+        this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
         this.isEngaged = this.engagedWithUsers.size > 0;
         
         // If leading and space name not set yet, set it now (space was just created)
@@ -845,12 +925,29 @@ export abstract class BaseBehavior {
             }
         }
 
-        // Face the player who just joined
-        if (userPosition) {
-            this.facePosition(userPosition);
+        // Try to get player position from room data if available
+        if (this.bot) {
+            const playerInfo = this.bot.getPlayerInfo(user.id);
+            if (playerInfo?.position) {
+                this.engagedWithUsers.set(user.id, { spaceName, position: playerInfo.position });
+                this.facePosition(playerInfo.position);
+            }
         }
 
         console.log(`[Behavior] User ${user.id} joined space ${spaceName}, now engaged with ${this.engagedWithUsers.size} users`);
+    }
+    
+    /**
+     * Register a pending spaceUserId -> userId mapping when we receive a chat message
+     * but don't have the UUID yet. This helps match addSpaceUserMessage when it arrives.
+     */
+    protected registerPendingSpaceUserId(spaceUserId: string, userId: number): void {
+        if (spaceUserId && userId > 0) {
+            this.pendingSpaceUserIdToUserId.set(spaceUserId, userId);
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] 📝 Registered pending spaceUserId ${spaceUserId} -> userId ${userId} (waiting for UUID)`);
+            }
+        }
     }
 
     /**
@@ -862,6 +959,24 @@ export abstract class BaseBehavior {
         // Remove from engaged users
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
+        
+        // End conversation for this user when they leave the space
+        const userUuid = this.userIdToUuid.get(userId);
+        if (userUuid && this.conversationStorage && this.bot) {
+            const botId = this.bot.getBotId();
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Ending conversation for user ${userId} (${userUuid}) who left space`);
+            }
+            this.conversationStorage.endConversation(botId, userUuid, 'user_left').catch(error => {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error(`[Behavior] Error ending conversation on space leave:`, error);
+                }
+            });
+        }
+        
+        // Clean up UUID mapping after conversation is ended
+        this.userIdToUuid.delete(userId);
+        this.userIdToIsLogged.delete(userId);
 
         // If summoned and no players left, end summon and return
         if (this.isSummoned && this.engagedWithUsers.size === 0 && this.nearbyPlayers.size === 0) {

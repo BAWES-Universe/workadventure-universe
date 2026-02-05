@@ -1,4 +1,5 @@
 import { get } from "svelte/store";
+import type { SvelteComponent } from "svelte";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
@@ -748,14 +749,166 @@ const registeredActionsByUuid = new Map<string, WokaMenuAction[]>();
 let wokaMenuUnsubscriber: (() => void) | null = null;
 let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
 
+// Emotions display tracking
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let emotionsComponentInstance: SvelteComponent<any> | null = null;
+let emotionsContainerElement: HTMLElement | null = null;
+let isInjectingEmotions = false; // Guard to prevent concurrent injections
+
+// Cleanup emotions display
+function cleanupEmotionsDisplay(): void {
+    // Destroy tracked component instance
+    if (emotionsComponentInstance) {
+        try {
+            // Svelte 4 destroy
+            emotionsComponentInstance.$destroy();
+        } catch {
+            // Fallback if destroy not available
+        }
+        emotionsComponentInstance = null;
+    }
+
+    // Remove ALL emotion containers from DOM (in case of duplicates)
+    const menuElement = document.querySelector('[data-testid="actions-menu"]');
+    if (menuElement) {
+        const allEmotionContainers = menuElement.querySelectorAll("[data-bot-emotions]");
+        allEmotionContainers.forEach((container) => {
+            if (container instanceof HTMLElement) {
+                container.remove();
+            }
+        });
+    }
+
+    // Also remove tracked container if it exists
+    if (emotionsContainerElement) {
+        try {
+            emotionsContainerElement.remove();
+        } catch {
+            // Already removed
+        }
+        emotionsContainerElement = null;
+    }
+}
+
+// Inject emotions display into WokaMenu for bots
+async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void> {
+    // Only for bots
+    if (!menuData.userUuid?.startsWith("bot-")) {
+        return;
+    }
+
+    // Prevent concurrent injections
+    if (isInjectingEmotions) {
+        return;
+    }
+
+    const botId = menuData.userUuid.substring(4); // Remove "bot-" prefix
+    const currentUserUuid = localUserStore.getLocalUser()?.uuid;
+
+    if (!currentUserUuid) {
+        return;
+    }
+
+    // Set guard immediately to prevent concurrent calls
+    isInjectingEmotions = true;
+
+    try {
+        // Wait for DOM to render
+        await new Promise<void>((resolve) => {
+            setTimeout(() => resolve(), 100);
+        });
+
+        const menuElement = document.querySelector('[data-testid="actions-menu"]');
+        if (!menuElement) {
+            // Retry if menu not ready yet
+            // eslint-disable-next-line require-atomic-updates
+            isInjectingEmotions = false; // Release guard before retry
+            setTimeout(() => void injectEmotionsIntoWokaMenu(menuData), 100);
+            return;
+        }
+
+        // Check if already injected (simple check - if any emotion container exists, return)
+        if (menuElement.querySelector("[data-bot-emotions]")) {
+            // eslint-disable-next-line require-atomic-updates
+            isInjectingEmotions = false; // Release guard
+            return;
+        }
+
+        // Find insertion point - before the action buttons section
+        // Structure: <div class="m-auto..."> -> first child is content, we want to inject before actions
+        const contentDiv = menuElement.querySelector("div > div:first-child");
+        const actionsDiv = menuElement.querySelector(".flex.items-center.bg-contrast");
+
+        if (!contentDiv || !actionsDiv) {
+            // eslint-disable-next-line require-atomic-updates
+            isInjectingEmotions = false; // Release guard
+            return;
+        }
+
+        // Fetch emotions from API FIRST, before mounting component
+        // This prevents the visual "jump" from default values to actual values
+        const botServerUrl = getBotServerUrl();
+        let emotionsData = null;
+
+        try {
+            const response = await fetch(`${botServerUrl}/api/bots/${botId}/emotions/${currentUserUuid}`);
+            if (response.ok) {
+                const data = await response.json();
+                emotionsData = data.emotions;
+            }
+        } catch (error) {
+            console.error("[Bot Extension] Error fetching bot emotions:", error);
+        }
+
+        // Create container for emotions display
+        const container = document.createElement("div");
+        container.setAttribute("data-bot-emotions", botId);
+        emotionsContainerElement = container;
+
+        // Insert before actions section
+        actionsDiv.parentElement?.insertBefore(container, actionsDiv);
+
+        try {
+            // Dynamically import the component (Svelte 4 style)
+            const BotEmotionsDisplay = (await import("./components/BotEmotionsDisplay.svelte")).default;
+
+            // Mount component with actual emotions (or null if fetch failed)
+            // This way tweened values initialize with correct values, no animation from defaults
+            const componentInstance = new BotEmotionsDisplay({
+                target: container,
+                props: {
+                    emotions: emotionsData,
+                    botName: menuData.wokaName || "Bot",
+                    loading: false, // Already fetched, not loading
+                },
+            });
+            emotionsComponentInstance = componentInstance;
+        } catch (error) {
+            console.error("[Bot Extension] Error mounting emotions component:", error);
+        }
+    } finally {
+        // Always release guard
+        // eslint-disable-next-line require-atomic-updates
+        isInjectingEmotions = false;
+    }
+}
+
 function setupWokaMenuHook() {
     if (wokaMenuUnsubscriber) return; // Already set up
 
     wokaMenuUnsubscriber = wokaMenuStore.subscribe((menuData: WokaMenuData | undefined) => {
-        // When menu is cleared, reset tracking
+        // When menu is cleared, cleanup emotions display
         if (!menuData) {
             lastProcessedMenu = null;
+
+            isInjectingEmotions = false; // Reset guard
+            void cleanupEmotionsDisplay();
             return;
+        }
+
+        // Inject emotions display for bots
+        if (menuData.userUuid?.startsWith("bot-")) {
+            void injectEmotionsIntoWokaMenu(menuData);
         }
 
         // Only process if this is a fresh menu initialization

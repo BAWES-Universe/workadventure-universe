@@ -1815,9 +1815,105 @@ export class BotClient {
                 this.handleLeaveSpaceRequest(message.leaveSpaceRequestMessage);
                 break;
 
+            case 'initSpaceUsersMessage':
+                // When bot joins a space, backend sends all existing users with their UUIDs
+                // This ensures we have UUID tracking before any chat messages arrive
+                if (this.behavior && message.initSpaceUsersMessage) {
+                    const spaceName = message.initSpaceUsersMessage.spaceName;
+                    const spaceUsers = message.initSpaceUsersMessage.users || [];
+                    
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 📥 initSpaceUsersMessage: ${spaceUsers.length} users in space ${spaceName}`);
+                    }
+                    
+                    // Process each user to populate UUID tracking immediately
+                    for (const spaceUser of spaceUsers) {
+                        // Extract numeric userId from spaceUserId (format: "roomID_userID")
+                        // The last part after the underscore is the numeric userId
+                        let numericUserId: number | null = null;
+                        if (spaceUser.spaceUserId) {
+                            const lastUnderscoreIndex = spaceUser.spaceUserId.lastIndexOf('_');
+                            if (lastUnderscoreIndex !== -1) {
+                                const userIdStr = spaceUser.spaceUserId.substring(lastUnderscoreIndex + 1);
+                                numericUserId = parseInt(userIdStr, 10);
+                                if (isNaN(numericUserId)) {
+                                    numericUserId = null;
+                                }
+                            }
+                        }
+                        
+                        if (numericUserId) {
+                            // Skip the bot itself
+                            if (numericUserId === this.userId) {
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[Bot ${this.config.botId}] Skipping bot itself (userId: ${numericUserId})`);
+                                }
+                                continue;
+                            }
+                            
+                            // Create a SpaceUser-like object with id field for onSpaceUserJoined
+                            const userWithId = {
+                                ...spaceUser,
+                                id: numericUserId,
+                            } as any;
+                            
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
+                            }
+                            
+                            // Call onSpaceUserJoined to track UUIDs and auth status
+                            this.behavior.onSpaceUserJoined(spaceName, userWithId);
+                        } else {
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[Bot ${this.config.botId}] Could not extract numeric userId from SpaceUser "${spaceUser.name}" (spaceUserId: ${spaceUser.spaceUserId || 'unknown'}, UUID: ${spaceUser.uuid || 'unknown'})`);
+                            }
+                        }
+                    }
+                }
+                break;
+
             case 'addSpaceUserMessage':
-                if (this.behavior) {
-                    this.behavior.onSpaceUserJoined(message.addSpaceUserMessage.spaceName, message.addSpaceUserMessage.user);
+                // When a user joins a space, we get their SpaceUser info
+                // Extract numeric userId from spaceUserId to avoid name collisions
+                if (this.behavior && message.addSpaceUserMessage) {
+                    const spaceName = message.addSpaceUserMessage.spaceName;
+                    const spaceUser = message.addSpaceUserMessage.user;
+                    
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 📥 addSpaceUserMessage: ${spaceUser.name} (spaceUserId: ${spaceUser.spaceUserId}, UUID: ${spaceUser.uuid || 'NO UUID'}) in space ${spaceName}`);
+                    }
+                    
+                    // Extract numeric userId from spaceUserId (format: "roomID_userID" or full URL)
+                    let numericUserId: number | null = null;
+                    if (spaceUser.spaceUserId) {
+                        const lastUnderscoreIndex = spaceUser.spaceUserId.lastIndexOf('_');
+                        if (lastUnderscoreIndex !== -1) {
+                            const userIdStr = spaceUser.spaceUserId.substring(lastUnderscoreIndex + 1);
+                            numericUserId = parseInt(userIdStr, 10);
+                            if (isNaN(numericUserId)) {
+                                numericUserId = null;
+                            }
+                        }
+                    }
+                    
+                    if (!numericUserId) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.warn(`[Bot ${this.config.botId}] Could not extract numeric userId from SpaceUser "${spaceUser.name}" (spaceUserId: ${spaceUser.spaceUserId || 'unknown'}, UUID: ${spaceUser.uuid || 'unknown'}) in space ${spaceName}`);
+                        }
+                        break;
+                    }
+                    
+                    // Create a SpaceUser-like object with id field
+                    const userWithId = {
+                        ...spaceUser,
+                        id: numericUserId,
+                    } as any;
+                    
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID from addSpaceUserMessage for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
+                    }
+                    
+                    this.behavior.onSpaceUserJoined(spaceName, userWithId);
                 }
                 break;
 
@@ -1841,25 +1937,67 @@ export class BotClient {
                     const spaceMessage = message.publicEvent.spaceEvent.event.spaceMessage;
                     const spaceName = message.publicEvent.spaceName;
                     const senderName = spaceMessage.name;
+                    const senderUserId = message.publicEvent.senderUserId; // spaceUserId format: "roomID_userID"
                     
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage: "${spaceMessage.message}" from ${senderName}, players map size: ${this.players.size}`);
+                        console.log(`[Bot ${this.config.botId}] publicEvent spaceMessage: "${spaceMessage.message}" from ${senderName}, senderUserId: ${senderUserId}, players map size: ${this.players.size}`);
                     }
                     
-                    // Find the player by name to get their userId
+                    // Extract numeric userId from senderUserId (format: "roomID_userID")
+                    // This is more reliable than matching by name and avoids name collisions
                     let senderId = 0;
-                    for (const [userId, player] of this.players.entries()) {
-                        if (player.name === senderName) {
-                            senderId = userId;
-                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[Bot ${this.config.botId}] Found player ${senderName} with userId ${userId}`);
+                    if (senderUserId) {
+                        const lastUnderscoreIndex = senderUserId.lastIndexOf('_');
+                        if (lastUnderscoreIndex !== -1) {
+                            const userIdStr = senderUserId.substring(lastUnderscoreIndex + 1);
+                            senderId = parseInt(userIdStr, 10);
+                            if (isNaN(senderId)) {
+                                senderId = 0;
                             }
-                            break;
+                        }
+                    }
+                    
+                    // Fallback: if extraction failed, try to find by name
+                    if (senderId === 0) {
+                        for (const [userId, player] of this.players.entries()) {
+                            if (player.name === senderName) {
+                                senderId = userId;
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[Bot ${this.config.botId}] Found player ${senderName} with userId ${userId} (fallback by name)`);
+                                }
+                                break;
+                            }
+                        }
+                    } else {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[Bot ${this.config.botId}] Extracted userId ${senderId} from senderUserId ${senderUserId}`);
                         }
                     }
                     
                     if (senderId === 0) {
-                        console.warn(`[Bot ${this.config.botId}] Could not find userId for player "${senderName}". Available players:`, Array.from(this.players.entries()).map(([id, p]) => `${p.name} (${id})`));
+                        console.warn(`[Bot ${this.config.botId}] Could not find userId for player "${senderName}" (senderUserId: ${senderUserId}). Available players:`, Array.from(this.players.entries()).map(([id, p]) => `${p.name} (${id})`));
+                    }
+                    
+                    // If we have senderId but no UUID tracked yet, register it as pending
+                    // This helps match addSpaceUserMessage when it arrives
+                    if (senderId > 0 && this.behavior && senderUserId) {
+                        const userUuid = (this.behavior as any).userIdToUuid?.get(senderId);
+                        if (!userUuid) {
+                            // Register pending spaceUserId -> userId mapping
+                            if ((this.behavior as any).registerPendingSpaceUserId) {
+                                (this.behavior as any).registerPendingSpaceUserId(senderUserId, senderId);
+                            }
+                            
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[Bot ${this.config.botId}] UUID not tracked for userId ${senderId} (${senderName}, senderUserId: ${senderUserId}). Registered as pending, waiting for addSpaceUserMessage...`);
+                                const uuidMap = (this.behavior as any).userIdToUuid;
+                                if (uuidMap) {
+                                    console.log(`[Bot ${this.config.botId}] Current UUID tracking map (${uuidMap.size} entries):`, Array.from(uuidMap.entries()).map(([id, uuid]) => `${id} -> ${uuid}`));
+                                } else {
+                                    console.warn(`[Bot ${this.config.botId}] UUID tracking map is not available on behavior`);
+                                }
+                            }
+                        }
                     }
                     
                     // Ignore messages from bots (including ourselves)
@@ -1953,6 +2091,11 @@ export class BotClient {
             const spaceUserId = await this.emitJoinSpace(request.spaceName, filterType, propertiesToSync);
             this.spaces.set(request.spaceName, spaceUserId);
             
+            // Register as a space watcher to receive initSpaceUsersMessage with user UUIDs
+            // This is required for the pusher to send us the list of existing users in the space
+            // (matches frontend behavior in Space.ts registerSpaceFilter)
+            this.emitAddSpaceFilter(request.spaceName);
+            
             // Immediately tell others we have NO camera/mic/screenshare
             // This prevents the "loading" indicator for our video
             this.sendSpaceUserUpdate(request.spaceName, {
@@ -1962,7 +2105,7 @@ export class BotClient {
             });
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[Bot ${this.config.botId}] Joined space: ${request.spaceName}, sent media state: off`);
+                console.log(`[Bot ${this.config.botId}] Joined space: ${request.spaceName}, registered filter, sent media state: off`);
             }
             
             if (this.behavior) {
@@ -2047,6 +2190,10 @@ export class BotClient {
 
     private async handleLeaveSpaceRequest(request: LeaveSpaceRequestMessage): Promise<void> {
         try {
+            // Unregister as a space watcher before leaving
+            // This matches frontend behavior and ensures proper cleanup
+            this.emitRemoveSpaceFilter(request.spaceName);
+            
             await this.emitLeaveSpace(request.spaceName);
             this.spaces.delete(request.spaceName);
             if (this.behavior) {
@@ -2054,6 +2201,45 @@ export class BotClient {
             }
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] Error leaving space:`, error);
+        }
+    }
+    
+    /**
+     * Register as a watcher for a space to receive user information (including UUIDs)
+     * This triggers the pusher to send initSpaceUsersMessage with all existing users
+     */
+    private emitAddSpaceFilter(spaceName: string): void {
+        this.send({
+            message: {
+                $case: 'addSpaceFilterMessage',
+                addSpaceFilterMessage: {
+                    spaceFilterMessage: {
+                        spaceName,
+                    },
+                },
+            },
+        });
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 📋 Sent AddSpaceFilterMessage for space: ${spaceName}`);
+        }
+    }
+    
+    /**
+     * Unregister as a watcher for a space (cleanup before leaving)
+     */
+    private emitRemoveSpaceFilter(spaceName: string): void {
+        this.send({
+            message: {
+                $case: 'removeSpaceFilterMessage',
+                removeSpaceFilterMessage: {
+                    spaceFilterMessage: {
+                        spaceName,
+                    },
+                },
+            },
+        });
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] 📋 Sent RemoveSpaceFilterMessage for space: ${spaceName}`);
         }
     }
 

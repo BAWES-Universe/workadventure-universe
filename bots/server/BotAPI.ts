@@ -252,6 +252,87 @@ export class BotAPI {
             }
         });
 
+        // Get bot emotions for a specific player (no auth required - public endpoint)
+        // This allows players to see how a bot feels about them
+        this.app.get('/api/bots/:botId/emotions/:userUuid', async (req: Request, res: Response) => {
+            try {
+                const { botId, userUuid } = req.params;
+
+                if (!botId || !userUuid) {
+                    res.status(400).json({ error: 'Missing botId or userUuid' });
+                    return;
+                }
+
+                // Get bot instance
+                const botInstance = this.botManager.getBotInstance(botId);
+                if (!botInstance) {
+                    // Bot not found - return default emotions
+                    res.json({
+                        botId,
+                        userUuid,
+                        emotions: {
+                            botEmotion: { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                            personEmotion: { anger: 0, happiness: 50, trust: 50 },
+                            lastEmotionUpdate: Date.now(),
+                        },
+                    });
+                    return;
+                }
+
+                // Get conversation memory from bot
+                const conversationMemory = botInstance.getConversationMemory?.();
+                if (!conversationMemory) {
+                    // Memory not available - return default emotions
+                    res.json({
+                        botId,
+                        userUuid,
+                        emotions: {
+                            botEmotion: { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                            personEmotion: { anger: 0, happiness: 50, trust: 50 },
+                            lastEmotionUpdate: Date.now(),
+                        },
+                    });
+                    return;
+                }
+
+                // Find memory by userUuid - check both active and pre-loaded memories
+                let emotions = null;
+
+                // First try the optimized method that checks both active and pre-loaded memories
+                if ('getMemoryByUserUuid' in conversationMemory && typeof (conversationMemory as any).getMemoryByUserUuid === 'function') {
+                    const memory = (conversationMemory as any).getMemoryByUserUuid(botId, userUuid);
+                    if (memory) {
+                        emotions = memory.emotions;
+                    }
+                } else {
+                    // Fallback: search active memories only
+                    const memories = conversationMemory.getAllMemories?.();
+                    if (memories) {
+                        for (const memory of memories.values()) {
+                            if (memory.userUuid === userUuid) {
+                                emotions = memory.emotions;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!emotions) {
+                    // No memory exists yet - return default
+                    emotions = {
+                        botEmotion: { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                        personEmotion: { anger: 0, happiness: 50, trust: 50 },
+                        lastEmotionUpdate: Date.now(),
+                    };
+                }
+
+                res.json({ botId, userUuid, emotions });
+            } catch (error: any) {
+                console.error('[BotAPI] Error fetching emotions:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
         // Spawn a specific bot immediately (called when bot is created in editor)
         this.app.post('/api/bots/spawn', async (req: Request, res: Response) => {
             try {
@@ -726,6 +807,612 @@ export class BotAPI {
                 });
             } catch (error: any) {
                 console.error('[BotAPI] Error getting bot status:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Metrics endpoints
+        // Get current metrics for a bot (from buffer)
+        this.app.get('/api/bots/:botId/metrics/current', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const metricsCollector = this.botManager.getMetricsCollector();
+                
+                if (!metricsCollector) {
+                    res.status(503).json({ error: 'Metrics collector not available' });
+                    return;
+                }
+
+                const metrics = metricsCollector.getCurrentMetrics(botId);
+                res.json({ botId, metrics, count: metrics.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting current metrics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get metrics with time range (from Admin API)
+        this.app.get('/api/bots/:botId/metrics', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const metricType = req.query.metricType as string | undefined;
+                const startTime = req.query.startTime ? parseInt(req.query.startTime as string, 10) : undefined;
+                const endTime = req.query.endTime ? parseInt(req.query.endTime as string, 10) : undefined;
+                const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+                const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+
+                const metrics = await this.adminApiService.getBotMetrics(botId, {
+                    metricType,
+                    startTime,
+                    endTime,
+                    limit,
+                    offset,
+                });
+
+                res.json({ botId, metrics, count: metrics.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting metrics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Record metrics (internal endpoint, uses BOT_SERVICE_TOKEN)
+        this.app.post('/api/bots/metrics', async (req: Request, res: Response) => {
+            try {
+                const { metrics } = req.body;
+
+                if (!Array.isArray(metrics)) {
+                    res.status(400).json({ error: 'Metrics must be an array' });
+                    return;
+                }
+
+                await this.adminApiService.saveBotMetrics(metrics);
+                res.json({ saved: metrics.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error recording metrics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Test endpoints
+        // Run test suite
+        this.app.post('/api/bots/test/run-suite', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { testSuite, botId } = req.body;
+
+                if (!testSuite || !botId) {
+                    res.status(400).json({ error: 'Missing testSuite or botId' });
+                    return;
+                }
+
+                const testRunner = this.botManager.getTestRunner();
+                if (!testRunner) {
+                    res.status(503).json({ error: 'Test runner not available' });
+                    return;
+                }
+
+                const testRun = await testRunner.runTestSuite(testSuite, botId);
+                res.json(testRun);
+            } catch (error: any) {
+                console.error('[BotAPI] Error running test suite:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get test results
+        this.app.get('/api/bots/test/results/:testId', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { testId } = req.params;
+                
+                // This would fetch from Admin API in a real implementation
+                // For now, return not implemented
+                res.status(501).json({ error: 'Not implemented - test results stored in Admin API' });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting test results:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Replay conversation
+        this.app.post('/api/bots/test/replay', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { conversationId, newChatInstructions } = req.body;
+
+                if (!conversationId) {
+                    res.status(400).json({ error: 'Missing conversationId' });
+                    return;
+                }
+
+                const conversationReplay = this.botManager.getConversationReplay();
+                if (!conversationReplay) {
+                    res.status(503).json({ error: 'Conversation replay not available' });
+                    return;
+                }
+
+                const result = await conversationReplay.replayConversation(conversationId, newChatInstructions);
+                res.json(result);
+            } catch (error: any) {
+                console.error('[BotAPI] Error replaying conversation:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get problematic conversations
+        this.app.get('/api/bots/:botId/conversations/problematic', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const criteria = req.query.criteria ? JSON.parse(req.query.criteria as string) : undefined;
+
+                const conversationReplay = this.botManager.getConversationReplay();
+                if (!conversationReplay) {
+                    res.status(503).json({ error: 'Conversation replay not available' });
+                    return;
+                }
+
+                const problematic = conversationReplay.identifyProblematicConversations(botId, criteria);
+                res.json({ botId, conversations: problematic, count: problematic.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting problematic conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Conversation storage endpoints (production)
+        // Get recent conversations for a bot
+        this.app.get('/api/bots/:botId/conversations', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+                const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : undefined;
+                const userId = req.query.userId ? (req.query.userId as string) : undefined; // Changed from playerId (number) to userId (string)
+                const startDate = req.query.startDate ? parseInt(req.query.startDate as string, 10) : undefined;
+                const endDate = req.query.endDate ? parseInt(req.query.endDate as string, 10) : undefined;
+
+                const conversationStorage = this.botManager.getConversationStorage();
+                if (!conversationStorage) {
+                    res.status(503).json({ error: 'Conversation storage not available' });
+                    return;
+                }
+
+                const conversations = await conversationStorage.getConversations({
+                    botId,
+                    limit,
+                    offset,
+                    userId,
+                    startDate,
+                    endDate,
+                });
+
+                res.json({ botId, conversations, count: conversations.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get specific conversation
+        this.app.get('/api/bots/:botId/conversations/:conversationId', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId, conversationId } = req.params;
+                
+                // This would fetch from Admin API in a real implementation
+                res.status(501).json({ error: 'Not implemented - fetch from Admin API' });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting conversation:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get conversation stats
+        this.app.get('/api/bots/:botId/conversations/stats', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+
+                const conversationStorage = this.botManager.getConversationStorage();
+                if (!conversationStorage) {
+                    res.status(503).json({ error: 'Conversation storage not available' });
+                    return;
+                }
+
+                const stats = await conversationStorage.getConversationStats(botId);
+                res.json(stats);
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting conversation stats:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Manual cleanup for specific bot (admin only)
+        this.app.delete('/api/bots/:botId/conversations/cleanup', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const olderThanDays = req.query.olderThanDays ? parseInt(req.query.olderThanDays as string, 10) : undefined;
+                const keepRecent = req.query.keepRecent ? parseInt(req.query.keepRecent as string, 10) : undefined;
+
+                const conversationCleanup = this.botManager.getConversationCleanup();
+                if (!conversationCleanup) {
+                    res.status(503).json({ error: 'Conversation cleanup not available' });
+                    return;
+                }
+
+                let stats;
+                if (keepRecent !== undefined) {
+                    stats = await conversationCleanup.cleanupByBot(botId, keepRecent);
+                } else if (olderThanDays !== undefined) {
+                    stats = await conversationCleanup.cleanupOldConversations(botId, olderThanDays);
+                } else {
+                    res.status(400).json({ error: 'Must provide olderThanDays or keepRecent' });
+                    return;
+                }
+
+                res.json(stats);
+            } catch (error: any) {
+                console.error('[BotAPI] Error cleaning up conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Manual cleanup for all bots (admin only)
+        this.app.delete('/api/bots/conversations/cleanup', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const olderThanDays = req.query.olderThanDays ? parseInt(req.query.olderThanDays as string, 10) : undefined;
+                const maxPerBot = req.query.maxPerBot ? parseInt(req.query.maxPerBot as string, 10) : undefined;
+                const maxTotal = req.query.maxTotal ? parseInt(req.query.maxTotal as string, 10) : undefined;
+
+                const conversationCleanup = this.botManager.getConversationCleanup();
+                if (!conversationCleanup) {
+                    res.status(503).json({ error: 'Conversation cleanup not available' });
+                    return;
+                }
+
+                const stats = await conversationCleanup.cleanupAll({
+                    olderThanDays,
+                    maxPerBot,
+                    maxTotal,
+                });
+
+                res.json(stats);
+            } catch (error: any) {
+                console.error('[BotAPI] Error cleaning up all conversations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Improvement endpoints (DEVELOPMENT ONLY - disabled in production)
+        // Get improvement recommendations
+        this.app.get('/api/bots/improve/recommendations', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Improvement endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const botId = req.query.botId as string;
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
+                    return;
+                }
+
+                const autoImprovement = this.botManager.getAutoImprovement();
+                if (!autoImprovement) {
+                    res.status(503).json({ error: 'Auto-improvement not available (development mode required)' });
+                    return;
+                }
+
+                const recommendations = await autoImprovement.analyzeAndRecommend(botId);
+                res.json({ botId, recommendations, count: recommendations.length });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting improvement recommendations:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get pending improvement tasks (for AI analysis)
+        this.app.get('/api/bots/improve/tasks', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Improvement endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                // Tasks are stored as files - read from directory
+                const tasksDir = process.env.IMPROVEMENT_TASKS_DIR || 
+                    require('path').join(process.cwd(), 'bots', 'improvement-tasks');
+                const fs = require('fs/promises');
+                const path = require('path');
+                
+                try {
+                    const files = await fs.readdir(tasksDir);
+                    const taskFiles = files.filter((f: string) => f.endsWith('.json'));
+                    
+                    const tasks: any[] = [];
+                    for (const file of taskFiles) {
+                        try {
+                            const content = await fs.readFile(path.join(tasksDir, file), 'utf-8');
+                            const task = JSON.parse(content);
+                            tasks.push(task);
+                        } catch (error) {
+                            // Skip invalid files
+                        }
+                    }
+                    
+                    // Sort by priority
+                    const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+                    tasks.sort((a, b) => priorityOrder[b.priority] - priorityOrder[a.priority]);
+                    
+                    res.json({ tasks, count: tasks.length, directory: tasksDir });
+                } catch (error: any) {
+                    if (error.code === 'ENOENT') {
+                        res.json({ tasks: [], count: 0, directory: tasksDir, message: 'Tasks directory does not exist yet' });
+                    } else {
+                        throw error;
+                    }
+                }
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting improvement tasks:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Run improvement cycle
+        this.app.post('/api/bots/improve/cycle', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Improvement endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const { botId } = req.body;
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
+                    return;
+                }
+
+                const improvementLoop = this.botManager.getSelfImprovementLoop();
+                if (!improvementLoop) {
+                    res.status(503).json({ error: 'Self-improvement loop not available (development mode required)' });
+                    return;
+                }
+
+                const cycle = await improvementLoop.runImprovementCycle(botId);
+                res.json(cycle);
+            } catch (error: any) {
+                console.error('[BotAPI] Error running improvement cycle:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Improvement tasks endpoint
+        this.app.get('/api/bots/improve/tasks', async (req: BotAPIRequest, res: Response) => {
+            await authenticateToken(req, res, async () => {
+                try {
+                    const autoPilot = this.botManager.getAutoPilot();
+                    if (!autoPilot) {
+                        res.status(503).json({ error: 'AutoPilot not available' });
+                        return;
+                    }
+
+                    const status = req.query.status as string | undefined;
+                    const tasks = await autoPilot.getPendingTasks();
+
+                    const filtered = status
+                        ? tasks.filter(t => t.status === status)
+                        : tasks.filter(t => t.status === 'pending' || t.status === 'in_progress');
+
+                    res.json({ tasks: filtered, total: filtered.length });
+                } catch (error: any) {
+                    console.error('[BotAPI] Error getting improvement tasks:', error);
+                    res.status(500).json({ error: error.message });
+                }
+            }, this.adminApiService);
+        });
+
+        // Analytics endpoints
+        // Get conversation analytics
+        this.app.get('/api/bots/:botId/analytics', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const startTime = req.query.startTime ? parseInt(req.query.startTime as string, 10) : undefined;
+                const endTime = req.query.endTime ? parseInt(req.query.endTime as string, 10) : undefined;
+
+                const analytics = this.botManager.getConversationAnalytics();
+                if (!analytics) {
+                    res.status(503).json({ error: 'Conversation analytics not available' });
+                    return;
+                }
+
+                const result = await analytics.getAnalytics(botId, startTime, endTime);
+                res.json(result);
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting analytics:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get purpose distribution
+        this.app.get('/api/bots/:botId/purposes', async (req: BotAPIRequest, res: Response) => {
+            try {
+                const { botId } = req.params;
+                const analytics = this.botManager.getConversationAnalytics();
+                if (!analytics) {
+                    res.status(503).json({ error: 'Conversation analytics not available' });
+                    return;
+                }
+
+                const result = await analytics.getAnalytics(botId);
+                res.json({ botId, purposeDistribution: result.purposeDistribution });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting purpose distribution:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // ========================================
+        // ON-DEMAND TEST API (DEVELOPMENT ONLY)
+        // These endpoints allow the AI assistant to run tests directly
+        // ========================================
+
+        // Run specific test cases on demand
+        this.app.post('/api/test/run', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Test endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const { botId, testCases } = req.body;
+
+                if (!botId) {
+                    res.status(400).json({ error: 'Missing botId' });
+                    return;
+                }
+
+                const testRunner = this.botManager.getTestRunner();
+                if (!testRunner) {
+                    res.status(503).json({ error: 'Test runner not available (only in development mode)' });
+                    return;
+                }
+
+                // If no test cases provided, run default tests
+                const cases = testCases && testCases.length > 0 ? testCases : [
+                    { id: 'greeting', input: 'Hello!', expectedBehavior: { shouldContain: ['hello', 'hi', 'hey', 'greetings'] } },
+                    { id: 'location', input: 'Where are we?', expectedBehavior: { shouldContain: ['universe', 'world', 'room', 'area'] } },
+                    { id: 'memory', input: "I'm hungry", expectedBehavior: { shouldNotContain: ['[', ']', '<', '>'] } },
+                ];
+
+                // Create test suite object
+                const testSuiteId = `ondemand-${Date.now()}`;
+                const testSuite = {
+                    id: testSuiteId,
+                    name: `On-demand Test Suite`,
+                    testCases: cases,
+                };
+
+                // Run the tests
+                const results = await testRunner.runTestSuite(testSuite, botId);
+
+                res.json({
+                    botId,
+                    testSuiteId: results.id,
+                    status: results.status,
+                    summary: results.summary,
+                    results: results.results,
+                    duration: results.duration,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error running tests:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Simulate a full conversation (multi-turn)
+        this.app.post('/api/test/conversation', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Test endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const { botId, messages, userName = 'Test User' } = req.body;
+
+                if (!botId || !messages || !Array.isArray(messages) || messages.length === 0) {
+                    res.status(400).json({ error: 'Missing botId or messages array' });
+                    return;
+                }
+
+                const testRunner = this.botManager.getTestRunner();
+                if (!testRunner) {
+                    res.status(503).json({ error: 'Test runner not available (only in development mode)' });
+                    return;
+                }
+
+                // Convert messages to test cases with context preservation
+                // Mark all conversation turns as preserveContext to maintain context across turns
+                const testCases = messages.map((msg: string, index: number) => ({
+                    id: `turn-${index + 1}`,
+                    input: msg,
+                    expectedBehavior: {
+                        shouldNotContain: ['[', ']', '<think>', '</think>', 'END_TOOL'],
+                    },
+                    metadata: {
+                        preserveContext: true, // Don't clear memory between turns
+                    },
+                }));
+
+                // Create test suite object
+                const testSuiteId = `conversation-${Date.now()}`;
+                const testSuite = {
+                    id: testSuiteId,
+                    name: `Conversation Test with ${userName}`,
+                    testCases: testCases,
+                };
+
+                // Run as a single conversation (preserves context)
+                const results = await testRunner.runTestSuite(testSuite, botId);
+
+                // Extract the conversation flow
+                // Safety: Remove emotion blocks in case they leaked through (handle both complete and incomplete blocks)
+                const conversationFlow = results.results.map((r: any) => {
+                    let botResponse = r.response || '';
+                    // Remove complete emotion blocks
+                    botResponse = botResponse.replace(/\[EMOTION_UPDATE\]\s*[\s\S]*?\[\/EMOTION_UPDATE\]/gi, '');
+                    // Remove incomplete emotion blocks (missing closing tag)
+                    botResponse = botResponse.replace(/\[EMOTION_UPDATE\]\s*[\s\S]*$/gi, '');
+                    botResponse = botResponse.trim();
+                    return {
+                        turn: r.testCaseId,
+                        userMessage: r.input || testSuite.testCases.find((tc: any) => tc.id === r.testCaseId)?.input,
+                        botResponse,
+                        passed: r.passed,
+                        responseTime: r.responseTime,
+                        emotions: r.emotions, // Include emotions separately
+                    };
+                });
+
+                res.json({
+                    botId,
+                    testSuiteId: results.id,
+                    status: results.status,
+                    summary: results.summary,
+                    conversationFlow,
+                    duration: results.duration,
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error running conversation test:', error);
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get test runner status and capabilities
+        this.app.get('/api/test/status', async (req: BotAPIRequest, res: Response) => {
+            // Block in production
+            if (process.env.NODE_ENV === 'production') {
+                res.status(403).json({ error: 'Test endpoints disabled in production' });
+                return;
+            }
+
+            try {
+                const testRunner = this.botManager.getTestRunner();
+                const autoPilot = this.botManager.getAutoPilot();
+
+                res.json({
+                    testRunnerAvailable: !!testRunner,
+                    autoPilotAvailable: !!autoPilot,
+                    autoPilotRunning: autoPilot?.isRunning() ?? false,
+                    environment: process.env.NODE_ENV,
+                    capabilities: {
+                        runTests: !!testRunner,
+                        runConversation: !!testRunner,
+                        replayConversation: !!this.botManager.getConversationReplay(),
+                    },
+                });
+            } catch (error: any) {
+                console.error('[BotAPI] Error getting test status:', error);
                 res.status(500).json({ error: error.message });
             }
         });

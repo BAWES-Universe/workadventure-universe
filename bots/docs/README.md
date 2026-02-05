@@ -15,6 +15,10 @@ Welcome to the WorkAdventure Bot System documentation. This documentation is org
 - **[Conversation Memory](./architecture/CONVERSATION_MEMORY.md)** - Per-bot, per-player memory system
 - **[Pathfinding](./architecture/PATHFINDING.md)** - Bot navigation and obstacle avoidance
 
+### Testing
+- **[Testing Guide](./testing/TESTING_GUIDE.md)** - How to write and run tests
+- **[On-Demand Testing](./testing/ON_DEMAND_TESTING.md)** - API-driven testing system
+
 ### Admin API
 - **[Admin API Requirements](./admin-api/ADMIN_API_REQUIREMENTS.md)** - What your Admin API needs to implement
 - **[Admin API Quick Reference](./admin-api/ADMIN_API_QUICK_REFERENCE.md)** - Condensed reference guide
@@ -59,6 +63,7 @@ Welcome to the WorkAdventure Bot System documentation. This documentation is org
 - **Get started quickly** → [Quick Start Guide](./getting-started/QUICK_START.md)
 - **Understand the architecture** → [Architecture Overview](./architecture/ARCHITECTURE.md)
 - **Implement the system** → [Implementation Plan](./getting-started/IMPLEMENTATION_PLAN.md)
+- **Test bots** → [On-Demand Testing](./testing/ON_DEMAND_TESTING.md)
 - **Scale to thousands of bots** → [Horizontal Scaling](./scaling/HORIZONTAL_SCALING.md)
 - **Set up Redis** → [Redis Setup](./scaling/REDIS_SETUP.md)
 - **Integrate with Admin API** → [Admin API Integration](./admin-api/ADMIN_API_INTEGRATION.md)

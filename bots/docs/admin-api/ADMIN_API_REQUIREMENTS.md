@@ -294,6 +294,264 @@ Content-Type: application/json
 
 ### 5. Conversation Memory
 
+### 6. Bot Metrics
+
+#### POST `/api/bots/metrics`
+
+**Purpose:** Store bot metrics (high volume, time-series data)
+
+**Request:**
+```http
+POST /api/bots/metrics
+Authorization: Bearer {BOT_SERVICE_TOKEN}
+Content-Type: application/json
+
+{
+  "metrics": [
+    {
+      "botId": "bot-123",
+      "timestamp": 1704067200000,
+      "metrics": {
+        "responseTime": 1250,
+        "tokenUsage": {
+          "prompt": 500,
+          "completion": 200,
+          "total": 700
+        },
+        "repetitionScore": 0.1,
+        "systemPromptLeakage": false,
+        "personalityCompliance": 0.95,
+        "conversationQuality": 0.9
+      },
+      "metadata": {
+        "playerId": 123,
+        "spaceName": "room-456"
+      }
+    }
+  ]
+}
+```
+
+**Response:**
+- `200 OK` with `{ "saved": number }`
+- `400 Bad Request` for invalid data
+
+**Requirements:**
+- High write throughput (thousands of metrics per minute)
+- Time-series optimized storage
+- Batch inserts for performance
+
+#### GET `/api/bots/:botId/metrics`
+
+**Purpose:** Query metrics with filters
+
+**Query Parameters:**
+- `metricType`: Filter by metric type (response_time, token_usage, etc.)
+- `startTime`: Start timestamp (milliseconds)
+- `endTime`: End timestamp (milliseconds)
+- `limit`: Maximum results (default: 100)
+- `offset`: Pagination offset
+
+**Response:**
+```json
+[
+  {
+    "botId": "bot-123",
+    "timestamp": 1704067200000,
+    "metrics": { ... },
+    "metadata": { ... }
+  }
+]
+```
+
+**Database Schema:**
+```sql
+CREATE TABLE bots_metrics (
+    id SERIAL PRIMARY KEY,
+    bot_id VARCHAR(255) NOT NULL,
+    metric_type VARCHAR(50) NOT NULL,
+    metric_value NUMERIC NOT NULL,
+    metadata JSONB,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_bot_timestamp (bot_id, timestamp),
+    INDEX idx_type_timestamp (metric_type, timestamp)
+);
+```
+
+### 7. Conversation Storage (Production)
+
+#### GET `/api/bots/:botId/conversations`
+
+**Purpose:** Get recent conversations for admin viewing
+
+**Query Parameters:**
+- `limit`: Maximum results (default: 50)
+- `offset`: Pagination offset
+- `playerId`: Filter by player ID
+- `startDate`: Start timestamp
+- `endDate`: End timestamp
+
+**Response:**
+```json
+{
+  "botId": "bot-123",
+  "conversations": [
+    {
+      "id": 1,
+      "botId": "bot-123",
+      "playerId": 456,
+      "playerName": "John",
+      "messages": [
+        {
+          "sender": "person",
+          "message": "Hello",
+          "timestamp": 1704067200000
+        },
+        {
+          "sender": "bot",
+          "message": "Hi there!",
+          "timestamp": 1704067201000
+        }
+      ],
+      "startedAt": 1704067200000,
+      "endedAt": 1704067205000,
+      "messageCount": 2,
+      "createdAt": 1704067205000
+    }
+  ],
+  "count": 1
+}
+```
+
+#### GET `/api/bots/:botId/conversations/stats`
+
+**Purpose:** Get conversation statistics
+
+**Response:**
+```json
+{
+  "botId": "bot-123",
+  "totalConversations": 150,
+  "oldestConversation": 1704067200000,
+  "newestConversation": 1704153600000,
+  "totalSize": 1048576
+}
+```
+
+#### DELETE `/api/bots/:botId/conversations/cleanup`
+
+**Purpose:** Manual cleanup for specific bot (admin only)
+
+**Query Parameters:**
+- `olderThanDays`: Delete conversations older than X days
+- `keepRecent`: Keep only last N conversations
+
+**Response:**
+```json
+{
+  "deletedCount": 50,
+  "spaceFreed": 524288,
+  "botsAffected": 1
+}
+```
+
+#### DELETE `/api/bots/conversations/cleanup`
+
+**Purpose:** Manual cleanup for all bots (admin only)
+
+**Query Parameters:**
+- `olderThanDays`: Delete conversations older than X days
+- `maxPerBot`: Maximum conversations per bot
+- `maxTotal`: Maximum total conversations
+
+**Database Schema:**
+```sql
+CREATE TABLE bots_conversations_recent (
+    id SERIAL PRIMARY KEY,
+    bot_id VARCHAR(255) NOT NULL,
+    player_id INTEGER NOT NULL,
+    player_name VARCHAR(255),
+    messages JSONB NOT NULL,
+    started_at TIMESTAMP NOT NULL,
+    ended_at TIMESTAMP NOT NULL,
+    message_count INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_bot_created (bot_id, created_at),
+    INDEX idx_player (player_id),
+    INDEX idx_created_at (created_at)
+);
+```
+
+**Note:** No automatic cleanup triggers. Admin must manually trigger cleanup via API endpoints.
+
+### 8. Test Results
+
+#### POST `/api/bots/test/results`
+
+**Purpose:** Store test results
+
+**Request:**
+```json
+{
+  "testId": "test-123",
+  "botId": "bot-123",
+  "testSuite": "personality_compliance",
+  "results": { ... },
+  "passed": true
+}
+```
+
+**Database Schema:**
+```sql
+CREATE TABLE bots_test_results (
+    id SERIAL PRIMARY KEY,
+    test_id VARCHAR(255) UNIQUE NOT NULL,
+    bot_id VARCHAR(255),
+    test_suite VARCHAR(255),
+    results JSONB NOT NULL,
+    passed BOOLEAN NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_bot_id (bot_id),
+    INDEX idx_test_suite (test_suite)
+);
+```
+
+### 9. Improvements
+
+#### POST `/api/bots/improvements`
+
+**Purpose:** Store improvement cycles
+
+**Request:**
+```json
+{
+  "botId": "bot-123",
+  "improvementType": "repetition_fix",
+  "changes": { ... },
+  "metricsBefore": { ... },
+  "metricsAfter": { ... },
+  "deployed": false
+}
+```
+
+**Database Schema:**
+```sql
+CREATE TABLE bots_improvements (
+    id SERIAL PRIMARY KEY,
+    bot_id VARCHAR(255),
+    improvement_type VARCHAR(50),
+    changes JSONB NOT NULL,
+    metrics_before JSONB,
+    metrics_after JSONB,
+    deployed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_bot_id (bot_id),
+    INDEX idx_deployed (deployed)
+);
+```
+
+### 5. Conversation Memory (Enhanced)
+
 #### POST `/api/bots/memory/:botId`
 
 **Purpose:** Save conversation memories for a bot

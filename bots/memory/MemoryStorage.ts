@@ -11,6 +11,7 @@ import axios from 'axios';
 export interface MemoryStorageConfig {
     adminApiUrl?: string;
     adminApiToken?: string;
+    botServiceToken?: string; // Use BOT_SERVICE_TOKEN for bot endpoints
     saveInterval: number; // Save interval in milliseconds (default: 5 minutes)
     maxRetries: number;
 }
@@ -18,6 +19,7 @@ export interface MemoryStorageConfig {
 export class MemoryStorage {
     private adminApiUrl?: string;
     private adminApiToken?: string;
+    private botServiceToken?: string;
     private saveInterval: number;
     private maxRetries: number;
     private saveTimer: NodeJS.Timeout | null = null;
@@ -25,6 +27,7 @@ export class MemoryStorage {
     constructor(config: MemoryStorageConfig) {
         this.adminApiUrl = config.adminApiUrl || process.env.ADMIN_API_URL;
         this.adminApiToken = config.adminApiToken || process.env.ADMIN_API_TOKEN;
+        this.botServiceToken = config.botServiceToken || process.env.BOT_SERVICE_TOKEN;
         this.saveInterval = config.saveInterval || 5 * 60 * 1000; // 5 minutes
         this.maxRetries = config.maxRetries || 3;
     }
@@ -33,7 +36,7 @@ export class MemoryStorage {
      * Check if storage is configured
      */
     isConfigured(): boolean {
-        return !!(this.adminApiUrl && this.adminApiToken);
+        return !!(this.adminApiUrl && (this.botServiceToken || this.adminApiToken));
     }
 
     /**
@@ -41,7 +44,9 @@ export class MemoryStorage {
      */
     startAutoSave(saveCallback: () => BotPlayerMemory[]): void {
         if (!this.isConfigured()) {
-            console.warn('[MemoryStorage] Admin API not configured, auto-save disabled');
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] Admin API not configured, auto-save disabled');
+            }
             return;
         }
 
@@ -56,7 +61,9 @@ export class MemoryStorage {
             }
         }, this.saveInterval);
 
-        console.log(`[MemoryStorage] Auto-save started (interval: ${this.saveInterval}ms)`);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[MemoryStorage] Auto-save started (interval: ${this.saveInterval}ms)`);
+        }
     }
 
     /**
@@ -71,29 +78,58 @@ export class MemoryStorage {
 
     /**
      * Save memories for a bot
+     * @param saveType - "immediate" for emotion-only updates, "periodic" for full memory saves
      */
-    async saveMemories(botId: string, memories: BotPlayerMemory[]): Promise<void> {
+    async saveMemories(botId: string, memories: BotPlayerMemory[], saveType: 'immediate' | 'periodic' = 'periodic'): Promise<void> {
         if (!this.isConfigured() || memories.length === 0) {
             return;
         }
 
         if (!botId) {
-            console.warn('[MemoryStorage] botId is required');
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] botId is required');
+            }
+            return;
+        }
+
+        // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
+        const authToken = this.botServiceToken || this.adminApiToken;
+        if (!authToken) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] No authentication token available');
+            }
             return;
         }
 
         let retries = 0;
         while (retries < this.maxRetries) {
             try {
+                const serializedMemories = memories.map(mem => this.serializeMemory(mem));
+                
+                // Debug: Log what we're sending (dev only)
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    for (const mem of serializedMemories) {
+                        console.log(`[MemoryStorage] Saving memory for userUuid=${mem.userUuid}, saveType=${saveType}:`);
+                        console.log(`  - memories.conversationHistory: ${mem.memories?.conversationHistory?.length || 0} messages`);
+                        console.log(`  - memories.personalInfo.name: ${mem.memories?.personalInfo?.name || 'not set'}`);
+                        console.log(`  - memories.personalInfo.birthday: ${mem.memories?.personalInfo?.birthday || 'not set'}`);
+                        console.log(`  - memories.personalInfo.facts: ${mem.memories?.personalInfo?.facts?.length || 0} facts`);
+                        console.log(`  - memories.relationship.totalConversations: ${mem.memories?.relationship?.totalConversations || 0}`);
+                        console.log(`  - memories.relationship.importantEvents: ${mem.memories?.relationship?.importantEvents?.length || 0} events`);
+                        console.log(`  - emotions: ${mem.emotions ? 'present' : 'missing'}`);
+                    }
+                }
+                
                 await axios.post(
                     `${this.adminApiUrl}/api/bots/memory/${botId}`,
                     {
-                        memories: memories.map(mem => this.serializeMemory(mem)),
+                        memories: serializedMemories,
                         timestamp: Date.now(),
+                        saveType: saveType, // "immediate" for emotions, "periodic" for full saves
                     },
                     {
                         headers: {
-                            Authorization: `Bearer ${this.adminApiToken}`,
+                            Authorization: `Bearer ${authToken}`,
                             'Content-Type': 'application/json',
                         },
                     }
@@ -102,6 +138,7 @@ export class MemoryStorage {
             } catch (error: any) {
                 retries++;
                 if (retries >= this.maxRetries) {
+                    // Always log critical errors (max retries exceeded)
                     console.error(`[MemoryStorage] Failed to save memories after ${this.maxRetries} retries:`, error);
                     // Don't throw - memory persistence shouldn't break bot functionality
                 } else {
@@ -120,65 +157,128 @@ export class MemoryStorage {
             return [];
         }
 
+        // Use BOT_SERVICE_TOKEN for bot endpoints (preferred), fallback to ADMIN_API_TOKEN
+        const authToken = this.botServiceToken || this.adminApiToken;
+        if (!authToken) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn('[MemoryStorage] No authentication token available');
+            }
+            return [];
+        }
+
+        const url = `${this.adminApiUrl}/api/bots/memory/${botId}`;
+
         try {
-            const response = await axios.get(
-                `${this.adminApiUrl}/api/bots/memory/${botId}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${this.adminApiToken}`,
-                    },
-                }
-            );
+            const response = await axios.get(url, {
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
 
             if (response.data && response.data.memories) {
-                return response.data.memories.map((mem: any) => this.deserializeMemory(mem));
+                const deserialized = response.data.memories.map((mem: any) => this.deserializeMemory(mem));
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[MemoryStorage] Loaded ${deserialized.length} memories for bot ${botId}`);
+                }
+                return deserialized;
             }
 
             return [];
         } catch (error: any) {
             if (error.response?.status === 404) {
-                // No memories yet, that's okay
+                // 404 = No memories yet (though Admin API should return 200 with empty array)
                 return [];
             }
-            console.error('[MemoryStorage] Error loading memories:', error);
+            if (error.response?.status === 405) {
+                // 405 = Method not allowed (shouldn't happen now, but keep for backwards compatibility)
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn('[MemoryStorage] Admin API returned 405 - endpoint may not be available');
+                }
+                return [];
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[MemoryStorage] Error loading memories:', error.message);
+            }
             return [];
         }
     }
 
     /**
      * Save a single memory update (for immediate persistence)
+     * @param saveType - "immediate" for emotion-only updates, "periodic" for full memory saves
      */
-    async saveMemory(botId: string, memory: BotPlayerMemory): Promise<void> {
-        await this.saveMemories(botId, [memory]);
+    async saveMemory(botId: string, memory: BotPlayerMemory, saveType: 'immediate' | 'periodic' = 'periodic'): Promise<void> {
+        await this.saveMemories(botId, [memory], saveType);
     }
 
     /**
      * Serialize memory for storage (convert Maps to objects)
+     * Admin API expects nested structure: { userUuid, memories: {...}, emotions: {...} }
      */
     private serializeMemory(memory: BotPlayerMemory): any {
         return {
-            ...memory,
-            personalInfo: {
-                ...memory.personalInfo,
-                facts: Array.from(memory.personalInfo.facts.entries()),
+            // Top-level identification
+            userUuid: memory.userUuid,
+            userId: memory.userId,
+            userName: memory.playerName,
+            isGuest: memory.isGuest,
+            
+            // Nested memories object (what Admin API looks for)
+            memories: {
+                personalInfo: {
+                    ...memory.personalInfo,
+                    facts: Array.from(memory.personalInfo.facts.entries()),
+                },
+                relationship: memory.relationship,
+                conversationHistory: memory.conversationHistory,
+                lastUpdated: memory.lastUpdated,
+                createdAt: memory.createdAt,
             },
+            
+            // Emotions at top level (matches Admin API expectation)
+            emotions: memory.emotions,
+            lastEmotionUpdate: memory.emotions.lastEmotionUpdate,
         };
     }
 
     /**
      * Deserialize memory from storage (convert objects back to Maps)
+     * Handles both nested format (from Admin API) and flat format (legacy)
      */
     private deserializeMemory(data: any): BotPlayerMemory {
+        // Handle nested format from Admin API: { userUuid, memories: {...}, emotions: {...} }
+        const memoryData = data.memories || data; // Use nested memories if present, otherwise assume flat
+        const emotions = data.emotions || memoryData.emotions;
+        const personalInfo = memoryData.personalInfo || {};
+        
         return {
-            ...data,
+            userUuid: data.userUuid || memoryData.userUuid || '',
+            userId: data.userId || memoryData.userId,
+            isGuest: data.isGuest ?? memoryData.isGuest ?? true,
+            playerId: memoryData.playerId || 0,
+            playerName: data.userName || memoryData.playerName,
+            conversationHistory: memoryData.conversationHistory || [],
+            maxHistorySize: memoryData.maxHistorySize || 50,
             personalInfo: {
-                ...data.personalInfo,
-                facts: new Map(data.personalInfo.facts || []),
+                ...personalInfo,
+                facts: new Map(personalInfo.facts || []),
+            },
+            relationship: memoryData.relationship || {
+                firstMet: Date.now(),
+                lastMet: Date.now(),
+                totalConversations: 0,
+                totalMessages: 0,
+                importantEvents: [],
             },
             emotions: {
-                ...data.emotions,
-                lastEmotionUpdate: data.emotions.lastEmotionUpdate || Date.now(),
+                botEmotion: emotions?.botEmotion || { anger: 0, happiness: 50, trust: 50, familiarity: 0 },
+                personEmotion: emotions?.personEmotion || { anger: 0, happiness: 50, trust: 50 },
+                wounds: emotions?.wounds || [],
+                recentSentiment: emotions?.recentSentiment || 0,
+                lastEmotionUpdate: emotions?.lastEmotionUpdate || data.lastEmotionUpdate || Date.now(),
             },
+            lastUpdated: memoryData.lastUpdated || Date.now(),
+            createdAt: memoryData.createdAt || Date.now(),
         };
     }
 

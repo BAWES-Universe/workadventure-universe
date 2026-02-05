@@ -26,3 +26,7 @@ synapse/media_store/*
 
 .vscode/settings.json
 play/src/i18n/ko-KR/*.backup
+
+# AutoPilot improvement tasks (auto-generated)
+bots/improvement-tasks/*.json
+bots/bots/improvement-tasks/*.json

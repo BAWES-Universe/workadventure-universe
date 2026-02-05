@@ -14,6 +14,7 @@ import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { movementLogger } from '../utils/MovementLogger';
+import * as path from 'path';
 
 // Environment variables
 const BOT_SERVER_PORT = parseInt(process.env.BOT_SERVER_PORT || '3001', 10);
@@ -37,6 +38,32 @@ const botRegistry = new BotRegistry(BOT_SERVER_ID, {
 
 const botManager = new BotManager(adminApiService, botRegistry);
 const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
+
+// Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
+// This system runs tests every 30 seconds and creates improvement task files for AI analysis
+const isDevelopment = process.env.NODE_ENV === 'development';
+if (isDevelopment) {
+    import('../services/AutoPilotImprovement').then(({ AutoPilotImprovement }) => {
+        const autopilot = new AutoPilotImprovement(botManager, {
+            enabled: true,
+            testIntervalMs: parseInt(process.env.AUTOPILOT_TEST_INTERVAL_MS || '30000', 10), // Default: 30 seconds (FAST)
+            improvementIntervalMs: parseInt(process.env.AUTOPILOT_IMPROVEMENT_INTERVAL_MS || '60000', 10), // Default: 1 minute
+            autoApplyImprovements: process.env.AUTOPILOT_AUTO_APPLY !== 'false', // Default: true
+            maxIterationsPerBot: parseInt(process.env.AUTOPILOT_MAX_ITERATIONS || '50', 10), // Higher for continuous iteration
+            tasksDirectory: process.env.IMPROVEMENT_TASKS_DIR || path.join(process.cwd(), 'bots', 'improvement-tasks'),
+        });
+        // Register with BotManager so API can access it
+        botManager.setAutoPilot(autopilot);
+        autopilot.start();
+        console.log('[BotServer] 🚀 AutoPilot improvement system started (FAST CONTINUOUS ITERATION)');
+        console.log('[BotServer]    Tests run every 30 seconds');
+        console.log('[BotServer]    Improvement tasks created in: bots/improvement-tasks/');
+    }).catch(error => {
+        console.error('[BotServer] Failed to start autopilot:', error);
+    });
+} else {
+    console.log('[BotServer] AutoPilot disabled (production mode)');
+}
 
 // Graceful shutdown handler
 async function shutdown(signal: string) {
@@ -192,5 +219,3 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Start the server
 start();
-
-// RESPAWN FIX - 01:16:41
