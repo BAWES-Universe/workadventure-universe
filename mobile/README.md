@@ -4,7 +4,7 @@ Native Android and iOS wrapper for [universe.bawes.net](https://universe.bawes.n
 
 ## Architecture
 
-```
+```text
 mobile/
 ├── capacitor.config.ts   ← Points shell at universe.bawes.net
 ├── package.json          ← Capacitor deps + scripts
@@ -74,6 +74,29 @@ The WebView configuration is set to:
 
 Camera and microphone permission requests are handled natively by each platform. See platform READMEs in `android/` and `ios/` once those PRs land.
 
+## Update architecture
+
+The native app does not use CodePush, Appflow Live Updates, or any OTA tool that swaps native code after App Store or Play Store review. The WebView loads `https://universe.bawes.net`, so web content, game logic, iframes, and bot UI updates are delivered by the live server. Native releases are only required for shell changes such as permissions, Capacitor plugins, deep links, icons, signing, or platform manifests.
+
+The web app checks `/api/version` at launch when it runs inside Capacitor. The endpoint returns:
+
+```json
+{
+  "webVersion": "2026.05.15",
+  "minNativeVersion": "1.0.0",
+  "latestNativeVersion": "1.2.0",
+  "updateUrl": {
+    "android": "https://play.google.com/store/apps/details?id=net.bawes.universe",
+    "ios": "https://apps.apple.com/app/id..."
+  }
+}
+```
+
+- If the installed native version is lower than `minNativeVersion`, the web app shows a blocking update modal.
+- If the installed native version is lower than `latestNativeVersion`, the web app shows a dismissible update banner.
+- Store links come from `MOBILE_ANDROID_UPDATE_URL` and `MOBILE_IOS_UPDATE_URL` on the back service.
+- Web-only deploys are handled by the service worker update banner: a new `service-worker-prod.js` activates and asks the player to reload without interrupting active gameplay.
+
 ## Fastlane
 
 Fastlane lanes are defined in `fastlane/Fastfile` (added in PRs #4 and #5).
@@ -82,6 +105,13 @@ Fastlane lanes are defined in `fastlane/Fastfile` (added in PRs #4 and #5).
 bundle exec fastlane android build    # Build signed Android APK/AAB
 bundle exec fastlane android deploy   # Deploy to Play Store internal track
 bundle exec fastlane ios beta         # Build + upload to TestFlight
+```
+
+Platform lanes should increment build numbers before signing and uploading so CI never submits duplicate builds:
+
+```ruby
+increment_build_number(xcodeproj: "ios/App/App.xcodeproj")
+# Android versionCode is managed in the Android Gradle config added with PR #4.
 ```
 
 ## Secrets required (GitHub Actions)

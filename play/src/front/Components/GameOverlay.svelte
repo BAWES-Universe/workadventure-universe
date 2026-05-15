@@ -9,6 +9,8 @@
     import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
     import { mapEditorModeStore } from "../Stores/MapEditorStore";
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
+    import { serviceWorkerUpdateStore } from "../Stores/ServiceWorkerUpdateStore";
+    import { nativeUpdateStore } from "../Stores/NativeUpdateStore";
     import { forceRefreshChatStore } from "../Stores/ChatStore";
     import { loaderVisibleStore } from "../Stores/LoaderStore";
     import { showModalGlobalComminucationVisibilityStore } from "../Stores/ModalStore";
@@ -23,6 +25,8 @@
     import ErrorScreen from "./UI/ErrorScreen.svelte";
     import MapEditor from "./MapEditor/MapEditor.svelte";
     import RefreshPrompt from "./RefreshPrompt.svelte";
+    import ServiceWorkerUpdateBanner from "./ServiceWorkerUpdateBanner.svelte";
+    import NativeUpdatePrompt from "./NativeUpdatePrompt.svelte";
     import LoaderScene from "./Loader/LoaderScene.svelte";
     import EnableCameraScene from "./EnableCamera/EnableCameraScene.svelte";
     import bgMap from "./images/map-exemple.png";
@@ -47,6 +51,13 @@
 <!-- Preload image loader TODO HUGO : Better way ? -->
 <link rel="preload" as="image" href={bgMap} />
 <link rel="preload" as="image" href={defaultLoader} />
+
+{#if $nativeUpdateStore}
+    <NativeUpdatePrompt />
+{/if}
+{#if $serviceWorkerUpdateStore}
+    <ServiceWorkerUpdateBanner />
+{/if}
 
 {#if $loaderVisibleStore}
     <div class="bg-contrast">

@@ -24,6 +24,7 @@
     import { urlManager } from "../Url/UrlManager";
     import { FileListener } from "../Phaser/FileUpload/FileListener";
     import { isStructuredCloneSupported } from "../Utils/BrowserCompatibility";
+    import { initNativeUpdateCheck } from "../Network/NativeUpdateManager";
     import GameOverlay from "./GameOverlay.svelte";
     import CoWebsitesContainer from "./EmbedScreens/CoWebsitesContainer.svelte";
     import BrowserNotSupported from "./BrowserNotSupported/BrowserNotSupported.svelte";
@@ -43,6 +44,7 @@
             browserNotSupported = true;
             return;
         }
+        void initNativeUpdateCheck();
         if (SENTRY_DSN_FRONT != undefined) {
             try {
                 const sentryOptions: Sentry.BrowserOptions = {
