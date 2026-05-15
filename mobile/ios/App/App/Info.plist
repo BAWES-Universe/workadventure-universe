@@ -41,8 +41,14 @@
 	<string>Required for video calls in Universe.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Required for voice chat in Universe.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Required to share images in Universe.</string>
 	<key>UIRequiresFullScreen</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
