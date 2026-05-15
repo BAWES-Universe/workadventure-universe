@@ -1,4 +1,4 @@
-# BAWES Universe — CI/CD Overview
+# Universe — CI/CD Overview
 
 ## Checks on Pull Requests
 

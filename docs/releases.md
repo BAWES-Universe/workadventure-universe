@@ -1,4 +1,4 @@
-# BAWES Universe — Release Runbook
+# Universe — Release Runbook
 
 ## Desktop Release Steps
 

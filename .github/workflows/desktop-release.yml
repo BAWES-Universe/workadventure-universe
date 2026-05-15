@@ -27,6 +27,10 @@ jobs:
       run:
         working-directory: desktop/electron
 
+    env:
+      # On tag pushes use the tag; on manual dispatch use the input.
+      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,16 +49,19 @@ jobs:
 
       - name: Build Electron app (Windows)
         if: matrix.platform == 'win'
-        run: yarn build --win
+        run: |
+          echo "Building Universe $RELEASE_VERSION for Windows"
+          yarn build --win
         env:
-          # Optional: remove CSC vars to build unsigned on first release
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Electron app (macOS)
         if: matrix.platform == 'mac'
-        run: yarn build --mac
+        run: |
+          echo "Building Universe $RELEASE_VERSION for macOS"
+          yarn build --mac
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -63,14 +70,16 @@ jobs:
 
       - name: Build Electron app (Linux)
         if: matrix.platform == 'linux'
-        run: yarn build --linux appimage deb
+        run: |
+          echo "Building Universe $RELEASE_VERSION for Linux"
+          yarn build --linux appimage deb
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: universe-desktop-${{ matrix.platform }}
+          name: universe-desktop-${{ matrix.platform }}-${{ env.RELEASE_VERSION }}
           path: |
             desktop/electron/dist/*.exe
             desktop/electron/dist/*.dmg
