@@ -1,14 +1,13 @@
-import { BrowserView, BrowserWindow, app } from "electron";
+import { BrowserView, BrowserWindow } from "electron";
 import electronIsDev from "electron-is-dev";
 import windowStateKeeper from "electron-window-state";
 import path from "path";
-import { loadCustomScheme } from "./serve";
+
+/** The canonical Universe deployment. Never changes at runtime. */
+const UNIVERSE_URL = "https://universe.bawes.net";
 
 let mainWindow: BrowserWindow | undefined;
 let appView: BrowserView | undefined;
-let appViewUrl = "";
-
-const sidebarWidth = 80;
 
 export function getWindow() {
     return mainWindow;
@@ -19,32 +18,36 @@ export function getAppView() {
 }
 
 function resizeAppView() {
-    // TODO: workaround: set timeout is needed as mainWindow.getBounds() needs some time to update
     setTimeout(() => {
-        if (!mainWindow || !appView) {
-            return;
-        }
-
+        if (!mainWindow || !appView) return;
         const { width, height } = mainWindow.getBounds();
-
-        appView.setBounds({
-            x: sidebarWidth,
-            y: 0,
-            width: width - sidebarWidth,
-            height: height,
-        });
+        appView.setBounds({ x: 0, y: 0, width, height });
     });
 }
 
-export async function createWindow() {
-    // do not re-create window if still existing
-    if (mainWindow) {
-        return;
-    }
+/** Inline HTML shown when Universe is unreachable. Auto-retries every 10s. */
+function offlinePageHtml(): string {
+    return `<!DOCTYPE html>
+<html style="margin:0;background:#0a0a0a;color:#fff;font-family:sans-serif">
+<body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:16px">
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#4f98a3" stroke-width="1.5">
+    <circle cx="12" cy="12" r="10"/>
+    <path d="M12 8v4M12 16h.01"/>
+  </svg>
+  <h2 style="margin:0">Unable to reach Universe</h2>
+  <p style="margin:0;color:#888">Check your connection. Retrying automatically&hellip;</p>
+  <button onclick="location.reload()" style="padding:10px 24px;background:#4f98a3;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Reload Now</button>
+  <script>
+    setTimeout(() => location.reload(), 10000);
+  <\/script>
+</body></html>`;
+}
 
-    // Load the previous state with fallback to defaults
+export async function createWindow() {
+    if (mainWindow) return;
+
     const windowState = windowStateKeeper({
-        defaultWidth: 1000,
+        defaultWidth: 1280,
         defaultHeight: 800,
         maximize: true,
     });
@@ -56,95 +59,60 @@ export async function createWindow() {
         height: windowState.height,
         autoHideMenuBar: true,
         show: false,
-        webPreferences: {
-            preload: path.resolve(__dirname, "..", "dist", "preload-local-app", "preload.js"),
-        },
+        webPreferences: { contextIsolation: true },
     });
     mainWindow.setMenu(null);
-
-    // Let us register listeners on the window, so we can update the state
-    // automatically (the listeners will be removed when the window is closed)
-    // and restore the maximized or full screen state
     windowState.manage(mainWindow);
 
     mainWindow.on("closed", () => {
         mainWindow = undefined;
+        appView = undefined;
     });
 
-    // mainWindow.on('close', async (event) => {
-    //   if (!app.confirmedExitPrompt) {
-    //     event.preventDefault(); // Prevents the window from closing
-    //     const choice = await dialog.showMessageBox(getMainWindow(), {
-    //       type: 'question',
-    //       buttons: ['Yes', 'Abort'],
-    //       title: 'Confirm',
-    //       message: 'Are you sure you want to quit?',
-    //     });
-    //     if (choice.response === 0) {
-    //       app.confirmedExitPrompt = true;
-    //       mainWindow.close();
-    //     }
-    //   } else {
-    //     app.confirmedExitPrompt = false;
-    //   }
-    // });
-
+    // BrowserView fills the entire window (no sidebar)
     appView = new BrowserView({
         webPreferences: {
             preload: path.resolve(__dirname, "..", "dist", "preload-app", "preload.js"),
+            contextIsolation: true,
+            allowRunningInsecureContent: false,
         },
     });
+
+    mainWindow.addBrowserView(appView);
     resizeAppView();
     appView.setAutoResize({ width: true, height: true });
     mainWindow.on("resize", resizeAppView);
 
-    mainWindow.once("ready-to-show", () => {
-        mainWindow?.show();
-    });
+    mainWindow.once("ready-to-show", () => mainWindow?.show());
 
     mainWindow.webContents.on("did-finish-load", () => {
-        mainWindow?.setTitle("WorkAdventure Desktop (alpha release)");
+        mainWindow?.setTitle("Universe");
     });
 
-    if (electronIsDev && process.env.LOCAL_APP_URL) {
-        await mainWindow.loadURL(process.env.LOCAL_APP_URL);
-    } else {
-        // load custom url scheme app://
-        await loadCustomScheme(mainWindow);
-        await mainWindow.loadURL("app://-");
-    }
+    // Handle offline / failed load gracefully
+    appView.webContents.on("did-fail-load", (_event, errorCode) => {
+        // -3 = ERR_ABORTED (navigation cancels, not a real failure)
+        if (errorCode === -3) return;
+        void appView?.webContents.loadURL(
+            `data:text/html;charset=utf-8,${encodeURIComponent(offlinePageHtml())}`
+        );
+    });
+
+    const targetUrl = electronIsDev && process.env.LOCAL_APP_URL
+        ? process.env.LOCAL_APP_URL
+        : UNIVERSE_URL;
+
+    await appView.webContents.loadURL(targetUrl);
 }
 
+/** Load a specific URL in the BrowserView (used by deep-link IPC). */
 export async function showAppView(url?: string) {
-    if (!appView) {
-        throw new Error("App view not found");
-    }
-
-    if (!mainWindow) {
-        throw new Error("Main window not found");
-    }
-
-    if (mainWindow.getBrowserView()) {
-        mainWindow.removeBrowserView(appView);
-    }
-    mainWindow.addBrowserView(appView);
-
-    if (url && url !== appViewUrl) {
-        await appView.webContents.loadURL(url);
-        appViewUrl = url;
-    }
-
+    if (!appView || !mainWindow) throw new Error("Window not initialised");
+    if (url) await appView.webContents.loadURL(url);
     appView.webContents.focus();
 }
 
 export function hideAppView() {
-    if (!appView) {
-        throw new Error("App view not found");
-    }
-
-    if (!mainWindow) {
-        throw new Error("Main window not found");
-    }
-
-    mainWindow.removeBrowserView(appView);
+    // No-op in Universe shell — no local app UI to toggle back to.
+    // Kept to avoid breaking any existing IPC callers during transition.
 }

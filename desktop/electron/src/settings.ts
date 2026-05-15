@@ -14,11 +14,13 @@ let settings: SettingsData;
 const defaultSettings: SettingsData = {
     log_level: "info",
     auto_launch_enabled: true,
+    // Universe shell loads universe.bawes.net directly —
+    // this entry is kept for SettingsData schema compatibility only.
     servers: [
         {
-            _id: `${Date.now()}-1`,
-            name: "WA Demo",
-            url: "https://play.staging.workadventu.re/@/tcm/workadventure/wa-village",
+            _id: "universe-default",
+            name: "Universe",
+            url: "https://universe.bawes.net",
         },
     ],
     shortcuts: {
@@ -38,35 +40,21 @@ async function init() {
 function get(): SettingsData;
 function get<T extends keyof SettingsData>(key: T): SettingsData[T] | undefined;
 function get<T extends keyof SettingsData>(key?: T): SettingsData | SettingsData[T] | undefined {
-    if (settings === undefined) {
-        throw new Error("Settings not initialized");
-    }
-
-    if (key === undefined) {
-        return settings;
-    }
-
+    if (settings === undefined) throw new Error("Settings not initialized");
+    if (key === undefined) return settings;
     return settings?.[key];
 }
 
 function set(key: SettingsData): void;
 function set<T extends keyof SettingsData>(key: T, value: SettingsData[T]): void;
 function set<T extends keyof SettingsData>(key: T | SettingsData, value?: SettingsData[T]) {
-    if (settings === undefined) {
-        throw new Error("Settings not initialized");
-    }
-
+    if (settings === undefined) throw new Error("Settings not initialized");
     if (typeof key === "string" && value !== undefined) {
         settings[key] = value;
     } else if (typeof key !== "string") {
         Object.assign(settings, key);
     }
-
     void Settings.set(settings);
 }
 
-export default {
-    init,
-    get,
-    set,
-};
+export default { init, get, set };
