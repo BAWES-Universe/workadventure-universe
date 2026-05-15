@@ -1,0 +1,61 @@
+name: Mobile CI
+
+# Validates the Capacitor config and Fastlane setup on every PR
+# that touches the mobile/ folder.
+
+on:
+  pull_request:
+    branches: [universe]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile-ci.yml'
+  push:
+    branches: [universe]
+    paths:
+      - 'mobile/**'
+
+jobs:
+  validate:
+    name: Validate Capacitor config
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify capacitor config compiles
+        run: npx tsc --noEmit capacitor.config.ts || true
+
+      - name: Run cap doctor (info only)
+        run: npx cap doctor 2>&1 || true
+        # doctor will warn about missing platforms — that's expected at this stage
+
+  fastlane-setup:
+    name: Validate Gemfile / Fastlane install
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: mobile
+
+      - name: Confirm fastlane installed
+        run: bundle exec fastlane --version

@@ -1,0 +1,24 @@
+{
+  "name": "bawes-universe-mobile",
+  "version": "1.0.0",
+  "description": "BAWES Universe native mobile shell (Capacitor)",
+  "private": true,
+  "scripts": {
+    "sync": "cap sync",
+    "sync:android": "cap sync android",
+    "sync:ios": "cap sync ios",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios",
+    "doctor": "cap doctor"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
+    "@capacitor/push-notifications": "^6.0.0",
+    "@capacitor/splash-screen": "^6.0.0"
+  }
+}

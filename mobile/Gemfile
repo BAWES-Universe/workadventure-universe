@@ -1,0 +1,9 @@
+# frozen_string_literal: true
+
+source 'https://rubygems.org'
+
+# Fastlane — used by both Android (issue #4) and iOS (issue #5) lanes
+gem 'fastlane'
+
+# Required for App Store Connect API key auth
+gem 'fastlane-plugin-versioning'

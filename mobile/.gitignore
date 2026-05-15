@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Capacitor platform folders — added by separate PRs
+# android/ is added by issue #4
+# ios/ is added by issue #5
+android/
+ios/
+
+# Fastlane build outputs
+fastlane/report.xml
+fastlane/screenshots
+fastlane/test_output
+
+# Signing — NEVER commit real keystores or certificates
+*.keystore
+*.jks
+google-play-key.json
+certs/
+*.p12
+*.mobileprovision
+
+# Bundler
+.bundle/
+vendor/
+
+# Build artifacts
+dist/
+*.apk
+*.aab
+*.ipa
