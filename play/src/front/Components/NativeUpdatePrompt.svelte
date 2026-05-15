@@ -12,6 +12,10 @@
             nativeUpdateStore.set(undefined);
         }
     }
+
+    function reload(): void {
+        window.location.reload();
+    }
 </script>
 
 {#if $nativeUpdateStore?.blocking}
@@ -24,6 +28,8 @@
             </p>
             {#if $nativeUpdateStore.updateUrl}
                 <button type="button" class="light" on:click={openUpdate}>Update app</button>
+            {:else}
+                <button type="button" class="light" on:click={reload}>Try again</button>
             {/if}
         </section>
     </div>

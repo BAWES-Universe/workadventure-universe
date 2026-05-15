@@ -80,8 +80,23 @@ function compareVersions(left: string, right: string): number {
     const length = Math.max(leftParts.length, rightParts.length);
 
     for (let index = 0; index < length; index++) {
-        const leftPart = leftParts[index] ?? "0";
-        const rightPart = rightParts[index] ?? "0";
+        const leftPart = leftParts[index];
+        const rightPart = rightParts[index];
+
+        if (leftPart === undefined || rightPart === undefined) {
+            const presentPart = leftPart ?? rightPart ?? "0";
+            const presentNumber = Number(presentPart);
+            if (Number.isInteger(presentNumber)) {
+                const comparison =
+                    (leftPart === undefined ? 0 : presentNumber) - (rightPart === undefined ? 0 : presentNumber);
+                if (comparison !== 0) {
+                    return comparison > 0 ? 1 : -1;
+                }
+                continue;
+            }
+            return leftPart === undefined ? 1 : -1;
+        }
+
         const leftNumber = Number(leftPart);
         const rightNumber = Number(rightPart);
 
