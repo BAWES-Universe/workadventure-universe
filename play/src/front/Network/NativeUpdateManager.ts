@@ -69,19 +69,52 @@ export async function initNativeUpdateCheck(): Promise<void> {
                 latestVersion: versionPayload.latestNativeVersion,
                 updateUrl,
             });
+            return;
         }
+
+        nativeUpdateStore.set(undefined);
     } catch (error) {
         console.warn("Unable to check native app version", error);
     }
 }
 
 function compareVersions(left: string, right: string): number {
-    const leftVersion = semver.valid(left) ?? semver.coerce(left)?.version;
-    const rightVersion = semver.valid(right) ?? semver.coerce(right)?.version;
+    const leftVersion = normalizeVersion(left);
+    const rightVersion = normalizeVersion(right);
 
     if (leftVersion && rightVersion) {
         return semver.compare(leftVersion, rightVersion);
     }
 
     return left.localeCompare(right);
+}
+
+function normalizeVersion(version: string): string | undefined {
+    const validVersion = semver.valid(version);
+    if (validVersion) {
+        return validVersion;
+    }
+
+    const coercedVersion = semver.coerce(version);
+    if (!coercedVersion) {
+        return undefined;
+    }
+
+    const suffix = extractCoercedSuffix(version);
+    if (suffix) {
+        const prerelease = suffix
+            .replace(/^[+-]+/, "")
+            .replace(/[^0-9A-Za-z-]+/g, "-")
+            .replace(/^-+|-+$/g, "");
+        const coercedWithPrerelease = `${coercedVersion.version}-${prerelease || "local"}`;
+        return semver.valid(coercedWithPrerelease) ?? coercedVersion.version;
+    }
+
+    return coercedVersion.version;
+}
+
+function extractCoercedSuffix(version: string): string {
+    const normalizedInput = version.trim();
+    const match = normalizedInput.match(/\d+(?:\.\d+){0,2}/);
+    return match?.index === undefined ? "" : normalizedInput.slice(match.index + match[0].length);
 }

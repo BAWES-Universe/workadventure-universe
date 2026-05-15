@@ -17,13 +17,18 @@ export interface MobileVersionPayload {
 }
 
 export function getMobileVersionPayload(): MobileVersionPayload {
+    const updateUrl: MobileVersionPayload["updateUrl"] = {
+        android: MOBILE_ANDROID_UPDATE_URL,
+    };
+
+    if (MOBILE_IOS_UPDATE_URL) {
+        updateUrl.ios = MOBILE_IOS_UPDATE_URL;
+    }
+
     return {
         webVersion: MOBILE_WEB_VERSION,
         minNativeVersion: MOBILE_MIN_NATIVE_VERSION,
         latestNativeVersion: MOBILE_LATEST_NATIVE_VERSION,
-        updateUrl: {
-            android: MOBILE_ANDROID_UPDATE_URL,
-            ios: MOBILE_IOS_UPDATE_URL,
-        },
+        updateUrl,
     };
 }

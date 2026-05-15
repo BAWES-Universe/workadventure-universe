@@ -72,7 +72,7 @@ describe("VersionController", () => {
                 android: "https://play.google.com/store/apps/details?id=net.bawes.universe",
             },
         });
-        expect(JSON.stringify(payload?.updateUrl)).not.toContain("ios");
+        expect(payload?.updateUrl).not.toHaveProperty("ios");
     });
 
     it("exposes configured mobile update metadata", async () => {

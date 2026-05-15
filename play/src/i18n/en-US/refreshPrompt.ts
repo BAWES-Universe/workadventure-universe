@@ -12,12 +12,12 @@ const refreshPrompt: BaseTranslation = {
         modal: {
             title: "Please update the app",
             message:
-                "Version {currentVersion:string} is no longer supported. Update to {requiredVersion:string} or newer to continue.",
+                "Version {currentVersion} is no longer supported. Update to {requiredVersion} or newer to continue.",
             updateButton: "Update app",
             retryButton: "Try again",
         },
         banner: {
-            message: "New app version {latestVersion:string} is available.",
+            message: "New app version {latestVersion} is available.",
             updateButton: "Update",
             laterButton: "Later",
             dismissLabel: "Dismiss native update prompt",
