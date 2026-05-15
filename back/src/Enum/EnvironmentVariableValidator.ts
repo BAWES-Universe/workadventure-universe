@@ -142,6 +142,35 @@ Note that anonymous players don't have any TTL limit because their data is store
         .string()
         .optional()
         .describe("The Sentry environnement we target. Only used if SENTRY_DSN is configured."),
+    UNIVERSE_WEB_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Public web app version returned by /api/version. Defaults to the back service version."),
+    UNIVERSE_MIN_NATIVE_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Minimum native mobile shell version allowed to open the web app."),
+    UNIVERSE_LATEST_NATIVE_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Latest native mobile shell version advertised to clients."),
+    UNIVERSE_ANDROID_UPDATE_URL: z
+        .string()
+        .url()
+        .or(z.literal(""))
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Android store or distribution URL for native shell updates."),
+    UNIVERSE_IOS_UPDATE_URL: z
+        .string()
+        .url()
+        .or(z.literal(""))
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("iOS App Store or TestFlight URL for native shell updates."),
     GRPC_MAX_MESSAGE_SIZE: PositiveIntAsString.optional()
         .or(z.string().max(0))
         .transform((val) => toNumber(val, 20 * 1024 * 1024)) // Default to 20 MB

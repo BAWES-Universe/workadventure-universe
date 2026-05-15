@@ -1,4 +1,5 @@
 import { NODE_ENV } from "../Enum/EnvironmentVariable";
+import { notifyServiceWorkerUpdate } from "../Stores/AppUpdateStore";
 
 export class _ServiceWorker {
     constructor() {
@@ -28,6 +29,7 @@ export class _ServiceWorker {
                 )
                 .then((serviceWorker) => {
                     console.info("Service Worker registered: ", serviceWorker);
+                    this.watchForUpdates(serviceWorker);
                 })
                 .catch((error) => {
                     console.error("Error registering the Service Worker: ", error);
@@ -40,9 +42,34 @@ export class _ServiceWorker {
             )
             .then((serviceWorker) => {
                 console.info("Service Worker registered: ", serviceWorker);
+                this.watchForUpdates(serviceWorker);
             })
             .catch((error) => {
                 console.error("Error registering the Service Worker: ", error);
             });
+    }
+
+    private watchForUpdates(registration: ServiceWorkerRegistration): void {
+        if (registration.waiting && navigator.serviceWorker.controller) {
+            notifyServiceWorkerUpdate(registration);
+        }
+
+        registration.addEventListener("updatefound", () => {
+            const installingWorker = registration.installing;
+
+            if (!installingWorker) {
+                return;
+            }
+
+            installingWorker.addEventListener("statechange", () => {
+                if (installingWorker.state === "installed" && navigator.serviceWorker.controller) {
+                    notifyServiceWorkerUpdate(registration);
+                }
+            });
+        });
+
+        registration.update().catch((error) => {
+            console.warn("Unable to check for a Service Worker update", error);
+        });
     }
 }
