@@ -1,0 +1,83 @@
+name: iOS Build & TestFlight
+
+on:
+  pull_request:
+    branches: [universe]
+    paths:
+      - 'mobile/ios/**'
+      - 'mobile/fastlane/**'
+      - 'mobile/Gemfile'
+      - '.github/workflows/ios-build.yml'
+  push:
+    branches: [universe]
+    paths:
+      - 'mobile/ios/**'
+      - 'mobile/fastlane/**'
+      - 'mobile/Gemfile'
+      - '.github/workflows/ios-build.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: iOS tests
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Capacitor CLI toolchain
+        run: npm install --no-save --registry=https://registry.npmjs.org @capacitor/core@8.3.4 @capacitor/cli@8.3.4 @capacitor/ios@8.3.4 @capacitor/push-notifications@8.1.1 @capacitor/splash-screen@8.0.1 typescript@6.0.3
+
+      - run: npx cap sync ios
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: mobile
+
+      - run: bundle exec fastlane ios test
+
+  beta:
+    name: Build and upload to TestFlight
+    runs-on: macos-latest
+    needs: test
+    if: github.event_name != 'pull_request'
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Capacitor CLI toolchain
+        run: npm install --no-save --registry=https://registry.npmjs.org @capacitor/core@8.3.4 @capacitor/cli@8.3.4 @capacitor/ios@8.3.4 @capacitor/push-notifications@8.1.1 @capacitor/splash-screen@8.0.1 typescript@6.0.3
+
+      - run: npx cap sync ios
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: mobile
+
+      - run: bundle exec fastlane ios beta
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
