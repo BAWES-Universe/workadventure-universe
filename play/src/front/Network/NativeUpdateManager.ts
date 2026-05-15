@@ -1,3 +1,4 @@
+import * as semver from "semver";
 import { nativeUpdateStore } from "../Stores/NativeUpdateStore";
 
 interface NativeAppInfo {
@@ -75,43 +76,12 @@ export async function initNativeUpdateCheck(): Promise<void> {
 }
 
 function compareVersions(left: string, right: string): number {
-    const leftParts = left.split(/[.-]/);
-    const rightParts = right.split(/[.-]/);
-    const length = Math.max(leftParts.length, rightParts.length);
+    const leftVersion = semver.valid(left) ?? semver.coerce(left)?.version;
+    const rightVersion = semver.valid(right) ?? semver.coerce(right)?.version;
 
-    for (let index = 0; index < length; index++) {
-        const leftPart = leftParts[index];
-        const rightPart = rightParts[index];
-
-        if (leftPart === undefined || rightPart === undefined) {
-            const presentPart = leftPart ?? rightPart ?? "0";
-            const presentNumber = Number(presentPart);
-            if (Number.isInteger(presentNumber)) {
-                const comparison =
-                    (leftPart === undefined ? 0 : presentNumber) - (rightPart === undefined ? 0 : presentNumber);
-                if (comparison !== 0) {
-                    return comparison > 0 ? 1 : -1;
-                }
-                continue;
-            }
-            return leftPart === undefined ? 1 : -1;
-        }
-
-        const leftNumber = Number(leftPart);
-        const rightNumber = Number(rightPart);
-
-        if (Number.isInteger(leftNumber) && Number.isInteger(rightNumber)) {
-            if (leftNumber !== rightNumber) {
-                return leftNumber > rightNumber ? 1 : -1;
-            }
-            continue;
-        }
-
-        const comparison = leftPart.localeCompare(rightPart);
-        if (comparison !== 0) {
-            return comparison > 0 ? 1 : -1;
-        }
+    if (leftVersion && rightVersion) {
+        return semver.compare(leftVersion, rightVersion);
     }
 
-    return 0;
+    return left.localeCompare(right);
 }

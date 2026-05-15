@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { LL } from "../../i18n/i18n-svelte";
     import { serviceWorkerUpdateStore } from "../Stores/ServiceWorkerUpdateStore";
 
     function reload(): void {
@@ -11,10 +12,15 @@
 </script>
 
 <div class="service-worker-update-banner" role="status" aria-live="polite">
-    <span>Game updated - tap to reload</span>
+    <span>{$LL.refreshPrompt.serviceWorkerUpdate.message()}</span>
     <div class="actions">
-        <button type="button" class="light" on:click={reload}>Reload</button>
-        <button type="button" class="light outline" aria-label="Dismiss update prompt" on:click={dismiss}>Later</button>
+        <button type="button" class="light" on:click={reload}>{$LL.refreshPrompt.serviceWorkerUpdate.reload()}</button>
+        <button
+            type="button"
+            class="light outline"
+            aria-label={$LL.refreshPrompt.serviceWorkerUpdate.dismissLabel()}
+            on:click={dismiss}>{$LL.refreshPrompt.serviceWorkerUpdate.later()}</button
+        >
     </div>
 </div>
 

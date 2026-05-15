@@ -6,7 +6,8 @@ Native Android and iOS wrapper for [universe.bawes.net](https://universe.bawes.n
 
 ```text
 mobile/
-├── capacitor.config.ts   ← Points shell at universe.bawes.net
+├── capacitor.config.js   ← Canonical Capacitor config; points shell at universe.bawes.net
+├── capacitor.config.ts   ← TypeScript wrapper that re-exports the JS config
 ├── package.json          ← Capacitor deps + scripts
 ├── Gemfile               ← Fastlane (shared by Android + iOS)
 ├── fastlane/             ← Added in #4 (Android) and #5 (iOS)
@@ -15,6 +16,7 @@ mobile/
 ```
 
 **The app is a thin native shell.** All game logic, iframes, video (LiveKit), and bot interactions live on the server at `universe.bawes.net`. This means:
+
 - Game updates ship instantly without app store review
 - Only native-layer changes (push notifications, deep links, icons) require a new app release
 - iframe websites, video calls, and all WA scripting API features work as-is
@@ -37,6 +39,7 @@ bundle install
 ```
 
 Verify the environment:
+
 ```bash
 npx cap doctor
 ```
@@ -55,7 +58,9 @@ npm run sync:ios      # iOS only
 
 1. Make changes to the web app at `universe.bawes.net` — no sync needed for web-only changes
 2. For native config changes (permissions, deep links, icons): edit platform folders → `npm run sync` → test on device
-3. For new Capacitor plugin additions: `npm install @capacitor/plugin-name` → update `capacitor.config.ts` if needed → `npm run sync`
+3. For new Capacitor plugin additions: `npm install @capacitor/plugin-name` → update `capacitor.config.js` if needed → `npm run sync`
+
+`capacitor.config.js` is the single source of truth for native shell settings. `capacitor.config.ts` only re-exports that CommonJS config for TypeScript-aware tooling, and CI validates the canonical file by requiring `capacitor.config.js`.
 
 ## Push Notifications
 
@@ -68,6 +73,7 @@ The shell is pre-configured for push notifications via `@capacitor/push-notifica
 ## LiveKit Video / iframe compatibility
 
 The WebView configuration is set to:
+
 - `cleartext: false` — HTTPS only (required for getUserMedia / camera + mic)
 - `androidScheme: https` — ensures WebRTC and cookies work correctly on Android
 - `contentInset: always` — iOS safe area respected so game UI is not obscured by notch
@@ -118,28 +124,28 @@ increment_build_number(xcodeproj: "ios/App/App.xcodeproj")
 
 See `.github/workflows/android-build.yml` and `.github/workflows/ios-build.yml` for the full list. Summary:
 
-| Secret | Used by |
-|---|---|
-| `ANDROID_KEYSTORE_BASE64` | Android signing |
-| `ANDROID_STORE_PASSWORD` | Android signing |
-| `ANDROID_KEY_ALIAS` | Android signing |
-| `ANDROID_KEY_PASSWORD` | Android signing |
-| `GOOGLE_PLAY_JSON_KEY` | Play Store upload |
-| `GOOGLE_SERVICES_JSON` | Firebase / push notifications |
-| `APPLE_ID` | iOS / TestFlight |
-| `APPLE_TEAM_ID` | iOS signing |
-| `MATCH_PASSWORD` | Fastlane Match cert encryption |
+| Secret                          | Used by                         |
+| ------------------------------- | ------------------------------- |
+| `ANDROID_KEYSTORE_BASE64`       | Android signing                 |
+| `ANDROID_STORE_PASSWORD`        | Android signing                 |
+| `ANDROID_KEY_ALIAS`             | Android signing                 |
+| `ANDROID_KEY_PASSWORD`          | Android signing                 |
+| `GOOGLE_PLAY_JSON_KEY`          | Play Store upload               |
+| `GOOGLE_SERVICES_JSON`          | Firebase / push notifications   |
+| `APPLE_ID`                      | iOS / TestFlight                |
+| `APPLE_TEAM_ID`                 | iOS signing                     |
+| `MATCH_PASSWORD`                | Fastlane Match cert encryption  |
 | `MATCH_GIT_BASIC_AUTHORIZATION` | Fastlane Match cert repo access |
-| `ASC_KEY_ID` | App Store Connect API |
-| `ASC_ISSUER_ID` | App Store Connect API |
-| `ASC_KEY_CONTENT` | App Store Connect API |
+| `ASC_KEY_ID`                    | App Store Connect API           |
+| `ASC_ISSUER_ID`                 | App Store Connect API           |
+| `ASC_KEY_CONTENT`               | App Store Connect API           |
 
 ## Branching rules
 
 All mobile work branches from and merges to `universe`.
 
-| Branch | Owns |
-|---|---|
-| `feat/mobile-capacitor-scaffold` | `mobile/` root (this PR) |
-| `feat/mobile-android` | `mobile/android/`, `.github/workflows/android-build.yml` |
-| `feat/mobile-ios` | `mobile/ios/`, `.github/workflows/ios-build.yml` |
+| Branch                           | Owns                                                     |
+| -------------------------------- | -------------------------------------------------------- |
+| `feat/mobile-capacitor-scaffold` | `mobile/` root (this PR)                                 |
+| `feat/mobile-android`            | `mobile/android/`, `.github/workflows/android-build.yml` |
+| `feat/mobile-ios`                | `mobile/ios/`, `.github/workflows/ios-build.yml`         |

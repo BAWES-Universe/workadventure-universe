@@ -124,6 +124,11 @@ Environment variables for the Back service (backend API).
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PLAY_URL` | Yes | Public URL of the play/frontend service |
+| `MOBILE_WEB_VERSION` | No | Version string returned by /api/version for the live web application. |
+| `MOBILE_MIN_NATIVE_VERSION` | Yes | Minimum native mobile shell version allowed to open the live web app. |
+| `MOBILE_LATEST_NATIVE_VERSION` | Yes | Latest recommended native mobile shell version. |
+| `MOBILE_ANDROID_UPDATE_URL` | No | Android store URL used by the mobile update prompt. |
+| `MOBILE_IOS_UPDATE_URL` | No | iOS App Store URL used by the mobile update prompt. |
 | `MINIMUM_DISTANCE` | No | Minimum distance (in pixels) before users are considered to be in proximity. Defaults to 64 |
 | `GROUP_RADIUS` | No | Radius (in pixels) of a group/bubble. Defaults to 48 |
 | `ADMIN_API_URL` | No | URL of the admin API for centralized configuration |

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { LL } from "../../i18n/i18n-svelte";
     import { nativeUpdateStore } from "../Stores/NativeUpdateStore";
 
     function openUpdate(): void {
@@ -21,27 +22,39 @@
 {#if $nativeUpdateStore?.blocking}
     <div class="native-update-backdrop">
         <section class="native-update-modal" aria-modal="true" role="dialog">
-            <h2>Please update the app</h2>
+            <h2>{$LL.refreshPrompt.nativeUpdate.modal.title()}</h2>
             <p>
-                Version {$nativeUpdateStore.currentVersion} is no longer supported. Update to
-                {$nativeUpdateStore.requiredVersion} or newer to continue.
+                {$LL.refreshPrompt.nativeUpdate.modal.message({
+                    currentVersion: $nativeUpdateStore.currentVersion,
+                    requiredVersion: $nativeUpdateStore.requiredVersion,
+                })}
             </p>
             {#if $nativeUpdateStore.updateUrl}
-                <button type="button" class="light" on:click={openUpdate}>Update app</button>
+                <button type="button" class="light" on:click={openUpdate}
+                    >{$LL.refreshPrompt.nativeUpdate.modal.updateButton()}</button
+                >
             {:else}
-                <button type="button" class="light" on:click={reload}>Try again</button>
+                <button type="button" class="light" on:click={reload}
+                    >{$LL.refreshPrompt.nativeUpdate.modal.retryButton()}</button
+                >
             {/if}
         </section>
     </div>
 {:else if $nativeUpdateStore}
     <div class="native-update-banner" role="status" aria-live="polite">
-        <span>New app version {$nativeUpdateStore.latestVersion} is available.</span>
+        <span>{$LL.refreshPrompt.nativeUpdate.banner.message({ latestVersion: $nativeUpdateStore.latestVersion })}</span
+        >
         <div class="actions">
             {#if $nativeUpdateStore.updateUrl}
-                <button type="button" class="light" on:click={openUpdate}>Update</button>
+                <button type="button" class="light" on:click={openUpdate}
+                    >{$LL.refreshPrompt.nativeUpdate.banner.updateButton()}</button
+                >
             {/if}
-            <button type="button" class="light outline" aria-label="Dismiss native update prompt" on:click={dismiss}
-                >Later</button
+            <button
+                type="button"
+                class="light outline"
+                aria-label={$LL.refreshPrompt.nativeUpdate.banner.dismissLabel()}
+                on:click={dismiss}>{$LL.refreshPrompt.nativeUpdate.banner.laterButton()}</button
             >
         </div>
     </div>

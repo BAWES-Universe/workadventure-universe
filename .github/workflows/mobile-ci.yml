@@ -7,13 +7,13 @@ on:
   pull_request:
     branches: [universe]
     paths:
-      - 'mobile/**'
-      - '.github/workflows/mobile-ci.yml'
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
   push:
     branches: [universe]
     paths:
-      - 'mobile/**'
-      - '.github/workflows/mobile-ci.yml'
+      - "mobile/**"
+      - ".github/workflows/mobile-ci.yml"
 
 jobs:
   validate:
@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
           # No npm install needed — config is plain JS with no imports
 
       - name: Verify capacitor config is valid JS
@@ -37,7 +37,7 @@ jobs:
         # No @capacitor/cli install needed — plain node require() is sufficient.
 
       - name: Run cap doctor (info only)
-        run: npx --yes @capacitor/cli doctor 2>&1
+        run: npx --yes @capacitor/cli@8.3.4 doctor 2>&1
         continue-on-error: true
         # cap doctor warns about missing Android/iOS platforms — expected at
         # scaffold stage. continue-on-error makes the intent explicit.
@@ -54,7 +54,7 @@ jobs:
 
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.2'
+          ruby-version: "3.2"
           bundler-cache: true
           working-directory: mobile
 

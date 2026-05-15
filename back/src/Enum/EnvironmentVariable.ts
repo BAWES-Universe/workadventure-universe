@@ -1,5 +1,5 @@
-import { EnvironmentVariables } from "./EnvironmentVariableValidator";
 import { version } from "../Services/version";
+import { EnvironmentVariables } from "./EnvironmentVariableValidator";
 
 const envChecking = EnvironmentVariables.safeParse(process.env);
 
@@ -29,12 +29,12 @@ if (!envChecking.success) {
 const env: EnvironmentVariables = envChecking.data;
 
 export const PLAY_URL = env.PLAY_URL;
-export const MOBILE_WEB_VERSION = env.MOBILE_WEB_VERSION ?? version;
-export const MOBILE_MIN_NATIVE_VERSION = env.MOBILE_MIN_NATIVE_VERSION ?? "1.0.0";
-export const MOBILE_LATEST_NATIVE_VERSION = env.MOBILE_LATEST_NATIVE_VERSION ?? MOBILE_MIN_NATIVE_VERSION;
-export const MOBILE_ANDROID_UPDATE_URL =
+export const MOBILE_WEB_VERSION: string = env.MOBILE_WEB_VERSION ?? version;
+export const MOBILE_MIN_NATIVE_VERSION: string = env.MOBILE_MIN_NATIVE_VERSION ?? "1.0.0";
+export const MOBILE_LATEST_NATIVE_VERSION: string = env.MOBILE_LATEST_NATIVE_VERSION ?? MOBILE_MIN_NATIVE_VERSION;
+export const MOBILE_ANDROID_UPDATE_URL: string =
     env.MOBILE_ANDROID_UPDATE_URL ?? "https://play.google.com/store/apps/details?id=net.bawes.universe";
-export const MOBILE_IOS_UPDATE_URL = env.MOBILE_IOS_UPDATE_URL;
+export const MOBILE_IOS_UPDATE_URL: string | undefined = env.MOBILE_IOS_UPDATE_URL;
 export const MINIMUM_DISTANCE = env.MINIMUM_DISTANCE;
 export const GROUP_RADIUS = env.GROUP_RADIUS;
 export const ADMIN_API_URL = env.ADMIN_API_URL;
