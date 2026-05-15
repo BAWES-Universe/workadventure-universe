@@ -3,6 +3,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const config: CapacitorConfig = {
   appId: "net.bawes.universe",
   appName: "BAWES Universe",
+  webDir: "www",
   server: {
     url: "https://universe.bawes.net",
     cleartext: false,
