@@ -5,12 +5,13 @@ on:
     workflows: ["Build Universe Images for Coolify"]
     types:
       - completed
+    branches: [universe]
   workflow_dispatch:
     inputs:
       docker_tag:
-        description: 'Docker tag to test (defaults to latest)'
+        description: 'Docker tag to test (defaults to universe)'
         required: false
-        default: 'latest'
+        default: 'universe'
 
 env:
   REGISTRY: ghcr.io
@@ -37,6 +38,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -86,7 +89,7 @@ jobs:
             fi
             echo "tag=${BRANCH_NAME}" >> $GITHUB_OUTPUT
           else
-            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "tag=universe" >> $GITHUB_OUTPUT
           fi
 
       - name: Login to GHCR
@@ -182,4 +185,21 @@ jobs:
           name: playwright-report-universe-${{ matrix.shard }}-${{ matrix.nbShards }}
           path: tests/playwright-report/
           retention-days: 30
+
+  deploy-universe:
+    name: "Deploy Universe"
+    needs: test-universe-images
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Trigger production deploy webhook
+        env:
+          UNIVERSE_DEPLOY_WEBHOOK: ${{ secrets.UNIVERSE_DEPLOY_WEBHOOK }}
+        run: |
+          if [ -z "$UNIVERSE_DEPLOY_WEBHOOK" ]; then
+            echo "::notice::UNIVERSE_DEPLOY_WEBHOOK is not configured. Universe images were tested successfully; configure this secret to trigger the production host automatically."
+            exit 0
+          fi
+
+          curl --fail-with-body --request POST "$UNIVERSE_DEPLOY_WEBHOOK"
 
