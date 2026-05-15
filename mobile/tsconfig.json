@@ -7,5 +7,5 @@
     "skipLibCheck": true,
     "moduleResolution": "node"
   },
-  "include": ["capacitor.config.ts"]
+  "include": []
 }
