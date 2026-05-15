@@ -8,6 +8,15 @@ import {
     toNumber,
 } from "@workadventure/shared-utils/src/EnvironmentVariables/EnvironmentVariableUtils";
 
+const semverLikeVersion = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+const OptionalSemverLikeString = z
+    .string()
+    .optional()
+    .transform(emptyStringToUndefined)
+    .refine((value) => value === undefined || semverLikeVersion.test(value), {
+        message: "must be a valid semver version",
+    });
+
 export const EnvironmentVariables = z.object({
     PLAY_URL: z.string().url().describe("Public URL of the play/frontend service"),
     MINIMUM_DISTANCE: PositiveIntAsString.optional()
@@ -147,16 +156,12 @@ Note that anonymous players don't have any TTL limit because their data is store
         .optional()
         .transform(emptyStringToUndefined)
         .describe("Public web app version returned by /api/version. Defaults to the back service version."),
-    UNIVERSE_MIN_NATIVE_VERSION: z
-        .string()
-        .optional()
-        .transform(emptyStringToUndefined)
-        .describe("Minimum native mobile shell version allowed to open the web app."),
-    UNIVERSE_LATEST_NATIVE_VERSION: z
-        .string()
-        .optional()
-        .transform(emptyStringToUndefined)
-        .describe("Latest native mobile shell version advertised to clients."),
+    UNIVERSE_MIN_NATIVE_VERSION: OptionalSemverLikeString.describe(
+        "Minimum native mobile shell version allowed to open the web app."
+    ),
+    UNIVERSE_LATEST_NATIVE_VERSION: OptionalSemverLikeString.describe(
+        "Latest native mobile shell version advertised to clients."
+    ),
     UNIVERSE_ANDROID_UPDATE_URL: z
         .string()
         .url()

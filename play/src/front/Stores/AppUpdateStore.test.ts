@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareNativeVersions, isNativeVersionBelowMinimum } from "./AppUpdateStore";
+import { compareNativeVersions, isNativeUpdateAvailable, isNativeVersionBelowMinimum } from "./AppUpdateStore";
 
 describe("AppUpdateStore", () => {
     it("compares native versions segment by segment", () => {
@@ -12,5 +12,12 @@ describe("AppUpdateStore", () => {
     it("detects native versions below the server minimum", () => {
         expect(isNativeVersionBelowMinimum("1.0.0", "1.0.1")).toBe(true);
         expect(isNativeVersionBelowMinimum("1.2.0", "1.0.1")).toBe(false);
+    });
+
+    it("detects non-blocking native updates", () => {
+        expect(isNativeUpdateAvailable("1.0.0", "1.1.0", false)).toBe(true);
+        expect(isNativeUpdateAvailable("1.0.0", "1.1.0", true)).toBe(false);
+        expect(isNativeUpdateAvailable("1.1.0", "1.1.0", false)).toBe(false);
+        expect(isNativeUpdateAvailable(undefined, "1.1.0", false)).toBe(false);
     });
 });

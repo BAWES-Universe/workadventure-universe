@@ -33,6 +33,8 @@ interface AppVersionResponse {
 export interface NativeAppUpdateState {
     checked: boolean;
     blocking: boolean;
+    available: boolean;
+    dismissed: boolean;
     currentVersion?: string;
     minVersion?: string;
     latestVersion?: string;
@@ -51,6 +53,8 @@ const initialState: AppUpdateState = {
     native: {
         checked: false,
         blocking: false,
+        available: false,
+        dismissed: false,
     },
 };
 
@@ -127,6 +131,16 @@ export function isNativeVersionBelowMinimum(currentVersion: string, minVersion: 
     return compareNativeVersions(currentVersion, minVersion) < 0;
 }
 
+export function isNativeUpdateAvailable(
+    currentVersion: string | undefined,
+    latestVersion: string | undefined,
+    blocking: boolean
+): boolean {
+    return Boolean(
+        currentVersion && latestVersion && !blocking && compareNativeVersions(currentVersion, latestVersion) < 0
+    );
+}
+
 export async function checkNativeAppVersion(): Promise<void> {
     const capacitor = getCapacitorBridge();
 
@@ -135,23 +149,26 @@ export async function checkNativeAppVersion(): Promise<void> {
     }
 
     const platform = capacitor.getPlatform?.() ?? "unknown";
-    const appInfo = await capacitor.Plugins?.App?.getInfo?.();
-
-    if (!appInfo?.version) {
-        update((state) => ({
-            ...state,
-            native: {
-                ...state.native,
-                checked: true,
-                blocking: false,
-                platform,
-                error: "Native app version is unavailable.",
-            },
-        }));
-        return;
-    }
+    let appInfo: CapacitorAppInfo | undefined;
 
     try {
+        appInfo = await capacitor.Plugins?.App?.getInfo?.();
+
+        if (!appInfo?.version) {
+            update((state) => ({
+                ...state,
+                native: {
+                    ...state.native,
+                    checked: true,
+                    blocking: false,
+                    available: false,
+                    platform,
+                    error: "Native app version is unavailable.",
+                },
+            }));
+            return;
+        }
+
         const response = await fetch("/api/version", {
             cache: "no-store",
         });
@@ -166,12 +183,15 @@ export async function checkNativeAppVersion(): Promise<void> {
         const updateUrl =
             platform === "ios" ? versionResponse.native?.updateUrls?.ios : versionResponse.native?.updateUrls?.android;
         const blocking = minVersion ? isNativeVersionBelowMinimum(appInfo.version, minVersion) : false;
+        const available = isNativeUpdateAvailable(appInfo.version, latestVersion, blocking);
 
         update((state) => ({
             ...state,
             native: {
                 checked: true,
                 blocking,
+                available,
+                dismissed: state.native.latestVersion === latestVersion ? state.native.dismissed : false,
                 currentVersion: appInfo.version,
                 minVersion,
                 latestVersion,
@@ -187,7 +207,8 @@ export async function checkNativeAppVersion(): Promise<void> {
                 ...state.native,
                 checked: true,
                 blocking: false,
-                currentVersion: appInfo.version,
+                available: false,
+                currentVersion: appInfo?.version,
                 platform,
                 error: error instanceof Error ? error.message : "Unable to check native app version.",
             },
@@ -201,4 +222,14 @@ export function openNativeUpdateUrl(updateUrl: string | undefined): void {
     }
 
     window.location.href = updateUrl;
+}
+
+export function dismissNativeUpdate(): void {
+    update((state) => ({
+        ...state,
+        native: {
+            ...state.native,
+            dismissed: true,
+        },
+    }));
 }

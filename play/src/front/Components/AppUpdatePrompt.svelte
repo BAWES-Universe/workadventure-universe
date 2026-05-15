@@ -1,10 +1,12 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { IconXIcon } from "@wa-icons";
+    import { LL } from "../../i18n/i18n-svelte";
     import {
         appUpdateStore,
         applyServiceWorkerUpdate,
         checkNativeAppVersion,
+        dismissNativeUpdate,
         dismissServiceWorkerUpdate,
         openNativeUpdateUrl,
     } from "../Stores/AppUpdateStore";
@@ -34,14 +36,16 @@
             aria-modal="true"
             aria-labelledby="native-update-title"
         >
-            <h2 id="native-update-title" class="font-bold text-xl mb-3">Update required</h2>
+            <h2 id="native-update-title" class="font-bold text-xl mb-3">
+                {$LL.refreshPrompt.appUpdate.nativeRequiredTitle()}
+            </h2>
             <p class="text-sm leading-6 mb-5">
-                This app version is no longer supported. Install the latest BAWES Universe app to continue.
+                {$LL.refreshPrompt.appUpdate.nativeRequiredMessage()}
             </p>
             <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm mb-6">
-                <dt class="opacity-70">Current</dt>
+                <dt class="opacity-70">{$LL.refreshPrompt.appUpdate.currentVersion()}</dt>
                 <dd>{$appUpdateStore.native.currentVersion}</dd>
-                <dt class="opacity-70">Minimum</dt>
+                <dt class="opacity-70">{$LL.refreshPrompt.appUpdate.minimumVersion()}</dt>
                 <dd>{$appUpdateStore.native.minVersion}</dd>
             </dl>
             {#if $appUpdateStore.native.updateUrl}
@@ -50,10 +54,36 @@
                     class="light w-full cursor-pointer px-3 py-2"
                     on:click={() => openNativeUpdateUrl($appUpdateStore.native.updateUrl)}
                 >
-                    Update app
+                    {$LL.refreshPrompt.appUpdate.updateApp()}
                 </button>
             {/if}
         </section>
+    </div>
+{:else if $appUpdateStore.native.available && !$appUpdateStore.native.dismissed}
+    <div class="fixed top-4 left-0 right-0 z-[1100] flex justify-center px-3 pointer-events-auto">
+        <div
+            class="flex max-w-[min(92vw,560px)] items-center gap-3 rounded bg-contrast text-white px-4 py-3 shadow-xl border border-white/20"
+            role="status"
+        >
+            <p class="min-w-0 flex-1 text-sm">{$LL.refreshPrompt.appUpdate.nativeAvailableMessage()}</p>
+            {#if $appUpdateStore.native.updateUrl}
+                <button
+                    type="button"
+                    class="light shrink-0 cursor-pointer px-3 py-1"
+                    on:click={() => openNativeUpdateUrl($appUpdateStore.native.updateUrl)}
+                >
+                    {$LL.refreshPrompt.appUpdate.updateApp()}
+                </button>
+            {/if}
+            <button
+                type="button"
+                class="shrink-0 cursor-pointer text-white/70 hover:text-white px-2"
+                aria-label={$LL.refreshPrompt.appUpdate.dismissUpdateNotice()}
+                on:click={dismissNativeUpdate}
+            >
+                <IconXIcon stroke="1" font-size="16" class="text-white" />
+            </button>
+        </div>
     </div>
 {:else if $appUpdateStore.serviceWorkerUpdateAvailable}
     <div class="fixed top-4 left-0 right-0 z-[1100] flex justify-center px-3 pointer-events-auto">
@@ -61,17 +91,17 @@
             class="flex max-w-[min(92vw,520px)] items-center gap-3 rounded bg-contrast text-white px-4 py-3 shadow-xl border border-white/20"
             role="status"
         >
-            <p class="min-w-0 flex-1 text-sm">A fresh version is ready.</p>
+            <p class="min-w-0 flex-1 text-sm">{$LL.refreshPrompt.appUpdate.webAvailableMessage()}</p>
             <button type="button" class="light shrink-0 cursor-pointer px-3 py-1" on:click={applyServiceWorkerUpdate}>
-                Reload
+                {$LL.refreshPrompt.appUpdate.reload()}
             </button>
             <button
                 type="button"
                 class="shrink-0 cursor-pointer text-white/70 hover:text-white px-2"
-                aria-label="Dismiss update notice"
+                aria-label={$LL.refreshPrompt.appUpdate.dismissUpdateNotice()}
                 on:click={dismissServiceWorkerUpdate}
             >
-                <IconXIcon stroke={1} font-size="16" class="text-white" />
+                <IconXIcon stroke="1" font-size="16" class="text-white" />
             </button>
         </div>
     </div>

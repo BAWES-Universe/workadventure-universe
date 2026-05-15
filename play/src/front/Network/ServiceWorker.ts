@@ -50,22 +50,29 @@ export class _ServiceWorker {
     }
 
     private watchForUpdates(registration: ServiceWorkerRegistration): void {
-        if (registration.waiting && navigator.serviceWorker.controller) {
-            notifyServiceWorkerUpdate(registration);
-        }
-
-        registration.addEventListener("updatefound", () => {
-            const installingWorker = registration.installing;
-
+        const watchInstallingWorker = (installingWorker: ServiceWorker | null): void => {
             if (!installingWorker) {
                 return;
             }
 
-            installingWorker.addEventListener("statechange", () => {
+            const notifyIfInstalled = () => {
                 if (installingWorker.state === "installed" && navigator.serviceWorker.controller) {
                     notifyServiceWorkerUpdate(registration);
                 }
-            });
+            };
+
+            notifyIfInstalled();
+            installingWorker.addEventListener("statechange", notifyIfInstalled);
+        };
+
+        if (registration.waiting && navigator.serviceWorker.controller) {
+            notifyServiceWorkerUpdate(registration);
+        }
+
+        watchInstallingWorker(registration.installing);
+
+        registration.addEventListener("updatefound", () => {
+            watchInstallingWorker(registration.installing);
         });
 
         registration.update().catch((error) => {
