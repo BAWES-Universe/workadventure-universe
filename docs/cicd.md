@@ -70,6 +70,8 @@ The workflow:
 - Uploads the Playwright report and docker-compose logs on failure.
 - Runs a single `deploy-universe` job after all shards pass. This job calls `UNIVERSE_DEPLOY_WEBHOOK` when configured and otherwise exits successfully with a notice.
 
+Manual runs are test-only by default. To intentionally deploy after a manual image test, launch the workflow with the `deploy` input set to `true`.
+
 ### `.github/workflows/build-test-and-deploy.yml`
 
 This is the upstream WorkAdventure build/test/deploy workflow for `master`, `develop`, releases, and labeled pull requests. It builds the upstream `workadventure/*` images, runs production-like tests, can trigger GitLab SaaS tests, and can deploy preview environments with Helm.
@@ -84,6 +86,8 @@ The GitHub-side contract for `universe.bawes.net` is:
 - `ghcr.io/<owner>/back-universe:universe`
 - `ghcr.io/<owner>/map-storage-universe:universe`
 - `ghcr.io/<owner>/uploader-universe:universe`
+
+`discord-bot-universe` and `bot-server-universe` are built by the Universe image workflow for auxiliary bot deployments, but they are intentionally excluded from this `universe.bawes.net` production contract because the current `contrib/docker/docker-compose.universe.yaml` runtime override only wires `play-universe`, `back-universe`, `map-storage-universe`, and `uploader-universe`.
 
 The production host should watch those tags or the matching `universe-<sha>` tags. A typical Coolify setup should point each service to the GHCR image, keep the runtime environment variables in Coolify, and expose a deploy webhook saved in GitHub as `UNIVERSE_DEPLOY_WEBHOOK`.
 
@@ -109,7 +113,7 @@ After merging into `universe`:
 - `Build Universe Images for Coolify` completes successfully.
 - `Test Universe Images` runs against the same triggering commit and the `universe` image tag.
 - GHCR contains the updated `*-universe:universe` images.
-- `Deploy Universe` either calls `UNIVERSE_DEPLOY_WEBHOOK` successfully or emits a notice that the secret still needs to be configured.
+- `Deploy Universe` either calls `UNIVERSE_DEPLOY_WEBHOOK` successfully after a `workflow_run`, or after a manual `workflow_dispatch` only when the `deploy` input is set to `true`.
 - The production host reports a successful rollout of the new image set after the webhook is configured.
 
 ## Audit Notes
@@ -118,3 +122,4 @@ After merging into `universe`:
 - Manual Universe image tests default to the `universe` tag because `latest` is not guaranteed unless `universe` is the default branch.
 - `build-universe-images.yml` now also triggers when the Universe compose override or Universe helper scripts change.
 - `test-universe-images.yml` now has a post-test `deploy-universe` job that triggers a configured production deploy webhook exactly once after all image-test shards pass.
+- The deploy handoff is protected with the `production` GitHub Environment, serialized through the `deploy-universe` concurrency group, disabled by default for manual test dispatches, and bounded with curl timeout/retry flags.
