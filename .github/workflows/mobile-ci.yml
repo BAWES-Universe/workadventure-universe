@@ -13,6 +13,7 @@ on:
     branches: [universe]
     paths:
       - 'mobile/**'
+      - '.github/workflows/mobile-ci.yml'
 
 jobs:
   validate:
@@ -35,11 +36,15 @@ jobs:
         run: npm ci
 
       - name: Verify capacitor config compiles
-        run: npx tsc --noEmit capacitor.config.ts || true
+        run: npx tsc --noEmit
+        # Uses mobile/tsconfig.json — fails on type errors (no || true)
 
       - name: Run cap doctor (info only)
-        run: npx cap doctor 2>&1 || true
-        # doctor will warn about missing platforms — that's expected at this stage
+        run: npx cap doctor 2>&1
+        continue-on-error: true
+        # cap doctor warns about missing Android/iOS platforms — expected at
+        # scaffold stage. continue-on-error makes the intent explicit without
+        # masking the output.
 
   fastlane-setup:
     name: Validate Gemfile / Fastlane install
