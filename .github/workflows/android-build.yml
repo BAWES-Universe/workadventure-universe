@@ -84,19 +84,18 @@ jobs:
           bundler-cache: true
           working-directory: mobile
 
-      - name: Materialize signing secrets
+      - name: Materialize release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          GOOGLE_PLAY_JSON_KEY: ${{ secrets.GOOGLE_PLAY_JSON_KEY }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$GOOGLE_PLAY_JSON_KEY" ]; then
-            echo "Missing Android release secrets; skipping signed bundle build."
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Missing Android keystore secret; skipping keystore materialization."
             exit 0
           fi
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release.keystore
-          printf '%s' "$GOOGLE_PLAY_JSON_KEY" > fastlane/google-play-key.json
 
       - name: Build signed AAB
+        if: github.event_name != 'workflow_dispatch'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
