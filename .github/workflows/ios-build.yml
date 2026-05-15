@@ -72,7 +72,12 @@ jobs:
           bundler-cache: true
           working-directory: mobile
 
-      - run: bundle exec fastlane ios beta
+      - run: |
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_TEAM_ID" ] || [ -z "$MATCH_PASSWORD" ] || [ -z "$MATCH_GIT_BASIC_AUTHORIZATION" ] || [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_KEY_CONTENT" ]; then
+            echo "Missing TestFlight secrets; skipping beta upload."
+            exit 0
+          fi
+          bundle exec fastlane ios beta
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
