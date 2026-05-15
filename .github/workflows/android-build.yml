@@ -1,0 +1,135 @@
+name: Android Build & Deploy
+
+on:
+  pull_request:
+    branches: [universe]
+    paths:
+      - 'mobile/android/**'
+      - 'mobile/fastlane/**'
+      - 'mobile/Gemfile'
+      - 'mobile/package.json'
+      - 'mobile/package-lock.json'
+      - '.github/workflows/android-build.yml'
+  push:
+    branches: [universe]
+    paths:
+      - 'mobile/android/**'
+      - 'mobile/fastlane/**'
+      - 'mobile/Gemfile'
+      - 'mobile/package.json'
+      - 'mobile/package-lock.json'
+      - '.github/workflows/android-build.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Android unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+
+      - run: npx cap sync android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: mobile
+
+      - run: bundle exec fastlane android test
+
+  build_release:
+    name: Build signed Android bundle
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request'
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+
+      - run: npx cap sync android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: mobile
+
+      - name: Materialize signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          GOOGLE_PLAY_JSON_KEY: ${{ secrets.GOOGLE_PLAY_JSON_KEY }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$GOOGLE_PLAY_JSON_KEY" ]; then
+            echo "Missing Android release secrets; skipping signed bundle build."
+            exit 0
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/release.keystore
+          printf '%s' "$GOOGLE_PLAY_JSON_KEY" > fastlane/google-play-key.json
+
+      - name: Build signed AAB
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_PATH: android/release.keystore
+          SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON_KEY }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "Missing Android signing secrets; skipping signed bundle build."
+            exit 0
+          fi
+          bundle exec fastlane android build
+
+      - name: Upload AAB artifact
+        if: hashFiles('mobile/android/app/build/outputs/bundle/release/*.aab') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: bawes-universe-android-aab
+          path: mobile/android/app/build/outputs/bundle/release/*.aab
+
+      - name: Deploy to Play internal track
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_PATH: android/release.keystore
+          SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_JSON_KEY }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ] || [ -z "$SUPPLY_JSON_KEY_DATA" ]; then
+            echo "Missing Play Store deployment secrets; skipping deploy."
+            exit 0
+          fi
+          bundle exec fastlane android deploy
