@@ -14,12 +14,12 @@ let settings: SettingsData;
 const defaultSettings: SettingsData = {
     log_level: "info",
     auto_launch_enabled: true,
-    // Universe shell loads universe.bawes.net directly — this entry is
-    // kept for SettingsData schema compatibility only.
+    // Universe shell loads universe.bawes.net directly —
+    // this entry is kept for SettingsData schema compatibility only.
     servers: [
         {
             _id: "universe-default",
-            name: "BAWES Universe",
+            name: "Universe",
             url: "https://universe.bawes.net",
         },
     ],

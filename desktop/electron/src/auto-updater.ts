@@ -19,7 +19,7 @@ export async function checkForUpdates() {
 
 export async function manualRequestUpdateCheck() {
     isManualRequestedUpdate = true;
-    createAndShowNotification({ body: "Checking for updates…" });
+    createAndShowNotification({ body: "Checking for updates\u2026" });
     await checkForUpdates();
     isManualRequestedUpdate = false;
 }
@@ -33,7 +33,7 @@ async function init() {
                 type: "question",
                 buttons: ["Install and Restart", "Install Later"],
                 defaultId: 0,
-                title: "BAWES Universe — Update Ready",
+                title: "Universe \u2014 Update Ready",
                 message: process.platform === "win32" ? releaseNotes : releaseName,
                 detail: "A new version has been downloaded. Restart the app to apply the update.",
             });
@@ -50,7 +50,7 @@ async function init() {
         autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.on("update-available", () => {
             createAndShowNotification({
-                title: "BAWES Universe — Update Available",
+                title: "Universe \u2014 Update Available",
                 body: "Download the latest version from universe.bawes.net",
             });
         });
@@ -58,13 +58,13 @@ async function init() {
 
     autoUpdater.on("update-not-available", () => {
         if (isManualRequestedUpdate) {
-            createAndShowNotification({ body: "You're on the latest version." });
+            createAndShowNotification({ body: "You\u2019re on the latest version." });
         }
     });
 
     await checkForUpdates();
 
-    // Check for updates every hour. Fixed: was passing fn ref instead of calling it.
+    // Check every hour. Fixed: was passing fn ref instead of calling it.
     setInterval(() => void checkForUpdates(), 1000 * 60 * 60);
 }
 

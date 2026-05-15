@@ -1,4 +1,4 @@
-import { BrowserView, BrowserWindow, app } from "electron";
+import { BrowserView, BrowserWindow } from "electron";
 import electronIsDev from "electron-is-dev";
 import windowStateKeeper from "electron-window-state";
 import path from "path";
@@ -34,7 +34,7 @@ function offlinePageHtml(): string {
     <circle cx="12" cy="12" r="10"/>
     <path d="M12 8v4M12 16h.01"/>
   </svg>
-  <h2 style="margin:0">Unable to reach BAWES Universe</h2>
+  <h2 style="margin:0">Unable to reach Universe</h2>
   <p style="margin:0;color:#888">Check your connection. Retrying automatically&hellip;</p>
   <button onclick="location.reload()" style="padding:10px 24px;background:#4f98a3;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Reload Now</button>
   <script>
@@ -59,7 +59,6 @@ export async function createWindow() {
         height: windowState.height,
         autoHideMenuBar: true,
         show: false,
-        // No preload needed for mainWindow — it hosts only the BrowserView
         webPreferences: { contextIsolation: true },
     });
     mainWindow.setMenu(null);
@@ -75,7 +74,6 @@ export async function createWindow() {
         webPreferences: {
             preload: path.resolve(__dirname, "..", "dist", "preload-app", "preload.js"),
             contextIsolation: true,
-            // Required for WebRTC (LiveKit video calls)
             allowRunningInsecureContent: false,
         },
     });
@@ -88,12 +86,12 @@ export async function createWindow() {
     mainWindow.once("ready-to-show", () => mainWindow?.show());
 
     mainWindow.webContents.on("did-finish-load", () => {
-        mainWindow?.setTitle("BAWES Universe");
+        mainWindow?.setTitle("Universe");
     });
 
     // Handle offline / failed load gracefully
-    appView.webContents.on("did-fail-load", (_event, errorCode, _errorDesc, validatedUrl) => {
-        // -3 = ERR_ABORTED (navigations, not a real failure)
+    appView.webContents.on("did-fail-load", (_event, errorCode) => {
+        // -3 = ERR_ABORTED (navigation cancels, not a real failure)
         if (errorCode === -3) return;
         void appView?.webContents.loadURL(
             `data:text/html;charset=utf-8,${encodeURIComponent(offlinePageHtml())}`
@@ -107,7 +105,7 @@ export async function createWindow() {
     await appView.webContents.loadURL(targetUrl);
 }
 
-/** Load a specific URL in the BrowserView (used by IPC shortcuts etc.) */
+/** Load a specific URL in the BrowserView (used by deep-link IPC). */
 export async function showAppView(url?: string) {
     if (!appView || !mainWindow) throw new Error("Window not initialised");
     if (url) await appView.webContents.loadURL(url);
@@ -115,6 +113,6 @@ export async function showAppView(url?: string) {
 }
 
 export function hideAppView() {
-    // No-op in Universe shell — there is no local app UI to toggle back to.
+    // No-op in Universe shell — no local app UI to toggle back to.
     // Kept to avoid breaking any existing IPC callers during transition.
 }
