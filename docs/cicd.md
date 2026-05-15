@@ -100,6 +100,24 @@ If the project later wants direct SSH deployment from GitHub Actions instead of 
 
 Do not add a production SSH job before those secrets and rollback steps are documented.
 
+## Rollback Contract
+
+The build workflow publishes immutable `universe-<sha>` tags in addition to the moving `universe` branch tag. Rollbacks should use those immutable tags so the production host can return to a known image set.
+
+Current rollback procedure:
+
+1. Identify the last successful `Build Universe Images for Coolify` run before the bad deploy.
+2. Copy its commit SHA and use the matching `universe-<sha>` tag for each production service.
+3. In Coolify or the host deployment configuration, point these runtime images back to that tag:
+   - `ghcr.io/<owner>/play-universe:universe-<sha>`
+   - `ghcr.io/<owner>/back-universe:universe-<sha>`
+   - `ghcr.io/<owner>/map-storage-universe:universe-<sha>`
+   - `ghcr.io/<owner>/uploader-universe:universe-<sha>`
+4. Trigger the host deploy through Coolify or the configured host webhook.
+5. Confirm `universe.bawes.net` and the backend health endpoint after the rollout.
+
+The GitHub workflow intentionally does not include a blind SSH rollback job yet. The repository does not currently define production SSH secrets or a tested rollback script, and the webhook contract does not currently accept a tag payload. Once the production receiver supports tag-specific deploys, a separate `workflow_dispatch` rollback job can be added to validate the requested tag and call that receiver.
+
 ## Operational Checklist
 
 Before merging into `universe`:
@@ -107,6 +125,7 @@ Before merging into `universe`:
 - CI passes for touched web/backend packages.
 - `mobile-ci.yml` passes when `mobile/**` is touched.
 - No unrelated service files are changed.
+- For daily development steps, use `docs/dev-workflow.md`.
 
 After merging into `universe`:
 
@@ -115,6 +134,7 @@ After merging into `universe`:
 - GHCR contains the updated `*-universe:universe` images.
 - `Deploy Universe` either calls `UNIVERSE_DEPLOY_WEBHOOK` successfully after a `workflow_run`, or after a manual `workflow_dispatch` only when the `deploy` input is set to `true`.
 - The production host reports a successful rollout of the new image set after the webhook is configured.
+- If rollback is needed, redeploy the last known good `universe-<sha>` image set from the production host.
 
 ## Audit Notes
 
@@ -123,3 +143,4 @@ After merging into `universe`:
 - `build-universe-images.yml` now also triggers when the Universe compose override or Universe helper scripts change.
 - `test-universe-images.yml` now has a post-test `deploy-universe` job that triggers a configured production deploy webhook exactly once after all image-test shards pass.
 - The deploy handoff is protected with the `production` GitHub Environment, serialized through the `deploy-universe` concurrency group, disabled by default for manual test dispatches, and bounded with curl timeout/retry flags.
+- `docs/dev-workflow.md` now documents branch naming, PR flow, local docker-compose smoke tests, deploy status checks, and host-side rollback.
