@@ -1,7 +1,7 @@
 {
     "name": "BAWES Universe",
     "short_name": "Universe",
-    "description": "BAWES Universe - a virtual world",
+    "description": "BAWES Universe — a virtual world",
     "start_url": "/",
     "display": "fullscreen",
     "orientation": "landscape",
