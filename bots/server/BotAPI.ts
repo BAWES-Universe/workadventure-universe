@@ -6,6 +6,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import { BotManager } from './BotManager';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
+import { PushNotificationClient, type BotPushNotificationPayload } from './PushNotificationClient';
 import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
 
@@ -113,11 +114,58 @@ async function authenticateToken(
     res.status(401).json({ error: 'Missing authorization token' });
 }
 
+function validateBotServiceToken(req: Request, res: Response, next: NextFunction): void {
+    const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+
+    if (!botServiceToken) {
+        res.status(401).json({ error: 'No bot service token configured' });
+        return;
+    }
+
+    const authorization = req.header('authorization');
+    const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
+    const token = bearerToken ?? req.header('x-bot-service-token');
+
+    if (token !== botServiceToken) {
+        res.status(401).json({ error: 'Invalid bot service token' });
+        return;
+    }
+
+    next();
+}
+
+function parsePushNotificationPayload(body: unknown): BotPushNotificationPayload | null {
+    if (!body || typeof body !== 'object') {
+        return null;
+    }
+
+    const candidate = body as Partial<BotPushNotificationPayload>;
+    if (
+        typeof candidate.target !== 'string' ||
+        typeof candidate.title !== 'string' ||
+        typeof candidate.body !== 'string'
+    ) {
+        return null;
+    }
+
+    if (candidate.url !== undefined && typeof candidate.url !== 'string') {
+        return null;
+    }
+
+    return {
+        target: candidate.target,
+        title: candidate.title,
+        body: candidate.body,
+        ...(candidate.url !== undefined ? { url: candidate.url } : {}),
+    };
+}
+
 export class BotAPI {
     private app: express.Application;
     private botManager: BotManager;
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
+    private pushNotificationClient: PushNotificationClient;
     private server: any = null;
 
     constructor(botManager: BotManager, adminApiService: AdminApiService, botRegistry: BotRegistry) {
@@ -126,6 +174,7 @@ export class BotAPI {
         this.botManager = botManager;
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
+        this.pushNotificationClient = new PushNotificationClient();
 
         // Keep constructor simple - no route registration here
         this.setupMiddleware();
@@ -141,7 +190,7 @@ export class BotAPI {
         this.app.use((req, res, next) => {
             res.header('Access-Control-Allow-Origin', '*');
             res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-            res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+            res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-bot-service-token');
             if (req.method === 'OPTIONS') {
                 res.sendStatus(200);
             } else {
@@ -492,6 +541,30 @@ export class BotAPI {
                 res.status(500).json({ error: error.message });
             }
         });
+
+        // Internal bot hook for forwarding game events to the push notification API.
+        this.app.post(
+            '/api/bots/notifications/send',
+            validateBotServiceToken,
+            async (req: Request, res: Response) => {
+                try {
+                    const payload = parsePushNotificationPayload(req.body);
+
+                    if (!payload) {
+                        res.status(400).json({
+                            error: 'Missing required fields: target, title, body',
+                        });
+                        return;
+                    }
+
+                    const result = await this.pushNotificationClient.send(payload);
+                    res.status(202).json(result);
+                } catch (error: any) {
+                    console.error('[BotAPI] Error sending bot push notification:', error.message || error);
+                    res.status(502).json({ error: error.message || 'Push notification API request failed' });
+                }
+            }
+        );
 
         // Apply authentication ONLY to /api/bots routes (NOT /api/debug, /dev/movement, etc.)
         // Movement endpoints are registered at /dev/movement/* to bypass any /api/* middleware
