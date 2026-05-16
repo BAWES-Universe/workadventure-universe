@@ -115,8 +115,22 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: '3.x'
+
       - name: Install dependencies (map-storage workspace)
         run: npm ci --workspace=workadventuremapstorage
+
+      - name: Install messages deps
+        run: npm ci
+        working-directory: messages
+
+      - name: Build proto messages
+        run: npm run ts-proto
+        working-directory: messages
 
       - name: Typecheck
         run: npm run typecheck

@@ -1,6 +1,8 @@
 name: Deploy Universe to universe.bawes.net
 
-# Triggers after `Build Universe Images for Coolify` completes successfully.
+# Triggers after `Test Universe Images` completes successfully (which itself
+# runs after `Build Universe Images for Coolify`). Chaining on test rather than
+# build means we never deploy an image that failed the Playwright suite.
 # 1. Pings Coolify deploy webhook so it pulls the freshly-pushed images.
 # 2. Polls `https://universe.bawes.net/ping` until services come back up.
 # 3. Reports outcome to a Discord webhook.
@@ -14,7 +16,7 @@ name: Deploy Universe to universe.bawes.net
 # without rebuilding (useful when the registry already has the image you want).
 on:
   workflow_run:
-    workflows: ["Build Universe Images for Coolify"]
+    workflows: ["Test Universe Images"]
     branches: [universe]
     types: [completed]
   workflow_dispatch:
@@ -23,7 +25,7 @@ jobs:
   deploy:
     name: Trigger Coolify + health check
     runs-on: ubuntu-latest
-    # When triggered by workflow_run, only deploy if the build actually succeeded.
+    # When triggered by workflow_run, only deploy if the test workflow actually passed.
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Resolve commit SHA
@@ -65,7 +67,7 @@ jobs:
           attempt=0
           while [ $SECONDS -lt $deadline ]; do
             attempt=$((attempt + 1))
-            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
               https://universe.bawes.net/ping)
             echo "attempt $attempt: HTTP $code"
             if [ "$code" = "200" ]; then

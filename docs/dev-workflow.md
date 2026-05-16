@@ -5,7 +5,7 @@ Practical guide for contributors. For the full pipeline reference see
 
 ## TL;DR
 
-```
+```bash
 git checkout universe && git pull
 git checkout -b feat/<short-name>
 # ... hack hack hack ...
@@ -164,7 +164,7 @@ npm run prepare
 
 Conventional Commits encouraged:
 
-```
+```text
 feat(play): add mobile update banner
 fix(back): handle missing version env vars
 chore(ci): bump setup-node to v4

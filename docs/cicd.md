@@ -5,7 +5,7 @@ running services on **universe.bawes.net**.
 
 ## TL;DR
 
-```
+```text
 PR → universe-ci.yml (typecheck/lint/test)
        │
        └─► merge to `universe`
@@ -63,8 +63,9 @@ suite (`npm run test-single-domain-install`) in 2 shards.
 
 ### Stage 4 — Deploy (post-build, success-only)
 
-`deploy-universe.yml` runs on `workflow_run: completed` of Stage 2 and gates
-on `conclusion == 'success'`. Steps:
+`deploy-universe.yml` runs on `workflow_run: completed` of Stage 3 (test) and
+gates on `conclusion == 'success'`, so we never deploy an image that failed
+the Playwright suite. Steps:
 
 1. POST `{ "sha": "<head_sha>" }` to the Coolify webhook. Coolify pulls the
    new `universe`-tagged images.
@@ -116,7 +117,7 @@ are missing — so a fresh fork won't break the build.
 | `mobile-ci.yml`              | PR touching `mobile/`          | Capacitor / mobile lint+build     | Universe (PR #9)   |
 | `build-universe-images.yml`  | push to `universe`, manual     | Build & push images to GHCR       | Universe           |
 | `test-universe-images.yml`   | workflow_run after build       | Playwright integration tests      | Universe           |
-| `deploy-universe.yml`        | workflow_run after build, manual | Coolify trigger + health check  | Universe (this PR) |
+| `deploy-universe.yml`        | workflow_run after test, manual | Coolify trigger + health check   | Universe (this PR) |
 | `rollback-universe.yml`      | manual                         | Re-tag + redeploy a known-good SHA| Universe (this PR) |
 | `continuous_integration.yml` | push `master`/`develop`, all PRs | Upstream WA CI                  | Upstream WA — keep as-is for upstream merges |
 | `build-test-and-deploy.yml`  | upstream                       | Upstream WA build/test/deploy     | Upstream WA — not used by Universe |
