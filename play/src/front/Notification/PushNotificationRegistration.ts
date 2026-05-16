@@ -103,7 +103,10 @@ function buildPushApiUrl(path: string, apiBaseUrl?: string): string {
         return path;
     }
 
-    return new URL(path, apiBaseUrl).toString();
+    const normalizedBase = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
+    const normalizedPath = path.replace(/^\/+/, "");
+
+    return new URL(normalizedPath, normalizedBase).toString();
 }
 
 function urlBase64ToUint8Array(value: string): Uint8Array {

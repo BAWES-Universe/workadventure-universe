@@ -1,9 +1,14 @@
-import { Capacitor } from "@capacitor/core";
-import { PushNotifications, type Token } from "@capacitor/push-notifications";
+import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
+import {
+  PushNotifications,
+  type RegistrationError,
+  type Token,
+} from "@capacitor/push-notifications";
 
 export type NativePushRegistrationReason =
   | "native-platform-unavailable"
   | "permission-denied"
+  | "registration-failed"
   | "registration-listener-failed";
 
 export interface NativePushRegistrationOptions {
@@ -33,20 +38,71 @@ export async function registerNativePushNotifications(
     return { registered: false, reason: "permission-denied" };
   }
 
+  let registrationListener: PluginListenerHandle | undefined;
+  let registrationErrorListener: PluginListenerHandle | undefined;
+
+  const removeListeners = async (): Promise<void> => {
+    await registrationListener?.remove();
+    await registrationErrorListener?.remove();
+  };
+
+  let resolveRegistration: (
+    result: NativePushRegistrationResult
+  ) => void = () => undefined;
+  let settled = false;
+
+  const registrationResult = new Promise<NativePushRegistrationResult>(
+    (resolve) => {
+      resolveRegistration = resolve;
+    }
+  );
+
+  const settleRegistration = async (
+    result: NativePushRegistrationResult
+  ): Promise<void> => {
+    if (settled) {
+      return;
+    }
+
+    settled = true;
+    await removeListeners();
+    resolveRegistration(result);
+  };
+
   try {
-    await PushNotifications.addListener(
+    registrationListener = await PushNotifications.addListener(
       "registration",
       async (token: Token): Promise<void> => {
-        await postNativePushToken(options, token.value, platform);
+        try {
+          await postNativePushToken(options, token.value, platform);
+          await settleRegistration({ registered: true });
+        } catch (error) {
+          console.error("Failed to register native push token", error);
+          await settleRegistration({
+            registered: false,
+            reason: "registration-failed",
+          });
+        }
       }
     );
-  } catch {
+    registrationErrorListener = await PushNotifications.addListener(
+      "registrationError",
+      async (error: RegistrationError): Promise<void> => {
+        console.error("Native push registration failed", error);
+        await settleRegistration({
+          registered: false,
+          reason: "registration-failed",
+        });
+      }
+    );
+    await PushNotifications.register();
+  } catch (error) {
+    console.error("Failed to start native push registration", error);
+    await removeListeners();
     return { registered: false, reason: "registration-listener-failed" };
   }
 
-  await PushNotifications.register();
-
-  return { registered: true };
+  return registrationResult;
 }
 
 export async function postNativePushToken(
@@ -55,7 +111,7 @@ export async function postNativePushToken(
   platform: "android" | "ios"
 ): Promise<void> {
   const response = await fetch(
-    new URL("/api/push/register", options.apiBaseUrl).toString(),
+    buildPushApiUrl("/api/push/register", options.apiBaseUrl),
     {
       method: "POST",
       headers: {
@@ -72,6 +128,18 @@ export async function postNativePushToken(
   );
 
   if (!response.ok) {
-    throw new Error(`Failed to register native push token: ${response.status}`);
+    const body = await response.text();
+    throw new Error(
+      `Failed to register native push token: ${response.status} ${body}`
+    );
   }
+}
+
+function buildPushApiUrl(path: string, apiBaseUrl: string): string {
+  const normalizedBase = apiBaseUrl.endsWith("/")
+    ? apiBaseUrl
+    : `${apiBaseUrl}/`;
+  const normalizedPath = path.replace(/^\/+/, "");
+
+  return new URL(normalizedPath, normalizedBase).toString();
 }

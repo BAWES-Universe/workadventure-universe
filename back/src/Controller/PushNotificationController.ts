@@ -15,8 +15,7 @@ const validatePushServiceTokenMiddleware = (req: Request, res: Response, next: N
 
     const authorization = req.header("authorization");
     const bearerToken = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
-    const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
-    const token = bearerToken ?? req.header("x-push-service-token") ?? queryToken;
+    const token = bearerToken ?? req.header("x-push-service-token");
 
     if (token !== PUSH_SERVICE_TOKEN) {
         res.status(401).send("Invalid push service token sent!");
@@ -50,7 +49,13 @@ export class PushNotificationController {
                 return;
             }
 
-            const registration = this.pushNotificationService.register(parsed.data);
+            // User and room identity must be bound server-side once authenticated context is wired.
+            const registration = this.pushNotificationService.register({
+                platform: parsed.data.platform,
+                ...(parsed.data.token !== undefined ? { token: parsed.data.token } : {}),
+                ...(parsed.data.subscription !== undefined ? { subscription: parsed.data.subscription } : {}),
+                ...(parsed.data.deviceId !== undefined ? { deviceId: parsed.data.deviceId } : {}),
+            });
             res.status(201).json({ registration });
         });
     }
