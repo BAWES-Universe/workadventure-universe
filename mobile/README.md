@@ -15,6 +15,7 @@ mobile/
 ```
 
 **The app is a thin native shell.** All game logic, iframes, video (LiveKit), and bot interactions live on the server at `universe.bawes.net`. This means:
+
 - Game updates ship instantly without app store review
 - Only native-layer changes (push notifications, deep links, icons) require a new app release
 - iframe websites, video calls, and all WA scripting API features work as-is
@@ -37,6 +38,7 @@ bundle install
 ```
 
 Verify the environment:
+
 ```bash
 npx cap doctor
 ```
@@ -59,15 +61,32 @@ npm run sync:ios      # iOS only
 
 ## Push Notifications
 
-The shell is pre-configured for push notifications via `@capacitor/push-notifications`.
+The shell is pre-configured for push notifications via `@capacitor/push-notifications` and can register native
+device tokens against the backend push API.
 
-- **Android**: Requires `GOOGLE_SERVICES_JSON` secret (from Firebase Console) — see PR #4
-- **iOS**: Requires APNs certificate — see PR #5
-- Notification payloads are handled by the web app's existing service worker (`play/public/notification-service-worker.js`)
+- Backend endpoints:
+  - `GET /api/push/vapid-public-key` returns the configured web VAPID public key.
+  - `POST /api/push/register` stores a native token or web subscription and returns only a hashed registration id.
+  - `POST /api/push/send` is guarded by `PUSH_SERVICE_TOKEN`; it validates and matches registrations while delivery
+    provider wiring remains disabled by default.
+- Native registration helper: call `registerNativePushNotifications({ apiBaseUrl })` from `mobile/src/registerPushNotifications.ts`
+  after a user-visible opt-in action.
+- Web registration helper: call `registerWebPushNotifications()` from
+  `play/src/front/Notification/PushNotificationRegistration.ts` after a user-visible opt-in action.
+- Required backend env vars:
+  - `PUSH_SERVICE_TOKEN`
+  - `PUSH_VAPID_PUBLIC_KEY`
+  - `PUSH_VAPID_PRIVATE_KEY`
+  - `PUSH_VAPID_SUBJECT`
+- **Android**: Requires `GOOGLE_SERVICES_JSON` secret (from Firebase Console) - see PR #4
+- **iOS**: Requires APNs certificate - see PR #5
+- Notification payload display is still handled by the web app's service worker
+  (`play/public/notification-service-worker.js`).
 
 ## LiveKit Video / iframe compatibility
 
 The WebView configuration is set to:
+
 - `cleartext: false` — HTTPS only (required for getUserMedia / camera + mic)
 - `androidScheme: https` — ensures WebRTC and cookies work correctly on Android
 - `contentInset: always` — iOS safe area respected so game UI is not obscured by notch
@@ -88,28 +107,28 @@ bundle exec fastlane ios beta         # Build + upload to TestFlight
 
 See `.github/workflows/android-build.yml` and `.github/workflows/ios-build.yml` for the full list. Summary:
 
-| Secret | Used by |
-|---|---|
-| `ANDROID_KEYSTORE_BASE64` | Android signing |
-| `ANDROID_STORE_PASSWORD` | Android signing |
-| `ANDROID_KEY_ALIAS` | Android signing |
-| `ANDROID_KEY_PASSWORD` | Android signing |
-| `GOOGLE_PLAY_JSON_KEY` | Play Store upload |
-| `GOOGLE_SERVICES_JSON` | Firebase / push notifications |
-| `APPLE_ID` | iOS / TestFlight |
-| `APPLE_TEAM_ID` | iOS signing |
-| `MATCH_PASSWORD` | Fastlane Match cert encryption |
+| Secret                          | Used by                         |
+| ------------------------------- | ------------------------------- |
+| `ANDROID_KEYSTORE_BASE64`       | Android signing                 |
+| `ANDROID_STORE_PASSWORD`        | Android signing                 |
+| `ANDROID_KEY_ALIAS`             | Android signing                 |
+| `ANDROID_KEY_PASSWORD`          | Android signing                 |
+| `GOOGLE_PLAY_JSON_KEY`          | Play Store upload               |
+| `GOOGLE_SERVICES_JSON`          | Firebase / push notifications   |
+| `APPLE_ID`                      | iOS / TestFlight                |
+| `APPLE_TEAM_ID`                 | iOS signing                     |
+| `MATCH_PASSWORD`                | Fastlane Match cert encryption  |
 | `MATCH_GIT_BASIC_AUTHORIZATION` | Fastlane Match cert repo access |
-| `ASC_KEY_ID` | App Store Connect API |
-| `ASC_ISSUER_ID` | App Store Connect API |
-| `ASC_KEY_CONTENT` | App Store Connect API |
+| `ASC_KEY_ID`                    | App Store Connect API           |
+| `ASC_ISSUER_ID`                 | App Store Connect API           |
+| `ASC_KEY_CONTENT`               | App Store Connect API           |
 
 ## Branching rules
 
 All mobile work branches from and merges to `universe`.
 
-| Branch | Owns |
-|---|---|
-| `feat/mobile-capacitor-scaffold` | `mobile/` root (this PR) |
-| `feat/mobile-android` | `mobile/android/`, `.github/workflows/android-build.yml` |
-| `feat/mobile-ios` | `mobile/ios/`, `.github/workflows/ios-build.yml` |
+| Branch                           | Owns                                                     |
+| -------------------------------- | -------------------------------------------------------- |
+| `feat/mobile-capacitor-scaffold` | `mobile/` root (this PR)                                 |
+| `feat/mobile-android`            | `mobile/android/`, `.github/workflows/android-build.yml` |
+| `feat/mobile-ios`                | `mobile/ios/`, `.github/workflows/ios-build.yml`         |
