@@ -54,7 +54,7 @@ jobs:
           for svc in $SERVICES; do
             image="$REGISTRY/$IMAGE_PREFIX/$svc-universe:universe-$SHA"
             echo "Checking $image"
-            docker manifest inspect "$image" > /dev/null
+            docker buildx imagetools inspect "$image" > /dev/null
           done
 
       - name: Re-tag universe-<sha> as universe (rollback pointer)
@@ -120,6 +120,11 @@ jobs:
           else
             EMOJI="🚨"; MSG="Rollback FAILED — manual intervention required"
           fi
+          # Build the JSON payload with jq so quotes / backslashes / newlines in
+          # $REASON (a free-text workflow input) can't break the request.
+          PAYLOAD=$(jq -nc \
+            --arg content "$EMOJI $MSG — rolled to \`${SHA:0:7}\` (reason: $REASON, run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)" \
+            '{content: $content}')
           curl -fsSL -X POST -H "Content-Type: application/json" \
-            --data "{\"content\":\"$EMOJI $MSG — rolled to \`${SHA:0:7}\` (reason: $REASON, run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)\"}" \
+            --data "$PAYLOAD" \
             "$DISCORD_URL"
