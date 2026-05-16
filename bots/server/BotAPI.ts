@@ -3,6 +3,7 @@
  */
 
 import express, { type Request, type Response, type NextFunction } from 'express';
+import { timingSafeEqual } from 'crypto';
 import { BotManager } from './BotManager';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
@@ -126,7 +127,15 @@ function validateBotServiceToken(req: Request, res: Response, next: NextFunction
     const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
     const token = bearerToken ?? req.header('x-bot-service-token');
 
-    if (token !== botServiceToken) {
+    if (!token) {
+        res.status(401).json({ error: 'Invalid bot service token' });
+        return;
+    }
+
+    const tokenBuffer = Buffer.from(token);
+    const expectedTokenBuffer = Buffer.from(botServiceToken);
+
+    if (tokenBuffer.length !== expectedTokenBuffer.length || !timingSafeEqual(tokenBuffer, expectedTokenBuffer)) {
         res.status(401).json({ error: 'Invalid bot service token' });
         return;
     }

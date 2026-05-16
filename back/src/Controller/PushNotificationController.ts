@@ -15,7 +15,7 @@ const validatePushServiceTokenMiddleware = (req: Request, res: Response, next: N
 
     const authorization = req.header("authorization");
     const bearerToken = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
-    const token = bearerToken ?? req.header("x-push-service-token");
+    const token = bearerToken;
 
     if (token !== PUSH_SERVICE_TOKEN) {
         res.status(401).send("Invalid push service token sent!");

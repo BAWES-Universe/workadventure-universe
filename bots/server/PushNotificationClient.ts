@@ -59,10 +59,22 @@ export class PushNotificationClient {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 const status = error.response?.status;
-                const reason =
-                    typeof error.response?.data === 'string'
-                        ? error.response.data
-                        : error.response?.statusText || error.message;
+                const responseData = error.response?.data;
+                let reason: string | undefined;
+
+                if (typeof responseData === 'string') {
+                    reason = responseData;
+                } else if (responseData && typeof responseData === 'object') {
+                    const errorPayload = responseData as { error?: unknown; message?: unknown };
+                    reason =
+                        errorPayload.error !== undefined
+                            ? String(errorPayload.error)
+                            : errorPayload.message !== undefined
+                            ? String(errorPayload.message)
+                            : JSON.stringify(responseData);
+                }
+
+                reason ||= error.response?.statusText || error.message;
                 throw new Error(`Push notification API request failed${status ? ` (${status})` : ''}: ${reason}`);
             }
 
