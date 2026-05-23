@@ -305,11 +305,12 @@ export class BotAPI {
                         emotions = memory.emotions;
                     }
                 } else {
-                    // Fallback: search active memories only
+                    // Fallback: search active memories only - MUST filter by botId
                     const memories = conversationMemory.getAllMemories?.();
                     if (memories) {
-                        for (const memory of memories.values()) {
-                            if (memory.userUuid === userUuid) {
+                        for (const [key, memory] of memories.entries()) {
+                            // CRITICAL: Check that this memory belongs to the correct bot
+                            if (key.startsWith(`${botId}_`) && memory.userUuid === userUuid) {
                                 emotions = memory.emotions;
                                 break;
                             }

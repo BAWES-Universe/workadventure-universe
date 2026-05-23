@@ -65,3 +65,20 @@ export interface AIUsageMetadata {
     error?: boolean;
 }
 
+/**
+ * AI-detected emotion data from response
+ */
+export interface AIEmotionData {
+    personSentiment: number;       // -100 to 100
+    isInsult: boolean;             // Whether the message was an insult
+    insultSeverity: number;        // 1-10 if insult, 0 otherwise
+    context: 'sarcastic' | 'joking' | 'sincere' | 'frustrated' | 'angry' | 'neutral' | string;
+}
+
+/**
+ * Parsed AI response with emotion data extracted
+ */
+export interface ParsedAIResponse {
+    cleanedResponse: string;       // Response text with emotion block removed
+    emotions: AIEmotionData | null; // Parsed emotion data, null if not found
+}
