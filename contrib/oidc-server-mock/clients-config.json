@@ -15,11 +15,11 @@
   {
     "ClientId": "authorization-code-with-pkce-client-id",
     "ClientSecrets": ["authorization-code-with-pkce-client-secret"],
-    "Description": "Client for authorization code flow",
+    "Description": "Client for authorization code flow with PKCE",
     "AllowedGrantTypes": ["authorization_code", "refresh_token"],
     "AllowAccessTokensViaBrowser": true,
     "RedirectUris": ["http://*.workadventure.localhost", "https://*.test.workadventu.re"],
-    "RequirePkce": false,
+    "RequirePkce": true,
     "AllowedScopes": ["openid", "profile", "email", "tags-scope", "some-app-scope-1", "offline_access"],
     "IdentityTokenLifetime": 3600,
     "AccessTokenLifetime": 300,
