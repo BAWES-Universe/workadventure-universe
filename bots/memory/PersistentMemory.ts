@@ -480,10 +480,11 @@ export class PersistentMemory extends ConversationMemory {
      * This is useful for API endpoints that need to access emotions before user enters proximity
      */
     getMemoryByUserUuid(botId: string, userUuid: string): BotPlayerMemory | null {
-        // First check active memories
+        // First check active memories - MUST filter by botId
         const activeMemories = this.getAllMemories();
-        for (const memory of activeMemories.values()) {
-            if (memory.userUuid === userUuid) {
+        for (const [key, memory] of activeMemories.entries()) {
+            // CRITICAL: Check that this memory belongs to the correct bot
+            if (key.startsWith(`${botId}_`) && memory.userUuid === userUuid) {
                 return memory;
             }
         }
