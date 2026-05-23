@@ -5,6 +5,7 @@ import { ADMIN_SOCKETS_TOKEN, SECRET_KEY } from "../enums/EnvironmentVariable";
 export const AuthTokenData = z.object({
     identifier: z.string(), //will be a email if logged in or an uuid if anonymous
     accessToken: z.string().optional(),
+    refreshToken: z.string().optional(),
     username: z.string().optional(),
     locale: z.string().optional(),
     tags: z.string().array().optional(),
@@ -23,6 +24,16 @@ export const AdminSocketTokenData = z.object({
 export type AdminSocketTokenData = z.infer<typeof AdminSocketTokenData>;
 export const tokenInvalidException = "tokenInvalid";
 
+export interface CreateAuthTokenOptions {
+    identifier: string;
+    accessToken?: string;
+    refreshToken?: string;
+    username?: string;
+    locale?: string;
+    tags?: string[];
+    matrixUserId?: string;
+}
+
 export class JWTTokenManager {
     public verifyAdminSocketToken(token: string): AdminSocketTokenData {
         if (!ADMIN_SOCKETS_TOKEN) {
@@ -34,15 +45,16 @@ export class JWTTokenManager {
         return AdminSocketTokenData.parse(verifiedToken);
     }
 
-    public createAuthToken(
-        identifier: string,
-        accessToken?: string,
-        username?: string,
-        locale?: string,
-        tags?: string[],
-        matrixUserId?: string
-    ): string {
-        return Jwt.sign({ identifier, accessToken, username, locale, tags, matrixUserId }, SECRET_KEY, {
+    public createAuthToken({
+        identifier,
+        accessToken,
+        refreshToken,
+        username,
+        locale,
+        tags,
+        matrixUserId,
+    }: CreateAuthTokenOptions): string {
+        return Jwt.sign({ identifier, accessToken, refreshToken, username, locale, tags, matrixUserId }, SECRET_KEY, {
             expiresIn: "30d",
         });
     }
