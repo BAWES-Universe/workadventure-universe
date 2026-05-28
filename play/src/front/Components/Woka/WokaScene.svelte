@@ -5,6 +5,7 @@
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { connectionManager } from "../../Connection/ConnectionManager";
+    import { localUserStore } from "../../Connection/LocalUserStore";
     import { selectCharacterSceneVisibleStore } from "../../Stores/SelectCharacterStore";
     import { EnableCameraSceneName } from "../../Phaser/Login/EnableCameraScene";
     import WokaSelectScene from "./WokaSelectScene.svelte";
@@ -23,6 +24,7 @@
 
             analyticsClient.validationWoka("SelectWoka");
             gameManager.setCharacterTextureIds(texturesId);
+            localUserStore.setCharacterTextures(texturesId);
             await connectionManager.saveTextures(texturesId);
             selectCharacterSceneVisibleStore.set(false);
             gameManager.tryToStopScene(SelectCharacterSceneName);

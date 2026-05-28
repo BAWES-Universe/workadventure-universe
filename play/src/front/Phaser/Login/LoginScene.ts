@@ -5,7 +5,6 @@ import { gameManager } from "../Game/GameManager";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { isUserNameTooLong, isUserNameValid } from "../../Connection/LocalUserUtils";
 import { NameNotValidError, NameTooLongError } from "../../Exception/NameError";
-import { hasCapability } from "../../Connection/Capabilities";
 import { ResizableScene } from "./ResizableScene";
 import { SelectCharacterSceneName } from "./SelectCharacterScene";
 
@@ -54,15 +53,11 @@ export class LoginScene extends ResizableScene {
 
         analyticsClient.validationName();
         name = name.trim();
-        const didSaveName = await connectionManager.saveName(name);
+        await connectionManager.saveName(name);
         gameManager.setPlayerName(name);
-        if (!didSaveName) {
-            // Only save the name if the user is not logged in
-            // If the user is logged in, the name will be fetched from the server. No need to save it locally.
-            if (!localUserStore.isLogged() || !hasCapability("api/save-name")) {
-                localUserStore.setName(name);
-            }
-        }
+        // Always save name to localStorage as fallback so it survives refresh
+        // even if the server save is unavailable
+        localUserStore.setName(name);
 
         this.scene.stop(LoginSceneName);
         gameManager.tryResumingGame(SelectCharacterSceneName);

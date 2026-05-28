@@ -759,10 +759,16 @@ class ConnectionManager {
     }
 
     async saveTextures(textures: string[]): Promise<boolean> {
+        const cap = hasCapability("api/save-textures");
+        const token = this.authToken;
+        const room = this.currentRoom;
+        const isLogged = room?.isLogged;
+        const noRoom = !room;
+        console.log("[DEBUG saveTextures] cap:", cap, "tokenPresent:", !!token, "isLogged:", isLogged, "noRoom:", noRoom, "condition:", cap && token !== undefined && (isLogged || noRoom));
         if (
-            hasCapability("api/save-textures") &&
-            this.authToken !== undefined &&
-            (this.currentRoom?.isLogged || !this.currentRoom)
+            cap &&
+            token !== undefined &&
+            (isLogged || noRoom)
         ) {
             await axiosToPusher.post(
                 "save-textures",
