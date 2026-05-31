@@ -318,8 +318,13 @@ jobs:
           elif [ "$PKG_VERSION" = "$LATEST_VERSION" ]; then
             IFS='.' read -r MAJOR MINOR PATCH <<< "$PKG_VERSION"
             NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          else
+          elif [ "$(printf '%s\n' "$PKG_VERSION" "$LATEST_VERSION" | sort -V | tail -1)" = "$PKG_VERSION" ]; then
+            # VERSION is ahead of latest tag — use VERSION (user bumped it)
             NEW_VERSION="$PKG_VERSION"
+          else
+            # VERSION is behind latest tag — bump from tag instead
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
           fi
 
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
