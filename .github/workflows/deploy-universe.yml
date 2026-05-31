@@ -1,0 +1,100 @@
+name: Deploy Universe to universe.bawes.net
+
+# Triggers after `Test Universe Images` completes successfully (which itself
+# runs after `Build Universe Images for Coolify`). Chaining on test rather than
+# build means we never deploy an image that failed the Playwright suite.
+# 1. Pings Coolify deploy webhook so it pulls the freshly-pushed images.
+# 2. Polls `https://universe.bawes.net/ping` until services come back up.
+# 3. Reports outcome to a Discord webhook.
+#
+# Required repository secrets (set in Settings -> Secrets and variables -> Actions):
+#   COOLIFY_WEBHOOK_URL   - Coolify "Deploy" webhook URL for the universe app
+#   COOLIFY_WEBHOOK_TOKEN - Bearer token Coolify expects (optional, depends on setup)
+#   DISCORD_WEBHOOK_URL   - Discord webhook for #deploys channel (optional)
+#
+# Manual override: workflow_dispatch lets you trigger a deploy from the Actions UI
+# without rebuilding (useful when the registry already has the image you want).
+on:
+  workflow_run:
+    workflows: ["Test Universe Images"]
+    branches: [universe]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Trigger Coolify + health check
+    runs-on: ubuntu-latest
+    # When triggered by workflow_run, only deploy if the test workflow actually passed.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Resolve commit SHA
+        id: sha
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger Coolify deploy webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          WEBHOOK_TOKEN: ${{ secrets.COOLIFY_WEBHOOK_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "::warning::COOLIFY_WEBHOOK_URL not set — skipping Coolify trigger."
+            exit 0
+          fi
+          AUTH_HEADER=()
+          if [ -n "$WEBHOOK_TOKEN" ]; then
+            AUTH_HEADER=(-H "Authorization: Bearer $WEBHOOK_TOKEN")
+          fi
+          echo "Triggering Coolify deploy for sha=${{ steps.sha.outputs.sha }}"
+          curl -fsSL -X POST "${AUTH_HEADER[@]}" \
+            -H "Content-Type: application/json" \
+            --data "{\"sha\":\"${{ steps.sha.outputs.sha }}\"}" \
+            "$WEBHOOK_URL"
+
+      - name: Wait for Coolify to start the rollout
+        run: sleep 30
+
+      - name: Health check (poll /ping for up to 5 minutes)
+        id: health
+        run: |
+          set +e
+          deadline=$((SECONDS + 300))
+          attempt=0
+          while [ $SECONDS -lt $deadline ]; do
+            attempt=$((attempt + 1))
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              https://universe.bawes.net/ping)
+            echo "attempt $attempt: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "result=success" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "result=failure" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Notify Discord
+        if: always()
+        env:
+          DISCORD_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          STATUS: ${{ steps.health.outputs.result || 'failure' }}
+          SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          if [ -z "$DISCORD_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL not set — skipping notification."
+            exit 0
+          fi
+          if [ "$STATUS" = "success" ]; then
+            EMOJI="✅"; MSG="Deploy succeeded"
+          else
+            EMOJI="❌"; MSG="Deploy failed health check"
+          fi
+          curl -fsSL -X POST -H "Content-Type: application/json" \
+            --data "{\"content\":\"$EMOJI $MSG — universe.bawes.net @ \`${SHA:0:7}\` (run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)\"}" \
+            "$DISCORD_URL"
