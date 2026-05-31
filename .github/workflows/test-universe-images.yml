@@ -36,7 +36,7 @@ jobs:
       packages: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -90,7 +90,7 @@ jobs:
           fi
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
