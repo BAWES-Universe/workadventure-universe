@@ -285,3 +285,93 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+
+  # ─────────────────────────────────────────────────
+  # Release: auto-version, tag, and GitHub Release
+  # Runs only on push to universe (not PRs)
+  # ─────────────────────────────────────────────────
+  release:
+    if: github.ref == 'refs/heads/universe' && github.event_name == 'push'
+    needs: [build-play, build-back, build-map-storage, build-uploader, build-discord-bot, build-bot-server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new_version: ${{ steps.calculate.outputs.new_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate next version
+        id: calculate
+        run: |
+          PKG_VERSION=$(cat VERSION)
+          LATEST_TAG=$(git tag -l 'v0.*.*' --sort=-v:refname | head -1)
+          LATEST_VERSION="${LATEST_TAG#v}"
+
+          echo "VERSION file: $PKG_VERSION"
+          echo "Latest tag:   $LATEST_TAG"
+
+          if [ -z "$LATEST_TAG" ]; then
+            NEW_VERSION="$PKG_VERSION"
+          elif [ "$PKG_VERSION" = "$LATEST_VERSION" ]; then
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$PKG_VERSION"
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          else
+            NEW_VERSION="$PKG_VERSION"
+          fi
+
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v${{ steps.calculate.outputs.new_version }}"
+
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists — skipping"
+            exit 0
+          fi
+
+          git config user.name "BAWES Bot"
+          git config user.email "bot@bawes.net"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
+          gh release create "$VERSION" --generate-notes
+
+  # ─────────────────────────────────────────────────
+  # Deploy: trigger Coolify to pull new images
+  # Fires only if release produced a new version
+  # ─────────────────────────────────────────────────
+  deploy:
+    if: needs.release.outputs.new_version != ''
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy all universe services to Coolify
+        env:
+          COOLIFY_BASE: ${{ secrets.COOLIFY_BASE }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_PLAY_UUID: ${{ secrets.COOLIFY_PLAY_UUID }}
+          COOLIFY_BACK_UUID: ${{ secrets.COOLIFY_BACK_UUID }}
+          COOLIFY_MAP_STORAGE_UUID: ${{ secrets.COOLIFY_MAP_STORAGE_UUID }}
+          COOLIFY_BOT_SERVER_UUID: ${{ secrets.COOLIFY_BOT_SERVER_UUID }}
+          COOLIFY_DISCORD_BOT_UUID: ${{ secrets.COOLIFY_DISCORD_BOT_UUID }}
+          COOLIFY_UPLOADER_UUID: ${{ secrets.COOLIFY_UPLOADER_UUID }}
+        run: |
+          echo "Deploying v${{ needs.release.outputs.new_version }}..."
+          for UUID in \
+            "${COOLIFY_PLAY_UUID}" \
+            "${COOLIFY_BACK_UUID}" \
+            "${COOLIFY_MAP_STORAGE_UUID}" \
+            "${COOLIFY_BOT_SERVER_UUID}" \
+            "${COOLIFY_DISCORD_BOT_UUID}" \
+            "${COOLIFY_UPLOADER_UUID}"; do
+            echo "Deploying $UUID..."
+            curl -sSf -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${UUID}" \
+              -H "Authorization: Bearer ${COOLIFY_TOKEN}" || echo "Failed: $UUID"
+          done
+          echo "All services deployed."
