@@ -12,6 +12,8 @@ on:
       - 'bots/**'
       - 'libs/**'
       - 'messages/**'
+      - 'contrib/docker/docker-compose.universe.yaml'
+      - 'scripts/*universe*'
       - '.github/workflows/build-universe-images.yml'
   workflow_dispatch:
     inputs:
