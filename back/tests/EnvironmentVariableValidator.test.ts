@@ -19,4 +19,19 @@ describe("EnvironmentVariable", () => {
         });
         expect(result.success).toBe(true);
     });
+
+    it("should validate native app version variables", () => {
+        const validResult = EnvironmentVariables.safeParse({
+            PLAY_URL: "https://example.com",
+            UNIVERSE_MIN_NATIVE_VERSION: "1.2.3",
+            UNIVERSE_LATEST_NATIVE_VERSION: "1.3.0-beta.1",
+        });
+        expect(validResult.success).toBe(true);
+
+        const invalidResult = EnvironmentVariables.safeParse({
+            PLAY_URL: "https://example.com",
+            UNIVERSE_MIN_NATIVE_VERSION: "not-a-version",
+        });
+        expect(invalidResult.success).toBe(false);
+    });
 });

@@ -21,6 +21,16 @@ self.addEventListener('install', function(event) {
     );
 });
 
+self.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
+});
+
+self.addEventListener('activate', function(event) {
+    event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener('fetch', () => {
     //never cache data will be stored in dev mode
 });
@@ -36,4 +46,3 @@ self.addEventListener('update', function(event) {
 self.addEventListener('beforeinstallprompt', (e) => {
     //TODO change prompt
 });
-

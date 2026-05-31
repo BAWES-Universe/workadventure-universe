@@ -34,6 +34,7 @@
     import MainModal from "./Modal/MainModal.svelte";
     import DroppingFileScene from "./DroppingFile/DroppingFileScene.svelte";
     import WokaScene from "./Woka/WokaScene.svelte";
+    import AppUpdatePrompt from "./AppUpdatePrompt.svelte";
 
     export let game: Game;
 
@@ -107,5 +108,6 @@
     {/if}
 {/if}
 
+<AppUpdatePrompt />
 <FloatingUiPopupList />
 <!-- </div> -->

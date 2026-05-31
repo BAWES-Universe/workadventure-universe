@@ -65,6 +65,39 @@ The shell is pre-configured for push notifications via `@capacitor/push-notifica
 - **iOS**: Requires APNs certificate — see PR #5
 - Notification payloads are handled by the web app's existing service worker (`play/public/notification-service-worker.js`)
 
+## Update management
+
+BAWES Universe uses two update paths:
+
+- Web/game changes are delivered by the service worker. When a new service worker is waiting, the web UI shows a non-blocking reload banner. The user can continue playing or reload immediately.
+- Native shell changes are controlled by `GET /api/version`. On launch and whenever the app returns to the foreground, the web app reads the native version through the Capacitor App plugin and compares it with `native.minVersion`.
+
+If the installed native version is below the server minimum, the web app shows a blocking update modal. Configure the server with:
+
+| Variable                         | Purpose                                    |
+| -------------------------------- | ------------------------------------------ |
+| `UNIVERSE_WEB_VERSION`           | Public web release shown by `/api/version` |
+| `UNIVERSE_MIN_NATIVE_VERSION`    | Oldest native shell allowed to run         |
+| `UNIVERSE_LATEST_NATIVE_VERSION` | Latest native shell available              |
+| `UNIVERSE_ANDROID_UPDATE_URL`    | Android store or distribution URL          |
+| `UNIVERSE_IOS_UPDATE_URL`        | iOS App Store or TestFlight URL            |
+
+Expected response:
+
+```json
+{
+  "webVersion": "2026.05.16",
+  "native": {
+    "minVersion": "1.0.0",
+    "latestVersion": "1.0.0",
+    "updateUrls": {
+      "android": "https://play.google.com/store/apps/details?id=net.bawes.universe",
+      "ios": "https://apps.apple.com/app/bawes-universe/id123456789"
+    }
+  }
+}
+```
+
 ## LiveKit Video / iframe compatibility
 
 The WebView configuration is set to:
