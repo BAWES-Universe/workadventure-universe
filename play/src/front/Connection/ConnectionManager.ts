@@ -123,6 +123,9 @@ class ConnectionManager {
      */
     public loadOpenIDScreen(manuallyTriggered: boolean, providerId?: string, providerScopes?: string[]): URL | null {
         localUserStore.setAuthToken(null);
+        // Clear guest-picked textures/name/companion so OIDC user's
+        // saved data loads from DB via the /room/access fallback
+        localUserStore.setCharacterTextures([]);
         if (!ENABLE_OPENID || !this._currentRoom) {
             analyticsClient.loggedWithToken();
             loginSceneVisibleIframeStore.set(false);
