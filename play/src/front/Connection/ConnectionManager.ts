@@ -757,20 +757,51 @@ class ConnectionManager {
             this.authToken !== undefined &&
             (this.currentRoom?.isLogged || !this.currentRoom)
         ) {
-            await axiosToPusher.post(
-                "save-name",
-                {
-                    name,
-                    roomUrl: this.currentRoom?.key,
-                },
-                {
-                    headers: {
-                        Authorization: this.authToken,
+            try {
+                await axiosToPusher.post(
+                    "save-name",
+                    {
+                        name,
+                        roomUrl: this.currentRoom?.key,
                     },
+                    {
+                        headers: {
+                            Authorization: this.authToken,
+                        },
+                    }
+                );
+                return true;
+            } catch (err) {
+                if (isAxiosError(err) && err.response?.status === 401) {
+                    console.warn("saveName: token expired, refreshing");
+                    if (this._currentRoom?.authenticationMandatory) {
+                        return false;
+                    }
+                    await this.anonymousLogin();
+                    await axiosToPusher.post(
+                        "save-name",
+                        {
+                            name,
+                            roomUrl: this.currentRoom?.key,
+                        },
+                        {
+                            headers: {
+                                Authorization: this.authToken,
+                            },
+                        }
+                    );
+                    return true;
                 }
-            );
-            return true;
+                console.error("saveName: HTTP POST failed", err);
+                return false;
+            }
         } else {
+            console.warn(
+                "saveName: skipped — missing auth or capability. authToken:",
+                !!this.authToken,
+                "capability:",
+                hasCapability("api/save-name")
+            );
             return false;
         }
     }
@@ -840,20 +871,51 @@ class ConnectionManager {
             this.authToken !== undefined &&
             (this.currentRoom?.isLogged || !this.currentRoom)
         ) {
-            await axiosToPusher.post(
-                "save-companion-texture",
-                {
-                    texture,
-                    roomUrl: this.currentRoom?.key,
-                },
-                {
-                    headers: {
-                        Authorization: this.authToken,
+            try {
+                await axiosToPusher.post(
+                    "save-companion-texture",
+                    {
+                        texture,
+                        roomUrl: this.currentRoom?.key,
                     },
+                    {
+                        headers: {
+                            Authorization: this.authToken,
+                        },
+                    }
+                );
+                return true;
+            } catch (err) {
+                if (isAxiosError(err) && err.response?.status === 401) {
+                    console.warn("saveCompanionTexture: token expired, refreshing");
+                    if (this._currentRoom?.authenticationMandatory) {
+                        return false;
+                    }
+                    await this.anonymousLogin();
+                    await axiosToPusher.post(
+                        "save-companion-texture",
+                        {
+                            texture,
+                            roomUrl: this.currentRoom?.key,
+                        },
+                        {
+                            headers: {
+                                Authorization: this.authToken,
+                            },
+                        }
+                    );
+                    return true;
                 }
-            );
-            return true;
+                console.error("saveCompanionTexture: HTTP POST failed", err);
+                return false;
+            }
         } else {
+            console.warn(
+                "saveCompanionTexture: skipped — missing auth or capability. authToken:",
+                !!this.authToken,
+                "capability:",
+                hasCapability("api/save-textures")
+            );
             return false;
         }
     }
