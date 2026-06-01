@@ -752,11 +752,7 @@ class ConnectionManager {
     }
 
     async saveName(name: string): Promise<boolean> {
-        if (
-            hasCapability("api/save-name") &&
-            this.authToken !== undefined &&
-            (this.currentRoom?.isLogged || !this.currentRoom)
-        ) {
+        if (hasCapability("api/save-name") && this.authToken !== undefined) {
             try {
                 await axiosToPusher.post(
                     "save-name",
@@ -807,11 +803,7 @@ class ConnectionManager {
     }
 
     async saveTextures(textures: string[]): Promise<boolean> {
-        if (
-            hasCapability("api/save-textures") &&
-            this.authToken !== undefined &&
-            (this.currentRoom?.isLogged || !this.currentRoom)
-        ) {
+        if (hasCapability("api/save-textures") && this.authToken !== undefined) {
             try {
                 await axiosToPusher.post(
                     "save-textures",
@@ -866,11 +858,7 @@ class ConnectionManager {
     }
 
     async saveCompanionTexture(texture: string | null): Promise<boolean> {
-        if (
-            hasCapability("api/save-textures") &&
-            this.authToken !== undefined &&
-            (this.currentRoom?.isLogged || !this.currentRoom)
-        ) {
+        if (hasCapability("api/save-textures") && this.authToken !== undefined) {
             try {
                 await axiosToPusher.post(
                     "save-companion-texture",
