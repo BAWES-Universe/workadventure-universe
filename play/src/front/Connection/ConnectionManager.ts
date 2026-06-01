@@ -798,6 +798,28 @@ class ConnectionManager {
                 this._roomConnection?.emitPlayerTextures(textures);
                 return true;
             } catch (err) {
+                if (isAxiosError(err) && err.response?.status === 401) {
+                    console.warn("saveTextures: token expired, refreshing");
+                    if (this._currentRoom?.authenticationMandatory) {
+                        return false; // OIDC user needs to re-login
+                    }
+                    await this.anonymousLogin();
+                    // Retry with fresh token
+                    await axiosToPusher.post(
+                        "save-textures",
+                        {
+                            textures,
+                            roomUrl: this.currentRoom?.key,
+                        },
+                        {
+                            headers: {
+                                Authorization: this.authToken,
+                            },
+                        }
+                    );
+                    this._roomConnection?.emitPlayerTextures(textures);
+                    return true;
+                }
                 console.error("saveTextures: HTTP POST failed", err);
                 return false;
             }

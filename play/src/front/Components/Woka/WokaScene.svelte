@@ -5,6 +5,7 @@
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { connectionManager } from "../../Connection/ConnectionManager";
+    import { hasCapability } from "../../Connection/Capabilities";
     import { selectCharacterSceneVisibleStore } from "../../Stores/SelectCharacterStore";
     import { EnableCameraSceneName } from "../../Phaser/Login/EnableCameraScene";
     import WokaSelectScene from "./WokaSelectScene.svelte";
@@ -23,7 +24,11 @@
 
             analyticsClient.validationWoka("SelectWoka");
             gameManager.setCharacterTextureIds(texturesId);
-            await connectionManager.saveTextures(texturesId);
+            const saved = await connectionManager.saveTextures(texturesId);
+            if (!saved && hasCapability("api/save-textures")) {
+                error = "Failed to save character customization. Changes will not persist after refresh.";
+                return;
+            }
             selectCharacterSceneVisibleStore.set(false);
             gameManager.tryToStopScene(SelectCharacterSceneName);
             gameManager.tryResumingGame(EnableCameraSceneName);
