@@ -113,6 +113,8 @@ message SetPlayerDetailsMessage {
   SetPlayerVariableMessage setVariable = 7;
   string chatID = 8;
   SayMessage sayMessage = 9;
+  repeated CharacterTextureMessage characterTextures = 10;
+  CompanionTextureMessage companionTexture = 11;
 }
 
 message SayMessage {
