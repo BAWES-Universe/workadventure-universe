@@ -80,6 +80,7 @@ class ConnectionManager {
 
     private readonly _roomConnectionStream = new Subject<RoomConnection>();
     public readonly roomConnectionStream = this._roomConnectionStream.asObservable();
+    private _roomConnection: RoomConnection | null = null;
 
     get unloading() {
         return this._unloading;
@@ -590,6 +591,7 @@ class ConnectionManager {
                         this._applications.push(app);
                     }
                 }
+                this._roomConnection = connection;
                 this._roomConnectionStream.next(connection);
                 errorScreenStore.delete();
                 resolve(connect);
@@ -791,6 +793,8 @@ class ConnectionManager {
                     },
                 }
             );
+            // Broadcast texture change to other users in the room via WebSocket
+            this._roomConnection?.emitPlayerTextures(textures);
             return true;
         } else {
             return false;
