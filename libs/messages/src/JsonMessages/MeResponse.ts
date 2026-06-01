@@ -45,6 +45,9 @@ export const MeSuccessResponse = extendApi(
                 "True if the character textures are valid, false if we need to redirect the user to the Woka selection page.",
             example: true,
         }),
+        characterTextureIds: extendApi(z.array(z.string()).optional(), {
+            description: "The texture ID strings for cross-device sync.",
+        }),
         isCompanionTextureValid: extendApi(z.boolean(), {
             description:
                 "True if the companion texture is valid, false if we need to redirect the user to the companion selection page.",
