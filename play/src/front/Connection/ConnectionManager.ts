@@ -681,7 +681,22 @@ class ConnectionManager {
             return response;
         }
 
-        const { authToken, userUuid, email, username, locale, visitCardUrl, matrixUserId, matrixServerUrl } = response;
+        const {
+            authToken,
+            userUuid,
+            email,
+            username,
+            locale,
+            visitCardUrl,
+            matrixUserId,
+            matrixServerUrl,
+            characterTextureIds,
+        } = response;
+        // Sync textures across devices — if server returned IDs, use them
+        if (characterTextureIds && characterTextureIds.length > 0) {
+            gameManager.setCharacterTextureIds(characterTextureIds);
+            localUserStore.setCharacterTextures(characterTextureIds);
+        }
 
         localUserStore.setAuthToken(authToken);
         this.localUser = new LocalUser(userUuid, email, matrixUserId /*, isMatrixRegistered*/);
