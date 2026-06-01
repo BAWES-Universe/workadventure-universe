@@ -781,22 +781,33 @@ class ConnectionManager {
             this.authToken !== undefined &&
             (this.currentRoom?.isLogged || !this.currentRoom)
         ) {
-            await axiosToPusher.post(
-                "save-textures",
-                {
-                    textures,
-                    roomUrl: this.currentRoom?.key,
-                },
-                {
-                    headers: {
-                        Authorization: this.authToken,
+            try {
+                await axiosToPusher.post(
+                    "save-textures",
+                    {
+                        textures,
+                        roomUrl: this.currentRoom?.key,
                     },
-                }
-            );
-            // Broadcast texture change to other users in the room via WebSocket
-            this._roomConnection?.emitPlayerTextures(textures);
-            return true;
+                    {
+                        headers: {
+                            Authorization: this.authToken,
+                        },
+                    }
+                );
+                // Broadcast texture change to other users in the room via WebSocket
+                this._roomConnection?.emitPlayerTextures(textures);
+                return true;
+            } catch (err) {
+                console.error("saveTextures: HTTP POST failed", err);
+                return false;
+            }
         } else {
+            console.warn(
+                "saveTextures: skipped — missing auth or capability. authToken:",
+                !!this.authToken,
+                "capability:",
+                hasCapability("api/save-textures")
+            );
             return false;
         }
     }
