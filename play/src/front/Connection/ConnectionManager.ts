@@ -769,24 +769,35 @@ class ConnectionManager {
                 return true;
             } catch (err) {
                 if (isAxiosError(err) && err.response?.status === 401) {
-                    console.warn("saveName: token expired, refreshing");
-                    if (this._currentRoom?.authenticationMandatory) {
+                    console.warn("saveName: token expired, refreshing via /me");
+                    try {
+                        const meRes = await axiosToPusher.get("me", {
+                            headers: { Authorization: this.authToken ?? "" },
+                        });
+                        const { MeResponse } = await import("@workadventure/messages");
+                        const parsed = MeResponse.parse(meRes.data);
+                        if (parsed.status !== "ok" || !("authToken" in parsed)) {
+                            console.error("saveTextures: /me returned non-ok status");
+                            return false;
+                        }
+                        this.authToken = (parsed as { authToken: string }).authToken;
+                        await axiosToPusher.post(
+                            "save-name",
+                            {
+                                name,
+                                roomUrl: this.currentRoom?.key,
+                            },
+                            {
+                                headers: {
+                                    Authorization: this.authToken,
+                                },
+                            }
+                        );
+                        return true;
+                    } catch (refreshErr) {
+                        console.error("saveName: token refresh failed", refreshErr);
                         return false;
                     }
-                    await this.anonymousLogin();
-                    await axiosToPusher.post(
-                        "save-name",
-                        {
-                            name,
-                            roomUrl: this.currentRoom?.key,
-                        },
-                        {
-                            headers: {
-                                Authorization: this.authToken,
-                            },
-                        }
-                    );
-                    return true;
                 }
                 console.error("saveName: HTTP POST failed", err);
                 return false;
@@ -822,26 +833,37 @@ class ConnectionManager {
                 return true;
             } catch (err) {
                 if (isAxiosError(err) && err.response?.status === 401) {
-                    console.warn("saveTextures: token expired, refreshing");
-                    if (this._currentRoom?.authenticationMandatory) {
-                        return false; // OIDC user needs to re-login
-                    }
-                    await this.anonymousLogin();
-                    // Retry with fresh token
-                    await axiosToPusher.post(
-                        "save-textures",
-                        {
-                            textures,
-                            roomUrl: this.currentRoom?.key,
-                        },
-                        {
-                            headers: {
-                                Authorization: this.authToken,
-                            },
+                    console.warn("saveTextures: token expired, refreshing via /me");
+                    try {
+                        const meRes = await axiosToPusher.get("me", {
+                            headers: { Authorization: this.authToken ?? "" },
+                        });
+                        const { MeResponse } = await import("@workadventure/messages");
+                        const parsed = MeResponse.parse(meRes.data);
+                        if (parsed.status !== "ok" || !("authToken" in parsed)) {
+                            console.error("saveTextures: /me returned non-ok status");
+                            return false;
                         }
-                    );
-                    this._roomConnection?.emitPlayerTextures(textures);
-                    return true;
+                        this.authToken = (parsed as { authToken: string }).authToken;
+                        // Retry with fresh token
+                        await axiosToPusher.post(
+                            "save-textures",
+                            {
+                                textures,
+                                roomUrl: this.currentRoom?.key,
+                            },
+                            {
+                                headers: {
+                                    Authorization: this.authToken,
+                                },
+                            }
+                        );
+                        this._roomConnection?.emitPlayerTextures(textures);
+                        return true;
+                    } catch (refreshErr) {
+                        console.error("saveTextures: token refresh failed", refreshErr);
+                        return false;
+                    }
                 }
                 console.error("saveTextures: HTTP POST failed", err);
                 return false;
@@ -875,24 +897,35 @@ class ConnectionManager {
                 return true;
             } catch (err) {
                 if (isAxiosError(err) && err.response?.status === 401) {
-                    console.warn("saveCompanionTexture: token expired, refreshing");
-                    if (this._currentRoom?.authenticationMandatory) {
+                    console.warn("saveCompanionTexture: token expired, refreshing via /me");
+                    try {
+                        const meRes = await axiosToPusher.get("me", {
+                            headers: { Authorization: this.authToken ?? "" },
+                        });
+                        const { MeResponse } = await import("@workadventure/messages");
+                        const parsed = MeResponse.parse(meRes.data);
+                        if (parsed.status !== "ok" || !("authToken" in parsed)) {
+                            console.error("saveCompanionTexture: /me returned non-ok");
+                            return false;
+                        }
+                        this.authToken = (parsed as { authToken: string }).authToken;
+                        await axiosToPusher.post(
+                            "save-companion-texture",
+                            {
+                                texture,
+                                roomUrl: this.currentRoom?.key,
+                            },
+                            {
+                                headers: {
+                                    Authorization: this.authToken,
+                                },
+                            }
+                        );
+                        return true;
+                    } catch (refreshErr) {
+                        console.error("saveCompanionTexture: token refresh failed", refreshErr);
                         return false;
                     }
-                    await this.anonymousLogin();
-                    await axiosToPusher.post(
-                        "save-companion-texture",
-                        {
-                            texture,
-                            roomUrl: this.currentRoom?.key,
-                        },
-                        {
-                            headers: {
-                                Authorization: this.authToken,
-                            },
-                        }
-                    );
-                    return true;
                 }
                 console.error("saveCompanionTexture: HTTP POST failed", err);
                 return false;
