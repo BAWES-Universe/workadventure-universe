@@ -3,8 +3,6 @@ import { localUserStore } from "../../Connection/LocalUserStore";
 import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
 import { modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
-import AdminDashboardButton from "./AdminDashboardButton.svelte";
-
 let adminModalOpen = false;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
@@ -100,16 +98,6 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     // Activate the Orbit button in the action bar (highest priority)
     adminDashboardActivatedStore.set(true);
 
-    // Also inject button component into apps menu (optional - for apps menu access)
-    options.externalSvelteComponent.addComponentToZone(
-        "actionBarAppsMenu",
-        "admin-dashboard-btn",
-        AdminDashboardButton,
-        {
-            onOpenModal: () => openAdminModal(options),
-        }
-    );
-
     // Auto-open after a short delay
     setTimeout(() => {
         openAdminModal(options);
@@ -163,14 +151,7 @@ const adminExtensionModule: ExtensionModule = {
         }
         // Deactivate the Orbit button
         adminDashboardActivatedStore.set(false);
-        // Remove button component from apps menu
-        if (extensionOptions) {
-            extensionOptions.externalSvelteComponent.removeComponentFromZone(
-                "actionBarAppsMenu",
-                "admin-dashboard-btn"
-            );
-            extensionOptions = null;
-        }
+        extensionOptions = null;
         closeAdminModal();
     },
 };
