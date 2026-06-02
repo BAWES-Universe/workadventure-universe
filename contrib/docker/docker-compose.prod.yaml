@@ -220,6 +220,11 @@ services:
       - ADMIN_API_URL=${ADMIN_API_URL}
       - ENABLE_CHAT_UPLOAD=${ENABLE_CHAT_UPLOAD}
       - UPLOAD_MAX_FILESIZE=${UPLOAD_MAX_FILESIZE}
+      #Sentry
+      - SENTRY_DSN=${SENTRY_DSN_UPLOADER}
+      - SENTRY_RELEASE
+      - SENTRY_ENVIRONMENT
+      - SENTRY_TRACES_SAMPLE_RATE
     labels:
       traefik.enable: "true"
       traefik.http.middlewares.strip-uploader-prefix.stripprefix.prefixes: "/uploader"

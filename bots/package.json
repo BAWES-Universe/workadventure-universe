@@ -7,9 +7,11 @@
     "build": "tsc",
     "dev": "npx tsx watch --clear-screen=false server/index.ts",
     "start": "ts-node --transpile-only server/index.ts",
-    "test": "jest"
+    "test": "jest",
+    "push-sentry-sourcemaps": "tsc && sentry-cli releases new $SENTRY_RELEASE && sentry-cli releases files $SENTRY_RELEASE upload-sourcemaps dist && sentry-cli releases finalize $SENTRY_RELEASE"
   },
   "dependencies": {
+    "@sentry/node": "^10.30.0",
     "@workadventure/messages": "workspace:*",
     "ws": "^8.16.0",
     "redis": "^4.3.1",
