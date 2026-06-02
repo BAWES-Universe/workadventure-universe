@@ -628,6 +628,13 @@ export class BotAPI {
                         (updatesToApply as any)[key] = value;
                     }
                 }
+                
+                // Normalize characterTextureId → characterTextureIds for merge
+                if ('characterTextureId' in updatesToApply && !('characterTextureIds' in updatesToApply)) {
+                    (updatesToApply as any).characterTextureIds = updatesToApply.characterTextureId
+                        ? [updatesToApply.characterTextureId]
+                        : [];
+                }
 
                 const updatedConfig: BotConfiguration = {
                     ...existingConfig,
