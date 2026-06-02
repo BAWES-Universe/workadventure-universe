@@ -108,6 +108,13 @@ export class UserDescriptor {
                 this.sayMessage = sayMessage;
             }
         }
+        const newTextures = playerDetails.characterTextures;
+        if (newTextures.length > 0) {
+            this.characterTextures = newTextures;
+        }
+        if (playerDetails.companionTexture !== undefined) {
+            this.companionTexture = playerDetails.companionTexture;
+        }
     }
 
     public toUserJoinedMessage(): UserJoinedMessage {

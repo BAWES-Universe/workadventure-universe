@@ -7,6 +7,7 @@ export const CompanionBehavior = z.union([
     z.literal("cat"),
     z.literal("dog"),
     z.literal("red_panda"),
+    z.literal("none"),
 ]);
 
 export type CompanionBehavior = z.infer<typeof CompanionBehavior>;

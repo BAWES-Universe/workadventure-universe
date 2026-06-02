@@ -817,6 +817,18 @@ export class RoomConnection implements RoomConnection {
         });
     }
 
+    public emitPlayerTextures(textureIds: string[]): void {
+        const message = SetPlayerDetailsMessageTsProto.fromPartial({
+            characterTextures: textureIds.map((id) => ({ id: id, url: "" })),
+        });
+        this.send({
+            message: {
+                $case: "setPlayerDetailsMessage",
+                setPlayerDetailsMessage: message,
+            },
+        });
+    }
+
     public emitPlayerOutlineColor(color: number | null) {
         let message: SetPlayerDetailsMessageTsProto;
         if (color === null) {
