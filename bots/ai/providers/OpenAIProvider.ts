@@ -283,11 +283,25 @@ export class OpenAIProvider implements AIProvider {
                         
                         if (data === '[DONE]') {
                             const latency = Date.now() - startTime;
+
+                            // Close Sentry span before returning
+                            if (sentrySpan) {
+                                sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                                sentrySpan.end();
+                            }
+
                             yield {
                                 content: '',
                                 done: true,
                                 metadata: {
                                     tokensUsed,
+                                    promptTokens,
+                                    completionTokens,
                                     latency,
                                     error: false,
                                 },

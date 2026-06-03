@@ -103,6 +103,18 @@ export class LMStudioProvider implements AIProvider {
                         
                         if (data === '[DONE]') {
                             const latency = Date.now() - startTime;
+
+                            // Close Sentry span before returning
+                            if (sentrySpan) {
+                                sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                sentrySpan.setAttribute("gen_ai.system", "lmstudio");
+                                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                                sentrySpan.end();
+                            }
+
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.log(`[LMStudioProvider] Received [DONE], yielding final chunk with tokensUsed=${tokensUsed}`);
                             }
@@ -111,6 +123,8 @@ export class LMStudioProvider implements AIProvider {
                                 done: true,
                                 metadata: {
                                     tokensUsed,
+                                    promptTokens,
+                                    completionTokens,
                                     latency,
                                     error: false,
                                 },
