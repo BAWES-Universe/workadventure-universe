@@ -7,6 +7,7 @@
 
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
+import * as Sentry from '@sentry/node';
 
 export class LMStudioProvider implements AIProvider {
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -31,7 +32,16 @@ export class LMStudioProvider implements AIProvider {
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
+        let promptTokens = 0;
+        let completionTokens = 0;
         let error = false;
+        let responseModel = '';
+
+        // Start Sentry span for this LLM call
+        const sentrySpan = Sentry.startInactiveSpan({
+            op: "gen_ai.chat",
+            name: `LLM ${config.model}`,
+        });
 
         try {
             const endpoint = `${config.endpoint}/v1/chat/completions`;
@@ -116,13 +126,19 @@ export class LMStudioProvider implements AIProvider {
                             // Check usage FIRST, as it might come in chunks without delta.content
                             if (json.usage) {
                                 if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
-                                    // Sum prompt and completion tokens
-                                    const newTokens = (json.usage.prompt_tokens || 0) + (json.usage.completion_tokens || 0);
+                                    // Track prompt and completion tokens separately
+                                    if (json.usage.prompt_tokens !== undefined) {
+                                        promptTokens = json.usage.prompt_tokens;
+                                    }
+                                    if (json.usage.completion_tokens !== undefined) {
+                                        completionTokens = json.usage.completion_tokens;
+                                    }
+                                    const newTokens = promptTokens + completionTokens;
                                     if (newTokens > 0) {
                                         tokensUsed = newTokens;
-                                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                            console.log(`[LMStudioProvider] Token usage updated: ${tokensUsed} (prompt: ${json.usage.prompt_tokens || 0}, completion: ${json.usage.completion_tokens || 0})`);
-                                        }
+                                    }
+                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.log(`[LMStudioProvider] Token usage updated: ${tokensUsed} (prompt: ${json.usage.prompt_tokens || 0}, completion: ${json.usage.completion_tokens || 0})`);
                                     }
                                 } else if (json.usage.total_tokens) {
                                     // Fallback to total_tokens if available
@@ -174,6 +190,18 @@ export class LMStudioProvider implements AIProvider {
 
             // Final chunk
             const latency = Date.now() - startTime;
+
+            // Set Sentry span attributes
+            if (sentrySpan) {
+                sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
+                sentrySpan.setAttribute("gen_ai.system", "lmstudio");
+                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                sentrySpan.end();
+            }
+
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[LMStudioProvider] Final chunk: tokensUsed=${tokensUsed}, latency=${latency}ms`);
             }
@@ -182,6 +210,8 @@ export class LMStudioProvider implements AIProvider {
                 done: true,
                 metadata: {
                     tokensUsed,
+                    promptTokens,
+                    completionTokens,
                     latency,
                     error: false,
                 },
@@ -189,6 +219,15 @@ export class LMStudioProvider implements AIProvider {
         } catch (error: any) {
             const latency = Date.now() - startTime;
             
+            // Finish Sentry span with error
+            if (sentrySpan) {
+                sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                sentrySpan.setAttribute("gen_ai.system", "lmstudio");
+                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                sentrySpan.end();
+            }
+
             if (error.name === 'AbortError') {
                 throw new Error(`LMStudio request timeout after ${timeout}ms`);
             }
@@ -217,7 +256,16 @@ export class LMStudioProvider implements AIProvider {
     ): Promise<AIResponse> {
         const startTime = Date.now();
 
-        try {
+        return Sentry.startSpan({
+            op: "gen_ai.chat",
+            name: `LLM ${config.model}`,
+            attributes: {
+                "gen_ai.request.model": config.model,
+                "gen_ai.system": "lmstudio",
+                "gen_ai.agent.name": config.name || '',
+            },
+        }, async (span) => {
+            try {
             const endpoint = `${config.endpoint}/v1/chat/completions`;
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
@@ -256,7 +304,13 @@ export class LMStudioProvider implements AIProvider {
             const data = await response.json();
             const content = data.choices?.[0]?.message?.content || '';
             const tokensUsed = data.usage?.total_tokens || 0;
+            const promptTokens = data.usage?.prompt_tokens || 0;
+            const completionTokens = data.usage?.completion_tokens || 0;
             const latency = Date.now() - startTime;
+
+            span.setAttribute("gen_ai.response.model", data.model || config.model);
+            span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
+            span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
 
             return {
                 content,
@@ -281,7 +335,8 @@ export class LMStudioProvider implements AIProvider {
                 latency,
                 error: true,
             };
-        }
+            }
+        });
     }
 }
 

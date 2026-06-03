@@ -525,6 +525,8 @@ export class AdminApiService {
         botId: string;
         providerId: string;
         tokensUsed?: number;
+        promptTokens?: number;
+        completionTokens?: number;
         apiCalls?: number;
         durationSeconds?: number | null;
         cost?: number;
