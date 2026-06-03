@@ -1,34 +1,9 @@
-import * as dotenv from "dotenv";
-import * as Sentry from "@sentry/node";
+import "./instrument";
 import { DiscordBot } from "./discord/bot";
 import { createJoinMessage, createLeaveMessage, createSummaryStatsEmbed, createRoomEmbeds, parseRoomUrl } from "./discord/channels";
 import { RoomDiscovery } from "./workadventure/roomDiscovery";
 import { WorkAdventureWebSocket } from "./workadventure/websocket";
-
-dotenv.config();
-
-// Sentry integration
-const SENTRY_DSN = process.env.SENTRY_DSN_DISCORD_BOT;
-const SENTRY_RELEASE = process.env.SENTRY_RELEASE;
-const SENTRY_ENVIRONMENT = process.env.SENTRY_ENVIRONMENT;
-const SENTRY_TRACES_SAMPLE_RATE = parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || "0.1");
-
-if (SENTRY_DSN != undefined) {
-    try {
-        const sentryOptions: Sentry.NodeOptions = {
-            dsn: SENTRY_DSN,
-            release: SENTRY_RELEASE,
-            environment: SENTRY_ENVIRONMENT,
-            tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
-            attachStacktrace: true,
-        };
-
-        Sentry.init(sentryOptions);
-        console.info("Sentry initialized");
-    } catch (e) {
-        console.error("Error while initializing Sentry", e);
-    }
-}
+import * as Sentry from "@sentry/node";
 
 class DiscordBotService {
     private discordBot: DiscordBot;
@@ -228,9 +203,21 @@ class DiscordBotService {
     }
 }
 
+// Global error handlers
+process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled Rejection:", reason);
+    Sentry.captureException(reason);
+});
+process.on("uncaughtException", (err) => {
+    console.error("Uncaught Exception:", err);
+    Sentry.captureException(err);
+    void Sentry.flush(2000).finally(() => process.exit(1));
+});
+
 // Start the service
 const service = new DiscordBotService();
 service.start().catch((err) => {
     console.error("Failed to start service:", err);
-    process.exit(1);
+    Sentry.captureException(err);
+    void Sentry.flush(2000).finally(() => process.exit(1));
 });
