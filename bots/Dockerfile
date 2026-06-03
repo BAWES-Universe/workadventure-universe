@@ -48,6 +48,10 @@ COPY bots/tsconfig.json ./bots/tsconfig.json
 
 WORKDIR /usr/src/app/bots
 
+# Install bots-specific dependencies (bots is not a root workspace)
+# This ensures packages like @sentry/node are available at runtime
+RUN npm install
+
 # Expose REST API port
 EXPOSE 3001
 
