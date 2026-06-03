@@ -36,6 +36,7 @@ export class LMStudioProvider implements AIProvider {
         let completionTokens = 0;
         let error = false;
         let responseModel = '';
+        const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
         // Start Sentry span for this LLM call
         const sentrySpan = Sentry.startInactiveSpan({
@@ -45,7 +46,6 @@ export class LMStudioProvider implements AIProvider {
 
         try {
             const endpoint = `${config.endpoint}/v1/chat/completions`;
-            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -279,9 +279,9 @@ export class LMStudioProvider implements AIProvider {
                 "gen_ai.agent.name": config.name || '',
             },
         }, async (span) => {
+            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             try {
             const endpoint = `${config.endpoint}/v1/chat/completions`;
-            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);

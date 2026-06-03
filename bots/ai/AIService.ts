@@ -551,6 +551,19 @@ CRITICAL RESPONSE RULES:
                             config,
                             tools.length > 0 ? tools : undefined
                         )) {
+                            // Track tokens from follow-up call metadata
+                            if (resultChunk.metadata?.tokensUsed) {
+                                tokensUsed = resultChunk.metadata.tokensUsed;
+                            }
+                            if (resultChunk.metadata?.promptTokens) {
+                                promptTokens = resultChunk.metadata.promptTokens;
+                            }
+                            if (resultChunk.metadata?.completionTokens) {
+                                completionTokens = resultChunk.metadata.completionTokens;
+                            }
+                            if (resultChunk.metadata?.error) {
+                                error = true;
+                            }
                             yield resultChunk;
                         }
                         continue;

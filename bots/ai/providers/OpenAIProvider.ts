@@ -147,6 +147,7 @@ export class OpenAIProvider implements AIProvider {
         let completionTokens = 0;
         let error = false;
         let responseModel = '';
+        const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
         // Start Sentry span for this LLM call
         const sentrySpan = Sentry.startInactiveSpan({
@@ -424,7 +425,7 @@ export class OpenAIProvider implements AIProvider {
         const startTime = Date.now();
         let responseModel = '';
 
-        return Sentry.startSpan({
+return Sentry.startSpan({
             op: "gen_ai.chat",
             name: `LLM ${config.model}`,
             attributes: {
@@ -433,10 +434,10 @@ export class OpenAIProvider implements AIProvider {
                 "gen_ai.agent.name": config.name || '',
             },
         }, async (span) => {
+            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             try {
             const endpoint = this.getEndpoint(config);
             const apiKey = this.getApiKey(config);
-            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);
