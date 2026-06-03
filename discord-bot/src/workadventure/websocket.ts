@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import jwt from "jsonwebtoken";
+import * as Sentry from "@sentry/node";
 import type { WebSocketMessage, UserCacheEntry, MemberJoinData, MemberLeaveData } from "../types";
 
 export interface WebSocketEventHandlers {
@@ -148,6 +149,7 @@ export class WorkAdventureWebSocket {
 
             this.ws.on("error", (error) => {
                 console.error("WebSocket error:", error);
+                Sentry.captureException(error);
                 this.isConnecting = false;
                 this.scheduleReconnect();
             });
@@ -159,6 +161,7 @@ export class WorkAdventureWebSocket {
             });
         } catch (error) {
             console.error("Failed to connect to WebSocket:", error);
+            Sentry.captureException(error);
             this.isConnecting = false;
             this.scheduleReconnect();
         }

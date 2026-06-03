@@ -9,6 +9,8 @@
  * - Handles graceful shutdown
  */
 
+import "./instrument";
+
 import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';

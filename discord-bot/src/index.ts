@@ -1,10 +1,9 @@
-import * as dotenv from "dotenv";
+import "./instrument";
 import { DiscordBot } from "./discord/bot";
 import { createJoinMessage, createLeaveMessage, createSummaryStatsEmbed, createRoomEmbeds, parseRoomUrl } from "./discord/channels";
 import { RoomDiscovery } from "./workadventure/roomDiscovery";
 import { WorkAdventureWebSocket } from "./workadventure/websocket";
-
-dotenv.config();
+import * as Sentry from "@sentry/node";
 
 class DiscordBotService {
     private discordBot: DiscordBot;
@@ -204,10 +203,21 @@ class DiscordBotService {
     }
 }
 
+// Global error handlers
+process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled Rejection:", reason);
+    Sentry.captureException(reason);
+});
+process.on("uncaughtException", (err) => {
+    console.error("Uncaught Exception:", err);
+    Sentry.captureException(err);
+    void Sentry.flush(2000).finally(() => process.exit(1));
+});
+
 // Start the service
 const service = new DiscordBotService();
 service.start().catch((err) => {
     console.error("Failed to start service:", err);
-    process.exit(1);
+    Sentry.captureException(err);
+    void Sentry.flush(2000).finally(() => process.exit(1));
 });
-

@@ -20,6 +20,11 @@ const PLAY_URL = process.env.PLAY_URL;
 export const ALLOWED_CORS_ORIGIN = process.env.ALLOWED_CORS_ORIGIN || PLAY_URL || "*";
 export const DEBUG_ERROR_MESSAGES = process.env.DEBUG_ERROR_MESSAGES || "";
 
+export const SENTRY_DSN = process.env.SENTRY_DSN_UPLOADER;
+export const SENTRY_RELEASE = process.env.SENTRY_RELEASE;
+export const SENTRY_ENVIRONMENT = process.env.SENTRY_ENVIRONMENT;
+export const SENTRY_TRACES_SAMPLE_RATE = parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || "0.1");
+
 export {
     ENABLE_CHAT_UPLOAD,
     UPLOAD_MAX_FILESIZE,

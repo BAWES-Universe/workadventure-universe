@@ -91,7 +91,7 @@ The button is added to the `actionBarAppsMenu` zone, which appears in the apps m
 
 ### Changing Button Appearance
 
-Edit `AdminDashboardButton.svelte` to customize the button's appearance, text, or styling.
+The button is removed from the apps menu. The Orbit button in the main action bar is the only access point for the admin dashboard.
 
 ### Changing Modal Behavior
 
@@ -135,7 +135,6 @@ To disable automatic modal opening, remove or comment out the `setTimeout` call 
 ## Files
 
 - `index.ts` - Main extension module implementation
-- `AdminDashboardButton.svelte` - Button component for the action bar
 - `README.md` - This documentation
 
 ## Notes
