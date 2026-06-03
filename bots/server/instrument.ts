@@ -1,13 +1,11 @@
 import * as Sentry from "@sentry/node";
-import App from "./src/App";
-import {
-    SENTRY_DSN,
-    SENTRY_RELEASE,
-    SENTRY_ENVIRONMENT,
-    SENTRY_TRACES_SAMPLE_RATE,
-} from "./src/Enum/EnvironmentVariable";
 
-// Sentry integration
+const SENTRY_DSN = process.env.SENTRY_DSN_BOT;
+const SENTRY_RELEASE = process.env.SENTRY_RELEASE;
+const SENTRY_ENVIRONMENT = process.env.SENTRY_ENVIRONMENT;
+const parsedRate = parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || "0.1");
+const SENTRY_TRACES_SAMPLE_RATE = isNaN(parsedRate) ? 0.1 : parsedRate;
+
 if (SENTRY_DSN) {
     try {
         const sentryOptions: Sentry.NodeOptions = {
@@ -24,9 +22,3 @@ if (SENTRY_DSN) {
         console.error("Error while initializing Sentry", e);
     }
 }
-
-App.listen(8080, () => {
-    console.log(`WorkAdventure uploader starting on port 8080!`);
-})
-
-export {}

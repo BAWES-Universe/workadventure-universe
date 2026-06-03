@@ -9,30 +9,7 @@
  * - Handles graceful shutdown
  */
 
-import * as Sentry from "@sentry/node";
-
-// Sentry integration
-const SENTRY_DSN = process.env.SENTRY_DSN_BOT;
-const SENTRY_RELEASE = process.env.SENTRY_RELEASE;
-const SENTRY_ENVIRONMENT = process.env.SENTRY_ENVIRONMENT;
-const SENTRY_TRACES_SAMPLE_RATE = parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || "0.1");
-
-if (SENTRY_DSN != undefined) {
-    try {
-        const sentryOptions: Sentry.NodeOptions = {
-            dsn: SENTRY_DSN,
-            release: SENTRY_RELEASE,
-            environment: SENTRY_ENVIRONMENT,
-            tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
-            attachStacktrace: true,
-        };
-
-        Sentry.init(sentryOptions);
-        console.info("Sentry initialized");
-    } catch (e) {
-        console.error("Error while initializing Sentry", e);
-    }
-}
+import "./instrument";
 
 import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
