@@ -40,6 +40,8 @@ export class PatrolBehavior extends BaseBehavior {
     private lastWaypointPosition: PositionInterface | null = null; // Track last position to detect if stuck
     private playerLastMoveTime: Map<number, number> = new Map(); // Track when each player last moved
     private readonly IDLE_RESUME_DELAY = 2000; // Resume if player idle for 2 seconds
+    private readonly INTERACTION_COOLDOWN = 5000; // Prevent patrol resumption for 5s after space interaction ends
+    private lastInteractionTime: number = 0; // Timestamp of last space interaction (start via join, reset via leave)
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -217,12 +219,21 @@ export class PatrolBehavior extends BaseBehavior {
         
         // If bot is stopped and not in a space, check if all nearby players are idle
         // If so, resume movement (ghost through idle players) - similar to social bot pattern
-        if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowingPath() && 
+if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowingPath() && 
             !this.currentSpaceName && this.engagedWithUsers.size === 0) {
             const now = Date.now();
-            let allPlayersIdle = true;
+            const timeSinceInteraction = now - this.lastInteractionTime;
+            
+            // Cooldown guard: don't ghost through during cooldown period after space interaction
+            if (timeSinceInteraction < this.INTERACTION_COOLDOWN) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PatrolBehavior] 🛑 Cooldown active (${Math.round((this.INTERACTION_COOLDOWN - timeSinceInteraction) / 1000)}s remaining) - not ghosting through`);
+                }
+                return;
+            }
             
             // Check if any nearby players moved recently (active)
+            let allPlayersIdle = true;
             for (const [playerId] of this.nearbyPlayers) {
                 const lastMoveTime = this.playerLastMoveTime.get(playerId) || 0;
                 if (now - lastMoveTime < this.IDLE_RESUME_DELAY) {
@@ -271,7 +282,7 @@ export class PatrolBehavior extends BaseBehavior {
             
             // Only stop if players are actively moving (not idle)
             // BUT: When leading, don't stop just because players are nearby - continue to target
-            if (hasNearbyPlayers && hasActivePlayers && !this.isLeading) {
+            if (hasNearbyPlayers && (hasActivePlayers || (now - this.lastInteractionTime) < this.INTERACTION_COOLDOWN) && !this.isLeading) {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[PatrolBehavior] 🛑 STOPPING - found active players (getNearbyPlayers=${nearbyPlayers.length}, nearbyPlayersMap=${this.nearbyPlayers.size}, responseRadius=${responseRadius}, isFollowingPath=${this.bot.getIsFollowingPath()})`);
                 }
@@ -468,6 +479,15 @@ export class PatrolBehavior extends BaseBehavior {
             return;
         }
 
+        // Cooldown guard: don't restart pathfinding during cooldown period after space interaction ends
+        if ((Date.now() - this.lastInteractionTime) < this.INTERACTION_COOLDOWN) {
+            // Still within cooldown - don't resume patrolling
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[PatrolBehavior] 🛑 Cooldown active - not restarting pathfinding`);
+            }
+            return;
+        }
+        
         if (this.targetWaypoint) {
             // Ghost mode: bot should continue moving even if players are nearby
             // Don't stop - keep moving to avoid triggering bubbles
@@ -633,6 +653,7 @@ export class PatrolBehavior extends BaseBehavior {
         }
         
         this.currentSpaceName = spaceName;
+        this.lastInteractionTime = Date.now(); // Record interaction start timestamp
         
         // CRITICAL: Stop immediately when joining a conversation space
         // This prevents the bot from continuing to move during the frame where onSpaceJoined is called
@@ -716,12 +737,44 @@ export class PatrolBehavior extends BaseBehavior {
 
     onSpaceLeft(spaceName: string): void {
         if (!this.currentSpaceName) return;
+        
+        // Inline leading cleanup from BaseBehavior.onSpaceLeft() instead of calling super.
+        // super.onSpaceLeft() calls returnAfterLeading() → returnToAssignedSpace() →
+        // moveToWithPathfinding() which is ASYNC (awaits findPath). By the time the
+        // pathfinding promise resolves, our synchronous getIsFollowingPath() check below
+        // would have already run and returned false, so cancelPathfinding() never fires.
+        // The bot then moves back to its assigned space, bypassing the cooldown.
+        if (!this.isLeading) {
+            this.justCompletedLeading = null;
+        }
+        // Do NOT call returnAfterLeading() here — the patrol bot should respect the
+        // cooldown before returning to its assigned space.
+        
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
+        // Clear engagedWithUsers entries for the departing space only.
+        // This lets the ghost mode entry condition (engagedWithUsers.size === 0)
+        // evaluate to true during the cooldown, so the cooldown guard at line 228
+        // can actually fire. Without this, if onSpaceUserLeft never arrives,
+        // line 206 catches engagedWithUsers.size > 0 every frame and the bot
+        // is permanently stuck — even after the cooldown expires.
+        for (const [userId, userData] of this.engagedWithUsers) {
+            if (userData.spaceName === spaceName) {
+                this.engagedWithUsers.delete(userId);
+            }
+        }
+        // CRITICAL: Keep nearbyPlayers intact so the stop/cooldown logic
+        // can still detect the player is nearby
+        this.lastInteractionTime = Date.now();
     }
 
     private async moveTowardsWaypoint(config: PatrolBehaviorConfig, deltaTime?: number): Promise<void> {
         if (!this.bot || !this.targetWaypoint) return;
+        
+        // Cooldown guard: don't restart pathfinding during cooldown or if in a space
+        if (this.currentSpaceName || (Date.now() - this.lastInteractionTime) < this.INTERACTION_COOLDOWN) {
+            return;
+        }
         
         // GHOST MODE: Continue moving even if in a space - don't stop, don't cancel pathfinding
         // The bot should keep moving to avoid triggering bubbles
