@@ -335,6 +335,8 @@ export class LMStudioProvider implements AIProvider {
         } catch (error: any) {
             const latency = Date.now() - startTime;
 
+            span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+
             if (error.name === 'AbortError') {
                 throw new Error(`LMStudio request timeout after ${timeout}ms`);
             }
