@@ -1,4 +1,6 @@
 import * as Sentry from "@sentry/node";
+// conversationIdIntegration is only exported from @sentry/core, not @sentry/node
+import { conversationIdIntegration } from "@sentry/core";
 
 const SENTRY_DSN = process.env.SENTRY_DSN_BOT;
 const SENTRY_RELEASE = process.env.SENTRY_RELEASE;
@@ -25,7 +27,7 @@ if (SENTRY_DSN) {
         Sentry.init(sentryOptions);
 
         // Add conversation tracking integration for AI Monitoring Conversations tab
-        (Sentry as any).addIntegration((Sentry as any).conversationIdIntegration());
+        (Sentry as any).addIntegration(conversationIdIntegration());
 
         console.info("Sentry initialized (AI monitoring + error/warn logging)");
     } catch (e) {
