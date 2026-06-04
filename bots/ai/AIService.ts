@@ -412,16 +412,20 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 : message;
 
             try {
-                // Set Sentry context tags for this LLM call
-                const sentryScope = Sentry.getCurrentScope();
-                sentryScope.setTag("bot.player_id", playerId);
-                sentryScope.setTag("bot.universe", botUniverse || 'unknown');
-                sentryScope.setTag("bot.world", botWorld || 'unknown');
-                sentryScope.setTag("bot.room", botRoom || 'unknown');
-                sentryScope.setTag("bot.provider", config.type);
-                sentryScope.setTag("bot.model", config.model);
-                sentryScope.setTag("bot.space", spaceName || '');
-                sentryScope.setTag("gen_ai.agent.name", config.name || botId);
+                // Create a parent Sentry span for this conversation turn
+                // Spans created inside providers will be children of this,
+                // preventing cross-session tag leakage in WebSocket environment
+                const parentSpan = Sentry.startInactiveSpan({
+                    op: "gen_ai.agent",
+                    name: `Bot ${config.name || botId}`,
+                });
+                parentSpan?.setAttribute("bot.player_id", playerId);
+                parentSpan?.setAttribute("bot.universe", botUniverse || 'unknown');
+                parentSpan?.setAttribute("bot.world", botWorld || 'unknown');
+                parentSpan?.setAttribute("bot.room", botRoom || 'unknown');
+                parentSpan?.setAttribute("bot.provider", config.type);
+                parentSpan?.setAttribute("bot.model", config.model);
+                parentSpan?.setAttribute("bot.space", spaceName || '');
 
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
@@ -604,6 +608,9 @@ CRITICAL RESPONSE RULES:
                     }
                 }
             } finally {
+                // Close parent Sentry span
+                parentSpan?.end();
+
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
