@@ -749,7 +749,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         }
         // Do NOT call returnAfterLeading() here — the patrol bot should respect the
         // cooldown before returning to its assigned space.
-        this.isReturning = false;
         
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
