@@ -445,6 +445,11 @@ export class BotManager {
 
             this.bots.set(botId, instance);
 
+            // Wire disconnect callback to update BotInstance status
+            instance.client.onDisconnect = () => {
+                instance.status = 'disconnected';
+            };
+
             // Register in bot registry
             await this.botRegistry.assignBot(botId);
 
