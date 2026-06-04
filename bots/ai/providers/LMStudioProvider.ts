@@ -104,7 +104,7 @@ export class LMStudioProvider implements AIProvider {
                         if (data === '[DONE]') {
                             const latency = Date.now() - startTime;
 
-                            // Close Sentry span before returning
+                            // Set attributes for Sentry span (ended in finally)
                             if (sentrySpan) {
                                 sentrySpan.setAttribute("gen_ai.request.model", config.model);
                                 sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
@@ -112,7 +112,6 @@ export class LMStudioProvider implements AIProvider {
                                 sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
                                 sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
                                 sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                                sentrySpan.end();
                             }
 
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -213,7 +212,6 @@ export class LMStudioProvider implements AIProvider {
                 sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
                 sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
                 sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                sentrySpan.end();
             }
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -239,7 +237,6 @@ export class LMStudioProvider implements AIProvider {
                 sentrySpan.setAttribute("gen_ai.system", "lmstudio");
                 sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
                 sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
-                sentrySpan.end();
             }
 
             if (error.name === 'AbortError') {
@@ -259,6 +256,8 @@ export class LMStudioProvider implements AIProvider {
                     error: true,
                 },
             };
+        } finally {
+            sentrySpan?.end();
         }
     }
 
