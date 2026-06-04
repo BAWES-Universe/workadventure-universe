@@ -153,6 +153,9 @@ export class OpenAIProvider implements AIProvider {
         const sentrySpan = Sentry.startInactiveSpan({
             op: "gen_ai.chat",
             name: `LLM ${config.model}`,
+            // Explicitly pass parent span from AIService to bypass async-context
+            // scope lookup which doesn't reliably cross for-await boundaries
+            parentSpan: (config as any).__sentryParentSpan,
         });
 
         try {

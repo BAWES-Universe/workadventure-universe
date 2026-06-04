@@ -425,6 +425,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             const sentryScope = Sentry.getCurrentScope();
             const previousSpan = Sentry.getActiveSpan();
             sentrySetSpan(sentryScope, parentSpan);
+            // Pass the parent span to providers via config so they can
+            // explicitly set it in startInactiveSpan({parentSpan: ...})
+            // This bypasses async-context scope lookup which doesn't
+            // consistently carry the active span across for-await boundaries
+            (config as any).__sentryParentSpan = parentSpan;
 
             try {
                 // Set attributes on the parent span
