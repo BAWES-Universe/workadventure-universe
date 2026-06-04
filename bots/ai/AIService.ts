@@ -411,14 +411,15 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 ? message + '\n\n/no_think'
                 : message;
 
+            // Create a parent Sentry span for this conversation turn
+            // Must be before the try block so it's accessible in try/catch/finally
+            const parentSpan = Sentry.startInactiveSpan({
+                op: "gen_ai.agent",
+                name: `Bot ${config.name || botId}`,
+            });
+
             try {
-                // Create a parent Sentry span for this conversation turn
-                // Spans created inside providers will be children of this,
-                // preventing cross-session tag leakage in WebSocket environment
-                const parentSpan = Sentry.startInactiveSpan({
-                    op: "gen_ai.agent",
-                    name: `Bot ${config.name || botId}`,
-                });
+                // Set attributes on the parent span
                 parentSpan?.setAttribute("bot.player_id", playerId);
                 parentSpan?.setAttribute("bot.universe", botUniverse || 'unknown');
                 parentSpan?.setAttribute("bot.world", botWorld || 'unknown');
