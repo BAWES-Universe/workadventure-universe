@@ -86,6 +86,9 @@ export class BotClient {
     // Full bot configuration (stored at spawn to avoid HTTP requests)
     private fullConfig: BotConfiguration | null = null;
 
+    // Callback invoked when WebSocket unexpectedly disconnects (not during initial connection)
+    public onDisconnect?: () => void;
+
     constructor(private config: BotConfig) {
         this.state = new BotState(config.position);
     }
@@ -188,6 +191,10 @@ export class BotClient {
                 } else if (code !== 1000) {
                     // In production, only log non-normal closes
                     console.warn(`[Bot ${this.config.botId}] Disconnected - Code: ${code}, Reason: ${reasonStr}`);
+                }
+                // Notify on unexpected disconnect (was previously connected, not during initial handshake)
+                if (this.connected) {
+                    this.onDisconnect?.();
                 }
                 this.connected = false;
             });
