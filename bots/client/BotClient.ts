@@ -698,7 +698,7 @@ export class BotClient {
                 const behaviorType = (this.behavior as any)?.config?.type;
                 const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
                 const isInSpace = (this.behavior as any)?.currentSpaceName || (this.behavior as any)?.engagedWithUsers?.size > 0;
-                if (behaviorType === 'patrol' && isInSpace && respondToPlayers !== false) {
+                if (behaviorType === 'patrol' && isInSpace && respondToPlayers !== false && !(this.behavior as any)?.isLeading) {
                     // Bot is in a space — don't start following path
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[Bot ${this.config.botId}] 🛑 moveToWithPathfinding BLOCKED — bot is in space`);
