@@ -1259,7 +1259,7 @@ export class BotManager {
                     await Promise.all(despawnPromises);
                     this.roomsWithBots.delete(roomId);
                 } else {
-                    // WA count is above our bot count - room has real players
+                    // WA count is above our connected bot count - room has real players
                     console.log(
                         `[BotManager] Room ${roomId} verification: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Keeping bots (possible timing issue).`
                     );
