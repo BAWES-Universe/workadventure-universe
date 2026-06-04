@@ -15,10 +15,20 @@ if (SENTRY_DSN) {
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
             streamGenAiSpans: true,
             attachStacktrace: true,
+            // Only capture warn/error logs to avoid spamming from debug logging
+            enableLogs: true,
+            integrations: [
+                Sentry.consoleLoggingIntegration({ levels: ["warn", "error"] }),
+            ],
         };
 
         Sentry.init(sentryOptions);
-        console.info("Sentry initialized");
+
+        // Add conversation tracking integration for AI monitoring Conversations tab
+        // conversationIdIntegration exists at runtime but not in @sentry/node type defs
+        (Sentry as any).addIntegration((Sentry as any).conversationIdIntegration());
+
+        console.info("Sentry initialized (AI monitoring + error/warn logging)");
     } catch (e) {
         console.error("Error while initializing Sentry", e);
     }
