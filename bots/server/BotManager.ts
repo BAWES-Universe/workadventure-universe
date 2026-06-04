@@ -1240,9 +1240,11 @@ export class BotManager {
                     }
                 }
                 
-                // Despawn if WA count is at or below our connected bot count
+                // Despawn if we have connected bots and WA count is at or below our count
                 // WA count includes bots, so waUserCount <= connectedBots means no real players
-                if (waUserCount <= connectedBots) {
+                // The connectedBots > 0 guard prevents false despawns when all bots have
+                // temporarily disconnected (network blip) and connectedBots reads 0
+                if (connectedBots > 0 && waUserCount <= connectedBots) {
                     console.log(
                         `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Despawning bots.`
                     );
@@ -1257,7 +1259,7 @@ export class BotManager {
                     await Promise.all(despawnPromises);
                     this.roomsWithBots.delete(roomId);
                 } else {
-                    // WA count is above our bot count - room has real players
+                    // WA count is above our connected bot count - room has real players
                     console.log(
                         `[BotManager] Room ${roomId} verification: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Keeping bots (possible timing issue).`
                     );
