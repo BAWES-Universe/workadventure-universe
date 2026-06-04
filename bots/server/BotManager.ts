@@ -1228,9 +1228,8 @@ export class BotManager {
             const waUserCount = waRooms.get(roomId) || 0;
             const ourBotCount = roomState.botIds.size;
 
-            // If WA reports exactly our bot count (or less), room is empty
-            // WA user count includes bots, so if waUserCount <= ourBotCount, there are no real players
-            // Add a small buffer (1) to account for timing/connection delays
+            // If WA reports at or below our bot count, room is empty of real players
+            // WA user count includes bots, so waUserCount <= ourBotCount means no real players present
             if (waUserCount <= ourBotCount) {
                 // Double-check: are any bots actually connected?
                 let connectedBots = 0;
@@ -1241,9 +1240,11 @@ export class BotManager {
                     }
                 }
                 
-                // Only despawn if WA count is significantly less than our connected bots
-                // This prevents despawning when bots are still connecting or WA count is slightly off
-                if (waUserCount < connectedBots - 1) {
+                // Despawn if we have connected bots and WA count is at or below our count
+                // WA count includes bots, so waUserCount <= connectedBots means no real players
+                // The connectedBots > 0 guard prevents false despawns when all bots have
+                // temporarily disconnected (network blip) and connectedBots reads 0
+                if (connectedBots > 0 && waUserCount <= connectedBots) {
                     console.log(
                         `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Despawning bots.`
                     );
@@ -1258,7 +1259,7 @@ export class BotManager {
                     await Promise.all(despawnPromises);
                     this.roomsWithBots.delete(roomId);
                 } else {
-                    // WA count is close to our bot count, might be timing issue - keep bots
+                    // WA count is above our connected bot count - room has real players
                     console.log(
                         `[BotManager] Room ${roomId} verification: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Keeping bots (possible timing issue).`
                     );
