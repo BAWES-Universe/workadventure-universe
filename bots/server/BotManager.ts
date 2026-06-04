@@ -443,6 +443,12 @@ export class BotManager {
                 lastHeartbeat: Date.now(),
             };
 
+            // Wire disconnect callback BEFORE storing in this.bots to prevent
+            // a race where a WebSocket close could fire before the handler is set
+            instance.client.onDisconnect = () => {
+                instance.status = 'disconnected';
+            };
+
             this.bots.set(botId, instance);
 
             // Register in bot registry
@@ -1040,16 +1046,20 @@ export class BotManager {
                     
                     // Check if bot is already spawned
                     if (existingInstance) {
-                        // Check if critical config fields have changed (require respawn)
-                        const configChanged = 
+                        // Check if bot needs respawn (config changed OR disconnected/errored)
+                        const needsRespawn = 
+                            existingInstance.status !== 'connected' ||
                             existingInstance.config.name !== bot.name ||
                             existingInstance.config.behaviorType !== bot.behaviorType ||
                             JSON.stringify(existingInstance.config.characterTextureIds) !== JSON.stringify(bot.characterTextureIds) ||
                             JSON.stringify(existingInstance.config.assignedSpace) !== JSON.stringify(bot.assignedSpace);
                         
-                        if (configChanged) {
+                        if (needsRespawn) {
+                            const reason = existingInstance.status !== 'connected' 
+                                ? `status is ${existingInstance.status}` 
+                                : `config changed`;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[BotManager] Bot ${bot.botId} config changed, respawning with new config`);
+                                console.log(`[BotManager] Bot ${bot.botId} ${reason}, respawning with new config`);
                             }
                             // Despawn old bot
                             await this.despawnBot(bot.botId);
