@@ -614,8 +614,8 @@ export abstract class BaseBehavior {
                     (this.bot as any).lastPathEndTime = 0;
                     // Try pathfinding again immediately with a small random delay to avoid tight loops
                     setTimeout(() => {
-                        if (this.isReturning && this.leadingStartPosition) {
-                            this.bot?.moveToWithPathfinding(startPos.x, startPos.y).then((success) => {
+                        if (this.isReturning && this.leadingStartPosition && this.bot) {
+                            this.bot.moveToWithPathfinding(startPos.x, startPos.y).then((success) => {
                                 if (!success) {
                                     console.error(`[Behavior] ❌ Return after leading retry pathfinding also failed, giving up`);
                                     this.isReturning = false;
@@ -772,8 +772,8 @@ export abstract class BaseBehavior {
                         (this.bot as any).lastPathEndTime = 0;
                         // Try pathfinding again immediately with a small random delay to avoid tight loops
                         setTimeout(() => {
-                            if (this.isReturning && this.originalPosition) {
-                                this.bot?.moveToWithPathfinding(originalPos.x, originalPos.y).then((success) => {
+                            if (this.isReturning && this.originalPosition && this.bot) {
+                                this.bot.moveToWithPathfinding(originalPos.x, originalPos.y).then((success) => {
                                     if (!success) {
                                         console.error(`[Behavior] ❌ Return pathfinding retry also failed, giving up`);
                                         this.isReturning = false;
