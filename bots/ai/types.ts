@@ -37,6 +37,8 @@ export interface AIStreamChunk {
     toolCalls?: ToolCall[]; // Tool calls requested by AI
     metadata?: {
         tokensUsed?: number;
+        promptTokens?: number;
+        completionTokens?: number;
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
@@ -58,6 +60,8 @@ export interface AIResponse {
  */
 export interface AIUsageMetadata {
     tokensUsed?: number;
+    promptTokens?: number;
+    completionTokens?: number;
     apiCalls?: number;
     latency?: number;
     durationSeconds?: number; // For voice AI

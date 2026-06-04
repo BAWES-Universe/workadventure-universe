@@ -9,6 +9,7 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { decryptApiKey } from '../encryption';
+import * as Sentry from '@sentry/node';
 
 export class OpenAIProvider implements AIProvider {
     private readonly DEFAULT_ENDPOINT = 'https://api.openai.com/v1';
@@ -142,7 +143,17 @@ export class OpenAIProvider implements AIProvider {
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
+        let promptTokens = 0;
+        let completionTokens = 0;
         let error = false;
+        let responseModel = '';
+        const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+
+        // Start Sentry span for this LLM call
+        const sentrySpan = Sentry.startInactiveSpan({
+            op: "gen_ai.chat",
+            name: `LLM ${config.model}`,
+        });
 
         try {
             const endpoint = this.getEndpoint(config);
@@ -273,11 +284,25 @@ export class OpenAIProvider implements AIProvider {
                         
                         if (data === '[DONE]') {
                             const latency = Date.now() - startTime;
+
+                            // Close Sentry span before returning
+                            if (sentrySpan) {
+                                sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                                sentrySpan.end();
+                            }
+
                             yield {
                                 content: '',
                                 done: true,
                                 metadata: {
                                     tokensUsed,
+                                    promptTokens,
+                                    completionTokens,
                                     latency,
                                     error: false,
                                 },
@@ -314,6 +339,16 @@ export class OpenAIProvider implements AIProvider {
                             if (json.usage?.total_tokens) {
                                 tokensUsed = json.usage.total_tokens;
                             }
+                            if (json.usage?.prompt_tokens) {
+                                promptTokens = json.usage.prompt_tokens;
+                            }
+                            if (json.usage?.completion_tokens) {
+                                completionTokens = json.usage.completion_tokens;
+                            }
+                            // Capture actual model from response
+                            if (json.model) {
+                                responseModel = json.model;
+                            }
                         } catch (e) {
                             // Skip invalid JSON lines
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -326,11 +361,25 @@ export class OpenAIProvider implements AIProvider {
 
             // Final chunk
             const latency = Date.now() - startTime;
+            
+            // Set Sentry span attributes
+            if (sentrySpan) {
+                sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
+                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                sentrySpan.end();
+            }
+
             yield {
                 content: '',
                 done: true,
                 metadata: {
                     tokensUsed,
+                    promptTokens,
+                    completionTokens,
                     latency,
                     error: false,
                 },
@@ -338,6 +387,15 @@ export class OpenAIProvider implements AIProvider {
         } catch (error: any) {
             const latency = Date.now() - startTime;
             
+            // Finish Sentry span with error
+            if (sentrySpan) {
+                sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                sentrySpan.end();
+            }
+
             if (error.name === 'AbortError') {
                 throw new Error(`OpenAI request timeout after ${timeout}ms`);
             }
@@ -365,11 +423,21 @@ export class OpenAIProvider implements AIProvider {
         tools?: any[]
     ): Promise<AIResponse> {
         const startTime = Date.now();
+        let responseModel = '';
 
-        try {
+return Sentry.startSpan({
+            op: "gen_ai.chat",
+            name: `LLM ${config.model}`,
+            attributes: {
+                "gen_ai.request.model": config.model,
+                "gen_ai.system": config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai',
+                "gen_ai.agent.name": config.name || '',
+            },
+        }, async (span) => {
+            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+            try {
             const endpoint = this.getEndpoint(config);
             const apiKey = this.getApiKey(config);
-            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -474,7 +542,14 @@ export class OpenAIProvider implements AIProvider {
             const data = await finalResponse.json();
             const content = data.choices?.[0]?.message?.content || '';
             const tokensUsed = data.usage?.total_tokens || 0;
+            const promptTokens = data.usage?.prompt_tokens || 0;
+            const completionTokens = data.usage?.completion_tokens || 0;
             const latency = Date.now() - startTime;
+
+            span.setAttribute("gen_ai.response.model", data.model || config.model);
+            span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
+            span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
+            span.setAttribute("gen_ai.agent.name", config.name || '');
 
             return {
                 content,
@@ -484,6 +559,8 @@ export class OpenAIProvider implements AIProvider {
             };
         } catch (error: any) {
             const latency = Date.now() - startTime;
+
+            span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
             if (error.name === 'AbortError') {
                 throw new Error(`OpenAI request timeout after ${timeout}ms`);
@@ -500,6 +577,7 @@ export class OpenAIProvider implements AIProvider {
                 error: true,
             };
         }
+        });
     }
 }
 

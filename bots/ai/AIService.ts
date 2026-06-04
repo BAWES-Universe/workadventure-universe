@@ -15,6 +15,7 @@ import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, ToolCall } from 
 import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
+import * as Sentry from '@sentry/node';
 
 interface CachedCredentials {
     credentials: AIProviderConfig;
@@ -124,6 +125,9 @@ export class AIService {
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
+            let botUniverse = '';
+            let botWorld = '';
+            let botRoom = '';
             if (botClient && adminApiService) {
                 try {
                     const roomUrl = botClient.getRoomUrl();
@@ -155,6 +159,9 @@ export class AIService {
                     }
                     
                     if (metadata) {
+                        botUniverse = metadata.universeName || '';
+                        botWorld = metadata.worldName || '';
+                        botRoom = metadata.roomName || '';
                         mapContextInfo = `\n\nCurrent Location Context (you are always here - ALWAYS mention this when asked about location):
 - Universe: ${metadata.universeName}
 - World: ${metadata.worldName}
@@ -390,6 +397,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
             // Generate stream with tools
             let tokensUsed = 0;
+            let promptTokens = 0;
+            let completionTokens = 0;
             let error = false;
             let streamCompleted = false;
             let accumulatedContent = '';
@@ -403,6 +412,17 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 : message;
 
             try {
+                // Set Sentry context tags for this LLM call
+                const sentryScope = Sentry.getCurrentScope();
+                sentryScope.setTag("bot.player_id", playerId);
+                sentryScope.setTag("bot.universe", botUniverse || 'unknown');
+                sentryScope.setTag("bot.world", botWorld || 'unknown');
+                sentryScope.setTag("bot.room", botRoom || 'unknown');
+                sentryScope.setTag("bot.provider", config.type);
+                sentryScope.setTag("bot.model", config.model);
+                sentryScope.setTag("bot.space", spaceName || '');
+                sentryScope.setTag("gen_ai.agent.name", config.name || botId);
+
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
                     systemPrompt,
@@ -531,6 +551,19 @@ CRITICAL RESPONSE RULES:
                             config,
                             tools.length > 0 ? tools : undefined
                         )) {
+                            // Track tokens from follow-up call metadata
+                            if (resultChunk.metadata?.tokensUsed) {
+                                tokensUsed = resultChunk.metadata.tokensUsed;
+                            }
+                            if (resultChunk.metadata?.promptTokens) {
+                                promptTokens = resultChunk.metadata.promptTokens;
+                            }
+                            if (resultChunk.metadata?.completionTokens) {
+                                completionTokens = resultChunk.metadata.completionTokens;
+                            }
+                            if (resultChunk.metadata?.error) {
+                                error = true;
+                            }
                             yield resultChunk;
                         }
                         continue;
@@ -541,13 +574,17 @@ CRITICAL RESPONSE RULES:
                         accumulatedContent += chunk.content;
                     }
 
-                    // Track metadata from chunk
+// Track metadata from chunk
                     if (chunk.metadata?.tokensUsed) {
                         tokensUsed = chunk.metadata.tokensUsed;
-                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] Received chunk with tokensUsed: ${tokensUsed}`);
-                        }
                     }
+                    if (chunk.metadata?.promptTokens) {
+                        promptTokens = chunk.metadata.promptTokens;
+                    }
+                    if (chunk.metadata?.completionTokens) {
+                        completionTokens = chunk.metadata.completionTokens;
+                    }
+
                     if (chunk.metadata?.error) {
                         error = true;
                     }
@@ -577,6 +614,8 @@ CRITICAL RESPONSE RULES:
                 // Always track usage - fire and forget
                 this.trackUsage(botId, providerId, {
                     tokensUsed,
+                    promptTokens,
+                    completionTokens,
                     latency,
                     error,
                 }).catch(err => {
@@ -635,6 +674,8 @@ CRITICAL RESPONSE RULES:
                 botId,
                 providerId,
                 tokensUsed: metadata.tokensUsed || 0,
+                promptTokens: metadata.promptTokens || 0,
+                completionTokens: metadata.completionTokens || 0,
                 apiCalls: 1,
                 durationSeconds: metadata.durationSeconds ?? null,
                 cost,
@@ -657,24 +698,50 @@ CRITICAL RESPONSE RULES:
     }
 
     /**
-     * Calculate cost based on provider pricing model
+     * Per-model pricing table (USD per 1K tokens)
+     * Sourced from official provider pricing pages.
+     * Cache-miss pricing used for DeepSeek (we can't detect cache hits from API response).
+     */
+    private static readonly MODEL_PRICING: Record<string, { in: number; out: number }> = {
+        // DeepSeek (official: https://api-docs.deepseek.com/quick_start/pricing/)
+        'deepseek-v4-flash':          { in: 0.00014,   out: 0.00028 },
+        'deepseek-v4-pro':            { in: 0.000435,  out: 0.00087 },
+        'deepseek-chat':              { in: 0.00014,   out: 0.00028 },   // deprecated, maps to v4-flash
+        'deepseek-reasoner':          { in: 0.00014,   out: 0.00028 },   // deprecated, maps to v4-flash thinking
+        'deepseek/deepseek-v4-flash': { in: 0.00014,   out: 0.00028 },   // OpenRouter prefix
+        'deepseek/deepseek-v4-pro':   { in: 0.000435,  out: 0.00087 },
+        'deepseek/deepseek-chat':     { in: 0.00014,   out: 0.00028 },
+        // OpenAI
+        'gpt-4o':            { in: 0.0025,   out: 0.01 },
+        'gpt-4o-mini':       { in: 0.00015,  out: 0.0006 },
+        'gpt-3.5-turbo':     { in: 0.0015,   out: 0.002 },
+        // Anthropic
+        'claude-sonnet-4':   { in: 0.003,    out: 0.015 },
+        'claude-3.5-haiku':  { in: 0.0008,   out: 0.004 },
+        'claude-3-haiku':    { in: 0.00025,  out: 0.00125 },
+        'claude-3-sonnet':   { in: 0.003,    out: 0.015 },
+        'claude-3-opus':     { in: 0.015,    out: 0.075 },
+    };
+
+    /**
+     * Calculate cost based on provider and model pricing
+     * Uses per-model rates when available, falls back to config/default flat rate.
      */
     private calculateCost(providerId: string, metadata: AIUsageMetadata): number {
         try {
             const cached = this.credentialCache.get(providerId);
             if (!cached) {
-                return 0; // Can't calculate without config
+                return 0;
             }
 
             const config = cached.credentials;
-            const tokensUsed = metadata.tokensUsed || 0;
+            const promptTokens = metadata.promptTokens || 0;
+            const completionTokens = metadata.completionTokens || 0;
             const durationSeconds = metadata.durationSeconds;
 
-            // Voice AI: per-minute pricing
+            // Voice AI: per-minute pricing (unchanged)
             if (config.type === 'ultravox' || config.type === 'gpt-voice') {
-                if (!durationSeconds) {
-                    return 0;
-                }
+                if (!durationSeconds) return 0;
                 const costPerMinute = config.settings?.costPerMinute || 0.05;
                 const durationMinutes = Math.ceil(durationSeconds / 60);
                 const minimumMinutes = config.settings?.minimumMinutes || 1;
@@ -682,13 +749,21 @@ CRITICAL RESPONSE RULES:
                 return actualMinutes * costPerMinute;
             }
 
-            // LMStudio: per-token pricing (default)
+            // LMStudio: always $0 (local models)
             if (config.type === 'lmstudio') {
-                const costPerToken = config.settings?.costPerToken || 0.00001;
-                return tokensUsed * costPerToken;
+                return 0;
             }
 
-            // OpenAI/Anthropic: per-token with optional markup
+            // Try per-model pricing lookup
+            const modelName = config.model || '';
+            const pricing = AIService.MODEL_PRICING[modelName];
+
+            if (pricing && (promptTokens > 0 || completionTokens > 0)) {
+                return (promptTokens / 1000 * pricing.in) + (completionTokens / 1000 * pricing.out);
+            }
+
+            // Fallback: existing flat rate from config or default
+            const tokensUsed = metadata.tokensUsed || 0;
             if (config.type === 'openai' || config.type === 'anthropic') {
                 const costPerToken = config.settings?.costPerToken || 0.00003;
                 const markup = config.settings?.markup || 1.0;
