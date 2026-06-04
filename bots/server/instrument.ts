@@ -13,6 +13,7 @@ if (SENTRY_DSN) {
             release: SENTRY_RELEASE,
             environment: SENTRY_ENVIRONMENT,
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
+            streamGenAiSpans: true,
             attachStacktrace: true,
         };
 
