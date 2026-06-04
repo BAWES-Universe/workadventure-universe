@@ -691,6 +691,22 @@ export class BotClient {
         // Path smoothing was causing issues with obstacle avoidance
         // The pathfinding algorithm (EasyStar) already provides smooth paths
         if (rawPath.length >= 2) {
+            // CRITICAL: Check if bot is in a conversation space BEFORE setting path
+            // moveTo() has this guard for direct movement, but moveToWithPathfinding
+            // also needs it to prevent the async restart race
+            if (this.behavior) {
+                const behaviorType = (this.behavior as any)?.config?.type;
+                const respondToPlayers = (this.behavior as any)?.config?.respondToPlayers;
+                const isInSpace = (this.behavior as any)?.currentSpaceName || (this.behavior as any)?.engagedWithUsers?.size > 0;
+                if (behaviorType === 'patrol' && isInSpace && respondToPlayers !== false) {
+                    // Bot is in a space — don't start following path
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Bot ${this.config.botId}] 🛑 moveToWithPathfinding BLOCKED — bot is in space`);
+                    }
+                    return false;
+                }
+            }
+
             this.currentPath = rawPath;
         } else {
             return false;

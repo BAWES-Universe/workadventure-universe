@@ -40,6 +40,15 @@ export class PatrolBehavior extends BaseBehavior {
     private lastWaypointPosition: PositionInterface | null = null; // Track last position to detect if stuck
     private playerLastMoveTime: Map<number, number> = new Map(); // Track when each player last moved
     private readonly IDLE_RESUME_DELAY = 2000; // Resume if player idle for 2 seconds
+    private lastSpaceInteractionTime: number = 0; // Track when bot was last in a conversation space
+    private readonly GHOST_RESUME_COOLDOWN = 10000; // 10 seconds after leaving a space before ghost mode resumes
+
+    /**
+     * Get effective respondToPlayers from config (handles cast + default)
+     */
+    private get shouldRespondToPlayers(): boolean {
+        return (this.config as PatrolBehaviorConfig).respondToPlayers !== false;
+    }
 
     constructor(config: PatrolBehaviorConfig) {
         super(config);
@@ -233,6 +242,17 @@ export class PatrolBehavior extends BaseBehavior {
             
             // If all players are idle and no space joined, resume (ghost mode)
             if (allPlayersIdle && this.nearbyPlayers.size > 0) {
+                // GHOST MODE: Check if we recently interacted with any of these players
+                const now_ = Date.now();
+                const timeSinceInteraction = now_ - this.lastSpaceInteractionTime;
+                if (timeSinceInteraction < this.GHOST_RESUME_COOLDOWN) {
+                    // Too soon after a space interaction — don't ghost through players
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[PatrolBehavior] ⏳ Ghost mode blocked — only ${Math.round(timeSinceInteraction / 1000)}s since last space interaction (cooldown: ${this.GHOST_RESUME_COOLDOWN / 1000}s)`);
+                    }
+                    return;
+                }
+
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     const firstPlayerId = Array.from(this.nearbyPlayers.keys())[0];
                     const timeSinceMove = firstPlayerId ? Math.round((now - (this.playerLastMoveTime.get(firstPlayerId) || 0)) / 1000) : 0;
@@ -271,7 +291,8 @@ export class PatrolBehavior extends BaseBehavior {
             
             // Only stop if players are actively moving (not idle)
             // BUT: When leading, don't stop just because players are nearby - continue to target
-            if (hasNearbyPlayers && hasActivePlayers && !this.isLeading) {
+            // Also stop if we're in a conversation space (regardless of player activity)
+            if ((hasNearbyPlayers && hasActivePlayers || this.currentSpaceName) && !this.isLeading) {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[PatrolBehavior] 🛑 STOPPING - found active players (getNearbyPlayers=${nearbyPlayers.length}, nearbyPlayersMap=${this.nearbyPlayers.size}, responseRadius=${responseRadius}, isFollowingPath=${this.bot.getIsFollowingPath()})`);
                 }
@@ -474,6 +495,13 @@ export class PatrolBehavior extends BaseBehavior {
             
             // Only start a new path if we're not already following one
             if (!this.bot.getIsFollowingPath()) {
+                // DOUBLE CHECK: Don't start pathfinding if in a conversation space
+                // This catches the case where onSpaceJoined cancelled pathfinding
+                // but targetWaypoint is still set — prevents async restart race
+                if (this.shouldRespondToPlayers && (this.currentSpaceName || this.engagedWithUsers.size > 0)) {
+                    return; // Silently skip — in conversation space
+                }
+
                 // Track when we start trying to reach this waypoint
                 if (this.waypointAttemptStartTime === 0) {
                     this.waypointAttemptStartTime = Date.now();
@@ -633,7 +661,8 @@ export class PatrolBehavior extends BaseBehavior {
         }
         
         this.currentSpaceName = spaceName;
-        
+        this.lastSpaceInteractionTime = Date.now(); // Track when interaction started
+
         // CRITICAL: Stop immediately when joining a conversation space
         // This prevents the bot from continuing to move during the frame where onSpaceJoined is called
         // BUT: Don't stop if bot is leading - it needs to continue to destination
@@ -718,11 +747,18 @@ export class PatrolBehavior extends BaseBehavior {
         if (!this.currentSpaceName) return;
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
+        this.lastSpaceInteractionTime = Date.now(); // Record when interaction ended
     }
 
     private async moveTowardsWaypoint(config: PatrolBehaviorConfig, deltaTime?: number): Promise<void> {
         if (!this.bot || !this.targetWaypoint) return;
-        
+
+        // CRITICAL: Don't restart pathfinding if we're in a conversation space
+        const shouldRespond = config.respondToPlayers !== false;
+        if (shouldRespond && (this.currentSpaceName || this.engagedWithUsers.size > 0)) {
+            return; // Bot is in a conversation space — don't restart movement
+        }
+
         // GHOST MODE: Continue moving even if in a space - don't stop, don't cancel pathfinding
         // The bot should keep moving to avoid triggering bubbles
         
