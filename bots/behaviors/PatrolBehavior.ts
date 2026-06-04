@@ -40,7 +40,7 @@ export class PatrolBehavior extends BaseBehavior {
     private lastWaypointPosition: PositionInterface | null = null; // Track last position to detect if stuck
     private playerLastMoveTime: Map<number, number> = new Map(); // Track when each player last moved
     private readonly IDLE_RESUME_DELAY = 2000; // Resume if player idle for 2 seconds
-    private readonly INTERACTION_COOLDOWN = 30000; // Prevent patrol resumption for 30s after space interaction ends
+    private readonly INTERACTION_COOLDOWN = 5000; // Prevent patrol resumption for 5s after space interaction ends
     private lastInteractionTime: number = 0; // Timestamp of last space interaction (start via join, reset via leave)
 
     constructor(config: PatrolBehaviorConfig) {
