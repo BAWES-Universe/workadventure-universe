@@ -285,7 +285,7 @@ export class OpenAIProvider implements AIProvider {
                         if (data === '[DONE]') {
                             const latency = Date.now() - startTime;
 
-                            // Close Sentry span before returning
+                            // Set attributes for Sentry span (ended in finally)
                             if (sentrySpan) {
                                 sentrySpan.setAttribute("gen_ai.request.model", config.model);
                                 sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
@@ -293,7 +293,6 @@ export class OpenAIProvider implements AIProvider {
                                 sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
                                 sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
                                 sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                                sentrySpan.end();
                             }
 
                             yield {
@@ -370,7 +369,6 @@ export class OpenAIProvider implements AIProvider {
                 sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
                 sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
                 sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                sentrySpan.end();
             }
 
             yield {
@@ -393,7 +391,6 @@ export class OpenAIProvider implements AIProvider {
                 sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
                 sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
                 sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
-                sentrySpan.end();
             }
 
             if (error.name === 'AbortError') {
@@ -413,6 +410,8 @@ export class OpenAIProvider implements AIProvider {
                     error: true,
                 },
             };
+        } finally {
+            sentrySpan?.end();
         }
     }
 
