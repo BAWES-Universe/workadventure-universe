@@ -608,9 +608,17 @@ export abstract class BaseBehavior {
                 if (success) {
                     console.log(`[Behavior] ✅ Return after leading pathfinding started to start position (3x speed)`);
                 } else {
-                    console.error(`[Behavior] ❌ Return after leading pathfinding failed, bot will stay at current position`);
-                    this.isReturning = false;
-                    this.leadingStartPosition = null; // Clear only on failure
+                    console.error(`[Behavior] ❌ Return after leading pathfinding failed, using direct movement as fallback`);
+                    // Pathfinding failed, use direct movement as fallback
+                    const angle = Math.atan2(dy, dx);
+                    const moveDistance = 50 * 0.016;
+                    const newX = botPos.x + Math.cos(angle) * moveDistance;
+                    const newY = botPos.y + Math.sin(angle) * moveDistance;
+                    let direction = PositionMessage_Direction.DOWN;
+                    if (Math.abs(dx) > Math.abs(dy)) direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+                    else direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                    this.bot.moveTo(newX, newY, direction);
+                    // Keep isReturning = true so the bot continues moving toward target
                 }
             }).catch((error) => {
                 console.error(`[Behavior] Error returning after leading:`, error);
@@ -753,9 +761,17 @@ export abstract class BaseBehavior {
                     if (success) {
                         console.log(`[Behavior] ✅ Return pathfinding started to original position (3x speed)`);
                     } else {
-                        console.error(`[Behavior] ❌ Return pathfinding failed, bot will stay at current position`);
-                        this.isReturning = false;
-                        this.originalPosition = null;
+                        console.error(`[Behavior] ❌ Return pathfinding failed, using direct movement as fallback`);
+                        // Pathfinding failed, use direct movement as fallback
+                        const angle = Math.atan2(dy, dx);
+                        const moveDistance = 50 * 0.016;
+                        const newX = botPos.x + Math.cos(angle) * moveDistance;
+                        const newY = botPos.y + Math.sin(angle) * moveDistance;
+                        let direction = PositionMessage_Direction.DOWN;
+                        if (Math.abs(dx) > Math.abs(dy)) direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+                        else direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+                        this.bot.moveTo(newX, newY, direction);
+                        // Keep isReturning = true so the bot continues moving toward target
                     }
                 }).catch((error) => {
                     console.error(`[Behavior] Error returning to original position:`, error);
