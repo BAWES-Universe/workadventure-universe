@@ -743,7 +743,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Keep them intact so the bot stays stopped during the cooldown period.
         // The cooldown will prevent patrol resumption even after the space is dissolved.
         this.lastInteractionTime = Date.now();
-        super.onSpaceLeft(spaceName);
     }
 
     private async moveTowardsWaypoint(config: PatrolBehaviorConfig, deltaTime?: number): Promise<void> {
