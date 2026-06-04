@@ -738,15 +738,18 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     onSpaceLeft(spaceName: string): void {
         if (!this.currentSpaceName) return;
         
-        // Call super FIRST to handle leading cleanup (justCompletedLeading, returnAfterLeading).
-        // This may start async pathfinding via returnToAssignedSpace() — we cancel it below.
-        super.onSpaceLeft(spaceName);
-        
-        // Cancel any pathfinding that super.onSpaceLeft() may have triggered (via returnToAssignedSpace)
-        if (this.bot?.getIsFollowingPath()) {
-            this.bot.cancelPathfinding();
+        // Inline leading cleanup from BaseBehavior.onSpaceLeft() instead of calling super.
+        // super.onSpaceLeft() calls returnAfterLeading() → returnToAssignedSpace() →
+        // moveToWithPathfinding() which is ASYNC (awaits findPath). By the time the
+        // pathfinding promise resolves, our synchronous getIsFollowingPath() check below
+        // would have already run and returned false, so cancelPathfinding() never fires.
+        // The bot then moves back to its assigned space, bypassing the cooldown.
+        if (!this.isLeading) {
+            this.justCompletedLeading = null;
         }
-        this.bot?.stop();
+        // Do NOT call returnAfterLeading() here — the patrol bot should respect the
+        // cooldown before returning to its assigned space.
+        this.isReturning = false;
         
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
