@@ -1240,9 +1240,11 @@ export class BotManager {
                     }
                 }
                 
-                // Despawn if WA count is at or below our connected bot count
+                // Despawn if we have connected bots and WA count is at or below our count
                 // WA count includes bots, so waUserCount <= connectedBots means no real players
-                if (waUserCount <= connectedBots) {
+                // The connectedBots > 0 guard prevents false despawns when all bots have
+                // temporarily disconnected (network blip) and connectedBots reads 0
+                if (connectedBots > 0 && waUserCount <= connectedBots) {
                     console.log(
                         `[BotManager] Room ${roomId} appears empty: WA reports ${waUserCount} users, we have ${connectedBots} connected bots. Despawning bots.`
                     );
