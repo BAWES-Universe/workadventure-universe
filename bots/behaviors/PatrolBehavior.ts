@@ -748,6 +748,12 @@ export class PatrolBehavior extends BaseBehavior {
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
         this.lastSpaceInteractionTime = 0; // Reset — player left, safe to resume
+        // CRITICAL: Clear all tracked users — the server may not send individual
+        // removeSpaceUserMessage when dissolving the space, leaving engagedWithUsers
+        // populated and permanently blocking bot resumption
+        this.engagedWithUsers.clear();
+        this.nearbyPlayers.clear();
+        this.playerLastMoveTime.clear();
     }
 
     private async moveTowardsWaypoint(config: PatrolBehaviorConfig, deltaTime?: number): Promise<void> {
