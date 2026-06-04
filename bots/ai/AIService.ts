@@ -16,6 +16,9 @@ import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+// Import internal API — scope.setSpan() was removed in v10, use _INTERNAL_setSpanForScope
+import * as SentryCore from '@sentry/core';
+const sentrySetSpan = (SentryCore as any)._INTERNAL_setSpanForScope as (scope: any, span: any) => void;
 
 interface CachedCredentials {
     credentials: AIProviderConfig;
@@ -419,9 +422,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             });
             // Make it the active span on the scope so gen_ai.chat spans in providers
             // are created as children (required for Sentry AI dashboard population)
+            // Note: scope.setSpan() was removed in v10 — use _INTERNAL_setSpanForScope
             const sentryScope = Sentry.getCurrentScope();
-            const previousSpan = (sentryScope as any).getSpan();
-            (sentryScope as any).setSpan(parentSpan);
+            const previousSpan = Sentry.getActiveSpan();
+            sentrySetSpan(sentryScope, parentSpan);
 
             try {
                 // Set attributes on the parent span
@@ -619,7 +623,7 @@ CRITICAL RESPONSE RULES:
                 // Close parent Sentry span
                 parentSpan?.end();
                 // Restore the previous active span to prevent cross-session leakage
-                (sentryScope as any).setSpan(previousSpan);
+                sentrySetSpan(sentryScope, previousSpan);
 
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
