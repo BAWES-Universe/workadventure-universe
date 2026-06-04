@@ -739,9 +739,19 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         if (!this.currentSpaceName) return;
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
-        // CRITICAL: DO NOT clear nearbyPlayers or engagedWithUsers here!
-        // Keep them intact so the bot stays stopped during the cooldown period.
-        // The cooldown will prevent patrol resumption even after the space is dissolved.
+        // Clear engagedWithUsers entries for the departing space only.
+        // This lets the ghost mode entry condition (engagedWithUsers.size === 0)
+        // evaluate to true during the cooldown, so the cooldown guard at line 228
+        // can actually fire. Without this, if onSpaceUserLeft never arrives,
+        // line 206 catches engagedWithUsers.size > 0 every frame and the bot
+        // is permanently stuck — even after the cooldown expires.
+        for (const [userId, userData] of this.engagedWithUsers) {
+            if (userData.spaceName === spaceName) {
+                this.engagedWithUsers.delete(userId);
+            }
+        }
+        // CRITICAL: Keep nearbyPlayers intact so the stop/cooldown logic
+        // can still detect the player is nearby
         this.lastInteractionTime = Date.now();
     }
 
