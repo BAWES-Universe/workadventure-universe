@@ -429,7 +429,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // explicitly set it in startInactiveSpan({parentSpan: ...})
             // This bypasses async-context scope lookup which doesn't
             // consistently carry the active span across for-await boundaries
-            (config as any).__sentryParentSpan = parentSpan;
+            // Clone config to avoid mutating the shared cached object (race condition)
+            // TODO: Refactor to pass parentSpan as a parameter once the provider
+            // interface is updated to accept it directly
+            const configWithParent: AIProviderConfig = { ...config };
+            (configWithParent as any).__sentryParentSpan = parentSpan;
 
             try {
                 // Set attributes on the parent span
@@ -447,7 +451,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                     providerId,
                     systemPrompt,
                     userMessageForQwen,
-                    config,
+                    configWithParent,
                     tools.length > 0 ? tools : undefined
                 )) {
                     // Collect tool calls first (before yielding content)
