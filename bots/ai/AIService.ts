@@ -572,7 +572,7 @@ CRITICAL RESPONSE RULES:
                             providerId,
                             systemPrompt,
                             followUpMessageWithNoThink,
-                            config,
+                            configWithParent,
                             tools.length > 0 ? tools : undefined
                         )) {
                             // Track tokens from follow-up call metadata (accumulate across tool call rounds)
