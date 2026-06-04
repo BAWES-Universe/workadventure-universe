@@ -747,7 +747,7 @@ export class PatrolBehavior extends BaseBehavior {
         if (!this.currentSpaceName) return;
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
-        this.lastSpaceInteractionTime = Date.now(); // Record when interaction ended
+        this.lastSpaceInteractionTime = 0; // Reset — player left, safe to resume
     }
 
     private async moveTowardsWaypoint(config: PatrolBehaviorConfig, deltaTime?: number): Promise<void> {
