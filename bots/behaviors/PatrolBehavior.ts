@@ -737,6 +737,17 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
     onSpaceLeft(spaceName: string): void {
         if (!this.currentSpaceName) return;
+        
+        // Call super FIRST to handle leading cleanup (justCompletedLeading, returnAfterLeading).
+        // This may start async pathfinding via returnToAssignedSpace() — we cancel it below.
+        super.onSpaceLeft(spaceName);
+        
+        // Cancel any pathfinding that super.onSpaceLeft() may have triggered (via returnToAssignedSpace)
+        if (this.bot?.getIsFollowingPath()) {
+            this.bot.cancelPathfinding();
+        }
+        this.bot?.stop();
+        
         this.currentSpaceName = null;
         this.spaceLeftTime = Date.now();
         // Clear engagedWithUsers entries for the departing space only.
