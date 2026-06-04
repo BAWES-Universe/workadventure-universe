@@ -16,6 +16,9 @@ import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+// Internal API for setting active span on scope — scope.setSpan() removed in v10
+import * as SentryCore from '@sentry/core';
+const sentrySetSpan = (SentryCore as any)._INTERNAL_setSpanForScope as (scope: any, span: any) => void;
 
 interface CachedCredentials {
     credentials: AIProviderConfig;
@@ -417,6 +420,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 op: "gen_ai.agent",
                 name: `Bot ${config.name || botId}`,
             });
+            // Make it the active span on the scope so gen_ai.chat spans in providers
+            // are created as children (required for Sentry AI dashboard population)
+            const sentryScope = Sentry.getCurrentScope();
+            const previousSpan = Sentry.getActiveSpan();
+            sentrySetSpan(sentryScope, parentSpan);
 
             try {
                 // Set attributes on the parent span
@@ -427,6 +435,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 parentSpan?.setAttribute("bot.provider", config.type);
                 parentSpan?.setAttribute("bot.model", config.model);
                 parentSpan?.setAttribute("bot.space", spaceName || '');
+                // Set conversation ID for grouping in Sentry Conversations tab
+                Sentry.setConversationId(`bot-${botId}-player-${playerId}`);
 
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
@@ -611,6 +621,8 @@ CRITICAL RESPONSE RULES:
             } finally {
                 // Close parent Sentry span
                 parentSpan?.end();
+                // Restore the previous active span to prevent cross-session leakage
+                sentrySetSpan(sentryScope, previousSpan);
 
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
