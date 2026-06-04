@@ -443,12 +443,13 @@ export class BotManager {
                 lastHeartbeat: Date.now(),
             };
 
-            this.bots.set(botId, instance);
-
-            // Wire disconnect callback to update BotInstance status
+            // Wire disconnect callback BEFORE storing in this.bots to prevent
+            // a race where a WebSocket close could fire before the handler is set
             instance.client.onDisconnect = () => {
                 instance.status = 'disconnected';
             };
+
+            this.bots.set(botId, instance);
 
             // Register in bot registry
             await this.botRegistry.assignBot(botId);
