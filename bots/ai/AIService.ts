@@ -416,9 +416,15 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
             // Create a parent Sentry span for this conversation turn
             // Must be before the try block so it's accessible in try/catch/finally
+            // forceTransaction: true because AI processing runs asynchronously after the
+            // HTTP transaction has already completed. Without this, startInactiveSpan
+            // would attach gen_ai.agent as a child of the (already-finished) HTTP request
+            // handler span, orphan both gen_ai spans, and Sentry AI Conversations would
+            // be empty (see issue #130).
             const parentSpan = Sentry.startInactiveSpan({
                 op: "gen_ai.agent",
                 name: `Bot ${config.name || botId}`,
+                forceTransaction: true,
             });
             // Make it the active span on the scope so gen_ai.chat spans in providers
             // are created as children (required for Sentry AI dashboard population)
