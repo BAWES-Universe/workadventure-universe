@@ -750,8 +750,23 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Do NOT call returnAfterLeading() here — the patrol bot should respect the
         // cooldown before returning to its assigned space.
         
-        this.currentSpaceName = null;
-        this.spaceLeftTime = Date.now();
+        // Only clear currentSpaceName when the departing space matches the active space
+        // This prevents dropping guards for other simultaneous spaces
+        if (this.currentSpaceName === spaceName) {
+            this.currentSpaceName = null;
+            this.spaceLeftTime = Date.now();
+        }
+        
+        // Summon cleanup (inlined from BaseBehavior.onSpaceLeft without calling super)
+        // If player leaves the conversation space but stays nearby, end the summon
+        // so the bot can resume patrol instead of staying stuck in summoned state
+        if (this.isSummoned && this.summonedPlayerUuid) {
+            const playerStillNearby = this.checkSummonedPlayerStillNearby();
+            if (!playerStillNearby) {
+                this.endSummon();
+            }
+        }
+        
         // Clear engagedWithUsers entries for the departing space only.
         // This lets the ghost mode entry condition (engagedWithUsers.size === 0)
         // evaluate to true during the cooldown, so the cooldown guard at line 228
