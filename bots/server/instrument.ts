@@ -15,6 +15,15 @@ if (SENTRY_DSN) {
             release: SENTRY_RELEASE,
             environment: SENTRY_ENVIRONMENT,
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
+            // Always sample gen_ai transactions at 100% for complete AI monitoring
+            // Non-AI traffic uses the configured background rate
+            tracesSampler: (samplingContext: any) => {
+                // gen_ai.agent transactions are our async AI processing spans
+                if (samplingContext.attributes?.["sentry.op"]?.startsWith("gen_ai.")) {
+                    return 1.0;
+                }
+                return SENTRY_TRACES_SAMPLE_RATE;
+            },
             streamGenAiSpans: true,
             attachStacktrace: true,
             // Only capture warn/error logs to avoid spamming from debug logging
