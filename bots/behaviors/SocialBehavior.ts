@@ -573,6 +573,8 @@ export class SocialBehavior extends BaseBehavior {
                 this.engagedWithUsers.delete(userId);
             }
         }
+        // Sync isEngaged with actual map size after removals
+        this.isEngaged = this.engagedWithUsers.size > 0;
 
         // Find and remove conversation
         for (const [playerId, state] of this.activeConversations.entries()) {

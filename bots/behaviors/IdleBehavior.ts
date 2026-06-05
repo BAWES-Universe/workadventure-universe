@@ -316,6 +316,8 @@ export class IdleBehavior extends BaseBehavior {
                 this.engagedWithUsers.delete(userId);
             }
         }
+        // Sync isEngaged with actual map size after removals
+        this.isEngaged = this.engagedWithUsers.size > 0;
         // Call super to handle base cleanup (leading state, return to assigned space, etc.)
         super.onSpaceLeft(spaceName);
     }

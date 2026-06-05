@@ -612,16 +612,27 @@ export abstract class BaseBehavior {
                     // Don't clear isReturning or leadingStartPosition — retry on next attempt.
                     // Clear path end cooldown so retry isn't blocked.
                     (this.bot as any).lastPathEndTime = 0;
-                    // Try pathfinding again immediately with a small random delay to avoid tight loops
+                    // Try pathfinding again with a small random delay. Check if pathfinding is available first.
                     setTimeout(() => {
                         if (this.isReturning && this.leadingStartPosition && this.bot) {
-                            this.bot.moveToWithPathfinding(startPos.x, startPos.y).then((success) => {
-                                if (!success) {
-                                    console.error(`[Behavior] ❌ Return after leading retry pathfinding also failed, giving up`);
+                            if ((this.bot as any).hasPathfinding?.()) {
+                                this.bot.moveToWithPathfinding(startPos.x, startPos.y).then((success) => {
+                                    if (!success) {
+                                        console.error(`[Behavior] ❌ Return after leading retry pathfinding also failed, giving up`);
+                                        this.isReturning = false;
+                                        this.leadingStartPosition = null;
+                                    }
+                                }).catch(() => {
+                                    console.error(`[Behavior] ❌ Return after leading retry rejected, giving up`);
                                     this.isReturning = false;
                                     this.leadingStartPosition = null;
-                                }
-                            }).catch(() => {});
+                                });
+                            } else {
+                                // No pathfinding available after retry, give up
+                                console.error(`[Behavior] ❌ Pathfinding still not available after retry, giving up`);
+                                this.isReturning = false;
+                                this.leadingStartPosition = null;
+                            }
                         }
                     }, 500);
                 }
@@ -770,16 +781,26 @@ export abstract class BaseBehavior {
                         // Don't clear isReturning or originalPosition — retry on next attempt.
                         // Clear path end cooldown so retry isn't blocked.
                         (this.bot as any).lastPathEndTime = 0;
-                        // Try pathfinding again immediately with a small random delay to avoid tight loops
+                        // Try pathfinding again with a small random delay. Check if pathfinding is available first.
                         setTimeout(() => {
                             if (this.isReturning && this.originalPosition && this.bot) {
-                                this.bot.moveToWithPathfinding(originalPos.x, originalPos.y).then((success) => {
-                                    if (!success) {
-                                        console.error(`[Behavior] ❌ Return pathfinding retry also failed, giving up`);
+                                if ((this.bot as any).hasPathfinding?.()) {
+                                    this.bot.moveToWithPathfinding(originalPos.x, originalPos.y).then((success) => {
+                                        if (!success) {
+                                            console.error(`[Behavior] ❌ Return pathfinding retry also failed, giving up`);
+                                            this.isReturning = false;
+                                            this.originalPosition = null;
+                                        }
+                                    }).catch(() => {
+                                        console.error(`[Behavior] ❌ Return pathfinding retry rejected, giving up`);
                                         this.isReturning = false;
                                         this.originalPosition = null;
-                                    }
-                                }).catch(() => {});
+                                    });
+                                } else {
+                                    console.error(`[Behavior] ❌ Pathfinding still not available after retry, giving up`);
+                                    this.isReturning = false;
+                                    this.originalPosition = null;
+                                }
                             }
                         }, 500);
                     }
