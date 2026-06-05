@@ -562,6 +562,20 @@ export class SocialBehavior extends BaseBehavior {
             this.currentSpaceName = null;
         }
 
+        // Clean up justCompletedLeading flag (mirrors BaseBehavior.onSpaceLeft behavior)
+        if (!this.isLeading) {
+            this.justCompletedLeading = null;
+        }
+
+        // Clean up engagedWithUsers for departing space
+        for (const [userId, userData] of this.engagedWithUsers) {
+            if (userData.spaceName === spaceName) {
+                this.engagedWithUsers.delete(userId);
+            }
+        }
+        // Sync isEngaged with actual map size after removals
+        this.isEngaged = this.engagedWithUsers.size > 0;
+
         // Find and remove conversation
         for (const [playerId, state] of this.activeConversations.entries()) {
             if (state.spaceName === spaceName) {
