@@ -608,9 +608,22 @@ export abstract class BaseBehavior {
                 if (success) {
                     console.log(`[Behavior] ✅ Return after leading pathfinding started to start position (3x speed)`);
                 } else {
-                    console.error(`[Behavior] ❌ Return after leading pathfinding failed, bot will stay at current position`);
-                    this.isReturning = false;
-                    this.leadingStartPosition = null; // Clear only on failure
+                    console.error(`[Behavior] ❌ Return after leading pathfinding failed, retrying pathfinding`);
+                    // Don't clear isReturning or leadingStartPosition — retry on next attempt.
+                    // Clear path end cooldown so retry isn't blocked.
+                    (this.bot as any).lastPathEndTime = 0;
+                    // Try pathfinding again immediately with a small random delay to avoid tight loops
+                    setTimeout(() => {
+                        if (this.isReturning && this.leadingStartPosition && this.bot) {
+                            this.bot.moveToWithPathfinding(startPos.x, startPos.y).then((success) => {
+                                if (!success) {
+                                    console.error(`[Behavior] ❌ Return after leading retry pathfinding also failed, giving up`);
+                                    this.isReturning = false;
+                                    this.leadingStartPosition = null;
+                                }
+                            }).catch(() => {});
+                        }
+                    }, 500);
                 }
             }).catch((error) => {
                 console.error(`[Behavior] Error returning after leading:`, error);
@@ -753,9 +766,22 @@ export abstract class BaseBehavior {
                     if (success) {
                         console.log(`[Behavior] ✅ Return pathfinding started to original position (3x speed)`);
                     } else {
-                        console.error(`[Behavior] ❌ Return pathfinding failed, bot will stay at current position`);
-                        this.isReturning = false;
-                        this.originalPosition = null;
+                        console.error(`[Behavior] ❌ Return pathfinding failed, retrying pathfinding`);
+                        // Don't clear isReturning or originalPosition — retry on next attempt.
+                        // Clear path end cooldown so retry isn't blocked.
+                        (this.bot as any).lastPathEndTime = 0;
+                        // Try pathfinding again immediately with a small random delay to avoid tight loops
+                        setTimeout(() => {
+                            if (this.isReturning && this.originalPosition && this.bot) {
+                                this.bot.moveToWithPathfinding(originalPos.x, originalPos.y).then((success) => {
+                                    if (!success) {
+                                        console.error(`[Behavior] ❌ Return pathfinding retry also failed, giving up`);
+                                        this.isReturning = false;
+                                        this.originalPosition = null;
+                                    }
+                                }).catch(() => {});
+                            }
+                        }, 500);
                     }
                 }).catch((error) => {
                     console.error(`[Behavior] Error returning to original position:`, error);

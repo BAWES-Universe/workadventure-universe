@@ -309,6 +309,17 @@ export class IdleBehavior extends BaseBehavior {
         }
     }
 
+    onSpaceLeft(spaceName: string): void {
+        // Clear engagedWithUsers entries for the departing space
+        for (const [userId, userData] of this.engagedWithUsers) {
+            if (userData.spaceName === spaceName) {
+                this.engagedWithUsers.delete(userId);
+            }
+        }
+        // Call super to handle base cleanup (leading state, return to assigned space, etc.)
+        super.onSpaceLeft(spaceName);
+    }
+
     onChatMessage(spaceName: string, message: string, senderId: number): void {
         if (!this.bot) {
             console.warn(`[IdleBehavior] onChatMessage: bot is null`);
