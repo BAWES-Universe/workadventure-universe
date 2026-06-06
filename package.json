@@ -17,6 +17,7 @@
     "libs/*",
     "benchmark",
     "uploader",
+    "bots",
     "play/packages/iframe-api-typings",
     "tests",
     "contrib/tools/generate-env-docs"
@@ -49,7 +50,6 @@
     },
     "@antfu/install-pkg": "0.3.3",
     "package-manager-detector": "1.1.0",
-
     "unplugin-icons": {
       ".": "0.19.0",
       "@iconify/utils": {

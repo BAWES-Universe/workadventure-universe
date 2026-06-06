@@ -516,6 +516,42 @@ jobs:
         run: yarn pretty-check
         working-directory: "desktop/local-app"
 
+  continuous-integration-bots:
+    name: "Continuous Integration Bots"
+
+    runs-on: "ubuntu-latest"
+
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@v5"
+
+      - name: "Setup NodeJS"
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: '3.x'
+
+      - name: "Install dependencies"
+        run: npm ci --workspace=@workadventure/bots
+
+      - name: "Install messages dependencies"
+        run: npm ci
+        working-directory: "messages"
+
+      - name: "Build proto messages"
+        run: npm run ts-proto
+        working-directory: "messages"
+
+      - name: "Vitest"
+        run: npm test
+        working-directory: "bots"
+
   continuous-integration-end-to-end-tests:
     name: "Continuous Integration checking End To End tests"
 
