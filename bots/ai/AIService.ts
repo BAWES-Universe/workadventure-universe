@@ -421,7 +421,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // would attach gen_ai.agent as a child of the (already-finished) HTTP request
             // handler span, orphan both gen_ai spans, and Sentry AI Conversations would
             // be empty (see issue #130).
-            // parentSpan: null to break sampling inheritance — without this, gen_ai.agent
+// parentSpan: null to break sampling inheritance — without this, gen_ai.agent
             // inherits parentSampled=false from the HTTP request_handler (which is already
             // complete and wasn't sampled 90% of the time), causing the gen_ai transaction
             // to always be dropped regardless of tracesSampleRate.
