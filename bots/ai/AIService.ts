@@ -21,7 +21,8 @@ import * as Sentry from '@sentry/node';
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
 // across async boundaries where node's AsyncLocalStorage may lose context.
 import * as SentryCore from '@sentry/core';
-const sentrySetSpan = (SentryCore as any)._INTERNAL_setSpanForScope as (scope: any, span: any) => void;
+const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
+    (SentryCore as any)?._INTERNAL_setSpanForScope;
 
 interface CachedCredentials {
     credentials: AIProviderConfig;
@@ -445,7 +446,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // are created as children (required for Sentry AI dashboard population)
             const sentryScope = Sentry.getCurrentScope();
             const previousSpan = Sentry.getActiveSpan();
-            sentrySetSpan(sentryScope, parentSpan);
+            sentrySetSpan?.(sentryScope, parentSpan);
             // Pass the parent span to providers via config so they can
             // explicitly set it in startInactiveSpan({parentSpan: ...})
             // This bypasses async-context scope lookup which doesn't
@@ -652,7 +653,7 @@ CRITICAL RESPONSE RULES:
                 // Close parent Sentry span
                 parentSpan?.end();
                 // Restore the previous active span to prevent cross-session leakage
-                sentrySetSpan(sentryScope, previousSpan);
+                sentrySetSpan?.(sentryScope, previousSpan);
 
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
