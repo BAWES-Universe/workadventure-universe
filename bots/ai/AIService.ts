@@ -421,10 +421,16 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // would attach gen_ai.agent as a child of the (already-finished) HTTP request
             // handler span, orphan both gen_ai spans, and Sentry AI Conversations would
             // be empty (see issue #130).
+// parentSpan: null to break sampling inheritance — without this, gen_ai.agent
+            // inherits parentSampled=false from the HTTP request_handler (which is already
+            // complete and wasn't sampled 90% of the time), causing the gen_ai transaction
+            // to always be dropped regardless of tracesSampleRate.
             const parentSpan = Sentry.startInactiveSpan({
                 op: "gen_ai.agent",
                 name: `Bot ${config.name || botId}`,
                 forceTransaction: true,
+                parentSpan: null,
+                attributes: { span_type: "gen_ai" },
             });
             // Make it the active span on the scope so gen_ai.chat spans in providers
             // are created as children (required for Sentry AI dashboard population)
