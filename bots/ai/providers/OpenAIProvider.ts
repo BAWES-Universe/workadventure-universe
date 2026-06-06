@@ -150,6 +150,9 @@ export class OpenAIProvider implements AIProvider {
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
         // Start Sentry span for this LLM call
+        // Use startInactiveSpan with explicit parentSpan from AIService's startSpanManual
+        // root transaction. With a properly created root (_startRootSpan path),
+        // startInactiveSpan({parentSpan: ...}) correctly registers child spans.
         const sentrySpan = Sentry.startInactiveSpan({
             op: "gen_ai.chat",
             name: `LLM ${config.model}`,

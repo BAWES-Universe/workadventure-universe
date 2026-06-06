@@ -17,8 +17,12 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
+// Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
+// The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
+// across async boundaries where node's AsyncLocalStorage may lose context.
 import * as SentryCore from '@sentry/core';
-const sentrySetSpan = (SentryCore as any)._INTERNAL_setSpanForScope as (scope: any, span: any) => void;
+const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
+    (SentryCore as any)?._INTERNAL_setSpanForScope;
 
 interface CachedCredentials {
     credentials: AIProviderConfig;
@@ -414,29 +418,35 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 ? message + '\n\n/no_think'
                 : message;
 
-            // Create a parent Sentry span for this conversation turn
-            // Must be before the try block so it's accessible in try/catch/finally
+            // Create a parent Sentry span for this conversation turn.
+            // Use startSpanManual instead of startInactiveSpan because
+            // startSpanManual sets the span on the active scope via _setSpanForScope,
+            // making it discoverable by getActiveSpan() / scope-based parent lookup.
+            // startInactiveSpan does NOT set the span on scope — it returns the span
+            // but stores nothing on the scope, so downstream code that relies on
+            // scope-based parent detection (e.g. Sentry.getActiveSpan()) won't find it.
+            // With the span on scope, child spans (gen_ai.chat) can be created via
+            // startInactiveSpan({parentSpan: ...}) with the explicit parentSpan from
+            // __sentryParentSpan below, which works regardless of scope.
             // forceTransaction: true because AI processing runs asynchronously after the
-            // HTTP transaction has already completed. Without this, startInactiveSpan
+            // HTTP transaction has already completed. Without this, startSpanManual
             // would attach gen_ai.agent as a child of the (already-finished) HTTP request
             // handler span, orphan both gen_ai spans, and Sentry AI Conversations would
             // be empty (see issue #130).
-// parentSpan: null to break sampling inheritance — without this, gen_ai.agent
-            // inherits parentSampled=false from the HTTP request_handler (which is already
-            // complete and wasn't sampled 90% of the time), causing the gen_ai transaction
-            // to always be dropped regardless of tracesSampleRate.
-            const parentSpan = Sentry.startInactiveSpan({
-                op: "gen_ai.agent",
-                name: `Bot ${config.name || botId}`,
-                forceTransaction: true,
-                parentSpan: null,
-                attributes: { span_type: "gen_ai" },
-            });
+            const parentSpan = Sentry.startSpanManual(
+                {
+                    op: "gen_ai.agent",
+                    name: `Bot ${config.name || botId}`,
+                    forceTransaction: true,
+                    attributes: { span_type: "gen_ai" },
+                },
+                (span) => span
+            );
             // Make it the active span on the scope so gen_ai.chat spans in providers
             // are created as children (required for Sentry AI dashboard population)
             const sentryScope = Sentry.getCurrentScope();
             const previousSpan = Sentry.getActiveSpan();
-            sentrySetSpan(sentryScope, parentSpan);
+            sentrySetSpan?.(sentryScope, parentSpan);
             // Pass the parent span to providers via config so they can
             // explicitly set it in startInactiveSpan({parentSpan: ...})
             // This bypasses async-context scope lookup which doesn't
@@ -643,7 +653,7 @@ CRITICAL RESPONSE RULES:
                 // Close parent Sentry span
                 parentSpan?.end();
                 // Restore the previous active span to prevent cross-session leakage
-                sentrySetSpan(sentryScope, previousSpan);
+                sentrySetSpan?.(sentryScope, previousSpan);
 
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
