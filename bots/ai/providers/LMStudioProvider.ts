@@ -51,7 +51,7 @@ export class LMStudioProvider implements AIProvider {
         await Sentry.startSpan(
             {
                 op: "gen_ai.chat",
-                name: `LMStudio ${config.model}`,
+                name: `LLM ${config.model}`,
                 parentSpan: (config as any).__sentryParentSpan,
             },
             async (span) => {
@@ -267,7 +267,6 @@ export class LMStudioProvider implements AIProvider {
         yield* chunks;
     }
 
-    async generate(
     async generate(
         systemPrompt: string,
         userMessage: string,
