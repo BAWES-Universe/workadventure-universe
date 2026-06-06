@@ -57,8 +57,5 @@
         "@antfu/install-pkg": "0.1.1"
       }
     }
-  },
-  "dependencies": {
-    "@sentry/node": "^10.56.0"
   }
 }
