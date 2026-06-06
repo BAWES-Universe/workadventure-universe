@@ -4,12 +4,15 @@
  * Both Sentry and PostHog run independently without conflict.
  * 
  * Only activates when POSTHOG_API_KEY env var is set — silent no-op otherwise.
+ * Uses fire-and-forget pattern with try/catch isolation — never throws.
+ * Flush uses pg.flush() (not shutdown) to avoid destroying the singleton.
  */
 
 import { PostHog } from 'posthog-node';
 
 const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
-const POSTHOG_HOST = process.env.POSTHOG_HOST || 'https://eu.posthog.com';
+// Support both POSTHOG_HOST and POSTHOG_URL for backward compatibility
+const POSTHOG_HOST = process.env.POSTHOG_HOST || process.env.POSTHOG_URL || 'https://eu.posthog.com';
 
 let client: PostHog | null = null;
 
@@ -39,54 +42,75 @@ export interface CapturedGeneration {
 }
 
 export function captureGeneration(params: CapturedGeneration): void {
-    const pg = getPostHogClient();
-    if (!pg) return;
+    try {
+        const pg = getPostHogClient();
+        if (!pg) return;
 
-    const timestamp = new Date();
+        const timestamp = new Date();
 
-    // Capture $ai_trace (top-level conversation turn)
-    pg.capture({
-        distinctId: params.distinctId,
-        event: '$ai_trace',
-        properties: {
-            $ai_trace_id: params.traceId,
-            $ai_input: params.input,
-            $ai_output: params.output,
-            $ai_model: params.model,
-            $ai_provider: params.provider,
-            $ai_input_tokens: params.inputTokens,
-            $ai_output_tokens: params.outputTokens,
-            $ai_cost: params.cost,
-            bot_id: params.botId,
-            player_id: params.playerId,
-            space: params.space,
-        },
-        timestamp,
-    });
+        // Capture $ai_trace (top-level conversation turn)
+        try {
+            pg.capture({
+                distinctId: params.distinctId,
+                event: '$ai_trace',
+                properties: {
+                    $ai_trace_id: params.traceId,
+                    $ai_input: params.input,
+                    $ai_output: params.output,
+                    $ai_model: params.model,
+                    $ai_provider: params.provider,
+                    $ai_input_tokens: params.inputTokens,
+                    $ai_output_tokens: params.outputTokens,
+                    $ai_cost: params.cost,
+                    bot_id: params.botId,
+                    player_id: params.playerId,
+                    space: params.space,
+                },
+                timestamp,
+            });
+        } catch (e) {
+            console.error('[PostHog] Failed to capture $ai_trace:', e);
+        }
 
-    // Capture $ai_generation (per-LLM-call)
-    pg.capture({
-        distinctId: params.distinctId,
-        event: '$ai_generation',
-        properties: {
-            $ai_trace_id: params.traceId,
-            $ai_model: params.model,
-            $ai_input: params.input,
-            $ai_output: params.output,
-            $ai_input_tokens: params.inputTokens,
-            $ai_output_tokens: params.outputTokens,
-            $ai_cost: params.cost,
-            $ai_provider: params.provider,
-            bot_id: params.botId,
-            player_id: params.playerId,
-        },
-        timestamp,
-    });
+        // Capture $ai_generation (per-LLM-call)
+        try {
+            pg.capture({
+                distinctId: params.distinctId,
+                event: '$ai_generation',
+                properties: {
+                    $ai_trace_id: params.traceId,
+                    $ai_model: params.model,
+                    $ai_input: params.input,
+                    $ai_output: params.output,
+                    $ai_input_tokens: params.inputTokens,
+                    $ai_output_tokens: params.outputTokens,
+                    $ai_cost: params.cost,
+                    $ai_provider: params.provider,
+                    bot_id: params.botId,
+                    player_id: params.playerId,
+                },
+                timestamp,
+            });
+        } catch (e) {
+            console.error('[PostHog] Failed to capture $ai_generation:', e);
+        }
+    } catch (e) {
+        // Outer catch — never let PostHog failures impact the request path
+        console.error('[PostHog] captureGeneration failed:', e);
+    }
 }
 
+/**
+ * Flush pending PostHog events without destroying the singleton client.
+ * Safe to call per-request — pg.flush() sends queued events asynchronously.
+ * Use try/catch for error isolation — never throws.
+ */
 export async function flushPostHog(): Promise<void> {
-    if (client) {
-        await client.shutdown();
-        client = null;
+    try {
+        if (client) {
+            await client.flush();
+        }
+    } catch (e) {
+        console.error('[PostHog] Flush failed:', e);
     }
 }
