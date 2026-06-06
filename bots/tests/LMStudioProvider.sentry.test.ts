@@ -17,7 +17,11 @@ const { mockSentrySpan, mockStartSpan } = vi.hoisted(() => {
     const span = { end: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() };
     return {
         mockSentrySpan: span,
-
+        mockStartSpan: vi.fn(async (_opts: any, cb: any) => {
+            const result = await cb(span);
+            span.end();
+            return result;
+        }),
     };
 });
 
