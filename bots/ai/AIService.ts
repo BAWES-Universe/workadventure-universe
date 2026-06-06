@@ -415,23 +415,26 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 : message;
 
             // Create a parent Sentry span for this conversation turn
-            // Must be before the try block so it's accessible in try/catch/finally
+            // Use startSpanManual instead of startInactiveSpan because startInactiveSpan
+            // with forceTransaction:true goes through startNewTrace() (lightweight root)
+            // instead of _startRootSpan() (full transaction). Spans created via the
+            // lightweight path don't properly register child spans — startChild() and
+            // startInactiveSpan({parentSpan: ...}) both fail to set parent_span_id.
+            // startSpanManual uses the full _startRootSpan path so children link correctly.
             // forceTransaction: true because AI processing runs asynchronously after the
-            // HTTP transaction has already completed. Without this, startInactiveSpan
+            // HTTP transaction has already completed. Without this, startSpanManual
             // would attach gen_ai.agent as a child of the (already-finished) HTTP request
             // handler span, orphan both gen_ai spans, and Sentry AI Conversations would
             // be empty (see issue #130).
-// parentSpan: null to break sampling inheritance — without this, gen_ai.agent
-            // inherits parentSampled=false from the HTTP request_handler (which is already
-            // complete and wasn't sampled 90% of the time), causing the gen_ai transaction
-            // to always be dropped regardless of tracesSampleRate.
-            const parentSpan = Sentry.startInactiveSpan({
-                op: "gen_ai.agent",
-                name: `Bot ${config.name || botId}`,
-                forceTransaction: true,
-                parentSpan: null,
-                attributes: { span_type: "gen_ai" },
-            });
+            const parentSpan = Sentry.startSpanManual(
+                {
+                    op: "gen_ai.agent",
+                    name: `Bot ${config.name || botId}`,
+                    forceTransaction: true,
+                    attributes: { span_type: "gen_ai" },
+                },
+                (span) => span
+            );
             // Make it the active span on the scope so gen_ai.chat spans in providers
             // are created as children (required for Sentry AI dashboard population)
             const sentryScope = Sentry.getCurrentScope();

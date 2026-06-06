@@ -150,12 +150,13 @@ export class OpenAIProvider implements AIProvider {
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
         // Start Sentry span for this LLM call
-        const sentrySpan = Sentry.startInactiveSpan({
+        // Use parentSpan.startChild() instead of startInactiveSpan({parentSpan: ...}) because
+        // startInactiveSpan doesn't register child spans in the parent's span tree when the
+        // parent is a forceTransaction root — the child ends up orphaned and never sent.
+        const parentSpan = (config as any).__sentryParentSpan;
+        const sentrySpan = parentSpan?.startChild({
             op: "gen_ai.chat",
             name: `LLM ${config.model}`,
-            // Explicitly pass parent span from AIService to bypass async-context
-            // scope lookup which doesn't reliably cross for-await boundaries
-            parentSpan: (config as any).__sentryParentSpan,
         });
 
         try {
