@@ -13,14 +13,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { OpenAIProvider } from "../ai/providers/OpenAIProvider";
 import type { AIProviderConfig } from "../ai/types";
 
-// Mock Sentry to track startInactiveSpan calls
-const mockSentrySpan = {
-    end: vi.fn(),
-    setAttribute: vi.fn(),
-    setStatus: vi.fn(),
-};
-
-const mockStartInactiveSpan = vi.fn(() => mockSentrySpan);
+// Use vi.hoisted() so mocks are defined before vi.mock is hoisted to top
+const { mockSentrySpan, mockStartInactiveSpan } = vi.hoisted(() => {
+    const span = { end: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() };
+    return {
+        mockSentrySpan: span,
+        mockStartInactiveSpan: vi.fn(() => span),
+    };
+});
 
 vi.mock("@sentry/node", () => ({
     startInactiveSpan: mockStartInactiveSpan,

@@ -3,8 +3,7 @@
   "private": true,
   "devDependencies": {
     "husky": "^7.0.1",
-    "typescript": "5.8.3",
-    "vitest": "^3.2.4"
+    "typescript": "5.8.3"
   },
   "scripts": {
     "prepare": "husky install || echo 'Husky not found. Maybe you are installing only a subproject.'",
@@ -18,6 +17,7 @@
     "libs/*",
     "benchmark",
     "uploader",
+    "bots",
     "play/packages/iframe-api-typings",
     "tests",
     "contrib/tools/generate-env-docs"
