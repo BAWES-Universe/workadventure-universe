@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@sentry/node": "^10.56.0",
+    "posthog-node": "^4.0.0",
     "@workadventure/messages": "1.0.0",
     "ws": "^8.16.0",
     "redis": "^4.3.1",
