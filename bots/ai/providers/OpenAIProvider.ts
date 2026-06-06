@@ -149,276 +149,275 @@ export class OpenAIProvider implements AIProvider {
         let responseModel = '';
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
-        // Start Sentry span for this LLM call
-        // Use startInactiveSpan with explicit parentSpan from AIService's startSpanManual
-        // root transaction. With a properly created root (_startRootSpan path),
-        // startInactiveSpan({parentSpan: ...}) correctly registers child spans.
-        const sentrySpan = Sentry.startInactiveSpan({
-            op: "gen_ai.chat",
-            name: `LLM ${config.model}`,
-            // Explicitly pass parent span from AIService to bypass async-context
-            // scope lookup which doesn't reliably cross for-await boundaries
-            parentSpan: (config as any).__sentryParentSpan,
-        });
-
-        try {
-            const endpoint = this.getEndpoint(config);
-            const apiKey = this.getApiKey(config);
-            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
-
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
-
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`,
-                },
-                body: JSON.stringify(requestBody),
-                signal: controller.signal,
-            });
-
-            clearTimeout(timeoutId);
-
-            let finalResponse = response;
-            if (!response.ok) {
-                const errorText = await response.text();
-                let errorData: any = null;
+        // Use startSpan (not startInactiveSpan) to create gen_ai.chat child spans.
+        // startSpan forges a new scope via withScope and pins the child span to it via
+        // _setSpanForScope inside withActiveSpan. This ensures the span survives async-
+        // generator continuation boundaries where startInactiveSpan's orphan span object
+        // can detach from its parent's scope chain during transport serialization.
+        //
+        // Chunks are buffered inside the callback and yielded afterwards — the LLM fetch
+        // still streams in real time into the buffer, so user-perceived latency is
+        // negligible (<5ms).
+        const chunks: AIStreamChunk[] = [];
+        await Sentry.startSpan(
+            {
+                op: "gen_ai.chat",
+                name: `LLM ${config.model}`,
+                parentSpan: (config as any).__sentryParentSpan,
+            },
+            async (span) => {
                 try {
-                    errorData = JSON.parse(errorText);
-                } catch (e) {
-                    // Not JSON, use as-is
-                }
+                    const endpoint = this.getEndpoint(config);
+                    const apiKey = this.getApiKey(config);
 
-                // If error is about temperature, retry without temperature (use default)
-                if (errorData?.error?.code === 'unsupported_value' && 
-                    errorData?.error?.param === 'temperature' &&
-                    errorData?.error?.message?.includes('Only the default')) {
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
-                    }
-                    // Retry without temperature parameter
-                    const retryBody = { ...requestBody };
-                    delete retryBody.temperature;
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-                    const retryController = new AbortController();
-                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+                    const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
 
-                    const retryResponse = await fetch(endpoint, {
+                    const response = await fetch(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${apiKey}`,
                         },
-                        body: JSON.stringify(retryBody),
-                        signal: retryController.signal,
+                        body: JSON.stringify(requestBody),
+                        signal: controller.signal,
                     });
 
-                    clearTimeout(retryTimeoutId);
+                    clearTimeout(timeoutId);
 
-                    if (!retryResponse.ok) {
-                        const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                    }
-
-                    // Use retry response instead
-                    finalResponse = retryResponse;
-                }
-                // If error is about max_tokens, retry with max_completion_tokens
-                else if (errorData?.error?.code === 'unsupported_parameter' && 
-                    errorData?.error?.param === 'max_tokens' &&
-                    errorData?.error?.message?.includes('max_completion_tokens')) {
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
-                    }
-                    // Retry with max_completion_tokens
-                    const retryBody = { ...requestBody };
-                    delete retryBody.max_tokens;
-                    retryBody.max_completion_tokens = config.maxTokens;
-
-                    const retryController = new AbortController();
-                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
-
-                    const retryResponse = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`,
-                        },
-                        body: JSON.stringify(retryBody),
-                        signal: retryController.signal,
-                    });
-
-                    clearTimeout(retryTimeoutId);
-
-                    if (!retryResponse.ok) {
-                        const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                    }
-
-                    // Use retry response instead
-                    finalResponse = retryResponse;
-                } else {
-                    throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
-                }
-            }
-
-            const reader = finalResponse.body?.getReader();
-            if (!reader) {
-                throw new Error('No response body reader available');
-            }
-
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    if (line.trim() === '') continue;
-
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6).trim();
-                        
-                        if (data === '[DONE]') {
-                            const latency = Date.now() - startTime;
-
-                            // Set attributes for Sentry span (ended in finally)
-                            if (sentrySpan) {
-                                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                            }
-
-                            yield {
-                                content: '',
-                                done: true,
-                                metadata: {
-                                    tokensUsed,
-                                    promptTokens,
-                                    completionTokens,
-                                    latency,
-                                    error: false,
-                                },
-                            };
-                            return;
-                        }
-
+                    let finalResponse = response;
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        let errorData: any = null;
                         try {
-                            const json = JSON.parse(data);
-                            const delta = json.choices?.[0]?.delta;
-
-                            // Handle tool calls
-                            if (delta?.tool_calls) {
-                                const toolCalls = delta.tool_calls.map((tc: any) => ({
-                                    id: tc.id,
-                                    name: tc.function?.name || '',
-                                    arguments: tc.function?.arguments || '{}',
-                                }));
-                                yield {
-                                    content: '',
-                                    done: false,
-                                    toolCalls,
-                                };
-                            }
-
-                            if (delta?.content) {
-                                yield {
-                                    content: delta.content,
-                                    done: false,
-                                };
-                            }
-
-                            // Extract token usage from final chunk
-                            if (json.usage?.total_tokens) {
-                                tokensUsed = json.usage.total_tokens;
-                            }
-                            if (json.usage?.prompt_tokens) {
-                                promptTokens = json.usage.prompt_tokens;
-                            }
-                            if (json.usage?.completion_tokens) {
-                                completionTokens = json.usage.completion_tokens;
-                            }
-                            // Capture actual model from response
-                            if (json.model) {
-                                responseModel = json.model;
-                            }
+                            errorData = JSON.parse(errorText);
                         } catch (e) {
-                            // Skip invalid JSON lines
+                            // Not JSON, use as-is
+                        }
+
+                        // If error is about temperature, retry without temperature (use default)
+                        if (errorData?.error?.code === 'unsupported_value' && 
+                            errorData?.error?.param === 'temperature' &&
+                            errorData?.error?.message?.includes('Only the default')) {
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn('[OpenAIProvider] Invalid JSON in stream:', line);
+                                console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
+                            }
+                            // Retry without temperature parameter
+                            const retryBody = { ...requestBody };
+                            delete retryBody.temperature;
+
+                            const retryController = new AbortController();
+                            const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                            const retryResponse = await fetch(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: retryController.signal,
+                            });
+
+                            clearTimeout(retryTimeoutId);
+
+                            if (!retryResponse.ok) {
+                                const retryErrorText = await retryResponse.text();
+                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            }
+
+                            // Use retry response instead
+                            finalResponse = retryResponse;
+                        }
+                        // If error is about max_tokens, retry with max_completion_tokens
+                        else if (errorData?.error?.code === 'unsupported_parameter' && 
+                            errorData?.error?.param === 'max_tokens' &&
+                            errorData?.error?.message?.includes('max_completion_tokens')) {
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
+                            }
+                            // Retry with max_completion_tokens
+                            const retryBody = { ...requestBody };
+                            delete retryBody.max_tokens;
+                            retryBody.max_completion_tokens = config.maxTokens;
+
+                            const retryController = new AbortController();
+                            const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                            const retryResponse = await fetch(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: retryController.signal,
+                            });
+
+                            clearTimeout(retryTimeoutId);
+
+                            if (!retryResponse.ok) {
+                                const retryErrorText = await retryResponse.text();
+                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            }
+
+                            // Use retry response instead
+                            finalResponse = retryResponse;
+                        } else {
+                            throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                        }
+                    }
+
+                    const reader = finalResponse.body?.getReader();
+                    if (!reader) {
+                        throw new Error('No response body reader available');
+                    }
+
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (line.trim() === '') continue;
+
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6).trim();
+                                
+                                if (data === '[DONE]') {
+                                    const latency = Date.now() - startTime;
+
+                                    span.setAttribute("gen_ai.request.model", config.model);
+                                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                    span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                    span.setAttribute("gen_ai.agent.name", config.name || '');
+
+                                    chunks.push({
+                                        content: '',
+                                        done: true,
+                                        metadata: {
+                                            tokensUsed,
+                                            promptTokens,
+                                            completionTokens,
+                                            latency,
+                                            error: false,
+                                        },
+                                    });
+                                    return chunks;
+                                }
+
+                                try {
+                                    const json = JSON.parse(data);
+                                    const delta = json.choices?.[0]?.delta;
+
+                                    // Handle tool calls
+                                    if (delta?.tool_calls) {
+                                        const toolCalls = delta.tool_calls.map((tc: any) => ({
+                                            id: tc.id,
+                                            name: tc.function?.name || '',
+                                            arguments: tc.function?.arguments || '{}',
+                                        }));
+                                        chunks.push({
+                                            content: '',
+                                            done: false,
+                                            toolCalls,
+                                        });
+                                    }
+
+                                    if (delta?.content) {
+                                        chunks.push({
+                                            content: delta.content,
+                                            done: false,
+                                        });
+                                    }
+
+                                    // Extract token usage from final chunk
+                                    if (json.usage?.total_tokens) {
+                                        tokensUsed = json.usage.total_tokens;
+                                    }
+                                    if (json.usage?.prompt_tokens) {
+                                        promptTokens = json.usage.prompt_tokens;
+                                    }
+                                    if (json.usage?.completion_tokens) {
+                                        completionTokens = json.usage.completion_tokens;
+                                    }
+                                    // Capture actual model from response
+                                    if (json.model) {
+                                        responseModel = json.model;
+                                    }
+                                } catch (e) {
+                                    // Skip invalid JSON lines
+                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.warn('[OpenAIProvider] Invalid JSON in stream:', line);
+                                    }
+                                }
                             }
                         }
                     }
+
+                    // Final chunk
+                    const latency = Date.now() - startTime;
+                    
+                    span.setAttribute("gen_ai.request.model", config.model);
+                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
+                    span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                    span.setAttribute("gen_ai.agent.name", config.name || '');
+
+                    chunks.push({
+                        content: '',
+                        done: true,
+                        metadata: {
+                            tokensUsed,
+                            promptTokens,
+                            completionTokens,
+                            latency,
+                            error: false,
+                        },
+                    });
+                } catch (error: any) {
+                    const latency = Date.now() - startTime;
+                    
+                    span.setAttribute("gen_ai.request.model", config.model);
+                    span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                    span.setAttribute("gen_ai.agent.name", config.name || '');
+                    span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+
+                    if (error.name === 'AbortError') {
+                        throw new Error(`OpenAI request timeout after ${timeout}ms`);
+                    }
+
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error('[OpenAIProvider] Stream error:', error);
+                    }
+
+                    chunks.push({
+                        content: '',
+                        done: true,
+                        metadata: {
+                            tokensUsed: 0,
+                            latency,
+                            error: true,
+                        },
+                    });
                 }
-            }
 
-            // Final chunk
-            const latency = Date.now() - startTime;
-            
-            // Set Sentry span attributes
-            if (sentrySpan) {
-                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                return chunks;
             }
+        );
 
-            yield {
-                content: '',
-                done: true,
-                metadata: {
-                    tokensUsed,
-                    promptTokens,
-                    completionTokens,
-                    latency,
-                    error: false,
-                },
-            };
-        } catch (error: any) {
-            const latency = Date.now() - startTime;
-            
-            // Finish Sentry span with error
-            if (sentrySpan) {
-                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
-            }
-
-            if (error.name === 'AbortError') {
-                throw new Error(`OpenAI request timeout after ${timeout}ms`);
-            }
-
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[OpenAIProvider] Stream error:', error);
-            }
-
-            yield {
-                content: '',
-                done: true,
-                metadata: {
-                    tokensUsed: 0,
-                    latency,
-                    error: true,
-                },
-            };
-        } finally {
-            sentrySpan?.end();
-        }
+        yield* chunks;
     }
 
     async generate(
