@@ -20,6 +20,9 @@ import * as Sentry from '@sentry/node';
 import * as SentryCore from '@sentry/core';
 const sentrySetSpan = (SentryCore as any)._INTERNAL_setSpanForScope as (scope: any, span: any) => void;
 
+// PostHog LLM Analytics — captures $ai_trace + $ai_generation events alongside Sentry
+import { captureGeneration, flushPostHog } from './PostHogClient';
+
 interface CachedCredentials {
     credentials: AIProviderConfig;
     expiresAt: number;
@@ -639,6 +642,32 @@ CRITICAL RESPONSE RULES:
                         console.log(`[AIService] Skipping chunk yield - waiting for tool calls to complete`);
                     }
                 }
+                
+                // Capture PostHog LLM analytics event (fire-and-forget)
+                // Uses accumulated input/output and token counts from the completed stream
+                if (streamCompleted && accumulatedContent) {
+                    const cost = this.calculateCost(providerId, {
+                        tokensUsed,
+                        promptTokens,
+                        completionTokens,
+                        latency: Date.now() - startTime,
+                        error: false,
+                    });
+                    captureGeneration({
+                        distinctId: `bot-${botId}`,
+                        traceId: parentSpan?.spanId || `trace-${Date.now()}`,
+                        model: config.model,
+                        provider: config.type,
+                        input: message,
+                        output: accumulatedContent,
+                        inputTokens: promptTokens,
+                        outputTokens: completionTokens,
+                        cost,
+                        botId,
+                        playerId: String(playerId),
+                        space: spaceName,
+                    });
+                }
             } finally {
                 // Close parent Sentry span
                 parentSpan?.end();
@@ -665,6 +694,11 @@ CRITICAL RESPONSE RULES:
                     if (err instanceof Error) {
                         console.error('[AIService] Error details:', err.message);
                     }
+                });
+
+                // Flush PostHog events (fire-and-forget)
+                flushPostHog().catch(err => {
+                    console.error('[AIService] Failed to flush PostHog:', err);
                 });
             }
         } catch (error: any) {
