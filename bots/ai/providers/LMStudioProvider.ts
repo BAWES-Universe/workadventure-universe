@@ -39,13 +39,15 @@ export class LMStudioProvider implements AIProvider {
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
         // Start Sentry span for this LLM call
-        // Use parentSpan.startChild() instead of startInactiveSpan({parentSpan: ...}) because
-        // startInactiveSpan doesn't register child spans in the parent's span tree when the
-        // parent is a forceTransaction root — the child ends up orphaned and never sent.
-        const parentSpan = (config as any).__sentryParentSpan;
-        const sentrySpan = parentSpan?.startChild({
+        // Use startInactiveSpan with explicit parentSpan from AIService's startSpanManual
+        // root transaction. With a properly created root (_startRootSpan path),
+        // startInactiveSpan({parentSpan: ...}) correctly registers child spans.
+        const sentrySpan = Sentry.startInactiveSpan({
             op: "gen_ai.chat",
             name: `LLM ${config.model}`,
+            // Explicitly pass parent span from AIService to bypass async-context
+            // scope lookup which doesn't reliably cross for-await boundaries
+            parentSpan: (config as any).__sentryParentSpan,
         });
 
         try {
