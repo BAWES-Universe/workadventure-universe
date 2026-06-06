@@ -19,7 +19,7 @@ if (SENTRY_DSN) {
             // Non-AI traffic uses the configured background rate
             tracesSampler: (samplingContext: any) => {
                 // gen_ai.agent transactions are our async AI processing spans
-                if (samplingContext.attributes?.["sentry.op"]?.startsWith("gen_ai.")) {
+                if (samplingContext.attributes?.span_type === "gen_ai") {
                     return 1.0;
                 }
                 return SENTRY_TRACES_SAMPLE_RATE;

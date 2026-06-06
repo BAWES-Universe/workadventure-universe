@@ -430,6 +430,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 name: `Bot ${config.name || botId}`,
                 forceTransaction: true,
                 parentSpan: null,
+                attributes: { span_type: "gen_ai" },
             });
             // Make it the active span on the scope so gen_ai.chat spans in providers
             // are created as children (required for Sentry AI dashboard population)
