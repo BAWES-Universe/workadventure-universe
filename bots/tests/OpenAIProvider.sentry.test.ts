@@ -1,11 +1,11 @@
 /**
- * Tests for OpenAIProvider Sentry span creation (PR #140: startInactiveSpan with parentSpan)
+ * Tests for OpenAIProvider Sentry span creation (PR #140: startSpan scope pinning)
  *
  * Scope: Only tests the changed behavior:
- *   - Sentry.startInactiveSpan is called (NOT startChild which was removed in v8)
+ *   - Sentry.startSpan is called (pinned to scope via _setSpanForScope)
  *   - parentSpan is passed from (config as any).__sentryParentSpan
  *   - When __sentryParentSpan is absent, no span is created (optional chaining)
- *   - sentrySpan?.end() is called in the finally block
+ *   - span is auto-ended via handleCallbackErrors
  *   - sentrySpan attributes are set on the child span
  */
 
@@ -14,17 +14,16 @@ import { OpenAIProvider } from "../ai/providers/OpenAIProvider";
 import type { AIProviderConfig } from "../ai/types";
 
 // Use vi.hoisted() so mocks are defined before vi.mock is hoisted to top
-const { mockSentrySpan, mockStartInactiveSpan } = vi.hoisted(() => {
+const { mockSentrySpan, mockStartSpan } = vi.hoisted(() => {
     const span = { end: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() };
     return {
         mockSentrySpan: span,
-        mockStartInactiveSpan: vi.fn(() => span),
+
     };
 });
 
 vi.mock("@sentry/node", () => ({
-    startInactiveSpan: mockStartInactiveSpan,
-    startSpan: vi.fn((_opts: unknown, cb: (s: any) => any) => cb({ setAttribute: vi.fn(), setStatus: vi.fn() })),
+    startSpan: mockStartSpan,
     startSpanManual: vi.fn(),
 }));
 
@@ -96,7 +95,7 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         vi.clearAllMocks();
     });
 
-    it("calls Sentry.startInactiveSpan with op 'gen_ai.chat'", async () => {
+    it("calls Sentry.startSpan with op 'gen_ai.chat'", async () => {
         const parentSpan = {};
         const config = buildConfig({ __sentryParentSpan: parentSpan });
 
@@ -104,12 +103,12 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockStartInactiveSpan).toHaveBeenCalledTimes(1);
-        const [opts] = mockStartInactiveSpan.mock.calls[0];
+        expect(mockStartSpan).toHaveBeenCalledTimes(1);
+        const [opts] = mockStartSpan.mock.calls[0];
         expect(opts).toMatchObject({ op: "gen_ai.chat" });
     });
 
-    it("passes name 'LLM <model>' to startInactiveSpan", async () => {
+    it("passes name 'LLM <model>' to startSpan", async () => {
         const parentSpan = {};
         const config = buildConfig({ model: "gpt-4o-mini", __sentryParentSpan: parentSpan });
 
@@ -117,11 +116,11 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        const [opts] = mockStartInactiveSpan.mock.calls[0];
+        const [opts] = mockStartSpan.mock.calls[0];
         expect(opts).toMatchObject({ name: "LLM gpt-4o-mini" });
     });
 
-    it("passes parentSpan from config.__sentryParentSpan to startInactiveSpan", async () => {
+    it("passes parentSpan from config.__sentryParentSpan to startSpan", async () => {
         const parentSpan = { someId: "parent-123" };
         const config = buildConfig({ __sentryParentSpan: parentSpan });
 
@@ -129,7 +128,7 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        const [opts] = mockStartInactiveSpan.mock.calls[0];
+        const [opts] = mockStartSpan.mock.calls[0];
         expect(opts.parentSpan).toBe(parentSpan);
     });
 
@@ -157,8 +156,6 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
 
     it("still streams successfully when __sentryParentSpan is absent", async () => {
         const config = buildConfig(); // no __sentryParentSpan
-        mockStartInactiveSpan.mockImplementationOnce(() => undefined);
-
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
@@ -169,8 +166,6 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
 
     it("still streams successfully when __sentryParentSpan is null", async () => {
         const config = buildConfig({ __sentryParentSpan: null });
-        mockStartInactiveSpan.mockImplementationOnce(() => undefined);
-
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
@@ -228,7 +223,7 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         );
     });
 
-    it("calls startInactiveSpan exactly once per generateStream call", async () => {
+    it("calls startSpan exactly once per generateStream call", async () => {
         const parentSpan = {};
         const config = buildConfig({ __sentryParentSpan: parentSpan });
 
@@ -236,6 +231,6 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockStartInactiveSpan).toHaveBeenCalledTimes(1);
+        expect(mockStartSpan).toHaveBeenCalledTimes(1);
     });
 });
