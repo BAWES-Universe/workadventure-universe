@@ -17,6 +17,9 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
+// Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
+// The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
+// across async boundaries where node's AsyncLocalStorage may lose context.
 import * as SentryCore from '@sentry/core';
 const sentrySetSpan = (SentryCore as any)._INTERNAL_setSpanForScope as (scope: any, span: any) => void;
 
@@ -414,13 +417,16 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 ? message + '\n\n/no_think'
                 : message;
 
-            // Create a parent Sentry span for this conversation turn
-            // Use startSpanManual instead of startInactiveSpan because startInactiveSpan
-            // with forceTransaction:true goes through startNewTrace() (lightweight root)
-            // instead of _startRootSpan() (full transaction). Spans created via the
-            // lightweight path don't properly register child spans — startChild() and
-            // startInactiveSpan({parentSpan: ...}) both fail to set parent_span_id.
-            // startSpanManual uses the full _startRootSpan path so children link correctly.
+            // Create a parent Sentry span for this conversation turn.
+            // Use startSpanManual instead of startInactiveSpan because
+            // startSpanManual sets the span on the active scope via _setSpanForScope,
+            // making it discoverable by getActiveSpan() / scope-based parent lookup.
+            // startInactiveSpan does NOT set the span on scope — it returns the span
+            // but stores nothing on the scope, so downstream code that relies on
+            // scope-based parent detection (e.g. Sentry.getActiveSpan()) won't find it.
+            // With the span on scope, child spans (gen_ai.chat) can be created via
+            // startInactiveSpan({parentSpan: ...}) with the explicit parentSpan from
+            // __sentryParentSpan below, which works regardless of scope.
             // forceTransaction: true because AI processing runs asynchronously after the
             // HTTP transaction has already completed. Without this, startSpanManual
             // would attach gen_ai.agent as a child of the (already-finished) HTTP request
