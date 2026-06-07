@@ -15,14 +15,13 @@ const error: DeepPartial<Translation["error"]> = {
             "Dla dalšnych informacijow wobroś se na administratory abo pśipowěź se pla nas pód adresu: hello@workadventu.re",
     },
     connectionRetry: {
-        unableConnect: "Zwězanje z WorkAdventure njejo mógło se natwariś. Wobwěsć se, až sy z internetom zwězany.",
+        unableConnect: "Zwězanje z Universe njejo mógło se natwariś. Wobwěsć se, až sy z internetom zwězany.",
     },
     errorDialog: {
         title: "Zmólka 😱",
         hasReportIssuesUrl:
             "Dla dalšnych informacijow móžoš se z administratorami kontaktěrowaś abo zmólku powdawaś pod:",
         noReportIssuesUrl: "Dla dalšnych informacijow wobroś se na administratory swěta.",
-        messageFAQ: "Móžoš teke do našu FAQ poglědaś:",
         reload: "Aktualizowaś",
         close: "Zacyniś",
     },

@@ -13,13 +13,12 @@ const error: DeepPartial<Translation["error"]> = {
         details: "자세한 정보가 필요하면 관리자에게 문의하거나 hello@workadventu.re로 연락하세요",
     },
     connectionRetry: {
-        unableConnect: "WorkAdventure에 연결할 수 없습니다. 인터넷에 연결되어 있나요?",
+        unableConnect: "Universe에 연결할 수 없습니다. 인터넷에 연결되어 있나요?",
     },
     errorDialog: {
         title: "오류 😱",
         hasReportIssuesUrl: "자세한 정보가 필요하면 관리자에게 문의하거나 다음에서 문제를 보고하세요:",
         noReportIssuesUrl: "자세한 정보가 필요하면 월드 관리자에게 문의하세요.",
-        messageFAQ: "다음도 확인할 수 있습니다:",
         reload: "새로 고침",
         close: "닫기",
     },

@@ -12,13 +12,12 @@ const error: BaseTranslation = {
         details: "If you want more information, you may contact administrator or contact us at: hello@workadventu.re",
     },
     connectionRetry: {
-        unableConnect: "Unable to connect to WorkAdventure. Are you connected to internet?",
+        unableConnect: "Unable to connect to the Universe. Are you connected to internet?",
     },
     errorDialog: {
         title: "Error 😱",
         hasReportIssuesUrl: "If you want more information, you may contact administrator or report an issue at:",
         noReportIssuesUrl: "If you want more information, you may contact the administrator of the world.",
-        messageFAQ: "You may also check our:",
         reload: "Reload",
         close: "Close",
     },

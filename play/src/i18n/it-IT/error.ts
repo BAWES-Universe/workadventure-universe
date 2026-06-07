@@ -15,14 +15,13 @@ const error: DeepPartial<Translation["error"]> = {
             "Se desideri maggiori informazioni, puoi contattare l'amministratore o contattarci a: hello@workadventu.re",
     },
     connectionRetry: {
-        unableConnect: "Impossibile connettersi a WorkAdventure. Sei connesso a internet?",
+        unableConnect: "Impossibile connettersi a Universe. Sei connesso a internet?",
     },
     errorDialog: {
         title: "Errore 😱",
         hasReportIssuesUrl:
             "Se desideri maggiori informazioni, puoi contattare l'amministratore o segnalare un problema a:",
         noReportIssuesUrl: "Se desideri maggiori informazioni, puoi contattare l'amministratore del mondo.",
-        messageFAQ: "Puoi anche controllare il nostro:",
         reload: "Ricarica",
         close: "Chiudi",
     },
