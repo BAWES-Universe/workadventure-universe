@@ -56,14 +56,13 @@
         tabindex="-1"
         on:click={handleCancel}
         on:keydown={handleKeydown}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="create-bot-title"
     >
         <!-- Modal -->
         <div
             class="bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 border border-white/20"
             role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-bot-title"
             on:click|stopPropagation
         >
             <h2 id="create-bot-title" class="text-xl font-semibold text-white mb-4">Create New Bot</h2>
