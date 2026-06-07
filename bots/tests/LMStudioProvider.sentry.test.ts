@@ -22,8 +22,8 @@ const { mockSentrySpan, mockStartSpan, mockStartSpanManual } = vi.hoisted(() => 
             span.end();
             return result;
         }),
-        mockStartSpanManual: vi.fn((_opts: any, _cb: any) => {
-            return span;
+        mockStartSpanManual: vi.fn((_opts: any, cb: any) => {
+            return cb(span);
         }),
     };
 });
