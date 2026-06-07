@@ -50,12 +50,13 @@ export class LMStudioProvider implements AIProvider {
             (span) => span
         );
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
         try {
                     const endpoint = `${config.endpoint}/v1/chat/completions`;
 
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), timeout);
+                    timeoutId = setTimeout(() => controller.abort(), timeout);
 
                     const response = await fetch(endpoint, {
                         method: 'POST',
