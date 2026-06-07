@@ -13,7 +13,7 @@ const error: DeepPartial<Translation["error"]> = {
         details: "如果你想了解更多信息，你可以联系管理员或联系我们: hello@workadventu.re",
     },
     connectionRetry: {
-        unableConnect: "无法链接到 WorkAdventure. 请检查互联网连接。",
+        unableConnect: "无法链接到 Universe. 请检查互联网连接。",
     },
     errorDialog: {
         title: "错误 😱",
