@@ -354,18 +354,33 @@ export class OpenAIProvider implements AIProvider {
             sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
             sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
 
-            // Yield final done chunk with metadata
-            yield {
-                content: '',
-                done: true,
-                metadata: {
-                    tokensUsed,
-                    promptTokens,
-                    completionTokens,
-                    latency,
-                    error: false,
-                },
-            };
+            // Yield final done chunk with metadata - only if stream ended cleanly via [DONE]
+            if (!streamEnded) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn('[OpenAIProvider] Stream ended without [DONE] signal');
+                }
+                yield {
+                    content: '',
+                    done: true,
+                    metadata: {
+                        tokensUsed: 0,
+                        latency,
+                        error: true,
+                    },
+                };
+            } else {
+                yield {
+                    content: '',
+                    done: true,
+                    metadata: {
+                        tokensUsed,
+                        promptTokens,
+                        completionTokens,
+                        latency,
+                        error: false,
+                    },
+                };
+            }
         } catch (error: any) {
             const latency = Date.now() - startTime;
 

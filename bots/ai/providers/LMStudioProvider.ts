@@ -50,12 +50,13 @@ export class LMStudioProvider implements AIProvider {
             (span) => span
         );
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
         try {
                     const endpoint = `${config.endpoint}/v1/chat/completions`;
 
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), timeout);
+                    timeoutId = setTimeout(() => controller.abort(), timeout);
 
                     const response = await fetch(endpoint, {
                         method: 'POST',
@@ -79,12 +80,15 @@ export class LMStudioProvider implements AIProvider {
                         signal: controller.signal,
                     });
 
-                    clearTimeout(timeoutId);
+                    clearTimeout(timeoutId); // Connection established — clear connection timeout
 
                     if (!response.ok) {
                         const errorText = await response.text();
                         throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
                     }
+
+                    // Per-chunk idle timeout — only after confirming a successful stream response
+                    timeoutId = setTimeout(() => controller.abort(), timeout);
 
                     reader = response.body?.getReader();
                     if (!reader) {
@@ -97,6 +101,10 @@ export class LMStudioProvider implements AIProvider {
                     while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
+
+                        // Reset idle timeout on each chunk — long streams stay alive as long as tokens keep flowing
+                        clearTimeout(timeoutId);
+                        timeoutId = setTimeout(() => controller.abort(), timeout);
 
                         buffer += decoder.decode(value, { stream: true });
                         const lines = buffer.split('\n');
@@ -255,6 +263,7 @@ export class LMStudioProvider implements AIProvider {
                         },
                     };
                 } finally {
+                    clearTimeout(timeoutId);
                     reader?.cancel();
                     sentrySpan?.end();
                 }
