@@ -21,8 +21,7 @@ const error: DeepPartial<Translation["error"]> = {
         title: "Error 😱",
         hasReportIssuesUrl:
             "Si quiere más información, puede contactar con el administrador o informar de un problema a:",
-        noReportIssuesUrl: "Si quiere más información, puede contactar con el administrador del mundo.",
-        messageFAQ: "También puede consultar nuestra:",
+        noReportIssuesUrl: "Si desea obtener más información, puede ponerse en contacto con el administrador del mundo.",
         reload: "Recargar",
         close: "Cerrar",
     },

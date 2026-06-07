@@ -22,7 +22,6 @@ const error: DeepPartial<Translation["error"]> = {
         hasReportIssuesUrl:
             "Als je meer informatie wilt, kun je contact opnemen met de beheerder of een probleem melden via:",
         noReportIssuesUrl: "Als je meer informatie wilt, kun je contact opnemen met de beheerder van de wereld.",
-        messageFAQ: "Je kunt ook onze volgende informatie raadplegen:",
         reload: "Opnieuw laden",
         close: "Sluiten",
     },

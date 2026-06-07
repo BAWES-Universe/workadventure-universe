@@ -22,7 +22,6 @@ const error: DeepPartial<Translation["error"]> = {
         hasReportIssuesUrl:
             "Dla dalšnych informacijow móžoš se z administratorami kontaktěrowaś abo zmólku powdawaś pod:",
         noReportIssuesUrl: "Dla dalšnych informacijow wobroś se na administratory swěta.",
-        messageFAQ: "Móžoš teke do našu FAQ poglědaś:",
         reload: "Aktualizowaś",
         close: "Zacyniś",
     },

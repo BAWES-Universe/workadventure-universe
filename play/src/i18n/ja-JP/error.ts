@@ -19,7 +19,6 @@ const error: DeepPartial<Translation["error"]> = {
         title: "エラー 😱",
         hasReportIssuesUrl: "より詳細な情報が必要な場合は、管理者に連絡するか、下記まで問題を報告してください。",
         noReportIssuesUrl: "より詳細な情報が必要な場合は、ワールドの管理者に連絡してください。",
-        messageFAQ: "私たちのサイトもご覧ください。",
         reload: "更新",
         close: "閉じる",
     },

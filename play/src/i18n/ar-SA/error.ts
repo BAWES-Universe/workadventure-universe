@@ -19,7 +19,6 @@ const error: DeepPartial<Translation["error"]> = {
         title: "خطأ 😱", // Error 😱
         hasReportIssuesUrl: "لمزيد من المعلومات، يرجى الاتصال بالمسؤولين أو الإبلاغ عن خطأ على:", // For more information, please contact the administrators or report an error at:
         noReportIssuesUrl: "لمزيد من المعلومات، يرجى الاتصال بمسؤولي هذا العالم.", // For more information, please contact the administrators of this world.
-        messageFAQ: "يمكنك أيضًا قراءة الأسئلة الشائعة لدينا:", // You can also read our FAQ:
         reload: "إعادة تحميل", // Reload
         close: "إغلاق", // Close
     },

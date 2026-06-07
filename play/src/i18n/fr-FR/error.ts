@@ -23,7 +23,6 @@ const error: DeepPartial<Translation["error"]> = {
             "Si vous souhaitez obtenir de plus amples informations, vous pouvez contacter l'administrateur ou signaler un problème à l'adresse suivante:",
         noReportIssuesUrl:
             "Si vous souhaitez obtenir de plus amples informations, vous pouvez contacter l'administrateur du monde.",
-        messageFAQ: "Vous pouvez également consulter notre:",
         reload: "Recharger",
         close: "Fermer",
     },
