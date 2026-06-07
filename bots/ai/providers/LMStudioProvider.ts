@@ -81,12 +81,14 @@ export class LMStudioProvider implements AIProvider {
                     });
 
                     clearTimeout(timeoutId); // Connection established — clear connection timeout
-                    timeoutId = setTimeout(() => controller.abort(), timeout); // Per-chunk idle timeout
 
                     if (!response.ok) {
                         const errorText = await response.text();
                         throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
                     }
+
+                    // Per-chunk idle timeout — only after confirming a successful stream response
+                    timeoutId = setTimeout(() => controller.abort(), timeout);
 
                     reader = response.body?.getReader();
                     if (!reader) {
