@@ -110,12 +110,12 @@ export class LMStudioProvider implements AIProvider {
                                 if (data === '[DONE]') {
                                     const latency = Date.now() - startTime;
 
-                                    sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                                    sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                                    sentrySpan.setAttribute("gen_ai.system", "lmstudio");
-                                    sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                                    sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                                    sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+                                    sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
+                                    sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                    sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
 
                                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
                                         console.log(`[LMStudioProvider] Received [DONE], yielding final chunk with tokensUsed=${tokensUsed}`);
@@ -207,12 +207,12 @@ export class LMStudioProvider implements AIProvider {
                     // Final chunk
                     const latency = Date.now() - startTime;
 
-                    sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                    sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                    sentrySpan.setAttribute("gen_ai.system", "lmstudio");
-                    sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                    sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                    sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+                    sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
+                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
+                    sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                    sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
 
                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[LMStudioProvider] Final chunk: tokensUsed=${tokensUsed}, latency=${latency}ms`);
@@ -231,10 +231,10 @@ export class LMStudioProvider implements AIProvider {
                 } catch (error: any) {
                     const latency = Date.now() - startTime;
                     
-                    sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                    sentrySpan.setAttribute("gen_ai.system", "lmstudio");
-                    sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                    sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
+                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
+                    sentrySpan?.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
                     if (error.name === 'AbortError') {
                         throw new Error(`LMStudio request timeout after ${timeout}ms`);
@@ -254,7 +254,7 @@ export class LMStudioProvider implements AIProvider {
                         },
                     };
                 } finally {
-                    sentrySpan.end();
+                    sentrySpan?.end();
                 }
     }
 

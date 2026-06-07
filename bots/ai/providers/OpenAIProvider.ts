@@ -346,12 +346,12 @@ export class OpenAIProvider implements AIProvider {
 
             // Set span attributes
             const latency = Date.now() - startTime;
-            sentrySpan.setAttribute("gen_ai.request.model", config.model);
-            sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-            sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-            sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-            sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-            sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+            sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+            sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
+            sentrySpan?.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+            sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+            sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+            sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
 
             // Yield final done chunk with metadata
             yield {
@@ -368,10 +368,10 @@ export class OpenAIProvider implements AIProvider {
         } catch (error: any) {
             const latency = Date.now() - startTime;
 
-            sentrySpan.setAttribute("gen_ai.request.model", config.model);
-            sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-            sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-            sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
+            sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+            sentrySpan?.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+            sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
+            sentrySpan?.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
             if (error.name === 'AbortError') {
                 throw new Error(`OpenAI request timeout after ${timeout}ms`);
@@ -391,7 +391,7 @@ export class OpenAIProvider implements AIProvider {
                 },
             };
         } finally {
-            sentrySpan.end();
+            sentrySpan?.end();
         }
     }
 
