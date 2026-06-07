@@ -80,6 +80,9 @@ export class LMStudioProvider implements AIProvider {
                         signal: controller.signal,
                     });
 
+                    clearTimeout(timeoutId); // Connection established — clear connection timeout
+                    timeoutId = setTimeout(() => controller.abort(), timeout); // Per-chunk idle timeout
+
                     if (!response.ok) {
                         const errorText = await response.text();
                         throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
@@ -96,6 +99,10 @@ export class LMStudioProvider implements AIProvider {
                     while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
+
+                        // Reset idle timeout on each chunk — long streams stay alive as long as tokens keep flowing
+                        clearTimeout(timeoutId);
+                        timeoutId = setTimeout(() => controller.abort(), timeout);
 
                         buffer += decoder.decode(value, { stream: true });
                         const lines = buffer.split('\n');
