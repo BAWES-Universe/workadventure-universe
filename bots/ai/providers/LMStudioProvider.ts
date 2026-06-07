@@ -79,8 +79,6 @@ export class LMStudioProvider implements AIProvider {
                         signal: controller.signal,
                     });
 
-                    clearTimeout(timeoutId);
-
                     if (!response.ok) {
                         const errorText = await response.text();
                         throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
@@ -255,6 +253,7 @@ export class LMStudioProvider implements AIProvider {
                         },
                     };
                 } finally {
+                    clearTimeout(timeoutId);
                     reader?.cancel();
                     sentrySpan?.end();
                 }
