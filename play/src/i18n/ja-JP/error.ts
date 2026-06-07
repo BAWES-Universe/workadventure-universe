@@ -13,13 +13,12 @@ const error: DeepPartial<Translation["error"]> = {
         details: "詳しくは管理者にお問い合わせください。",
     },
     connectionRetry: {
-        unableConnect: "WorkAdventure に接続できません。インターネットに接続されていますか？",
+        unableConnect: "Universe に接続できません。インターネットに接続されていますか？",
     },
     errorDialog: {
         title: "エラー 😱",
         hasReportIssuesUrl: "より詳細な情報が必要な場合は、管理者に連絡するか、下記まで問題を報告してください。",
         noReportIssuesUrl: "より詳細な情報が必要な場合は、ワールドの管理者に連絡してください。",
-        messageFAQ: "私たちのサイトもご覧ください。",
         reload: "更新",
         close: "閉じる",
     },

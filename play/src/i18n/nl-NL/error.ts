@@ -15,14 +15,13 @@ const error: DeepPartial<Translation["error"]> = {
             "Als je meer informatie wilt, kun je contact opnemen met de beheerder of ons bereiken via: hello@workadventu.re",
     },
     connectionRetry: {
-        unableConnect: "Kan geen verbinding maken met WorkAdventure. Ben je verbonden met internet?",
+        unableConnect: "Kan geen verbinding maken met Universe. Ben je verbonden met internet?",
     },
     errorDialog: {
         title: "Fout 😱",
         hasReportIssuesUrl:
             "Als je meer informatie wilt, kun je contact opnemen met de beheerder of een probleem melden via:",
         noReportIssuesUrl: "Als je meer informatie wilt, kun je contact opnemen met de beheerder van de wereld.",
-        messageFAQ: "Je kunt ook onze volgende informatie raadplegen:",
         reload: "Opnieuw laden",
         close: "Sluiten",
     },

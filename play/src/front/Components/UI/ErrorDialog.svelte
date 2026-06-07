@@ -2,8 +2,6 @@
     import { errorStore, hasClosableMessagesInErrorStore } from "../../Stores/ErrorStore";
     import { LL } from "../../../i18n/i18n-svelte";
     import { connectionManager } from "../../Connection/ConnectionManager";
-    import { SimpleCoWebsite } from "../../WebRtc/CoWebsite/SimpleCoWebsite";
-    import { coWebsites } from "../../Stores/CoWebsiteStore";
 
     function close(): void {
         errorStore.clearClosableMessages();
@@ -13,19 +11,6 @@
     function refresh(): void {
         window.location.reload();
         return;
-    }
-
-    function openCwebsiteLink(event: MouseEvent) {
-        let link: string | undefined;
-        if ((link = (event.target as HTMLAnchorElement).href) == undefined) return;
-
-        const coWebsite = new SimpleCoWebsite(new URL(link), undefined, undefined, 75, true);
-        coWebsites.add(coWebsite);
-        // try {
-        //     coWebsiteManager.loadCoWebsite(coWebsite);
-        // } catch (e) {
-        //     console.error("Error during loading a co-website: " + coWebsite.getUrl(), e);
-        // }
     }
 </script>
 
@@ -45,15 +30,6 @@
         {:else}
             <p class="text-lg place-self-center">
                 {$LL.error.errorDialog.noReportIssuesUrl()}
-            </p>
-            <p class="text-sm place-self-center">
-                {$LL.error.errorDialog.messageFAQ()}
-                <a
-                    href="https://workadventu.re/faq"
-                    on:click|stopPropagation|preventDefault={openCwebsiteLink}
-                    target="_blank"
-                    rel="noopener noreferrer">FAQ</a
-                >
             </p>
         {/if}
         {#if $hasClosableMessagesInErrorStore}

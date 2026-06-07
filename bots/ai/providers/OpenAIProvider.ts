@@ -145,26 +145,26 @@ export class OpenAIProvider implements AIProvider {
         let tokensUsed = 0;
         let promptTokens = 0;
         let completionTokens = 0;
-        let error = false;
         let responseModel = '';
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
-        // Start Sentry span for this LLM call
-        // Use startInactiveSpan with explicit parentSpan from AIService's startSpanManual
-        // root transaction. With a properly created root (_startRootSpan path),
-        // startInactiveSpan({parentSpan: ...}) correctly registers child spans.
-        const sentrySpan = Sentry.startInactiveSpan({
-            op: "gen_ai.chat",
-            name: `LLM ${config.model}`,
-            // Explicitly pass parent span from AIService to bypass async-context
-            // scope lookup which doesn't reliably cross for-await boundaries
-            parentSpan: (config as any).__sentryParentSpan,
-        });
+        // Use startSpanManual so the span stays alive across async-generator yield points.
+        // startSpan wraps everything in a callback that must complete before yielding,
+        // forcing chunk buffering. startSpanManual gives us the span handle immediately
+        // so we can yield each chunk in real-time and end() the span when done.
+        const sentrySpan = Sentry.startSpanManual(
+            {
+                op: "gen_ai.chat",
+                name: `LLM ${config.model}`,
+                parentSpan: (config as any).__sentryParentSpan,
+            },
+            (span) => span
+        );
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
         try {
             const endpoint = this.getEndpoint(config);
             const apiKey = this.getApiKey(config);
-            const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -266,13 +266,14 @@ export class OpenAIProvider implements AIProvider {
                 }
             }
 
-            const reader = finalResponse.body?.getReader();
+            reader = finalResponse.body?.getReader();
             if (!reader) {
                 throw new Error('No response body reader available');
             }
 
             const decoder = new TextDecoder();
             let buffer = '';
+            let streamEnded = false;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -289,30 +290,8 @@ export class OpenAIProvider implements AIProvider {
                         const data = line.slice(6).trim();
                         
                         if (data === '[DONE]') {
-                            const latency = Date.now() - startTime;
-
-                            // Set attributes for Sentry span (ended in finally)
-                            if (sentrySpan) {
-                                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                            }
-
-                            yield {
-                                content: '',
-                                done: true,
-                                metadata: {
-                                    tokensUsed,
-                                    promptTokens,
-                                    completionTokens,
-                                    latency,
-                                    error: false,
-                                },
-                            };
-                            return;
+                            streamEnded = true;
+                            break;
                         }
 
                         try {
@@ -362,42 +341,53 @@ export class OpenAIProvider implements AIProvider {
                         }
                     }
                 }
+
+                if (streamEnded) break;
             }
 
-            // Final chunk
+            // Set span attributes
             const latency = Date.now() - startTime;
-            
-            // Set Sentry span attributes
-            if (sentrySpan) {
-                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-            }
+            sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+            sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
+            sentrySpan?.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+            sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+            sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+            sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
 
-            yield {
-                content: '',
-                done: true,
-                metadata: {
-                    tokensUsed,
-                    promptTokens,
-                    completionTokens,
-                    latency,
-                    error: false,
-                },
-            };
+            // Yield final done chunk with metadata - only if stream ended cleanly via [DONE]
+            if (!streamEnded) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn('[OpenAIProvider] Stream ended without [DONE] signal');
+                }
+                yield {
+                    content: '',
+                    done: true,
+                    metadata: {
+                        tokensUsed: 0,
+                        latency,
+                        error: true,
+                    },
+                };
+            } else {
+                yield {
+                    content: '',
+                    done: true,
+                    metadata: {
+                        tokensUsed,
+                        promptTokens,
+                        completionTokens,
+                        latency,
+                        error: false,
+                    },
+                };
+            }
         } catch (error: any) {
             const latency = Date.now() - startTime;
-            
-            // Finish Sentry span with error
-            if (sentrySpan) {
-                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                sentrySpan.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
-            }
+
+            sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+            sentrySpan?.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+            sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
+            sentrySpan?.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
             if (error.name === 'AbortError') {
                 throw new Error(`OpenAI request timeout after ${timeout}ms`);
@@ -417,6 +407,7 @@ export class OpenAIProvider implements AIProvider {
                 },
             };
         } finally {
+            reader?.cancel();
             sentrySpan?.end();
         }
     }

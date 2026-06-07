@@ -34,237 +34,239 @@ export class LMStudioProvider implements AIProvider {
         let tokensUsed = 0;
         let promptTokens = 0;
         let completionTokens = 0;
-        let error = false;
         let responseModel = '';
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
-        // Start Sentry span for this LLM call
-        // Use startInactiveSpan with explicit parentSpan from AIService's startSpanManual
-        // root transaction. With a properly created root (_startRootSpan path),
-        // startInactiveSpan({parentSpan: ...}) correctly registers child spans.
-        const sentrySpan = Sentry.startInactiveSpan({
-            op: "gen_ai.chat",
-            name: `LLM ${config.model}`,
-            // Explicitly pass parent span from AIService to bypass async-context
-            // scope lookup which doesn't reliably cross for-await boundaries
-            parentSpan: (config as any).__sentryParentSpan,
-        });
+        // Use startSpanManual so the span stays alive across async-generator yield points.
+        // startSpan wraps everything in a callback that must complete before yielding,
+        // forcing chunk buffering. startSpanManual gives us the span handle immediately
+        // so we can yield each chunk in real-time and end() the span when done.
+        const sentrySpan = Sentry.startSpanManual(
+            {
+                op: "gen_ai.chat",
+                name: `LLM ${config.model}`,
+                parentSpan: (config as any).__sentryParentSpan,
+            },
+            (span) => span
+        );
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
         try {
-            const endpoint = `${config.endpoint}/v1/chat/completions`;
+                    const endpoint = `${config.endpoint}/v1/chat/completions`;
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
+                    const controller = new AbortController();
+                    timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model: config.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage },
-                    ],
-                    stream: true,
-                    stream_options: {
-                        include_usage: true,  // Enable token counts in streaming
-                    },
-                    temperature: config.temperature,
-                    max_tokens: config.maxTokens,
-                    ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
-                }),
-                signal: controller.signal,
-            });
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: config.model,
+                            messages: [
+                                { role: 'system', content: systemPrompt },
+                                { role: 'user', content: userMessage },
+                            ],
+                            stream: true,
+                            stream_options: {
+                                include_usage: true,  // Enable token counts in streaming
+                            },
+                            temperature: config.temperature,
+                            max_tokens: config.maxTokens,
+                            ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
+                        }),
+                        signal: controller.signal,
+                    });
 
-            clearTimeout(timeoutId);
+                    clearTimeout(timeoutId); // Connection established — clear connection timeout
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
-            }
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
+                    }
 
-            const reader = response.body?.getReader();
-            if (!reader) {
-                throw new Error('No response body reader available');
-            }
+                    // Per-chunk idle timeout — only after confirming a successful stream response
+                    timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const decoder = new TextDecoder();
-            let buffer = '';
+                    reader = response.body?.getReader();
+                    if (!reader) {
+                        throw new Error('No response body reader available');
+                    }
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+                    const decoder = new TextDecoder();
+                    let buffer = '';
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
 
-                for (const line of lines) {
-                    if (line.trim() === '') continue;
+                        // Reset idle timeout on each chunk — long streams stay alive as long as tokens keep flowing
+                        clearTimeout(timeoutId);
+                        timeoutId = setTimeout(() => controller.abort(), timeout);
 
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6).trim();
-                        
-                        if (data === '[DONE]') {
-                            const latency = Date.now() - startTime;
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
 
-                            // Set attributes for Sentry span (ended in finally)
-                            if (sentrySpan) {
-                                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                                sentrySpan.setAttribute("gen_ai.system", "lmstudio");
-                                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                            }
+                        for (const line of lines) {
+                            if (line.trim() === '') continue;
 
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[LMStudioProvider] Received [DONE], yielding final chunk with tokensUsed=${tokensUsed}`);
-                            }
-                            yield {
-                                content: '',
-                                done: true,
-                                metadata: {
-                                    tokensUsed,
-                                    promptTokens,
-                                    completionTokens,
-                                    latency,
-                                    error: false,
-                                },
-                            };
-                            return;
-                        }
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6).trim();
+                                
+                                if (data === '[DONE]') {
+                                    const latency = Date.now() - startTime;
 
-                        try {
-                            const json = JSON.parse(data);
-                            const delta = json.choices?.[0]?.delta;
+                                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+                                    sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
+                                    sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                    sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
 
-                            // Extract token usage - can come in usage chunks when include_usage is true
-                            // Check usage FIRST, as it might come in chunks without delta.content
-                            if (json.usage) {
-                                if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
-                                    // Track prompt and completion tokens separately
-                                    if (json.usage.prompt_tokens !== undefined) {
-                                        promptTokens = json.usage.prompt_tokens;
-                                    }
-                                    if (json.usage.completion_tokens !== undefined) {
-                                        completionTokens = json.usage.completion_tokens;
-                                    }
-                                    const newTokens = promptTokens + completionTokens;
-                                    if (newTokens > 0) {
-                                        tokensUsed = newTokens;
-                                    }
                                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                        console.log(`[LMStudioProvider] Token usage updated: ${tokensUsed} (prompt: ${json.usage.prompt_tokens || 0}, completion: ${json.usage.completion_tokens || 0})`);
+                                        console.log(`[LMStudioProvider] Received [DONE], yielding final chunk with tokensUsed=${tokensUsed}`);
                                     }
-                                } else if (json.usage.total_tokens) {
-                                    // Fallback to total_tokens if available
-                                    tokensUsed = json.usage.total_tokens;
+                                    yield {
+                                        content: '',
+                                        done: true,
+                                        metadata: {
+                                            tokensUsed,
+                                            promptTokens,
+                                            completionTokens,
+                                            latency,
+                                            error: false,
+                                        },
+                                    };
+                                    return;
+                                }
+
+                                try {
+                                    const json = JSON.parse(data);
+                                    const delta = json.choices?.[0]?.delta;
+
+                                    // Extract token usage - can come in usage chunks when include_usage is true
+                                    // Check usage FIRST, as it might come in chunks without delta.content
+                                    if (json.usage) {
+                                        if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
+                                            // Track prompt and completion tokens separately
+                                            if (json.usage.prompt_tokens !== undefined) {
+                                                promptTokens = json.usage.prompt_tokens;
+                                            }
+                                            if (json.usage.completion_tokens !== undefined) {
+                                                completionTokens = json.usage.completion_tokens;
+                                            }
+                                            const newTokens = promptTokens + completionTokens;
+                                            if (newTokens > 0) {
+                                                tokensUsed = newTokens;
+                                            }
+                                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                                console.log(`[LMStudioProvider] Token usage updated: ${tokensUsed} (prompt: ${json.usage.prompt_tokens || 0}, completion: ${json.usage.completion_tokens || 0})`);
+                                            }
+                                        } else if (json.usage.total_tokens) {
+                                            // Fallback to total_tokens if available
+                                            tokensUsed = json.usage.total_tokens;
+                                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                                console.log(`[LMStudioProvider] Token usage from total_tokens: ${tokensUsed}`);
+                                            }
+                                        }
+                                    }
+
+                                    // Handle tool calls
+                                    if (delta?.tool_calls) {
+                                        const toolCalls = delta.tool_calls.map((tc: any) => {
+                                            // Use empty string instead of '{}' for undefined arguments
+                                            // This allows proper accumulation of streamed arguments
+                                            const toolCall = {
+                                                id: tc.id,
+                                                name: tc.function?.name || '',
+                                                arguments: tc.function?.arguments || '',
+                                            };
+                                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                                console.log(`[LMStudioProvider] Tool call chunk: id=${toolCall.id}, name=${toolCall.name}, args="${toolCall.arguments.substring(0, 50)}"`);
+                                            }
+                                            return toolCall;
+                                        });
+                                        yield {
+                                            content: '',
+                                            done: false,
+                                            toolCalls,
+                                        };
+                                    }
+
+                                    // Yield content chunks
+                                    if (delta?.content) {
+                                        yield {
+                                            content: delta.content,
+                                            done: false,
+                                        };
+                                    }
+                                } catch (e) {
+                                    // Skip invalid JSON lines
                                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                        console.log(`[LMStudioProvider] Token usage from total_tokens: ${tokensUsed}`);
+                                        console.warn('[LMStudioProvider] Invalid JSON in stream:', line);
                                     }
                                 }
                             }
-
-                            // Handle tool calls
-                            if (delta?.tool_calls) {
-                                const toolCalls = delta.tool_calls.map((tc: any) => {
-                                    // Use empty string instead of '{}' for undefined arguments
-                                    // This allows proper accumulation of streamed arguments
-                                    const toolCall = {
-                                        id: tc.id,
-                                        name: tc.function?.name || '',
-                                        arguments: tc.function?.arguments || '',
-                                    };
-                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                        console.log(`[LMStudioProvider] Tool call chunk: id=${toolCall.id}, name=${toolCall.name}, args="${toolCall.arguments.substring(0, 50)}"`);
-                                    }
-                                    return toolCall;
-                                });
-                                yield {
-                                    content: '',
-                                    done: false,
-                                    toolCalls,
-                                };
-                            }
-
-                            // Yield content chunks
-                            if (delta?.content) {
-                                yield {
-                                    content: delta.content,
-                                    done: false,
-                                };
-                            }
-                        } catch (e) {
-                            // Skip invalid JSON lines
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn('[LMStudioProvider] Invalid JSON in stream:', line);
-                            }
                         }
                     }
+
+                    // Final chunk
+                    const latency = Date.now() - startTime;
+
+                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+                    sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
+                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
+                    sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                    sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
+
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[LMStudioProvider] Final chunk: tokensUsed=${tokensUsed}, latency=${latency}ms`);
+                    }
+                    yield {
+                        content: '',
+                        done: true,
+                        metadata: {
+                            tokensUsed,
+                            promptTokens,
+                            completionTokens,
+                            latency,
+                            error: false,
+                        },
+                    };
+                } catch (error: any) {
+                    const latency = Date.now() - startTime;
+                    
+                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
+                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
+                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
+                    sentrySpan?.setStatus({ code: 2, message: error.message || 'Unknown error' });
+
+                    if (error.name === 'AbortError') {
+                        throw new Error(`LMStudio request timeout after ${timeout}ms`);
+                    }
+
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error('[LMStudioProvider] Stream error:', error);
+                    }
+
+                    yield {
+                        content: '',
+                        done: true,
+                        metadata: {
+                            tokensUsed: 0,
+                            latency,
+                            error: true,
+                        },
+                    };
+                } finally {
+                    clearTimeout(timeoutId);
+                    reader?.cancel();
+                    sentrySpan?.end();
                 }
-            }
-
-            // Final chunk
-            const latency = Date.now() - startTime;
-
-            // Set Sentry span attributes
-            if (sentrySpan) {
-                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
-                sentrySpan.setAttribute("gen_ai.system", "lmstudio");
-                sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-            }
-
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[LMStudioProvider] Final chunk: tokensUsed=${tokensUsed}, latency=${latency}ms`);
-            }
-            yield {
-                content: '',
-                done: true,
-                metadata: {
-                    tokensUsed,
-                    promptTokens,
-                    completionTokens,
-                    latency,
-                    error: false,
-                },
-            };
-        } catch (error: any) {
-            const latency = Date.now() - startTime;
-            
-            // Finish Sentry span with error
-            if (sentrySpan) {
-                sentrySpan.setAttribute("gen_ai.request.model", config.model);
-                sentrySpan.setAttribute("gen_ai.system", "lmstudio");
-                sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
-                sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
-            }
-
-            if (error.name === 'AbortError') {
-                throw new Error(`LMStudio request timeout after ${timeout}ms`);
-            }
-
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[LMStudioProvider] Stream error:', error);
-            }
-
-            yield {
-                content: '',
-                done: true,
-                metadata: {
-                    tokensUsed: 0,
-                    latency,
-                    error: true,
-                },
-            };
-        } finally {
-            sentrySpan?.end();
-        }
     }
 
     async generate(

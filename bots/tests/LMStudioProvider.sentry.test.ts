@@ -1,11 +1,11 @@
 /**
- * Tests for LMStudioProvider Sentry span creation (PR #140: startInactiveSpan with parentSpan)
+ * Tests for LMStudioProvider Sentry span creation (PR #140: startSpan scope pinning)
  *
  * Scope: Only tests the changed behavior:
- *   - Sentry.startInactiveSpan is called (NOT startChild which was removed in v8)
+ *   - Sentry.startSpan is called (pinned to scope via _setSpanForScope)
  *   - parentSpan is passed from (config as any).__sentryParentSpan
  *   - When __sentryParentSpan is absent, no span is created
- *   - sentrySpan?.end() is called in the finally block
+ *   - span is auto-ended via handleCallbackErrors
  *   - sentrySpan attributes are set on the child span
  */
 
@@ -13,18 +13,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { LMStudioProvider } from "../ai/providers/LMStudioProvider";
 
 // Use vi.hoisted() so mocks are defined before vi.mock is hoisted to top
-const { mockSharedSpan, mockStartInactiveSpan } = vi.hoisted(() => {
+const { mockSentrySpan, mockStartSpan, mockStartSpanManual } = vi.hoisted(() => {
     const span = { end: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() };
     return {
-        mockSharedSpan: span,
-        mockStartInactiveSpan: vi.fn(() => span),
+        mockSentrySpan: span,
+        mockStartSpan: vi.fn(async (_opts: any, cb: any) => {
+            const result = await cb(span);
+            span.end();
+            return result;
+        }),
+        mockStartSpanManual: vi.fn((_opts: any, cb: any) => {
+            return cb(span);
+        }),
     };
 });
 
 vi.mock("@sentry/node", () => ({
-    startInactiveSpan: mockStartInactiveSpan,
-    startSpan: vi.fn((_opts: unknown, cb: (s: any) => any) => cb({ setAttribute: vi.fn(), setStatus: vi.fn() })),
-    startSpanManual: vi.fn(),
+    startSpan: mockStartSpan,
+    startSpanManual: mockStartSpanManual,
 }));
 
 // ---- Helper: build config ----
@@ -89,30 +95,30 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
         vi.clearAllMocks();
     });
 
-    it("calls Sentry.startInactiveSpan with op 'gen_ai.chat'", async () => {
+    it("calls Sentry.startSpanManual with op 'gen_ai.chat'", async () => {
         const config = buildConfig({ __sentryParentSpan: {} });
 
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockStartInactiveSpan).toHaveBeenCalledTimes(1);
-        const opts = mockStartInactiveSpan.mock.calls[0][0];
+        expect(mockStartSpanManual).toHaveBeenCalledTimes(1);
+        const opts = mockStartSpanManual.mock.calls[0][0];
         expect(opts).toMatchObject({ op: "gen_ai.chat" });
     });
 
-    it("passes name 'LLM <model>' to startInactiveSpan", async () => {
+    it("passes name 'LLM <model>' to startSpanManual", async () => {
         const config = buildConfig({ model: "mistral-7b", __sentryParentSpan: {} });
 
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        const opts = mockStartInactiveSpan.mock.calls[0][0];
+        const opts = mockStartSpanManual.mock.calls[0][0];
         expect(opts).toMatchObject({ name: "LLM mistral-7b" });
     });
 
-    it("passes parentSpan from config.__sentryParentSpan to startInactiveSpan", async () => {
+    it("passes parentSpan from config.__sentryParentSpan to startSpanManual", async () => {
         const parentSpan = { someId: "parent-123" };
         const config = buildConfig({ __sentryParentSpan: parentSpan });
 
@@ -120,7 +126,7 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        const opts = mockStartInactiveSpan.mock.calls[0][0];
+        const opts = mockStartSpanManual.mock.calls[0][0];
         expect(opts.parentSpan).toBe(parentSpan);
     });
 
@@ -131,7 +137,7 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockSharedSpan.end).toHaveBeenCalledTimes(1);
+        expect(mockSentrySpan.end).toHaveBeenCalledTimes(1);
     });
 
     it("calls sentrySpan.end() even when fetch throws", async () => {
@@ -141,13 +147,11 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockSharedSpan.end).toHaveBeenCalledTimes(1);
+        expect(mockSentrySpan.end).toHaveBeenCalledTimes(1);
     });
 
     it("still streams successfully when __sentryParentSpan is absent", async () => {
         const config = buildConfig();
-        mockStartInactiveSpan.mockImplementationOnce(() => undefined);
-
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
@@ -158,8 +162,6 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
 
     it("still streams successfully when __sentryParentSpan is null", async () => {
         const config = buildConfig({ __sentryParentSpan: null });
-        mockStartInactiveSpan.mockImplementationOnce(() => undefined);
-
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
@@ -175,7 +177,7 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        const attrCalls = mockSharedSpan.setAttribute.mock.calls;
+        const attrCalls = mockSentrySpan.setAttribute.mock.calls;
         const modelAttr = attrCalls.find(([key]: string) => key === "gen_ai.request.model");
         expect(modelAttr).toBeDefined();
         expect(modelAttr![1]).toBe("phi-3");
@@ -188,7 +190,7 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        const attrCalls = mockSharedSpan.setAttribute.mock.calls;
+        const attrCalls = mockSentrySpan.setAttribute.mock.calls;
         const systemAttr = attrCalls.find(([key]: string) => key === "gen_ai.system");
         expect(systemAttr).toBeDefined();
         expect(systemAttr![1]).toBe("lmstudio");
@@ -206,18 +208,18 @@ describe("LMStudioProvider.generateStream – Sentry child span (PR #140)", () =
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockSharedSpan.setStatus).toHaveBeenCalledWith(
+        expect(mockSentrySpan.setStatus).toHaveBeenCalledWith(
             expect.objectContaining({ code: 2 })
         );
     });
 
-    it("calls startInactiveSpan exactly once per generateStream call", async () => {
+    it("calls startSpanManual exactly once per generateStream call", async () => {
         const config = buildConfig({ __sentryParentSpan: {} });
 
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockStartInactiveSpan).toHaveBeenCalledTimes(1);
+        expect(mockStartSpanManual).toHaveBeenCalledTimes(1);
     });
 });
