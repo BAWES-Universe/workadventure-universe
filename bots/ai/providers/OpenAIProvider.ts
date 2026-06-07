@@ -160,6 +160,7 @@ export class OpenAIProvider implements AIProvider {
             },
             (span) => span
         );
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
         try {
             const endpoint = this.getEndpoint(config);
@@ -265,7 +266,7 @@ export class OpenAIProvider implements AIProvider {
                 }
             }
 
-            const reader = finalResponse.body?.getReader();
+            reader = finalResponse.body?.getReader();
             if (!reader) {
                 throw new Error('No response body reader available');
             }
@@ -391,6 +392,7 @@ export class OpenAIProvider implements AIProvider {
                 },
             };
         } finally {
+            reader?.cancel();
             sentrySpan?.end();
         }
     }

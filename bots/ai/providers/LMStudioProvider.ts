@@ -49,6 +49,7 @@ export class LMStudioProvider implements AIProvider {
             },
             (span) => span
         );
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
         try {
                     const endpoint = `${config.endpoint}/v1/chat/completions`;
@@ -85,7 +86,7 @@ export class LMStudioProvider implements AIProvider {
                         throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
                     }
 
-                    const reader = response.body?.getReader();
+                    reader = response.body?.getReader();
                     if (!reader) {
                         throw new Error('No response body reader available');
                     }
@@ -254,6 +255,7 @@ export class LMStudioProvider implements AIProvider {
                         },
                     };
                 } finally {
+                    reader?.cancel();
                     sentrySpan?.end();
                 }
     }
