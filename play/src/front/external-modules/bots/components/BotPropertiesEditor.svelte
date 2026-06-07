@@ -44,9 +44,10 @@
 
 <div class="space-y-4">
     <div>
-        <label class="block text-sm font-medium mb-1">Bot Name</label>
+        <label for="bot-name-input" class="block text-sm font-medium mb-1">Bot Name</label>
         <input
             type="text"
+            id="bot-name-input"
             class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             bind:value={name}
             on:input={handleNameChange}
@@ -55,8 +56,9 @@
     </div>
 
     <div>
-        <label class="block text-sm font-medium mb-1">Description</label>
+        <label for="bot-description-input" class="block text-sm font-medium mb-1">Description</label>
         <textarea
+            id="bot-description-input"
             class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             bind:value={description}
             on:input={handleDescriptionChange}
@@ -66,9 +68,10 @@
     </div>
 
     <div>
-        <label class="block text-sm font-medium mb-1">Character Texture</label>
+        <label for="bot-texture-input" class="block text-sm font-medium mb-1">Character Texture</label>
         <input
             type="text"
+            id="bot-texture-input"
             class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             bind:value={characterTexture}
             on:input={handleTextureChange}
