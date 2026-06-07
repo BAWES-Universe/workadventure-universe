@@ -34,28 +34,23 @@ export class LMStudioProvider implements AIProvider {
         let tokensUsed = 0;
         let promptTokens = 0;
         let completionTokens = 0;
-        let error = false;
         let responseModel = '';
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
 
-        // Use startSpan (not startInactiveSpan) to create gen_ai.chat child spans.
-        // startSpan forges a new scope via withScope and pins the child span to it via
-        // _setSpanForScope inside withActiveSpan. This ensures the span survives async-
-        // generator continuation boundaries where startInactiveSpan's orphan span object
-        // can detach from its parent's scope chain during transport serialization.
-        //
-        // Chunks are buffered inside the callback and yielded afterwards — the LLM fetch
-        // still streams in real time into the buffer, so user-perceived latency is
-        // negligible (<5ms).
-        const chunks: AIStreamChunk[] = [];
-        await Sentry.startSpan(
+        // Use startSpanManual so the span stays alive across async-generator yield points.
+        // startSpan wraps everything in a callback that must complete before yielding,
+        // forcing chunk buffering. startSpanManual gives us the span handle immediately
+        // so we can yield each chunk in real-time and end() the span when done.
+        const sentrySpan = Sentry.startSpanManual(
             {
                 op: "gen_ai.chat",
                 name: `LLM ${config.model}`,
                 parentSpan: (config as any).__sentryParentSpan,
             },
-            async (span) => {
-                try {
+            (span) => span
+        );
+
+        try {
                     const endpoint = `${config.endpoint}/v1/chat/completions`;
 
                     const controller = new AbortController();
@@ -115,17 +110,17 @@ export class LMStudioProvider implements AIProvider {
                                 if (data === '[DONE]') {
                                     const latency = Date.now() - startTime;
 
-                                    span.setAttribute("gen_ai.request.model", config.model);
-                                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
-                                    span.setAttribute("gen_ai.system", "lmstudio");
-                                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                                    span.setAttribute("gen_ai.agent.name", config.name || '');
+                                    sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                                    sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                    sentrySpan.setAttribute("gen_ai.system", "lmstudio");
+                                    sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                    sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                    sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
 
                                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
                                         console.log(`[LMStudioProvider] Received [DONE], yielding final chunk with tokensUsed=${tokensUsed}`);
                                     }
-                                    chunks.push({
+                                    yield {
                                         content: '',
                                         done: true,
                                         metadata: {
@@ -135,8 +130,8 @@ export class LMStudioProvider implements AIProvider {
                                             latency,
                                             error: false,
                                         },
-                                    });
-                                    return chunks;
+                                    };
+                                    return;
                                 }
 
                                 try {
@@ -185,19 +180,19 @@ export class LMStudioProvider implements AIProvider {
                                             }
                                             return toolCall;
                                         });
-                                        chunks.push({
+                                        yield {
                                             content: '',
                                             done: false,
                                             toolCalls,
-                                        });
+                                        };
                                     }
 
                                     // Yield content chunks
                                     if (delta?.content) {
-                                        chunks.push({
+                                        yield {
                                             content: delta.content,
                                             done: false,
-                                        });
+                                        };
                                     }
                                 } catch (e) {
                                     // Skip invalid JSON lines
@@ -212,17 +207,17 @@ export class LMStudioProvider implements AIProvider {
                     // Final chunk
                     const latency = Date.now() - startTime;
 
-                    span.setAttribute("gen_ai.request.model", config.model);
-                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
-                    span.setAttribute("gen_ai.system", "lmstudio");
-                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                    span.setAttribute("gen_ai.agent.name", config.name || '');
+                    sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                    sentrySpan.setAttribute("gen_ai.response.model", responseModel || config.model);
+                    sentrySpan.setAttribute("gen_ai.system", "lmstudio");
+                    sentrySpan.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                    sentrySpan.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                    sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
 
                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[LMStudioProvider] Final chunk: tokensUsed=${tokensUsed}, latency=${latency}ms`);
                     }
-                    chunks.push({
+                    yield {
                         content: '',
                         done: true,
                         metadata: {
@@ -232,14 +227,14 @@ export class LMStudioProvider implements AIProvider {
                             latency,
                             error: false,
                         },
-                    });
+                    };
                 } catch (error: any) {
                     const latency = Date.now() - startTime;
                     
-                    span.setAttribute("gen_ai.request.model", config.model);
-                    span.setAttribute("gen_ai.system", "lmstudio");
-                    span.setAttribute("gen_ai.agent.name", config.name || '');
-                    span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                    sentrySpan.setAttribute("gen_ai.request.model", config.model);
+                    sentrySpan.setAttribute("gen_ai.system", "lmstudio");
+                    sentrySpan.setAttribute("gen_ai.agent.name", config.name || '');
+                    sentrySpan.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
                     if (error.name === 'AbortError') {
                         throw new Error(`LMStudio request timeout after ${timeout}ms`);
@@ -249,7 +244,7 @@ export class LMStudioProvider implements AIProvider {
                         console.error('[LMStudioProvider] Stream error:', error);
                     }
 
-                    chunks.push({
+                    yield {
                         content: '',
                         done: true,
                         metadata: {
@@ -257,14 +252,10 @@ export class LMStudioProvider implements AIProvider {
                             latency,
                             error: true,
                         },
-                    });
+                    };
+                } finally {
+                    sentrySpan.end();
                 }
-
-                return chunks;
-            }
-        );
-
-        yield* chunks;
     }
 
     async generate(
