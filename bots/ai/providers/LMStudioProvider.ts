@@ -8,6 +8,12 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import * as Sentry from '@sentry/node';
+import * as SentryCore from '@sentry/core';
+// Internal API for setting active span on scope — ensures parent span
+// is on the active scope even across async generator boundaries where
+// Node's AsyncLocalStorage may lose context.
+const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
+    (SentryCore as any)?._INTERNAL_setSpanForScope;
 
 export class LMStudioProvider implements AIProvider {
     private readonly DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -41,6 +47,14 @@ export class LMStudioProvider implements AIProvider {
         // startSpan wraps everything in a callback that must complete before yielding,
         // forcing chunk buffering. startSpanManual gives us the span handle immediately
         // so we can yield each chunk in real-time and end() the span when done.
+        // Explicitly set the parent span on the active scope first, because async generator
+        // boundaries can lose Node's AsyncLocalStorage scope propagation, and without the
+        // parent on scope the child span won't be attached to the gen_ai.agent transaction.
+        const scope = Sentry.getCurrentScope();
+        const parentSpan: any = (config as any).__sentryParentSpan;
+        if (parentSpan && sentrySetSpan) {
+            sentrySetSpan(scope, parentSpan);
+        }
         const sentrySpan = Sentry.startSpanManual(
             {
                 op: "gen_ai.chat",
