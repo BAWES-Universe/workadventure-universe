@@ -24,6 +24,7 @@ const mockStartSpanManual = vi.fn((_opts: unknown, callback: (span: any) => any)
 const mockGetCurrentScope = vi.fn(() => ({}));
 const mockGetActiveSpan = vi.fn(() => null);
 const mockSetConversationId = vi.fn();
+const mockWithIsolationScope = vi.fn((cb: () => void) => cb());
 
 vi.mock("@sentry/node", () => ({
     startSpanManual: mockStartSpanManual,
@@ -31,6 +32,7 @@ vi.mock("@sentry/node", () => ({
     getCurrentScope: mockGetCurrentScope,
     getActiveSpan: mockGetActiveSpan,
     setConversationId: mockSetConversationId,
+    withIsolationScope: mockWithIsolationScope,
 }));
 
 // --- Mock @sentry/core ---
@@ -262,5 +264,42 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
 
         expect(mockParentSpanSetAttribute).toHaveBeenCalledWith("bot.player_id", 42);
         expect(mockParentSpanSetAttribute).toHaveBeenCalledWith("bot.space", "my-space");
+    });
+
+    it("calls withIsolationScope before startSpanManual (timing fix)", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+
+        for await (const _ of service.generateBotResponseStream("bot-1", 42, "hello", "", "test-provider", undefined, "")) {
+            /* drain */
+        }
+
+        // withIsolationScope should be called (wrapping setConversationId)
+        expect(mockWithIsolationScope).toHaveBeenCalledTimes(1);
+        // startSpanManual should still be called exactly once
+        expect(mockStartSpanManual).toHaveBeenCalledTimes(1);
+    });
+
+    it("sets conversationId via withIsolationScope before span creation", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+
+        for await (const _ of service.generateBotResponseStream("bot-1", 42, "hello", "", "test-provider", undefined, "")) {
+            /* drain */
+        }
+
+        // setConversationId should be called with the correct conversation ID pattern
+        expect(mockSetConversationId).toHaveBeenCalledWith("bot-bot-1-player-42");
+    });
+
+    it("uses botId and playerId in conversation ID", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+
+        for await (const _ of service.generateBotResponseStream("custom-bot", 99, "hello", "", "test-provider", undefined, "")) {
+            /* drain */
+        }
+
+        expect(mockSetConversationId).toHaveBeenCalledWith("bot-custom-bot-player-99");
     });
 });
