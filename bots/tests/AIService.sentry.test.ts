@@ -21,7 +21,10 @@ const mockParentSpan = {
 const mockStartSpanManual = vi.fn((_opts: unknown, callback: (span: any) => any) => {
     return callback(mockParentSpan);
 });
-const mockGetCurrentScope = vi.fn(() => ({}));
+const mockScopeSetConversationId = vi.fn();
+const mockGetCurrentScope = vi.fn(() => ({
+    setConversationId: mockScopeSetConversationId,
+}));
 const mockGetActiveSpan = vi.fn(() => null);
 const mockSetConversationId = vi.fn();
 
@@ -262,5 +265,32 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
 
         expect(mockParentSpanSetAttribute).toHaveBeenCalledWith("bot.player_id", 42);
         expect(mockParentSpanSetAttribute).toHaveBeenCalledWith("bot.space", "my-space");
+    });
+
+    it("calls getCurrentScope().setConversationId before startSpanManual (timing fix)", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+
+        for await (const _ of service.generateBotResponseStream("bot-1", 42, "hello", "", "test-provider", undefined, "")) {
+            /* drain */
+        }
+
+        // getCurrentScope should be called (once for setConversationId, once for sentrySetSpan)
+        expect(mockGetCurrentScope).toHaveBeenCalledTimes(2);
+        // scope.setConversationId should be called with the correct conversation ID
+        expect(mockScopeSetConversationId).toHaveBeenCalledWith("bot-bot-1-player-42");
+        // startSpanManual should still be called exactly once
+        expect(mockStartSpanManual).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses botId and playerId in conversation ID", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+
+        for await (const _ of service.generateBotResponseStream("custom-bot", 99, "hello", "", "test-provider", undefined, "")) {
+            /* drain */
+        }
+
+        expect(mockScopeSetConversationId).toHaveBeenCalledWith("bot-custom-bot-player-99");
     });
 });

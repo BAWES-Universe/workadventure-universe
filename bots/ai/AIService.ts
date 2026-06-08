@@ -418,6 +418,21 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 ? message + '\n\n/no_think'
                 : message;
 
+            // Set the conversation ID for Sentry Conversations BEFORE creating the
+            // gen_ai.agent span. The conversationIdIntegration reads conversationId
+            // from the scope chain at spanStart time via a client.on("spanStart")
+            // hook — if the ID isn't set yet, the gen_ai.agent span won't get the
+            // gen_ai.conversation.id attribute.
+            //
+            // Set on the current scope directly (not via Sentry.setConversationId()
+            // which hardcodes getIsolationScope()). startSpanManual internally calls
+            // withScope() which clones the current scope — preserving _conversationId
+            // on the cloned scope that's active when spanStart fires. This avoids
+            // the isolation scope boxing problem: wrapping in withIsolationScope would
+            // write the ID to a cloned isolation scope that's discarded as soon as the
+            // callback returns, before startSpanManual runs.
+            Sentry.getCurrentScope().setConversationId(`bot-${botId}-player-${playerId}`);
+
             // Create a parent Sentry span for this conversation turn.
             // Use startSpanManual instead of startInactiveSpan because
             // startSpanManual sets the span on the active scope via _setSpanForScope,
@@ -425,9 +440,6 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // startInactiveSpan does NOT set the span on scope — it returns the span
             // but stores nothing on the scope, so downstream code that relies on
             // scope-based parent detection (e.g. Sentry.getActiveSpan()) won't find it.
-            // With the span on scope, child spans (gen_ai.chat) can be created via
-            // startInactiveSpan({parentSpan: ...}) with the explicit parentSpan from
-            // __sentryParentSpan below, which works regardless of scope.
             // forceTransaction: true because AI processing runs asynchronously after the
             // HTTP transaction has already completed. Without this, startSpanManual
             // would attach gen_ai.agent as a child of the (already-finished) HTTP request
@@ -448,7 +460,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             const previousSpan = Sentry.getActiveSpan();
             sentrySetSpan?.(sentryScope, parentSpan);
             // Pass the parent span to providers via config so they can
-            // explicitly set it in startInactiveSpan({parentSpan: ...})
+            // explicitly set it in startSpanManual({parentSpan: ...})
             // This bypasses async-context scope lookup which doesn't
             // consistently carry the active span across for-await boundaries
             // Clone config to avoid mutating the shared cached object (race condition)
@@ -466,8 +478,6 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 parentSpan?.setAttribute("bot.provider", config.type);
                 parentSpan?.setAttribute("bot.model", config.model);
                 parentSpan?.setAttribute("bot.space", spaceName || '');
-                // Set conversation ID for grouping in Sentry Conversations tab
-                Sentry.setConversationId(`bot-${botId}-player-${playerId}`);
 
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
