@@ -11,6 +11,7 @@
     "push-sentry-sourcemaps": "tsc && sentry-cli releases new $SENTRY_RELEASE && sentry-cli releases files $SENTRY_RELEASE upload-sourcemaps dist && sentry-cli releases finalize $SENTRY_RELEASE"
   },
   "dependencies": {
+    "@sentry/core": "^10.56.0",
     "@sentry/node": "^10.56.0",
     "@workadventure/messages": "1.0.0",
     "ws": "^8.16.0",
