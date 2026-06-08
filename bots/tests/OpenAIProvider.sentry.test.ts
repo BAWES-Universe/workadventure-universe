@@ -29,9 +29,22 @@ const { mockSentrySpan, mockStartSpan, mockStartSpanManual } = vi.hoisted(() => 
     };
 });
 
+const { mockGetCurrentScope, mockSetSpanForScope } = vi.hoisted(() => {
+    const scope = { setSpan: vi.fn() };
+    return {
+        mockGetCurrentScope: vi.fn(() => scope),
+        mockSetSpanForScope: vi.fn(),
+    };
+});
+
 vi.mock("@sentry/node", () => ({
     startSpan: mockStartSpan,
     startSpanManual: mockStartSpanManual,
+    getCurrentScope: mockGetCurrentScope,
+}));
+
+vi.mock("@sentry/core", () => ({
+    _INTERNAL_setSpanForScope: mockSetSpanForScope,
 }));
 
 // Mock encryption
@@ -239,5 +252,31 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         vi.unstubAllGlobals();
 
         expect(mockStartSpanManual).toHaveBeenCalledTimes(1);
+    });
+
+    it("sets parent span on active scope via _INTERNAL_setSpanForScope", async () => {
+        const parentSpan = { myId: "scope-test" };
+        const config = buildConfig({ __sentryParentSpan: parentSpan });
+
+        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
+        await drainStream(provider.generateStream("system", "user", config));
+        vi.unstubAllGlobals();
+
+        // Should call getCurrentScope
+        expect(mockGetCurrentScope).toHaveBeenCalledTimes(1);
+        // Should call _INTERNAL_setSpanForScope with the scope and parent span
+        expect(mockSetSpanForScope).toHaveBeenCalledTimes(1);
+        const scope = mockGetCurrentScope.mock.results[0].value;
+        expect(mockSetSpanForScope).toHaveBeenCalledWith(scope, parentSpan);
+    });
+
+    it("does not call _INTERNAL_setSpanForScope when __sentryParentSpan is absent", async () => {
+        const config = buildConfig(); // no __sentryParentSpan
+
+        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
+        await drainStream(provider.generateStream("system", "user", config));
+        vi.unstubAllGlobals();
+
+        expect(mockSetSpanForScope).not.toHaveBeenCalled();
     });
 });
