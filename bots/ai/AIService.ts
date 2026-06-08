@@ -420,21 +420,18 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
             // Set the conversation ID for Sentry Conversations BEFORE creating the
             // gen_ai.agent span. The conversationIdIntegration reads conversationId
-            // from the isolation scope at spanStart time via a client.on("spanStart")
+            // from the scope chain at spanStart time via a client.on("spanStart")
             // hook — if the ID isn't set yet, the gen_ai.agent span won't get the
-            // gen_ai.conversation.id attribute. gen_ai.chat child spans (created in
-            // the provider) would still get it, but the parent span would be missing
-            // from the Conversations view.
+            // gen_ai.conversation.id attribute.
             //
-            // Wrap in withIsolationScope to create a per-interaction isolation scope
-            // (Node.js ALS strategy clones the isolation scope in withIsolationScope).
-            // Without this, multiple concurrent bot interactions would all write their
-            // conversation IDs to the same global default isolation scope, causing race
-            // conditions where one interaction's ID overwrites another's before the
-            // spanStart hook can read it.
-            Sentry.withIsolationScope(() => {
-                Sentry.setConversationId(`bot-${botId}-player-${playerId}`);
-            });
+            // Set on the current scope directly (not via Sentry.setConversationId()
+            // which hardcodes getIsolationScope()). startSpanManual internally calls
+            // withScope() which clones the current scope — preserving _conversationId
+            // on the cloned scope that's active when spanStart fires. This avoids
+            // the isolation scope boxing problem: wrapping in withIsolationScope would
+            // write the ID to a cloned isolation scope that's discarded as soon as the
+            // callback returns, before startSpanManual runs.
+            Sentry.getCurrentScope().setConversationId(`bot-${botId}-player-${playerId}`);
 
             // Create a parent Sentry span for this conversation turn.
             // Use startSpanManual instead of startInactiveSpan because
