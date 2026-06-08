@@ -281,6 +281,10 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
         expect(mockScopeSetConversationId).toHaveBeenCalledWith("bot-bot-1-player-42");
         // startSpanManual should still be called exactly once
         expect(mockStartSpanManual).toHaveBeenCalledTimes(1);
+        // Verify order: scope.setConversationId runs BEFORE startSpanManual (timing fix)
+        const conversationIdCallIndex = mockScopeSetConversationId.mock.invocationCallOrder[0];
+        const startSpanManualCallIndex = mockStartSpanManual.mock.invocationCallOrder[0];
+        expect(conversationIdCallIndex).toBeLessThan(startSpanManualCallIndex);
     });
 
     it("uses botId and playerId in conversation ID", async () => {
