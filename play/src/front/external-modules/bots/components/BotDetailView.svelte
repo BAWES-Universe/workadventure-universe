@@ -345,6 +345,8 @@
     })();
 </script>
 
+<svelte:window on:keydown={handleTextureKeydown} />
+
 <div class="bot-detail-view flex flex-col h-full min-h-0">
     <!-- Header -->
     <div class="flex items-center gap-3 mb-4 pb-4 border-b border-white/20 flex-shrink-0">
@@ -611,13 +613,12 @@
 
 <!-- Texture Picker Modal -->
 {#if editingTexture && wokaData && currentBot}
-    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
         role="presentation"
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         tabindex="-1"
         on:click={() => (editingTexture = false)}
-        on:keydown={handleTextureKeydown}
     >
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
         <div
