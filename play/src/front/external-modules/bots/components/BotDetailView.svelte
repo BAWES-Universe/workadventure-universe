@@ -33,6 +33,12 @@
     let editingBehavior = false;
     let editingInstructions = false;
 
+    function handleTextureKeydown(e: KeyboardEvent) {
+        if (e.key === "Escape") {
+            editingTexture = false;
+        }
+    }
+
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
         if (storeBot && currentBot && storeBot.id === currentBot.id) {
@@ -611,6 +617,7 @@
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         tabindex="-1"
         on:click={() => (editingTexture = false)}
+        on:keydown={handleTextureKeydown}
     >
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
         <div
