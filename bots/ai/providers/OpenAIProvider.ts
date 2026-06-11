@@ -403,7 +403,6 @@ export class OpenAIProvider implements AIProvider {
 
                     clearTimeouts();
 
-                    latency = Date.now() - startTime;
                     chunks.push({
                         content: '',
                         done: true,
