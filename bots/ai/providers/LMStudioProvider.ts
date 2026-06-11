@@ -30,29 +30,36 @@ export class LMStudioProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[]
     ): AsyncGenerator<AIStreamChunk> {
-        const startTime = Date.now();
-        let tokensUsed = 0;
-        let promptTokens = 0;
-        let completionTokens = 0;
-        let responseModel = '';
-        const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
-
-        // Use startSpanManual so the span stays alive across async-generator yield points.
-        // startSpan wraps everything in a callback that must complete before yielding,
-        // forcing chunk buffering. startSpanManual gives us the span handle immediately
-        // so we can yield each chunk in real-time and end() the span when done.
-        const sentrySpan = Sentry.startSpanManual(
+        // Collect all chunks first, then yield them after the span ends.
+        // This ensures the gen_ai.chat span is properly created as a child
+        // of the parent gen_ai.agent span and its end() is called before
+        // the parent ends. startSpanManual with identity callback was the
+        // root cause of 0 child spans — it never called end() or scope
+        // cleanup properly across async generator yield points.
+        const chunks: AIStreamChunk[] = [];
+        await Sentry.startSpan(
             {
                 op: "gen_ai.chat",
                 name: `LLM ${config.model}`,
                 parentSpan: (config as any).__sentryParentSpan,
+                attributes: {
+                    "gen_ai.request.model": config.model,
+                    "gen_ai.system": "lmstudio",
+                    "gen_ai.agent.name": config.name || '',
+                },
             },
-            (span) => span
-        );
-        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            async (span) => {
+                const startTime = Date.now();
+                let tokensUsed = 0;
+                let promptTokens = 0;
+                let completionTokens = 0;
+                let responseModel = '';
+                let streamEnded = false;
+                const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+                let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+                let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-        try {
+                try {
                     const endpoint = `${config.endpoint}/v1/chat/completions`;
 
                     const controller = new AbortController();
@@ -71,7 +78,7 @@ export class LMStudioProvider implements AIProvider {
                             ],
                             stream: true,
                             stream_options: {
-                                include_usage: true,  // Enable token counts in streaming
+                                include_usage: true,
                             },
                             temperature: config.temperature,
                             max_tokens: config.maxTokens,
@@ -87,7 +94,7 @@ export class LMStudioProvider implements AIProvider {
                         throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
                     }
 
-                    // Per-chunk idle timeout — only after confirming a successful stream response
+                    // Per-chunk idle timeout
                     timeoutId = setTimeout(() => controller.abort(), timeout);
 
                     reader = response.body?.getReader();
@@ -102,7 +109,7 @@ export class LMStudioProvider implements AIProvider {
                         const { done, value } = await reader.read();
                         if (done) break;
 
-                        // Reset idle timeout on each chunk — long streams stay alive as long as tokens keep flowing
+                        // Reset idle timeout on each chunk
                         clearTimeout(timeoutId);
                         timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -115,21 +122,19 @@ export class LMStudioProvider implements AIProvider {
 
                             if (line.startsWith('data: ')) {
                                 const data = line.slice(6).trim();
-                                
+
                                 if (data === '[DONE]') {
+                                    streamEnded = true;
                                     const latency = Date.now() - startTime;
 
-                                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
-                                    sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
-                                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
-                                    sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                                    sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
+                                    span.setAttribute("gen_ai.request.model", config.model);
+                                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
+                                    span.setAttribute("gen_ai.system", "lmstudio");
+                                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                                    span.setAttribute("gen_ai.agent.name", config.name || '');
 
-                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                        console.log(`[LMStudioProvider] Received [DONE], yielding final chunk with tokensUsed=${tokensUsed}`);
-                                    }
-                                    yield {
+                                    chunks.push({
                                         content: '',
                                         done: true,
                                         metadata: {
@@ -139,7 +144,7 @@ export class LMStudioProvider implements AIProvider {
                                             latency,
                                             error: false,
                                         },
-                                    };
+                                    });
                                     return;
                                 }
 
@@ -147,11 +152,9 @@ export class LMStudioProvider implements AIProvider {
                                     const json = JSON.parse(data);
                                     const delta = json.choices?.[0]?.delta;
 
-                                    // Extract token usage - can come in usage chunks when include_usage is true
-                                    // Check usage FIRST, as it might come in chunks without delta.content
+                                    // Extract token usage
                                     if (json.usage) {
                                         if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
-                                            // Track prompt and completion tokens separately
                                             if (json.usage.prompt_tokens !== undefined) {
                                                 promptTokens = json.usage.prompt_tokens;
                                             }
@@ -162,71 +165,54 @@ export class LMStudioProvider implements AIProvider {
                                             if (newTokens > 0) {
                                                 tokensUsed = newTokens;
                                             }
-                                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                                console.log(`[LMStudioProvider] Token usage updated: ${tokensUsed} (prompt: ${json.usage.prompt_tokens || 0}, completion: ${json.usage.completion_tokens || 0})`);
-                                            }
                                         } else if (json.usage.total_tokens) {
-                                            // Fallback to total_tokens if available
                                             tokensUsed = json.usage.total_tokens;
-                                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                                console.log(`[LMStudioProvider] Token usage from total_tokens: ${tokensUsed}`);
-                                            }
                                         }
                                     }
 
                                     // Handle tool calls
                                     if (delta?.tool_calls) {
                                         const toolCalls = delta.tool_calls.map((tc: any) => {
-                                            // Use empty string instead of '{}' for undefined arguments
-                                            // This allows proper accumulation of streamed arguments
                                             const toolCall = {
                                                 id: tc.id,
                                                 name: tc.function?.name || '',
                                                 arguments: tc.function?.arguments || '',
                                             };
-                                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                                console.log(`[LMStudioProvider] Tool call chunk: id=${toolCall.id}, name=${toolCall.name}, args="${toolCall.arguments.substring(0, 50)}"`);
-                                            }
                                             return toolCall;
                                         });
-                                        yield {
+                                        chunks.push({
                                             content: '',
                                             done: false,
                                             toolCalls,
-                                        };
+                                        });
                                     }
 
-                                    // Yield content chunks
+                                    // Track content chunks
                                     if (delta?.content) {
-                                        yield {
+                                        chunks.push({
                                             content: delta.content,
                                             done: false,
-                                        };
+                                        });
                                     }
                                 } catch (e) {
                                     // Skip invalid JSON lines
-                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                        console.warn('[LMStudioProvider] Invalid JSON in stream:', line);
-                                    }
                                 }
                             }
                         }
                     }
 
-                    // Final chunk
+                    // Final chunk (stream ended without [DONE])
+                    streamEnded = true;
                     const latency = Date.now() - startTime;
 
-                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
-                    sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
-                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
-                    sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                    sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
+                    span.setAttribute("gen_ai.request.model", config.model);
+                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
+                    span.setAttribute("gen_ai.system", "lmstudio");
+                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                    span.setAttribute("gen_ai.agent.name", config.name || '');
 
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[LMStudioProvider] Final chunk: tokensUsed=${tokensUsed}, latency=${latency}ms`);
-                    }
-                    yield {
+                    chunks.push({
                         content: '',
                         done: true,
                         metadata: {
@@ -236,14 +222,15 @@ export class LMStudioProvider implements AIProvider {
                             latency,
                             error: false,
                         },
-                    };
+                    });
+
                 } catch (error: any) {
                     const latency = Date.now() - startTime;
-                    
-                    sentrySpan?.setAttribute("gen_ai.request.model", config.model);
-                    sentrySpan?.setAttribute("gen_ai.system", "lmstudio");
-                    sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
-                    sentrySpan?.setStatus({ code: 2, message: error.message || 'Unknown error' });
+
+                    span.setAttribute("gen_ai.request.model", config.model);
+                    span.setAttribute("gen_ai.system", "lmstudio");
+                    span.setAttribute("gen_ai.agent.name", config.name || '');
+                    span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
                     if (error.name === 'AbortError') {
                         throw new Error(`LMStudio request timeout after ${timeout}ms`);
@@ -253,7 +240,7 @@ export class LMStudioProvider implements AIProvider {
                         console.error('[LMStudioProvider] Stream error:', error);
                     }
 
-                    yield {
+                    chunks.push({
                         content: '',
                         done: true,
                         metadata: {
@@ -261,12 +248,14 @@ export class LMStudioProvider implements AIProvider {
                             latency,
                             error: true,
                         },
-                    };
+                    });
                 } finally {
                     clearTimeout(timeoutId);
                     reader?.cancel();
-                    sentrySpan?.end();
                 }
+            }
+        );
+        yield* chunks;
     }
 
     async generate(
@@ -288,78 +277,77 @@ export class LMStudioProvider implements AIProvider {
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             try {
-            const endpoint = `${config.endpoint}/v1/chat/completions`;
+                const endpoint = `${config.endpoint}/v1/chat/completions`;
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model: config.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage },
-                    ],
-                    stream: false,
-                    stream_options: {
-                        include_usage: true,  // For consistency
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
                     },
-                    temperature: config.temperature,
-                    max_tokens: config.maxTokens,
-                    ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
-                }),
-                signal: controller.signal,
-            });
+                    body: JSON.stringify({
+                        model: config.model,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: userMessage },
+                        ],
+                        stream: false,
+                        stream_options: {
+                            include_usage: true,
+                        },
+                        temperature: config.temperature,
+                        max_tokens: config.maxTokens,
+                        ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
+                    }),
+                    signal: controller.signal,
+                });
 
-            clearTimeout(timeoutId);
+                clearTimeout(timeoutId);
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
-            }
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
+                }
 
-            const data = await response.json();
-            const content = data.choices?.[0]?.message?.content || '';
-            const tokensUsed = data.usage?.total_tokens || 0;
-            const promptTokens = data.usage?.prompt_tokens || 0;
-            const completionTokens = data.usage?.completion_tokens || 0;
-            const latency = Date.now() - startTime;
+                const data = await response.json();
+                const content = data.choices?.[0]?.message?.content || '';
+                const tokensUsed = data.usage?.total_tokens || 0;
+                const promptTokens = data.usage?.prompt_tokens || 0;
+                const completionTokens = data.usage?.completion_tokens || 0;
+                const latency = Date.now() - startTime;
 
-            span.setAttribute("gen_ai.response.model", data.model || config.model);
-            span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
-            span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
+                span.setAttribute("gen_ai.response.model", data.model || config.model);
+                span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
+                span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
 
-            return {
-                content,
-                tokensUsed,
-                latency,
-                error: false,
-            };
-        } catch (error: any) {
-            const latency = Date.now() - startTime;
+                return {
+                    content,
+                    tokensUsed,
+                    latency,
+                    error: false,
+                };
+            } catch (error: any) {
+                const latency = Date.now() - startTime;
 
-            span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
-            if (error.name === 'AbortError') {
-                throw new Error(`LMStudio request timeout after ${timeout}ms`);
-            }
+                if (error.name === 'AbortError') {
+                    throw new Error(`LMStudio request timeout after ${timeout}ms`);
+                }
 
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[LMStudioProvider] Generate error:', error);
-            }
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[LMStudioProvider] Generate error:', error);
+                }
 
-            return {
-                content: '',
-                tokensUsed: 0,
-                latency,
-                error: true,
-            };
+                return {
+                    content: '',
+                    tokensUsed: 0,
+                    latency,
+                    error: true,
+                };
             }
         });
     }
 }
-
