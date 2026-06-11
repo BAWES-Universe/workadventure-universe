@@ -180,8 +180,8 @@ export class OpenAIProvider implements AIProvider {
                     const endpoint = this.getEndpoint(config);
                     const apiKey = this.getApiKey(config);
 
-                    const controller = new AbortController();
-                    timeoutId = setTimeout(() => controller.abort(), timeout);
+                    let activeController = new AbortController();
+                    timeoutId = setTimeout(() => activeController.abort(), timeout);
 
                     const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
 
@@ -192,7 +192,7 @@ export class OpenAIProvider implements AIProvider {
                             'Authorization': `Bearer ${apiKey}`,
                         },
                         body: JSON.stringify(requestBody),
-                        signal: controller.signal,
+                        signal: activeController.signal,
                     });
 
                     clearTimeouts();
@@ -286,7 +286,7 @@ export class OpenAIProvider implements AIProvider {
 
                     // Per-chunk idle timeout — only after confirming a successful stream response
                     clearTimeouts();
-                    streamTimeoutId = setTimeout(() => controller.abort(), timeout);
+                    streamTimeoutId = setTimeout(() => activeController.abort(), timeout);
 
                     reader = finalResponse.body.getReader();
                     const decoder = new TextDecoder();
@@ -298,7 +298,7 @@ export class OpenAIProvider implements AIProvider {
 
                         // Reset idle timeout on each chunk
                         clearTimeout(streamTimeoutId);
-                        streamTimeoutId = setTimeout(() => controller.abort(), timeout);
+                        streamTimeoutId = setTimeout(() => activeController.abort(), timeout);
 
                         buffer += decoder.decode(value, { stream: true });
                         const lines = buffer.split('\n');
