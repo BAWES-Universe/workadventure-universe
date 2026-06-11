@@ -201,8 +201,7 @@ export class LMStudioProvider implements AIProvider {
                         }
                     }
 
-                    // Final chunk (stream ended without [DONE])
-                    streamEnded = true;
+                    // Final chunk — without [DONE] means the stream aborted
                     const latency = Date.now() - startTime;
 
                     span.setAttribute("gen_ai.request.model", config.model);
@@ -220,7 +219,7 @@ export class LMStudioProvider implements AIProvider {
                             promptTokens,
                             completionTokens,
                             latency,
-                            error: false,
+                            error: !streamEnded,
                         },
                     });
 
