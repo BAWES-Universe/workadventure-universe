@@ -170,6 +170,7 @@ export class OpenAIProvider implements AIProvider {
                 let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
                 let timeoutId: ReturnType<typeof setTimeout> | undefined;
                 let streamTimeoutId: ReturnType<typeof setTimeout> | undefined;
+                let latency = 0;
 
                 function clearTimeouts() {
                     if (timeoutId !== undefined) { clearTimeout(timeoutId); timeoutId = undefined; }
@@ -371,7 +372,7 @@ export class OpenAIProvider implements AIProvider {
                     clearTimeouts();
 
                     // Set span attributes
-                    const latency = Date.now() - startTime;
+                    latency = Date.now() - startTime;
                     span.setAttribute("gen_ai.request.model", config.model);
                     span.setAttribute("gen_ai.response.model", responseModel || config.model);
                     span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
@@ -393,7 +394,7 @@ export class OpenAIProvider implements AIProvider {
                     });
 
                 } catch (error: any) {
-                    const latency = Date.now() - startTime;
+                    latency = Date.now() - startTime;
 
                     span.setAttribute("gen_ai.request.model", config.model);
                     span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
@@ -402,14 +403,7 @@ export class OpenAIProvider implements AIProvider {
 
                     clearTimeouts();
 
-                    if (error.name === 'AbortError') {
-                        throw new Error(`OpenAI request timeout after ${timeout}ms`);
-                    }
-
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.error('[OpenAIProvider] Stream error:', error);
-                    }
-
+                    latency = Date.now() - startTime;
                     chunks.push({
                         content: '',
                         done: true,
