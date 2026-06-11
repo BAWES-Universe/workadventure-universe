@@ -279,7 +279,7 @@ export class OpenAIProvider implements AIProvider {
 
                     // Per-chunk idle timeout — only after confirming a successful stream response
                     clearTimeout(timeoutId);
-                    const streamTimeoutId = setTimeout(() => controller.abort(), timeout);
+                    let streamTimeoutId = setTimeout(() => controller.abort(), timeout);
 
                     reader = finalResponse.body.getReader();
                     const decoder = new TextDecoder();
