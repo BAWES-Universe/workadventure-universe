@@ -291,7 +291,7 @@ export class OpenAIProvider implements AIProvider {
 
                         // Reset idle timeout on each chunk
                         clearTimeout(streamTimeoutId);
-                        const newStreamTimeoutId = setTimeout(() => controller.abort(), timeout);
+                        streamTimeoutId = setTimeout(() => controller.abort(), timeout);
 
                         buffer += decoder.decode(value, { stream: true });
                         const lines = buffer.split('\n');
