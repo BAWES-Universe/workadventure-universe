@@ -168,13 +168,20 @@ export class OpenAIProvider implements AIProvider {
                 let streamEnded = false;
                 const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
                 let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+                let timeoutId: ReturnType<typeof setTimeout> | undefined;
+                let streamTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+                function clearTimeouts() {
+                    if (timeoutId !== undefined) { clearTimeout(timeoutId); timeoutId = undefined; }
+                    if (streamTimeoutId !== undefined) { clearTimeout(streamTimeoutId); streamTimeoutId = undefined; }
+                }
 
                 try {
                     const endpoint = this.getEndpoint(config);
                     const apiKey = this.getApiKey(config);
 
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), timeout);
+                    timeoutId = setTimeout(() => controller.abort(), timeout);
 
                     const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
 
@@ -188,7 +195,7 @@ export class OpenAIProvider implements AIProvider {
                         signal: controller.signal,
                     });
 
-                    clearTimeout(timeoutId);
+                    clearTimeouts();
 
                     let finalResponse = response;
                     if (!response.ok) {
@@ -278,8 +285,8 @@ export class OpenAIProvider implements AIProvider {
                     }
 
                     // Per-chunk idle timeout — only after confirming a successful stream response
-                    clearTimeout(timeoutId);
-                    let streamTimeoutId = setTimeout(() => controller.abort(), timeout);
+                    clearTimeouts();
+                    streamTimeoutId = setTimeout(() => controller.abort(), timeout);
 
                     reader = finalResponse.body.getReader();
                     const decoder = new TextDecoder();
@@ -359,7 +366,7 @@ export class OpenAIProvider implements AIProvider {
                         if (streamEnded) break;
                     }
 
-                    clearTimeout(streamTimeoutId);
+                    clearTimeouts();
 
                     // Set span attributes
                     const latency = Date.now() - startTime;
@@ -391,6 +398,8 @@ export class OpenAIProvider implements AIProvider {
                     span.setAttribute("gen_ai.agent.name", config.name || '');
                     span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
+                    clearTimeouts();
+
                     if (error.name === 'AbortError') {
                         throw new Error(`OpenAI request timeout after ${timeout}ms`);
                     }
@@ -409,6 +418,7 @@ export class OpenAIProvider implements AIProvider {
                         },
                     });
                 } finally {
+                    clearTimeouts();
                     reader?.cancel();
                 }
             }
