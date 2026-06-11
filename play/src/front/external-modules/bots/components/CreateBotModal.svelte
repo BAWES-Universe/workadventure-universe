@@ -51,18 +51,21 @@
 
 {#if isOpen}
     <!-- Backdrop -->
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
     <div
+        role="presentation"
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         tabindex="-1"
         on:click={handleCancel}
         on:keydown={handleKeydown}
     >
         <!-- Modal -->
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
         <div
-            class="bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 border border-white/20"
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-bot-title"
+            class="bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 border border-white/20"
             on:click|stopPropagation
         >
             <h2 id="create-bot-title" class="text-xl font-semibold text-white mb-4">Create New Bot</h2>
