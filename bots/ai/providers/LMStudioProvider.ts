@@ -232,14 +232,6 @@ export class LMStudioProvider implements AIProvider {
                     span.setAttribute("gen_ai.agent.name", config.name || '');
                     span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
-                    if (error.name === 'AbortError') {
-                        throw new Error(`LMStudio request timeout after ${timeout}ms`);
-                    }
-
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.error('[LMStudioProvider] Stream error:', error);
-                    }
-
                     chunks.push({
                         content: '',
                         done: true,
