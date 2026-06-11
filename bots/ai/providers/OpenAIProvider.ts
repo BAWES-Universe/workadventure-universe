@@ -240,6 +240,7 @@ export class OpenAIProvider implements AIProvider {
 
                             // Use retry response instead
                             finalResponse = retryResponse;
+                            activeController = retryController;
                         }
                         // If error is about max_tokens, retry with max_completion_tokens
                         else if (errorData?.error?.code === 'unsupported_parameter' && 
@@ -275,6 +276,7 @@ export class OpenAIProvider implements AIProvider {
 
                             // Use retry response instead
                             finalResponse = retryResponse;
+                            activeController = retryController;
                         } else {
                             throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
                         }
