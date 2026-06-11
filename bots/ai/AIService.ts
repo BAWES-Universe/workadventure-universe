@@ -450,6 +450,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                     op: "gen_ai.agent",
                     name: `Bot ${config.name || botId}`,
                     forceTransaction: true,
+                    parentSpan: null,
                     attributes: { span_type: "gen_ai" },
                 },
                 (span) => span
