@@ -25,6 +25,11 @@ if (SENTRY_DSN) {
                 return SENTRY_TRACES_SAMPLE_RATE;
             },
             streamGenAiSpans: true,
+            // Enable span streaming pipeline — required for gen_ai child spans to be
+            // properly batched with their parent transaction in the OTel-based SDK.
+            // Without this, each span is exported individually (via SentrySpanExporter)
+            // and gen_ai.chat child spans never appear nested under gen_ai.agent.
+            traceLifecycle: "stream",
             attachStacktrace: true,
             // Only capture warn/error logs to avoid spamming from debug logging
             enableLogs: true,
