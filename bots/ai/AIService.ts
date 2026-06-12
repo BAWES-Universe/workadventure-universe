@@ -432,6 +432,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // write the ID to a cloned isolation scope that's discarded as soon as the
             // callback returns, before startSpanManual runs.
             Sentry.getCurrentScope().setConversationId(`bot-${botId}-player-${playerId}`);
+            // ALSO set the event-level tag — Sentry AI Monitoring reads this
+            // from event tags, not from span attributes. Without this, the
+            // Conversations tab stays empty even though events arrive.
+            Sentry.getCurrentScope().setTag("gen_ai.conversation.id", `bot-${botId}-player-${playerId}`);
 
             // Create a parent Sentry span for this conversation turn.
             // Use startSpanManual instead of startInactiveSpan because
