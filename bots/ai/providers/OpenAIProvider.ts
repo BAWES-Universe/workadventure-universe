@@ -141,275 +141,285 @@ export class OpenAIProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[]
     ): AsyncGenerator<AIStreamChunk> {
-        const startTime = Date.now();
-        let tokensUsed = 0;
-        let promptTokens = 0;
-        let completionTokens = 0;
-        let responseModel = '';
-        const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
-
-        // Use startSpanManual so the span stays alive across async-generator yield points.
-        // startSpan wraps everything in a callback that must complete before yielding,
-        // forcing chunk buffering. startSpanManual gives us the span handle immediately
-        // so we can yield each chunk in real-time and end() the span when done.
-        const sentrySpan = Sentry.startSpanManual(
+        // Collect all chunks first, then yield them after the span ends.
+        // This ensures the gen_ai.chat span is properly created as a child
+        // of the parent gen_ai.agent span and its end() is called before
+        // the parent ends. startSpanManual with identity callback was the
+        // root cause of 0 child spans — it never called end() or scope
+        // cleanup properly across async generator yield points.
+        const chunks: AIStreamChunk[] = [];
+        await Sentry.startSpan(
             {
                 op: "gen_ai.chat",
                 name: `LLM ${config.model}`,
                 parentSpan: (config as any).__sentryParentSpan,
+                attributes: {
+                    "gen_ai.request.model": config.model,
+                    "gen_ai.system": config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai',
+                    "gen_ai.agent.name": config.name || '',
+                },
             },
-            (span) => span
-        );
-        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+            async (span) => {
+                const startTime = Date.now();
+                let tokensUsed = 0;
+                let promptTokens = 0;
+                let completionTokens = 0;
+                let responseModel = '';
+                let streamEnded = false;
+                let streamClosed = false;
+                const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+                let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+                let timeoutId: ReturnType<typeof setTimeout> | undefined;
+                let streamTimeoutId: ReturnType<typeof setTimeout> | undefined;
+                let latency = 0;
 
-        try {
-            const endpoint = this.getEndpoint(config);
-            const apiKey = this.getApiKey(config);
+                function clearTimeouts() {
+                    if (timeoutId !== undefined) { clearTimeout(timeoutId); timeoutId = undefined; }
+                    if (streamTimeoutId !== undefined) { clearTimeout(streamTimeoutId); streamTimeoutId = undefined; }
+                }
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
-
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`,
-                },
-                body: JSON.stringify(requestBody),
-                signal: controller.signal,
-            });
-
-            clearTimeout(timeoutId);
-
-            let finalResponse = response;
-            if (!response.ok) {
-                const errorText = await response.text();
-                let errorData: any = null;
                 try {
-                    errorData = JSON.parse(errorText);
-                } catch (e) {
-                    // Not JSON, use as-is
-                }
+                    const endpoint = this.getEndpoint(config);
+                    const apiKey = this.getApiKey(config);
 
-                // If error is about temperature, retry without temperature (use default)
-                if (errorData?.error?.code === 'unsupported_value' && 
-                    errorData?.error?.param === 'temperature' &&
-                    errorData?.error?.message?.includes('Only the default')) {
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
-                    }
-                    // Retry without temperature parameter
-                    const retryBody = { ...requestBody };
-                    delete retryBody.temperature;
+                    let activeController = new AbortController();
+                    timeoutId = setTimeout(() => activeController.abort(), timeout);
 
-                    const retryController = new AbortController();
-                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+                    const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
 
-                    const retryResponse = await fetch(endpoint, {
+                    const response = await fetch(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${apiKey}`,
                         },
-                        body: JSON.stringify(retryBody),
-                        signal: retryController.signal,
+                        body: JSON.stringify(requestBody),
+                        signal: activeController.signal,
                     });
 
-                    clearTimeout(retryTimeoutId);
+                    clearTimeouts();
 
-                    if (!retryResponse.ok) {
-                        const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                    }
-
-                    // Use retry response instead
-                    finalResponse = retryResponse;
-                }
-                // If error is about max_tokens, retry with max_completion_tokens
-                else if (errorData?.error?.code === 'unsupported_parameter' && 
-                    errorData?.error?.param === 'max_tokens' &&
-                    errorData?.error?.message?.includes('max_completion_tokens')) {
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
-                    }
-                    // Retry with max_completion_tokens
-                    const retryBody = { ...requestBody };
-                    delete retryBody.max_tokens;
-                    retryBody.max_completion_tokens = config.maxTokens;
-
-                    const retryController = new AbortController();
-                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
-
-                    const retryResponse = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`,
-                        },
-                        body: JSON.stringify(retryBody),
-                        signal: retryController.signal,
-                    });
-
-                    clearTimeout(retryTimeoutId);
-
-                    if (!retryResponse.ok) {
-                        const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                    }
-
-                    // Use retry response instead
-                    finalResponse = retryResponse;
-                } else {
-                    throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
-                }
-            }
-
-            reader = finalResponse.body?.getReader();
-            if (!reader) {
-                throw new Error('No response body reader available');
-            }
-
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let streamEnded = false;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    if (line.trim() === '') continue;
-
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6).trim();
-                        
-                        if (data === '[DONE]') {
-                            streamEnded = true;
-                            break;
-                        }
-
+                    let finalResponse = response;
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        let errorData: any = null;
                         try {
-                            const json = JSON.parse(data);
-                            const delta = json.choices?.[0]?.delta;
-
-                            // Handle tool calls
-                            if (delta?.tool_calls) {
-                                const toolCalls = delta.tool_calls.map((tc: any) => ({
-                                    id: tc.id,
-                                    name: tc.function?.name || '',
-                                    arguments: tc.function?.arguments || '{}',
-                                }));
-                                yield {
-                                    content: '',
-                                    done: false,
-                                    toolCalls,
-                                };
-                            }
-
-                            if (delta?.content) {
-                                yield {
-                                    content: delta.content,
-                                    done: false,
-                                };
-                            }
-
-                            // Extract token usage from final chunk
-                            if (json.usage?.total_tokens) {
-                                tokensUsed = json.usage.total_tokens;
-                            }
-                            if (json.usage?.prompt_tokens) {
-                                promptTokens = json.usage.prompt_tokens;
-                            }
-                            if (json.usage?.completion_tokens) {
-                                completionTokens = json.usage.completion_tokens;
-                            }
-                            // Capture actual model from response
-                            if (json.model) {
-                                responseModel = json.model;
-                            }
+                            errorData = JSON.parse(errorText);
                         } catch (e) {
-                            // Skip invalid JSON lines
+                            // Not JSON, use as-is
+                        }
+
+                        // If error is about temperature, retry without temperature (use default)
+                        if (errorData?.error?.code === 'unsupported_value' && 
+                            errorData?.error?.param === 'temperature' &&
+                            errorData?.error?.message?.includes('Only the default')) {
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn('[OpenAIProvider] Invalid JSON in stream:', line);
+                                console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
                             }
+                            // Retry without temperature parameter
+                            const retryBody = { ...requestBody };
+                            delete retryBody.temperature;
+
+                            const retryController = new AbortController();
+                            const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                            const retryResponse = await fetch(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: retryController.signal,
+                            });
+
+                            clearTimeout(retryTimeoutId);
+
+                            if (!retryResponse.ok) {
+                                const retryErrorText = await retryResponse.text();
+                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            }
+
+                            // Use retry response instead
+                            finalResponse = retryResponse;
+                            activeController = retryController;
+                        }
+                        // If error is about max_tokens, retry with max_completion_tokens
+                        else if (errorData?.error?.code === 'unsupported_parameter' && 
+                            errorData?.error?.param === 'max_tokens' &&
+                            errorData?.error?.message?.includes('max_completion_tokens')) {
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
+                            }
+                            // Retry with max_completion_tokens
+                            const retryBody = { ...requestBody };
+                            delete retryBody.max_tokens;
+                            retryBody.max_completion_tokens = config.maxTokens;
+
+                            const retryController = new AbortController();
+                            const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                            const retryResponse = await fetch(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: retryController.signal,
+                            });
+
+                            clearTimeout(retryTimeoutId);
+
+                            if (!retryResponse.ok) {
+                                const retryErrorText = await retryResponse.text();
+                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            }
+
+                            // Use retry response instead
+                            finalResponse = retryResponse;
+                            activeController = retryController;
+                        } else {
+                            throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
                         }
                     }
+
+                    if (!finalResponse.body) {
+                        throw new Error('No response body');
+                    }
+
+                    // Per-chunk idle timeout — only after confirming a successful stream response
+                    clearTimeouts();
+                    streamTimeoutId = setTimeout(() => activeController.abort(), timeout);
+
+                    reader = finalResponse.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) { streamClosed = true; break; }
+
+                        // Reset idle timeout on each chunk
+                        clearTimeout(streamTimeoutId);
+                        streamTimeoutId = setTimeout(() => activeController.abort(), timeout);
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (line.trim() === '') continue;
+
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6).trim();
+
+                                if (data === '[DONE]') {
+                                    streamEnded = true;
+                                    break;
+                                }
+
+                                try {
+                                    const json = JSON.parse(data);
+                                    const delta = json.choices?.[0]?.delta;
+
+                                    // Extract token usage
+                                    if (json.usage) {
+                                        const usage = json.usage;
+                                        if (usage.prompt_tokens !== undefined) {
+                                            promptTokens = usage.prompt_tokens;
+                                        }
+                                        if (usage.completion_tokens !== undefined) {
+                                            completionTokens = usage.completion_tokens;
+                                        }
+                                        tokensUsed = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+                                    }
+
+                                    // Track response model
+                                    if (json.model) {
+                                        responseModel = json.model;
+                                    }
+
+                                    // Track content
+                                    if (delta?.content) {
+                                        chunks.push({
+                                            content: delta.content,
+                                            done: false,
+                                        });
+                                    }
+
+                                    // Handle tool calls
+                                    if (delta?.tool_calls) {
+                                        const toolCalls = delta.tool_calls.map((tc: any) => ({
+                                            id: tc.id,
+                                            name: tc.function?.name || '',
+                                            arguments: tc.function?.arguments || '',
+                                        }));
+                                        chunks.push({
+                                            content: '',
+                                            done: false,
+                                            toolCalls,
+                                        });
+                                    }
+                                } catch (e) {
+                                    // Skip invalid JSON lines
+                                }
+                            }
+                        }
+
+                        if (streamEnded) break;
+                    }
+
+                    clearTimeouts();
+
+                    // Set span attributes
+                    latency = Date.now() - startTime;
+                    span.setAttribute("gen_ai.request.model", config.model);
+                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
+                    span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
+                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
+                    span.setAttribute("gen_ai.agent.name", config.name || '');
+
+                    // Push final done chunk with metadata
+                    chunks.push({
+                        content: '',
+                        done: true,
+                        metadata: {
+                            tokensUsed,
+                            promptTokens,
+                            completionTokens,
+                            latency,
+                            error: !(streamEnded || streamClosed),
+                        },
+                    });
+
+                } catch (error: any) {
+                    latency = Date.now() - startTime;
+
+                    span.setAttribute("gen_ai.request.model", config.model);
+                    span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
+                    span.setAttribute("gen_ai.agent.name", config.name || '');
+                    span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+
+                    clearTimeouts();
+
+                    chunks.push({
+                        content: '',
+                        done: true,
+                        metadata: {
+                            tokensUsed: 0,
+                            latency,
+                            error: true,
+                        },
+                    });
+                } finally {
+                    clearTimeouts();
+                    reader?.cancel();
                 }
-
-                if (streamEnded) break;
             }
-
-            // Set span attributes
-            const latency = Date.now() - startTime;
-            sentrySpan?.setAttribute("gen_ai.request.model", config.model);
-            sentrySpan?.setAttribute("gen_ai.response.model", responseModel || config.model);
-            sentrySpan?.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-            sentrySpan?.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-            sentrySpan?.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-            sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
-
-            // Yield final done chunk with metadata - only if stream ended cleanly via [DONE]
-            if (!streamEnded) {
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.warn('[OpenAIProvider] Stream ended without [DONE] signal');
-                }
-                yield {
-                    content: '',
-                    done: true,
-                    metadata: {
-                        tokensUsed: 0,
-                        latency,
-                        error: true,
-                    },
-                };
-            } else {
-                yield {
-                    content: '',
-                    done: true,
-                    metadata: {
-                        tokensUsed,
-                        promptTokens,
-                        completionTokens,
-                        latency,
-                        error: false,
-                    },
-                };
-            }
-        } catch (error: any) {
-            const latency = Date.now() - startTime;
-
-            sentrySpan?.setAttribute("gen_ai.request.model", config.model);
-            sentrySpan?.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-            sentrySpan?.setAttribute("gen_ai.agent.name", config.name || '');
-            sentrySpan?.setStatus({ code: 2, message: error.message || 'Unknown error' });
-
-            if (error.name === 'AbortError') {
-                throw new Error(`OpenAI request timeout after ${timeout}ms`);
-            }
-
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[OpenAIProvider] Stream error:', error);
-            }
-
-            yield {
-                content: '',
-                done: true,
-                metadata: {
-                    tokensUsed: 0,
-                    latency,
-                    error: true,
-                },
-            };
-        } finally {
-            reader?.cancel();
-            sentrySpan?.end();
-        }
+        );
+        yield* chunks;
     }
 
     async generate(
@@ -421,7 +431,7 @@ export class OpenAIProvider implements AIProvider {
         const startTime = Date.now();
         let responseModel = '';
 
-return Sentry.startSpan({
+        return Sentry.startSpan({
             op: "gen_ai.chat",
             name: `LLM ${config.model}`,
             attributes: {
@@ -432,148 +442,143 @@ return Sentry.startSpan({
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             try {
-            const endpoint = this.getEndpoint(config);
-            const apiKey = this.getApiKey(config);
+                const endpoint = this.getEndpoint(config);
+                const apiKey = this.getApiKey(config);
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false, tools);
+                const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false, tools);
 
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`,
-                },
-                body: JSON.stringify(requestBody),
-                signal: controller.signal,
-            });
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                    },
+                    body: JSON.stringify(requestBody),
+                    signal: controller.signal,
+                });
 
-            clearTimeout(timeoutId);
+                clearTimeout(timeoutId);
 
-            let finalResponse = response;
-            if (!response.ok) {
-                const errorText = await response.text();
-                let errorData: any = null;
-                try {
-                    errorData = JSON.parse(errorText);
-                } catch (e) {
-                    // Not JSON, use as-is
+                let finalResponse = response;
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorData: any = null;
+                    try {
+                        errorData = JSON.parse(errorText);
+                    } catch (e) {
+                        // Not JSON, use as-is
+                    }
+
+                    // If error is about temperature, retry without temperature (use default)
+                    if (errorData?.error?.code === 'unsupported_value' && 
+                        errorData?.error?.param === 'temperature' &&
+                        errorData?.error?.message?.includes('Only the default')) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
+                        }
+                        const retryBody = { ...requestBody };
+                        delete retryBody.temperature;
+
+                        const retryController = new AbortController();
+                        const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                        const retryResponse = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${apiKey}`,
+                            },
+                            body: JSON.stringify(retryBody),
+                            signal: retryController.signal,
+                        });
+
+                        clearTimeout(retryTimeoutId);
+
+                        if (!retryResponse.ok) {
+                            const retryErrorText = await retryResponse.text();
+                            throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                        }
+
+                        finalResponse = retryResponse;
+                    }
+                    // If error is about max_tokens, retry with max_completion_tokens
+                    else if (errorData?.error?.code === 'unsupported_parameter' && 
+                        errorData?.error?.param === 'max_tokens' &&
+                        errorData?.error?.message?.includes('max_completion_tokens')) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
+                        }
+                        const retryBody = { ...requestBody };
+                        delete retryBody.max_tokens;
+                        retryBody.max_completion_tokens = config.maxTokens;
+
+                        const retryController = new AbortController();
+                        const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+
+                        const retryResponse = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${apiKey}`,
+                            },
+                            body: JSON.stringify(retryBody),
+                            signal: retryController.signal,
+                        });
+
+                        clearTimeout(retryTimeoutId);
+
+                        if (!retryResponse.ok) {
+                            const retryErrorText = await retryResponse.text();
+                            throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                        }
+
+                        finalResponse = retryResponse;
+                    } else {
+                        throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                    }
                 }
 
-                // If error is about temperature, retry without temperature (use default)
-                if (errorData?.error?.code === 'unsupported_value' && 
-                    errorData?.error?.param === 'temperature' &&
-                    errorData?.error?.message?.includes('Only the default')) {
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
-                    }
-                    // Retry without temperature parameter
-                    const retryBody = { ...requestBody };
-                    delete retryBody.temperature;
+                const data = await finalResponse.json();
+                const content = data.choices?.[0]?.message?.content || '';
+                const tokensUsed = data.usage?.total_tokens || 0;
+                const promptTokens = data.usage?.prompt_tokens || 0;
+                const completionTokens = data.usage?.completion_tokens || 0;
+                const latency = Date.now() - startTime;
 
-                    const retryController = new AbortController();
-                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
+                span.setAttribute("gen_ai.response.model", data.model || config.model);
+                span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
+                span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
+                span.setAttribute("gen_ai.agent.name", config.name || '');
 
-                    const retryResponse = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`,
-                        },
-                        body: JSON.stringify(retryBody),
-                        signal: retryController.signal,
-                    });
+                return {
+                    content,
+                    tokensUsed,
+                    latency,
+                    error: false,
+                };
+            } catch (error: any) {
+                const latency = Date.now() - startTime;
 
-                    clearTimeout(retryTimeoutId);
+                span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
-                    if (!retryResponse.ok) {
-                        const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                    }
-
-                    // Use retry response instead
-                    finalResponse = retryResponse;
+                if (error.name === 'AbortError') {
+                    throw new Error(`OpenAI request timeout after ${timeout}ms`);
                 }
-                // If error is about max_tokens, retry with max_completion_tokens
-                else if (errorData?.error?.code === 'unsupported_parameter' && 
-                    errorData?.error?.param === 'max_tokens' &&
-                    errorData?.error?.message?.includes('max_completion_tokens')) {
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
-                    }
-                    // Retry with max_completion_tokens
-                    const retryBody = { ...requestBody };
-                    delete retryBody.max_tokens;
-                    retryBody.max_completion_tokens = config.maxTokens;
 
-                    const retryController = new AbortController();
-                    const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
-
-                    const retryResponse = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${apiKey}`,
-                        },
-                        body: JSON.stringify(retryBody),
-                        signal: retryController.signal,
-                    });
-
-                    clearTimeout(retryTimeoutId);
-
-                    if (!retryResponse.ok) {
-                        const retryErrorText = await retryResponse.text();
-                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                    }
-
-                    // Use retry response instead
-                    finalResponse = retryResponse;
-                } else {
-                    throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[OpenAIProvider] Generate error:', error);
                 }
+
+                return {
+                    content: '',
+                    tokensUsed: 0,
+                    latency,
+                    error: true,
+                };
             }
-
-            const data = await finalResponse.json();
-            const content = data.choices?.[0]?.message?.content || '';
-            const tokensUsed = data.usage?.total_tokens || 0;
-            const promptTokens = data.usage?.prompt_tokens || 0;
-            const completionTokens = data.usage?.completion_tokens || 0;
-            const latency = Date.now() - startTime;
-
-            span.setAttribute("gen_ai.response.model", data.model || config.model);
-            span.setAttribute("gen_ai.usage.input_tokens", promptTokens);
-            span.setAttribute("gen_ai.usage.output_tokens", completionTokens);
-            span.setAttribute("gen_ai.agent.name", config.name || '');
-
-            return {
-                content,
-                tokensUsed,
-                latency,
-                error: false,
-            };
-        } catch (error: any) {
-            const latency = Date.now() - startTime;
-
-            span.setStatus({ code: 2, message: error.message || 'Unknown error' });
-
-            if (error.name === 'AbortError') {
-                throw new Error(`OpenAI request timeout after ${timeout}ms`);
-            }
-
-            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[OpenAIProvider] Generate error:', error);
-            }
-
-            return {
-                content: '',
-                tokensUsed: 0,
-                latency,
-                error: true,
-            };
-        }
         });
     }
 }
-
