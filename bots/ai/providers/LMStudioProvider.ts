@@ -55,7 +55,6 @@ export class LMStudioProvider implements AIProvider {
                 let completionTokens = 0;
                 let responseModel = '';
                 let streamEnded = false;
-                let streamClosed = false;
                 const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
                 let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
                 let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -108,7 +107,7 @@ export class LMStudioProvider implements AIProvider {
 
                     while (true) {
                         const { done, value } = await reader.read();
-                        if (done) { streamClosed = true; break; }
+                        if (done) break;
 
                         // Reset idle timeout on each chunk
                         clearTimeout(timeoutId);
@@ -225,7 +224,7 @@ export class LMStudioProvider implements AIProvider {
                             promptTokens,
                             completionTokens,
                             latency,
-                            error: !(streamEnded || streamClosed),
+                            error: !streamEnded,
                         },
                     });
 
@@ -273,11 +272,10 @@ export class LMStudioProvider implements AIProvider {
             },
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = `${config.endpoint}/v1/chat/completions`;
-
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), timeout);
 
                 const response = await fetch(endpoint, {
                     method: 'POST',
@@ -344,6 +342,8 @@ export class LMStudioProvider implements AIProvider {
                     latency,
                     error: true,
                 };
+            } finally {
+                clearTimeout(timeoutId);
             }
         });
     }
