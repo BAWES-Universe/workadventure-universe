@@ -14,7 +14,7 @@ import { OpenAIProvider } from "../ai/providers/OpenAIProvider";
 import type { AIProviderConfig } from "../ai/types";
 
 // Use vi.hoisted() so mocks are defined before vi.mock is hoisted to top
-const { mockSentrySpan, mockStartSpan, mockStartSpanManual } = vi.hoisted(() => {
+const { mockSentrySpan, mockStartSpan } = vi.hoisted(() => {
     const span = { end: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() };
     return {
         mockSentrySpan: span,
@@ -23,15 +23,11 @@ const { mockSentrySpan, mockStartSpan, mockStartSpanManual } = vi.hoisted(() => 
             span.end();
             return result;
         }),
-        mockStartSpanManual: vi.fn((_opts: any, cb: any) => {
-            return cb(span);
-        }),
     };
 });
 
 vi.mock("@sentry/node", () => ({
     startSpan: mockStartSpan,
-    startSpanManual: mockStartSpanManual,
 }));
 
 // Mock encryption
