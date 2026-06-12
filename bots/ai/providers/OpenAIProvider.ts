@@ -171,11 +171,13 @@ export class OpenAIProvider implements AIProvider {
                 let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
                 let timeoutId: ReturnType<typeof setTimeout> | undefined;
                 let streamTimeoutId: ReturnType<typeof setTimeout> | undefined;
+                let retryTimeoutId: ReturnType<typeof setTimeout> | undefined;
                 let latency = 0;
 
                 function clearTimeouts() {
                     if (timeoutId !== undefined) { clearTimeout(timeoutId); timeoutId = undefined; }
                     if (streamTimeoutId !== undefined) { clearTimeout(streamTimeoutId); streamTimeoutId = undefined; }
+                    if (retryTimeoutId !== undefined) { clearTimeout(retryTimeoutId); retryTimeoutId = undefined; }
                 }
 
                 try {
@@ -221,8 +223,7 @@ export class OpenAIProvider implements AIProvider {
                             delete retryBody.temperature;
 
                             const retryController = new AbortController();
-                            const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
-
+                            retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
                             const retryResponse = await fetch(endpoint, {
                                 method: 'POST',
                                 headers: {
@@ -234,6 +235,7 @@ export class OpenAIProvider implements AIProvider {
                             });
 
                             clearTimeout(retryTimeoutId);
+                            retryTimeoutId = undefined;
 
                             if (!retryResponse.ok) {
                                 const retryErrorText = await retryResponse.text();
@@ -257,8 +259,7 @@ export class OpenAIProvider implements AIProvider {
                             retryBody.max_completion_tokens = config.maxTokens;
 
                             const retryController = new AbortController();
-                            const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
-
+                            retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
                             const retryResponse = await fetch(endpoint, {
                                 method: 'POST',
                                 headers: {
@@ -270,6 +271,7 @@ export class OpenAIProvider implements AIProvider {
                             });
 
                             clearTimeout(retryTimeoutId);
+                            retryTimeoutId = undefined;
 
                             if (!retryResponse.ok) {
                                 const retryErrorText = await retryResponse.text();
@@ -441,12 +443,11 @@ export class OpenAIProvider implements AIProvider {
             },
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = this.getEndpoint(config);
                 const apiKey = this.getApiKey(config);
-
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), timeout);
 
                 const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false, tools);
 
@@ -485,24 +486,26 @@ export class OpenAIProvider implements AIProvider {
                         const retryController = new AbortController();
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
-                        const retryResponse = await fetch(endpoint, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${apiKey}`,
-                            },
-                            body: JSON.stringify(retryBody),
-                            signal: retryController.signal,
-                        });
+                        try {
+                            const retryResponse = await fetch(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: retryController.signal,
+                            });
 
-                        clearTimeout(retryTimeoutId);
+                            if (!retryResponse.ok) {
+                                const retryErrorText = await retryResponse.text();
+                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            }
 
-                        if (!retryResponse.ok) {
-                            const retryErrorText = await retryResponse.text();
-                            throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            finalResponse = retryResponse;
+                        } finally {
+                            clearTimeout(retryTimeoutId);
                         }
-
-                        finalResponse = retryResponse;
                     }
                     // If error is about max_tokens, retry with max_completion_tokens
                     else if (errorData?.error?.code === 'unsupported_parameter' && 
@@ -518,24 +521,26 @@ export class OpenAIProvider implements AIProvider {
                         const retryController = new AbortController();
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
-                        const retryResponse = await fetch(endpoint, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${apiKey}`,
-                            },
-                            body: JSON.stringify(retryBody),
-                            signal: retryController.signal,
-                        });
+                        try {
+                            const retryResponse = await fetch(endpoint, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': `Bearer ${apiKey}`,
+                                },
+                                body: JSON.stringify(retryBody),
+                                signal: retryController.signal,
+                            });
 
-                        clearTimeout(retryTimeoutId);
+                            if (!retryResponse.ok) {
+                                const retryErrorText = await retryResponse.text();
+                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            }
 
-                        if (!retryResponse.ok) {
-                            const retryErrorText = await retryResponse.text();
-                            throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                            finalResponse = retryResponse;
+                        } finally {
+                            clearTimeout(retryTimeoutId);
                         }
-
-                        finalResponse = retryResponse;
                     } else {
                         throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
                     }
@@ -578,6 +583,8 @@ export class OpenAIProvider implements AIProvider {
                     latency,
                     error: true,
                 };
+            } finally {
+                clearTimeout(timeoutId);
             }
         });
     }
