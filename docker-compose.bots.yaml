@@ -28,6 +28,8 @@ services:
       ENABLE_MOVEMENT_LOGGING: "true"
       ENABLE_BOT_DEBUG: "true"
       NODE_ENV: development
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-https://eu.posthog.com}
     depends_on:
       - redis
     restart: unless-stopped
