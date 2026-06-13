@@ -677,7 +677,7 @@ CRITICAL RESPONSE RULES:
                 
                 // Capture PostHog LLM analytics event (fire-and-forget)
                 // Uses accumulated input/output and token counts from the completed stream
-                if (streamCompleted && accumulatedContent) {
+                if (streamCompleted) {
                     const cost = this.calculateCost(providerId, {
                         tokensUsed,
                         promptTokens,
@@ -687,11 +687,11 @@ CRITICAL RESPONSE RULES:
                     });
                     captureGeneration({
                         distinctId: `bot-${botId}`,
-                        traceId: parentSpan?.spanId || `trace-${Date.now()}`,
+                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                         model: config.model,
                         provider: config.type,
                         input: message,
-                        output: accumulatedContent,
+                        output: accumulatedContent || '',
                         inputTokens: promptTokens,
                         outputTokens: completionTokens,
                         cost,
