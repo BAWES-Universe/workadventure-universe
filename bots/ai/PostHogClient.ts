@@ -35,6 +35,7 @@ export interface CapturedGeneration {
     output: string;
     inputTokens: number;
     outputTokens: number;
+    latency?: number;
     cost?: number;
     botId?: string;
     playerId?: string;
@@ -61,6 +62,7 @@ export function captureGeneration(params: CapturedGeneration): void {
                     $ai_provider: params.provider,
                     $ai_input_tokens: params.inputTokens,
                     $ai_output_tokens: params.outputTokens,
+                    $ai_latency: params.latency,
                     $ai_cost: params.cost,
                     bot_id: params.botId,
                     player_id: params.playerId,
@@ -81,9 +83,10 @@ export function captureGeneration(params: CapturedGeneration): void {
                     $ai_trace_id: params.traceId,
                     $ai_model: params.model,
                     $ai_input: params.input,
-                    $ai_output: params.output,
+                    $ai_output_choices: [params.output],
                     $ai_input_tokens: params.inputTokens,
                     $ai_output_tokens: params.outputTokens,
+                    $ai_latency: params.latency,
                     $ai_cost: params.cost,
                     $ai_provider: params.provider,
                     bot_id: params.botId,

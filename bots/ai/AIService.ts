@@ -685,6 +685,7 @@ CRITICAL RESPONSE RULES:
                         latency: Date.now() - startTime,
                         error: false,
                     });
+                    const generationLatency = Date.now() - startTime;
                     captureGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -694,6 +695,7 @@ CRITICAL RESPONSE RULES:
                         output: accumulatedContent || '',
                         inputTokens: promptTokens,
                         outputTokens: completionTokens,
+                        latency: generationLatency,
                         cost,
                         botId,
                         playerId: String(playerId),
