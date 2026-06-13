@@ -83,7 +83,7 @@ export function captureGeneration(params: CapturedGeneration): void {
                     $ai_trace_id: params.traceId,
                     $ai_model: params.model,
                     $ai_input: params.input,
-                    $ai_output_choices: [params.output],
+                    $ai_output_choices: [{role: 'assistant', content: params.output}],
                     $ai_input_tokens: params.inputTokens,
                     $ai_output_tokens: params.outputTokens,
                     $ai_latency: params.latency,
