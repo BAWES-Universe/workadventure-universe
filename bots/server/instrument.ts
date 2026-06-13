@@ -1,6 +1,4 @@
 import * as Sentry from "@sentry/node";
-// conversationIdIntegration is only exported from @sentry/core, not @sentry/node
-import { conversationIdIntegration } from "@sentry/core";
 
 const SENTRY_DSN = process.env.SENTRY_DSN_BOT;
 const SENTRY_RELEASE = process.env.SENTRY_RELEASE;
@@ -24,12 +22,10 @@ if (SENTRY_DSN) {
                 }
                 return SENTRY_TRACES_SAMPLE_RATE;
             },
+            // streamGenAiSpans: true is REQUIRED for Conversations tab.
+            // Without this, gen_ai spans stay bundled in the parent transaction
+            // and Conversations can't process them.
             streamGenAiSpans: true,
-            // Enable span streaming pipeline — required for gen_ai child spans to be
-            // properly batched with their parent transaction in the OTel-based SDK.
-            // Without this, each span is exported individually (via SentrySpanExporter)
-            // and gen_ai.chat child spans never appear nested under gen_ai.agent.
-            traceLifecycle: "stream",
             attachStacktrace: true,
             // Only capture warn/error logs to avoid spamming from debug logging
             enableLogs: true,
@@ -39,9 +35,6 @@ if (SENTRY_DSN) {
         };
 
         Sentry.init(sentryOptions);
-
-        // Add conversation tracking integration for AI Monitoring Conversations tab
-        (Sentry as any).addIntegration(conversationIdIntegration());
 
         console.info("Sentry initialized (AI monitoring + error/warn logging)");
     } catch (e) {

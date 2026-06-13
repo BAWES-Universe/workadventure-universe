@@ -432,6 +432,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // write the ID to a cloned isolation scope that's discarded as soon as the
             // callback returns, before startSpanManual runs.
             Sentry.getCurrentScope().setConversationId(`bot-${botId}-player-${playerId}`);
+            // Note: intentionally NOT setting an event-level tag (Sentry.setTag).
+            // The conversation ID is captured as a span attribute via setConversationId(),
+            // which is properly isolated per async context on the current scope.
+            // setTag on the isolation scope would race between concurrent bot conversations.
 
             // Create a parent Sentry span for this conversation turn.
             // Use startSpanManual instead of startInactiveSpan because
