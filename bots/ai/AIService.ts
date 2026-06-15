@@ -24,6 +24,9 @@ import * as SentryCore from '@sentry/core';
 const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
     (SentryCore as any)?._INTERNAL_setSpanForScope;
 
+// PostHog LLM Analytics — captures $ai_trace + $ai_generation events alongside Sentry
+import { captureGeneration, flushPostHog } from './PostHogClient';
+
 interface CachedCredentials {
     credentials: AIProviderConfig;
     expiresAt: number;
@@ -625,6 +628,13 @@ CRITICAL RESPONSE RULES:
                             if (resultChunk.metadata?.error) {
                                 error = true;
                             }
+                            // Accumulate content from follow-up response (same as main stream)
+                            if (resultChunk.content) {
+                                accumulatedContent += resultChunk.content;
+                            }
+                            if (resultChunk.done) {
+                                streamCompleted = true;
+                            }
                             yield resultChunk;
                         }
                         continue;
@@ -664,6 +674,34 @@ CRITICAL RESPONSE RULES:
                         console.log(`[AIService] Skipping chunk yield - waiting for tool calls to complete`);
                     }
                 }
+                
+                // Capture PostHog LLM analytics event (fire-and-forget)
+                // Uses accumulated input/output and token counts from the completed stream
+                if (streamCompleted) {
+                    const cost = this.calculateCost(providerId, {
+                        tokensUsed,
+                        promptTokens,
+                        completionTokens,
+                        latency: Date.now() - startTime,
+                        error: false,
+                    });
+                    const generationLatency = (Date.now() - startTime) / 1000;
+                    captureGeneration({
+                        distinctId: `bot-${botId}`,
+                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                        model: config.model,
+                        provider: config.type,
+                        input: message,
+                        output: accumulatedContent || '',
+                        inputTokens: promptTokens,
+                        outputTokens: completionTokens,
+                        latency: generationLatency,
+                        cost,
+                        botId,
+                        playerId: String(playerId),
+                        space: spaceName,
+                    });
+                }
             } finally {
                 // Close parent Sentry span
                 parentSpan?.end();
@@ -690,6 +728,11 @@ CRITICAL RESPONSE RULES:
                     if (err instanceof Error) {
                         console.error('[AIService] Error details:', err.message);
                     }
+                });
+
+                // Flush PostHog events — pg.flush() sends queued events without destroying the singleton
+                flushPostHog().catch(err => {
+                    console.error('[AIService] Failed to flush PostHog:', err);
                 });
             }
         } catch (error: any) {
