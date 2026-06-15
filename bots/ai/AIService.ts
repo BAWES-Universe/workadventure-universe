@@ -685,7 +685,7 @@ CRITICAL RESPONSE RULES:
                         latency: Date.now() - startTime,
                         error: false,
                     });
-                    const generationLatency = Date.now() - startTime;
+                    const generationLatency = (Date.now() - startTime) / 1000;
                     captureGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
