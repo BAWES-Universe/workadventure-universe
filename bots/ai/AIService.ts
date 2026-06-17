@@ -417,6 +417,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let followUpTokens = 0;
             let followUpPromptTokens = 0;
             let followUpCompletionTokens = 0;
+            let followUpStartTime = 0;
+            let hadToolCalls = false;
             let pendingToolCalls: ToolCall[] = [];
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
@@ -584,6 +586,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
                         pendingToolCalls = [];
                         toolCallAccumulator.clear();
+                        hadToolCalls = true;
 
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[AIService] ✅ Tool execution completed. Results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, success: tr.result?.success, error: tr.result?.error, areasCount: tr.result?.areas?.length || 0 })));
@@ -612,6 +615,8 @@ CRITICAL RESPONSE RULES:
                         const followUpMessageWithNoThink = isQwenModel 
                             ? followUpMessage + '\n\n/no_think'
                             : followUpMessage;
+
+                        followUpStartTime = Date.now();
 
                         for await (const resultChunk of this.providerRegistry.generateStream(
                             providerId,
@@ -648,7 +653,7 @@ CRITICAL RESPONSE RULES:
                         }
 
                         // Capture $ai_generation for the tool follow-up LLM call
-                        if (followUpContent) {
+                        if (followUpContent || error) {
                             captureAiGeneration({
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -659,13 +664,13 @@ CRITICAL RESPONSE RULES:
                                 output: followUpContent,
                                 inputTokens: followUpPromptTokens,
                                 outputTokens: followUpCompletionTokens,
-                                latency: (Date.now() - startTime) / 1000,
+                                latency: (Date.now() - followUpStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
                                     tokensUsed: 0,
                                     promptTokens: followUpPromptTokens,
                                     completionTokens: followUpCompletionTokens,
-                                    latency: Date.now() - startTime,
-                                    error: false,
+                                    latency: Date.now() - followUpStartTime,
+                                    error,
                                 }),
                                 botId,
                                 playerId: String(playerId),
@@ -712,7 +717,7 @@ CRITICAL RESPONSE RULES:
                 }
                 
                 // Capture $ai_generation for the initial (first) LLM call
-                if (streamCompleted && firstCallContent) {
+                if (streamCompleted && (firstCallContent || hadToolCalls)) {
                     captureAiGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -740,7 +745,7 @@ CRITICAL RESPONSE RULES:
             } finally {
                 // Capture $ai_trace (turn-level) in finally block
                 // $ai_generation is captured per-call around each generateStream() invocation
-                if (streamCompleted && accumulatedContent) {
+                if (streamCompleted && (accumulatedContent || error)) {
                     const generationLatency = (Date.now() - startTime) / 1000;
                     captureAiTrace({
                         distinctId: `bot-${botId}`,
@@ -758,7 +763,7 @@ CRITICAL RESPONSE RULES:
                             promptTokens,
                             completionTokens,
                             latency: Date.now() - startTime,
-                            error: false,
+                            error,
                         }),
                         botId,
                         playerId: String(playerId),
