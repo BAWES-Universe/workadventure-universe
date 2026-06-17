@@ -789,7 +789,7 @@ CRITICAL RESPONSE RULES:
                 }
                 
                 // Tool follow-up path: capture $ai_generation for the follow-up LLM call
-                if (!followUpGenCaptured && hadToolCalls && followUpContent) {
+                if (!followUpGenCaptured && hadToolCalls && (followUpContent || error)) {
                     captureAiGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
