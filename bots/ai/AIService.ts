@@ -418,6 +418,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let followUpPromptTokens = 0;
             let followUpCompletionTokens = 0;
             let followUpStartTime = 0;
+            let firstCallStartTime = 0;
             let hadToolCalls = false;
             let pendingToolCalls: ToolCall[] = [];
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
@@ -494,6 +495,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 parentSpan?.setAttribute("bot.model", config.model);
                 parentSpan?.setAttribute("bot.space", spaceName || '');
 
+                firstCallStartTime = Date.now();
+
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
                     systemPrompt,
@@ -566,6 +569,32 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
                     if (chunk.done && toolCallAccumulator.size > 0) {
+                        // Capture $ai_generation for the initial LLM call NOW —
+                        // before tool execution distorts its latency and before
+                        // the follow-up call inverts event ordering
+                        captureAiGeneration({
+                            distinctId: `bot-${botId}`,
+                            traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                            sessionId: `conversation-${botId}-player-${playerId}`,
+                            model: config.model,
+                            provider: config.type,
+                            input: userMessageForQwen,
+                            output: firstCallContent,
+                            inputTokens: promptTokens,
+                            outputTokens: completionTokens,
+                            latency: (Date.now() - firstCallStartTime) / 1000,
+                            cost: this.calculateCost(providerId, {
+                                tokensUsed,
+                                promptTokens,
+                                completionTokens,
+                                latency: Date.now() - firstCallStartTime,
+                                error,
+                            }),
+                            botId,
+                            playerId: String(playerId),
+                            space: spaceName,
+                        });
+
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
                             id: tc.id,
@@ -717,7 +746,8 @@ CRITICAL RESPONSE RULES:
                 }
                 
                 // Capture $ai_generation for the initial (first) LLM call
-                if (streamCompleted && (firstCallContent || hadToolCalls)) {
+                // (non-tool-flow: fires here; tool-flow already fired before tool execution)
+                if (streamCompleted && firstCallContent && !hadToolCalls) {
                     captureAiGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -728,13 +758,13 @@ CRITICAL RESPONSE RULES:
                         output: firstCallContent,
                         inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                         outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
-                        latency: (Date.now() - startTime) / 1000,
+                        latency: (Date.now() - firstCallStartTime) / 1000,
                         cost: this.calculateCost(providerId, {
                             tokensUsed,
                             promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
                             completionTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
-                            latency: Date.now() - startTime,
-                            error: false,
+                            latency: Date.now() - firstCallStartTime,
+                            error,
                         }),
                         botId,
                         playerId: String(playerId),
