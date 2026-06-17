@@ -695,7 +695,7 @@ CRITICAL RESPONSE RULES:
                                 outputTokens: followUpCompletionTokens,
                                 latency: (Date.now() - followUpStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
-                                    tokensUsed: 0,
+                                    tokensUsed: followUpTokens,
                                     promptTokens: followUpPromptTokens,
                                     completionTokens: followUpCompletionTokens,
                                     latency: Date.now() - followUpStartTime,
