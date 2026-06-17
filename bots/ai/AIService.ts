@@ -426,6 +426,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // skipping code after the loop but still reaching the finally block.
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
+            let followUpInput = '';
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
 
@@ -650,6 +651,7 @@ CRITICAL RESPONSE RULES:
                         const followUpMessageWithNoThink = isQwenModel 
                             ? followUpMessage + '\n\n/no_think'
                             : followUpMessage;
+                        followUpInput = followUpMessageWithNoThink;
 
                         followUpStartTime = Date.now();
 
@@ -794,7 +796,7 @@ CRITICAL RESPONSE RULES:
                         sessionId: `conversation-${botId}-player-${playerId}`,
                         model: config.model,
                         provider: config.type,
-                        input: `(tool follow-up) ${message}`,
+                        input: followUpInput,
                         output: followUpContent,
                         inputTokens: followUpPromptTokens,
                         outputTokens: followUpCompletionTokens,
