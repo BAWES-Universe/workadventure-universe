@@ -25,7 +25,7 @@ const sentrySetSpan: ((scope: any, span: any) => void) | undefined =
     (SentryCore as any)?._INTERNAL_setSpanForScope;
 
 // PostHog LLM Analytics — captures $ai_trace + $ai_generation events alongside Sentry
-import { captureGeneration, flushPostHog } from './PostHogClient';
+import { captureAiGeneration, captureAiTrace, flushPostHog } from './PostHogClient';
 
 interface CachedCredentials {
     credentials: AIProviderConfig;
@@ -412,6 +412,14 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let error = false;
             let streamCompleted = false;
             let accumulatedContent = '';
+            let firstCallContent = '';
+            let followUpContent = '';
+            let followUpTokens = 0;
+            let followUpPromptTokens = 0;
+            let followUpCompletionTokens = 0;
+            let followUpStartTime = 0;
+            let firstCallStartTime = 0;
+            let hadToolCalls = false;
             let pendingToolCalls: ToolCall[] = [];
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
@@ -487,6 +495,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 parentSpan?.setAttribute("bot.model", config.model);
                 parentSpan?.setAttribute("bot.space", spaceName || '');
 
+                firstCallStartTime = Date.now();
+
                 for await (const chunk of this.providerRegistry.generateStream(
                     providerId,
                     systemPrompt,
@@ -559,6 +569,32 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
                     if (chunk.done && toolCallAccumulator.size > 0) {
+                        // Capture $ai_generation for the initial LLM call NOW —
+                        // before tool execution distorts its latency and before
+                        // the follow-up call inverts event ordering
+                        captureAiGeneration({
+                            distinctId: `bot-${botId}`,
+                            traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                            sessionId: `conversation-${botId}-player-${playerId}`,
+                            model: config.model,
+                            provider: config.type,
+                            input: userMessageForQwen,
+                            output: firstCallContent,
+                            inputTokens: promptTokens,
+                            outputTokens: completionTokens,
+                            latency: (Date.now() - firstCallStartTime) / 1000,
+                            cost: this.calculateCost(providerId, {
+                                tokensUsed,
+                                promptTokens,
+                                completionTokens,
+                                latency: Date.now() - firstCallStartTime,
+                                error,
+                            }),
+                            botId,
+                            playerId: String(playerId),
+                            space: spaceName,
+                        });
+
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
                             id: tc.id,
@@ -579,6 +615,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
                         pendingToolCalls = [];
                         toolCallAccumulator.clear();
+                        hadToolCalls = true;
 
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[AIService] ✅ Tool execution completed. Results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, success: tr.result?.success, error: tr.result?.error, areasCount: tr.result?.areas?.length || 0 })));
@@ -608,6 +645,8 @@ CRITICAL RESPONSE RULES:
                             ? followUpMessage + '\n\n/no_think'
                             : followUpMessage;
 
+                        followUpStartTime = Date.now();
+
                         for await (const resultChunk of this.providerRegistry.generateStream(
                             providerId,
                             systemPrompt,
@@ -615,15 +654,18 @@ CRITICAL RESPONSE RULES:
                             configWithParent,
                             tools.length > 0 ? tools : undefined
                         )) {
-                            // Track tokens from follow-up call metadata (accumulate across tool call rounds)
+                            // Track tokens from follow-up call metadata
                             if (resultChunk.metadata?.tokensUsed) {
                                 tokensUsed += resultChunk.metadata.tokensUsed;
+                                followUpTokens += resultChunk.metadata.tokensUsed;
                             }
                             if (resultChunk.metadata?.promptTokens) {
                                 promptTokens += resultChunk.metadata.promptTokens;
+                                followUpPromptTokens += resultChunk.metadata.promptTokens;
                             }
                             if (resultChunk.metadata?.completionTokens) {
                                 completionTokens += resultChunk.metadata.completionTokens;
+                                followUpCompletionTokens += resultChunk.metadata.completionTokens;
                             }
                             if (resultChunk.metadata?.error) {
                                 error = true;
@@ -631,11 +673,38 @@ CRITICAL RESPONSE RULES:
                             // Accumulate content from follow-up response (same as main stream)
                             if (resultChunk.content) {
                                 accumulatedContent += resultChunk.content;
+                                followUpContent += resultChunk.content;
                             }
                             if (resultChunk.done) {
                                 streamCompleted = true;
                             }
                             yield resultChunk;
+                        }
+
+                        // Capture $ai_generation for the tool follow-up LLM call
+                        if (followUpContent || error) {
+                            captureAiGeneration({
+                                distinctId: `bot-${botId}`,
+                                traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                                sessionId: `conversation-${botId}-player-${playerId}`,
+                                model: config.model,
+                                provider: config.type,
+                                input: followUpMessageWithNoThink,
+                                output: followUpContent,
+                                inputTokens: followUpPromptTokens,
+                                outputTokens: followUpCompletionTokens,
+                                latency: (Date.now() - followUpStartTime) / 1000,
+                                cost: this.calculateCost(providerId, {
+                                    tokensUsed: 0,
+                                    promptTokens: followUpPromptTokens,
+                                    completionTokens: followUpCompletionTokens,
+                                    latency: Date.now() - followUpStartTime,
+                                    error,
+                                }),
+                                botId,
+                                playerId: String(playerId),
+                                space: spaceName,
+                            });
                         }
                         continue;
                     }
@@ -643,6 +712,7 @@ CRITICAL RESPONSE RULES:
                     // Accumulate content (only if no tool calls pending)
                     if (chunk.content && pendingToolCalls.length === 0) {
                         accumulatedContent += chunk.content;
+                        firstCallContent += chunk.content;
                     }
 
 // Track metadata from chunk
@@ -675,12 +745,39 @@ CRITICAL RESPONSE RULES:
                     }
                 }
                 
+                // Capture $ai_generation for the initial (first) LLM call
+                // (non-tool-flow: fires here; tool-flow already fired before tool execution)
+                if (streamCompleted && firstCallContent && !hadToolCalls) {
+                    captureAiGeneration({
+                        distinctId: `bot-${botId}`,
+                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                        sessionId: `conversation-${botId}-player-${playerId}`,
+                        model: config.model,
+                        provider: config.type,
+                        input: userMessageForQwen,
+                        output: firstCallContent,
+                        inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
+                        outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
+                        latency: (Date.now() - firstCallStartTime) / 1000,
+                        cost: this.calculateCost(providerId, {
+                            tokensUsed,
+                            promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
+                            completionTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
+                            latency: Date.now() - firstCallStartTime,
+                            error,
+                        }),
+                        botId,
+                        playerId: String(playerId),
+                        space: spaceName,
+                    });
+                }
+                
             } finally {
-                // Capture PostHog LLM analytics event (fire-and-forget) in finally block
-                // to ensure it runs even if the for-await loop throws after the last chunk
-                if (streamCompleted && accumulatedContent) {
+                // Capture $ai_trace (turn-level) in finally block
+                // $ai_generation is captured per-call around each generateStream() invocation
+                if (streamCompleted && (accumulatedContent || error)) {
                     const generationLatency = (Date.now() - startTime) / 1000;
-                    captureGeneration({
+                    captureAiTrace({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
                         sessionId: `conversation-${botId}-player-${playerId}`,
@@ -696,7 +793,7 @@ CRITICAL RESPONSE RULES:
                             promptTokens,
                             completionTokens,
                             latency: Date.now() - startTime,
-                            error: false,
+                            error,
                         }),
                         botId,
                         playerId: String(playerId),
