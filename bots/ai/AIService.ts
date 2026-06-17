@@ -421,11 +421,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let firstCallStartTime = 0;
             let hadToolCalls = false;
             let pendingToolCalls: ToolCall[] = [];
-            // Track whether per-call $ai_generation was captured in the tool-call flow.
-            // Flag-based because the for-await loop may throw after the last chunk,
-            // skipping code after the loop but still reaching the finally block.
             let initialGenCaptured = false;
             let followUpGenCaptured = false;
+            let followUpError = false;
+            // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
@@ -676,7 +675,7 @@ CRITICAL RESPONSE RULES:
                                 followUpCompletionTokens += resultChunk.metadata.completionTokens;
                             }
                             if (resultChunk.metadata?.error) {
-                                error = true;
+                                followUpError = true;
                             }
                             // Accumulate content from follow-up response (same as main stream)
                             if (resultChunk.content) {
@@ -690,7 +689,7 @@ CRITICAL RESPONSE RULES:
                         }
 
                         // Capture $ai_generation for the tool follow-up LLM call
-                        if (followUpContent || error) {
+                        if (followUpContent || followUpError) {
                             captureAiGeneration({
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -707,7 +706,7 @@ CRITICAL RESPONSE RULES:
                                     promptTokens: followUpPromptTokens,
                                     completionTokens: followUpCompletionTokens,
                                     latency: Date.now() - followUpStartTime,
-                                    error,
+                                    error: followUpError,
                                 }),
                                 botId,
                                 playerId: String(playerId),
@@ -789,7 +788,7 @@ CRITICAL RESPONSE RULES:
                 }
                 
                 // Tool follow-up path: capture $ai_generation for the follow-up LLM call
-                if (!followUpGenCaptured && hadToolCalls && (followUpContent || error)) {
+                if (!followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
                     captureAiGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -806,7 +805,7 @@ CRITICAL RESPONSE RULES:
                             promptTokens: followUpPromptTokens,
                             completionTokens: followUpCompletionTokens,
                             latency: Date.now() - followUpStartTime,
-                            error,
+                            error: followUpError,
                         }),
                         botId,
                         playerId: String(playerId),
