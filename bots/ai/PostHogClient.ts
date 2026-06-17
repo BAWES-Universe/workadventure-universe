@@ -5,14 +5,21 @@
  * 
  * Only activates when POSTHOG_API_KEY env var is set — silent no-op otherwise.
  * Uses fire-and-forget pattern with try/catch isolation — never throws.
+ * Uses posthog-node SDK for capture (v4.18.0).
  * Flush uses pg.flush() (not shutdown) to avoid destroying the singleton.
+ * 
+ * PostHog LLM Observability data model:
+ *   $ai_session_id    — Stable across all turns in one conversation (bot-player pair)
+ *   $ai_trace_id      — Unique per-turn (identifies one response cycle)
+ *   $ai_trace         — Root event per turn (input + output state)
+ *   $ai_generation    — Per-LLM-call event (model, tokens, cost, output choices)
  */
 
 import { PostHog } from 'posthog-node';
 
 const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
 // Support both POSTHOG_HOST and POSTHOG_URL for backward compatibility
-const POSTHOG_HOST = process.env.POSTHOG_HOST || process.env.POSTHOG_URL || 'https://eu.posthog.com';
+const POSTHOG_HOST = (process.env.POSTHOG_HOST || process.env.POSTHOG_URL || 'https://eu.posthog.com').replace(/\/+$/, '');
 
 let client: PostHog | null = null;
 
@@ -21,6 +28,7 @@ export function getPostHogClient(): PostHog | null {
     if (!client) {
         client = new PostHog(POSTHOG_API_KEY, {
             host: POSTHOG_HOST,
+            flushAt: 1,
         });
     }
     return client;
@@ -28,7 +36,10 @@ export function getPostHogClient(): PostHog | null {
 
 export interface CapturedGeneration {
     distinctId: string;
+    /** Unique per-turn trace ID (e.g. Sentry span ID or UUID) */
     traceId: string;
+    /** Stable across all turns in the same conversation */
+    sessionId: string;
     model: string;
     provider: string;
     input: string;
@@ -49,24 +60,30 @@ export function captureGeneration(params: CapturedGeneration): void {
 
         const timestamp = new Date();
 
+        // Common properties shared across both event types
+        const commonProps: Record<string, any> = {
+            $ai_session_id: params.sessionId,
+            $ai_trace_id: params.traceId,
+            $ai_model: params.model,
+            $ai_provider: params.provider,
+            $ai_input: [{role: 'user', content: params.input}],
+            $ai_input_tokens: params.inputTokens,
+            $ai_output_tokens: params.outputTokens,
+            $ai_latency: params.latency,
+            $ai_cost: params.cost,
+            bot_id: params.botId,
+            player_id: params.playerId,
+            space: params.space,
+        };
+
         // Capture $ai_trace (top-level conversation turn)
         try {
             pg.capture({
                 distinctId: params.distinctId,
                 event: '$ai_trace',
                 properties: {
-                    $ai_trace_id: params.traceId,
-                    $ai_input: params.input,
+                    ...commonProps,
                     $ai_output: params.output,
-                    $ai_model: params.model,
-                    $ai_provider: params.provider,
-                    $ai_input_tokens: params.inputTokens,
-                    $ai_output_tokens: params.outputTokens,
-                    $ai_latency: params.latency,
-                    $ai_cost: params.cost,
-                    bot_id: params.botId,
-                    player_id: params.playerId,
-                    space: params.space,
                 },
                 timestamp,
             });
@@ -74,23 +91,14 @@ export function captureGeneration(params: CapturedGeneration): void {
             console.error('[PostHog] Failed to capture $ai_trace:', e);
         }
 
-        // Capture $ai_generation (per-LLM-call)
+        // Capture $ai_generation (per-LLM-call — powers PostHog's LLM dashboards)
         try {
             pg.capture({
                 distinctId: params.distinctId,
                 event: '$ai_generation',
                 properties: {
-                    $ai_trace_id: params.traceId,
-                    $ai_model: params.model,
-                    $ai_input: params.input,
+                    ...commonProps,
                     $ai_output_choices: [{role: 'assistant', content: params.output}],
-                    $ai_input_tokens: params.inputTokens,
-                    $ai_output_tokens: params.outputTokens,
-                    $ai_latency: params.latency,
-                    $ai_cost: params.cost,
-                    $ai_provider: params.provider,
-                    bot_id: params.botId,
-                    player_id: params.playerId,
                 },
                 timestamp,
             });

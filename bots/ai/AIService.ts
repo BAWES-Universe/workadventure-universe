@@ -675,20 +675,15 @@ CRITICAL RESPONSE RULES:
                     }
                 }
                 
-                // Capture PostHog LLM analytics event (fire-and-forget)
-                // Uses accumulated input/output and token counts from the completed stream
-                if (streamCompleted) {
-                    const cost = this.calculateCost(providerId, {
-                        tokensUsed,
-                        promptTokens,
-                        completionTokens,
-                        latency: Date.now() - startTime,
-                        error: false,
-                    });
+            } finally {
+                // Capture PostHog LLM analytics event (fire-and-forget) in finally block
+                // to ensure it runs even if the for-await loop throws after the last chunk
+                if (streamCompleted && accumulatedContent) {
                     const generationLatency = (Date.now() - startTime) / 1000;
                     captureGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                        sessionId: `conversation-${botId}-player-${playerId}`,
                         model: config.model,
                         provider: config.type,
                         input: message,
@@ -696,13 +691,19 @@ CRITICAL RESPONSE RULES:
                         inputTokens: promptTokens,
                         outputTokens: completionTokens,
                         latency: generationLatency,
-                        cost,
+                        cost: this.calculateCost(providerId, {
+                            tokensUsed,
+                            promptTokens,
+                            completionTokens,
+                            latency: Date.now() - startTime,
+                            error: false,
+                        }),
                         botId,
                         playerId: String(playerId),
                         space: spaceName,
                     });
                 }
-            } finally {
+                
                 // Close parent Sentry span
                 parentSpan?.end();
                 // Restore the previous active span to prevent cross-session leakage
