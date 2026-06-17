@@ -421,6 +421,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let firstCallStartTime = 0;
             let hadToolCalls = false;
             let pendingToolCalls: ToolCall[] = [];
+            // Track whether per-call $ai_generation was captured in the tool-call flow.
+            // Flag-based because the for-await loop may throw after the last chunk,
+            // skipping code after the loop but still reaching the finally block.
+            let initialGenCaptured = false;
+            let followUpGenCaptured = false;
+            let followUpInput = '';
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
 
@@ -594,6 +600,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             playerId: String(playerId),
                             space: spaceName,
                         });
+                        initialGenCaptured = true;
 
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
@@ -644,6 +651,7 @@ CRITICAL RESPONSE RULES:
                         const followUpMessageWithNoThink = isQwenModel 
                             ? followUpMessage + '\n\n/no_think'
                             : followUpMessage;
+                        followUpInput = followUpMessageWithNoThink;
 
                         followUpStartTime = Date.now();
 
@@ -705,6 +713,7 @@ CRITICAL RESPONSE RULES:
                                 playerId: String(playerId),
                                 space: spaceName,
                             });
+                            followUpGenCaptured = true;
                         }
                         continue;
                     }
@@ -745,9 +754,16 @@ CRITICAL RESPONSE RULES:
                     }
                 }
                 
-                // Capture $ai_generation for the initial (first) LLM call
-                // (non-tool-flow: fires here; tool-flow already fired before tool execution)
-                if (streamCompleted && firstCallContent && !hadToolCalls) {
+                // $ai_generation for non-tool-call flow captured in finally block
+                // (must be there because the for-await loop may throw after the last chunk)
+                
+            } finally {
+                // Capture $ai_generation (per-call) in finally block — the for-await
+                // loop may throw after the last chunk, so code after the loop never
+                // executes, but the finally block always runs.
+                
+                // Non-tool-call path: capture $ai_generation for the first (only) LLM call
+                if (!initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
                     captureAiGeneration({
                         distinctId: `bot-${botId}`,
                         traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -772,9 +788,33 @@ CRITICAL RESPONSE RULES:
                     });
                 }
                 
-            } finally {
-                // Capture $ai_trace (turn-level) in finally block
-                // $ai_generation is captured per-call around each generateStream() invocation
+                // Tool follow-up path: capture $ai_generation for the follow-up LLM call
+                if (!followUpGenCaptured && hadToolCalls && followUpContent) {
+                    captureAiGeneration({
+                        distinctId: `bot-${botId}`,
+                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                        sessionId: `conversation-${botId}-player-${playerId}`,
+                        model: config.model,
+                        provider: config.type,
+                        input: followUpInput,
+                        output: followUpContent,
+                        inputTokens: followUpPromptTokens,
+                        outputTokens: followUpCompletionTokens,
+                        latency: (Date.now() - followUpStartTime) / 1000,
+                        cost: this.calculateCost(providerId, {
+                            tokensUsed: followUpTokens,
+                            promptTokens: followUpPromptTokens,
+                            completionTokens: followUpCompletionTokens,
+                            latency: Date.now() - followUpStartTime,
+                            error,
+                        }),
+                        botId,
+                        playerId: String(playerId),
+                        space: spaceName,
+                    });
+                }
+                
+                // Capture $ai_trace (turn-level)
                 if (streamCompleted && (accumulatedContent || error)) {
                     const generationLatency = (Date.now() - startTime) / 1000;
                     captureAiTrace({
