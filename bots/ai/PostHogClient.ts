@@ -5,14 +5,21 @@
  * 
  * Only activates when POSTHOG_API_KEY env var is set — silent no-op otherwise.
  * Uses fire-and-forget pattern with try/catch isolation — never throws.
+ * Uses posthog-node SDK for capture (v4.18.0).
  * Flush uses pg.flush() (not shutdown) to avoid destroying the singleton.
+ * 
+ * PostHog LLM Observability data model:
+ *   $ai_session_id    — Stable across all turns in one conversation (bot-player pair)
+ *   $ai_trace_id      — Unique per-turn (identifies one response cycle)
+ *   $ai_trace         — Root event per turn (input + output state)
+ *   $ai_generation    — Per-LLM-call event (model, tokens, cost, output choices)
  */
 
 import { PostHog } from 'posthog-node';
 
 const POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
 // Support both POSTHOG_HOST and POSTHOG_URL for backward compatibility
-const POSTHOG_HOST = process.env.POSTHOG_HOST || process.env.POSTHOG_URL || 'https://eu.posthog.com';
+const POSTHOG_HOST = (process.env.POSTHOG_HOST || process.env.POSTHOG_URL || 'https://eu.posthog.com').replace(/\/+$/, '');
 
 let client: PostHog | null = null;
 
@@ -21,6 +28,7 @@ export function getPostHogClient(): PostHog | null {
     if (!client) {
         client = new PostHog(POSTHOG_API_KEY, {
             host: POSTHOG_HOST,
+            flushAt: 1,
         });
     }
     return client;
@@ -28,7 +36,10 @@ export function getPostHogClient(): PostHog | null {
 
 export interface CapturedGeneration {
     distinctId: string;
+    /** Unique per-turn trace ID (e.g. Sentry span ID or UUID) */
     traceId: string;
+    /** Stable across all turns in the same conversation */
+    sessionId: string;
     model: string;
     provider: string;
     input: string;
@@ -42,64 +53,77 @@ export interface CapturedGeneration {
     space?: string;
 }
 
-export function captureGeneration(params: CapturedGeneration): void {
+/**
+ * Capture a per-LLM-call $ai_generation event.
+ * Emit one call per generateStream() invocation so PostHog's trace view
+ * correctly reflects multi-call tool flows (initial call + tool follow-up).
+ */
+export function captureAiGeneration(params: CapturedGeneration): void {
     try {
         const pg = getPostHogClient();
         if (!pg) return;
 
         const timestamp = new Date();
 
-        // Capture $ai_trace (top-level conversation turn)
-        try {
-            pg.capture({
-                distinctId: params.distinctId,
-                event: '$ai_trace',
-                properties: {
-                    $ai_trace_id: params.traceId,
-                    $ai_input: params.input,
-                    $ai_output: params.output,
-                    $ai_model: params.model,
-                    $ai_provider: params.provider,
-                    $ai_input_tokens: params.inputTokens,
-                    $ai_output_tokens: params.outputTokens,
-                    $ai_latency: params.latency,
-                    $ai_cost: params.cost,
-                    bot_id: params.botId,
-                    player_id: params.playerId,
-                    space: params.space,
-                },
-                timestamp,
-            });
-        } catch (e) {
-            console.error('[PostHog] Failed to capture $ai_trace:', e);
-        }
-
-        // Capture $ai_generation (per-LLM-call)
-        try {
-            pg.capture({
-                distinctId: params.distinctId,
-                event: '$ai_generation',
-                properties: {
-                    $ai_trace_id: params.traceId,
-                    $ai_model: params.model,
-                    $ai_input: params.input,
-                    $ai_output_choices: [{role: 'assistant', content: params.output}],
-                    $ai_input_tokens: params.inputTokens,
-                    $ai_output_tokens: params.outputTokens,
-                    $ai_latency: params.latency,
-                    $ai_cost: params.cost,
-                    $ai_provider: params.provider,
-                    bot_id: params.botId,
-                    player_id: params.playerId,
-                },
-                timestamp,
-            });
-        } catch (e) {
-            console.error('[PostHog] Failed to capture $ai_generation:', e);
-        }
+        pg.capture({
+            distinctId: params.distinctId,
+            event: '$ai_generation',
+            properties: {
+                $ai_session_id: params.sessionId,
+                $ai_trace_id: params.traceId,
+                $ai_model: params.model,
+                $ai_provider: params.provider,
+                $ai_input: [{role: 'user', content: params.input}],
+                $ai_input_tokens: params.inputTokens,
+                $ai_output_tokens: params.outputTokens,
+                $ai_latency: params.latency,
+                $ai_cost: params.cost,
+                $ai_output_choices: [{role: 'assistant', content: params.output}],
+                bot_id: params.botId,
+                player_id: params.playerId,
+                space: params.space,
+            },
+            timestamp,
+        });
     } catch (e) {
-        // Outer catch — never let PostHog failures impact the request path
-        console.error('[PostHog] captureGeneration failed:', e);
+        console.error('[PostHog] Failed to capture $ai_generation:', e);
+    }
+}
+
+/**
+ * Capture a turn-level $ai_trace event.
+ * Fires once in the finally block — aggregates the full turn including
+ * any tool call rounds into one trace event per turn.
+ */
+export function captureAiTrace(params: CapturedGeneration): void {
+    try {
+        const pg = getPostHogClient();
+        if (!pg) return;
+
+        const timestamp = new Date();
+
+        pg.capture({
+            distinctId: params.distinctId,
+            event: '$ai_trace',
+            properties: {
+                $ai_session_id: params.sessionId,
+                $ai_trace_id: params.traceId,
+                $ai_model: params.model,
+                $ai_provider: params.provider,
+                $ai_input: [{role: 'user', content: params.input}],
+                $ai_input_tokens: params.inputTokens,
+                $ai_output_tokens: params.outputTokens,
+                $ai_latency: params.latency,
+                $ai_cost: params.cost,
+                $ai_output: params.output,
+                bot_id: params.botId,
+                player_id: params.playerId,
+                space: params.space,
+            },
+            timestamp,
+        });
+    } catch (e) {
+        console.error('[PostHog] Failed to capture $ai_trace:', e);
     }
 }
 
