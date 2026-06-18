@@ -762,90 +762,95 @@ CRITICAL RESPONSE RULES:
                 // Capture $ai_generation (per-call) in finally block — the for-await
                 // loop may throw after the last chunk, so code after the loop never
                 // executes, but the finally block always runs.
-                
-                // Non-tool-call path: capture $ai_generation for the first (only) LLM call
-                if (!initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
-                    captureAiGeneration({
-                        distinctId: `bot-${botId}`,
-                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
-                        sessionId: `conversation-${botId}-player-${playerId}`,
-                        model: config.model,
-                        provider: config.type,
-                        input: userMessageForQwen,
-                        output: firstCallContent,
-                        inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
-                        outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
-                        latency: (Date.now() - firstCallStartTime) / 1000,
-                        cost: this.calculateCost(providerId, {
-                            tokensUsed,
-                            promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
-                            completionTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
-                            latency: Date.now() - firstCallStartTime,
-                            error,
-                        }),
-                        botId,
-                        playerId: String(playerId),
-                        space: spaceName,
-                    });
+                //
+                // All PostHog capture calls (captureAiGeneration, captureAiTrace) may
+                // throw if the admin API is unreachable. The Sentry span cleanup must
+                // run regardless — wrap them in a try-finally so parentSpan?.end() and
+                // the scope restore always execute, preventing orphaned child spans.
+                try {
+                    // Non-tool-call path: capture $ai_generation for the first (only) LLM call
+                    if (!initialGenCaptured && streamCompleted && firstCallContent && !hadToolCalls) {
+                        captureAiGeneration({
+                            distinctId: `bot-${botId}`,
+                            traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                            sessionId: `conversation-${botId}-player-${playerId}`,
+                            model: config.model,
+                            provider: config.type,
+                            input: userMessageForQwen,
+                            output: firstCallContent,
+                            inputTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
+                            outputTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
+                            latency: (Date.now() - firstCallStartTime) / 1000,
+                            cost: this.calculateCost(providerId, {
+                                tokensUsed,
+                                promptTokens: followUpPromptTokens > 0 ? (promptTokens - followUpPromptTokens) : promptTokens,
+                                completionTokens: followUpCompletionTokens > 0 ? (completionTokens - followUpCompletionTokens) : completionTokens,
+                                latency: Date.now() - firstCallStartTime,
+                                error,
+                            }),
+                            botId,
+                            playerId: String(playerId),
+                            space: spaceName,
+                        });
+                    }
+                    
+                    // Tool follow-up path: capture $ai_generation for the follow-up LLM call
+                    if (!followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
+                        captureAiGeneration({
+                            distinctId: `bot-${botId}`,
+                            traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                            sessionId: `conversation-${botId}-player-${playerId}`,
+                            model: config.model,
+                            provider: config.type,
+                            input: followUpInput,
+                            output: followUpContent,
+                            inputTokens: followUpPromptTokens,
+                            outputTokens: followUpCompletionTokens,
+                            latency: (Date.now() - followUpStartTime) / 1000,
+                            cost: this.calculateCost(providerId, {
+                                tokensUsed: followUpTokens,
+                                promptTokens: followUpPromptTokens,
+                                completionTokens: followUpCompletionTokens,
+                                latency: Date.now() - followUpStartTime,
+                                error: followUpError,
+                            }),
+                            botId,
+                            playerId: String(playerId),
+                            space: spaceName,
+                        });
+                    }
+                    
+                    // Capture $ai_trace (turn-level)
+                    if (streamCompleted && (accumulatedContent || error)) {
+                        const generationLatency = (Date.now() - startTime) / 1000;
+                        captureAiTrace({
+                            distinctId: `bot-${botId}`,
+                            traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                            sessionId: `conversation-${botId}-player-${playerId}`,
+                            model: config.model,
+                            provider: config.type,
+                            input: message,
+                            output: accumulatedContent || '',
+                            inputTokens: promptTokens,
+                            outputTokens: completionTokens,
+                            latency: generationLatency,
+                            cost: this.calculateCost(providerId, {
+                                tokensUsed,
+                                promptTokens,
+                                completionTokens,
+                                latency: Date.now() - startTime,
+                                error,
+                            }),
+                            botId,
+                            playerId: String(playerId),
+                            space: spaceName,
+                        });
+                    }
+                } finally {
+                    // Always close Sentry span and restore scope, even if PostHog fails
+                    parentSpan?.end();
+                    sentrySetSpan?.(sentryScope, previousSpan);
                 }
-                
-                // Tool follow-up path: capture $ai_generation for the follow-up LLM call
-                if (!followUpGenCaptured && hadToolCalls && (followUpContent || followUpError)) {
-                    captureAiGeneration({
-                        distinctId: `bot-${botId}`,
-                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
-                        sessionId: `conversation-${botId}-player-${playerId}`,
-                        model: config.model,
-                        provider: config.type,
-                        input: followUpInput,
-                        output: followUpContent,
-                        inputTokens: followUpPromptTokens,
-                        outputTokens: followUpCompletionTokens,
-                        latency: (Date.now() - followUpStartTime) / 1000,
-                        cost: this.calculateCost(providerId, {
-                            tokensUsed: followUpTokens,
-                            promptTokens: followUpPromptTokens,
-                            completionTokens: followUpCompletionTokens,
-                            latency: Date.now() - followUpStartTime,
-                            error: followUpError,
-                        }),
-                        botId,
-                        playerId: String(playerId),
-                        space: spaceName,
-                    });
-                }
-                
-                // Capture $ai_trace (turn-level)
-                if (streamCompleted && (accumulatedContent || error)) {
-                    const generationLatency = (Date.now() - startTime) / 1000;
-                    captureAiTrace({
-                        distinctId: `bot-${botId}`,
-                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
-                        sessionId: `conversation-${botId}-player-${playerId}`,
-                        model: config.model,
-                        provider: config.type,
-                        input: message,
-                        output: accumulatedContent || '',
-                        inputTokens: promptTokens,
-                        outputTokens: completionTokens,
-                        latency: generationLatency,
-                        cost: this.calculateCost(providerId, {
-                            tokensUsed,
-                            promptTokens,
-                            completionTokens,
-                            latency: Date.now() - startTime,
-                            error,
-                        }),
-                        botId,
-                        playerId: String(playerId),
-                        space: spaceName,
-                    });
-                }
-                
-                // Close parent Sentry span
-                parentSpan?.end();
-                // Restore the previous active span to prevent cross-session leakage
-                sentrySetSpan?.(sentryScope, previousSpan);
 
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
