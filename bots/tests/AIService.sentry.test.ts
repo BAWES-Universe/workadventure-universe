@@ -278,7 +278,7 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
         // getCurrentScope should be called (once for setConversationId, once for sentrySetSpan)
         expect(mockGetCurrentScope).toHaveBeenCalledTimes(2);
         // scope.setConversationId should be called with the correct conversation ID
-        expect(mockScopeSetConversationId).toHaveBeenCalledWith("bot-bot-1-player-42");
+        expect(mockScopeSetConversationId).toHaveBeenCalledWith("conversation-bot-1-player-42");
         // startSpanManual should still be called exactly once
         expect(mockStartSpanManual).toHaveBeenCalledTimes(1);
         // Verify order: scope.setConversationId runs BEFORE startSpanManual (timing fix)
@@ -295,6 +295,6 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
             /* drain */
         }
 
-        expect(mockScopeSetConversationId).toHaveBeenCalledWith("bot-custom-bot-player-99");
+        expect(mockScopeSetConversationId).toHaveBeenCalledWith("conversation-custom-bot-player-99");
     });
 });
