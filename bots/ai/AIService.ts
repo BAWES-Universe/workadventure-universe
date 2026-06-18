@@ -447,11 +447,13 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             // the isolation scope boxing problem: wrapping in withIsolationScope would
             // write the ID to a cloned isolation scope that's discarded as soon as the
             // callback returns, before startSpanManual runs.
-            Sentry.getCurrentScope().setConversationId(`bot-${botId}-player-${playerId}`);
-            // Note: intentionally NOT setting an event-level tag (Sentry.setTag).
-            // The conversation ID is captured as a span attribute via setConversationId(),
-            // which is properly isolated per async context on the current scope.
-            // setTag on the isolation scope would race between concurrent bot conversations.
+            // Set conversation ID BEFORE creating the parent span.
+            // The conversationIdIntegration listens for spanStart — if
+            // setConversationId hasn't been called yet, the gen_ai.conversation.id
+            // span attribute is missing from the root gen_ai.agent span and
+            // Conversations can't group spans by conversation.
+            const conversationId = `conversation-${botId}-player-${playerId}`;
+            Sentry.getCurrentScope().setConversationId(conversationId);
 
             // Create a parent Sentry span for this conversation turn.
             // Use startSpanManual instead of startInactiveSpan because
