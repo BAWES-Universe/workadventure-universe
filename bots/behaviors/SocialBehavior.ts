@@ -793,7 +793,7 @@ export class SocialBehavior extends BaseBehavior {
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
-                    } else if (!parsedResponse.emotions && this.conversationMemory && cleanedMessage.trim()) {
+                    } else if (!parsedResponse.emotions && this.conversationMemory && processedMessage.trim()) {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[SocialBehavior] AI omitted emotion block, using neutral fallback`);
                         }
@@ -804,7 +804,7 @@ export class SocialBehavior extends BaseBehavior {
                             context: 'neutral',
                         });
                     }
-                    
+
                     if (this.responseProcessor && processedMessage.trim()) {
                         // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
                         const tokenUsage = tokensUsed > 0 ? {
