@@ -1399,8 +1399,17 @@ export class SocialBehavior extends BaseBehavior {
             // The AI has access to memory (if they've met before), map context, and can assess the situation
             // It should respond naturally, not ask meta questions
             const hasContext = context.length > 0;
+            
+            // Debug log: confirm memory context was loaded before greeting generation
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] generateAIGreeting: context.length=${context.length}, hasContext=${hasContext}`);
+                if (hasContext) {
+                    console.log(`[SocialBehavior] Context preview: ${context.substring(0, 200)}...`);
+                }
+            }
+            
             const playerMessage = hasContext
-                ? 'Greet this person who just approached you. You have history with them — reference past conversations, shared experiences, and your relationship naturally, like greeting someone you know.'
+                ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
