@@ -486,6 +486,16 @@ export class IdleBehavior extends BaseBehavior {
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && processedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
                     }
                     
                     // Debug: Check if responseProcessor exists
@@ -707,6 +717,16 @@ export class IdleBehavior extends BaseBehavior {
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && cleanedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
                     }
                     
                     // Clean with ResponseProcessor if available
@@ -805,6 +825,16 @@ export class IdleBehavior extends BaseBehavior {
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && cleanedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
                     }
                     
                     // Clean with ResponseProcessor if available
@@ -923,6 +953,16 @@ export class IdleBehavior extends BaseBehavior {
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, followerUserId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && cleanedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, followerUserId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
                     }
                     
                     // Clean with ResponseProcessor if available
@@ -1050,6 +1090,16 @@ export class IdleBehavior extends BaseBehavior {
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, followerUserId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && cleanedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, followerUserId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
                     }
                     
                     // Clean with ResponseProcessor if available
@@ -1122,7 +1172,10 @@ export class IdleBehavior extends BaseBehavior {
             // The AI has access to memory (if they've met before), map context, and can assess the situation
             // It should respond naturally, not ask meta questions
             // Use a more direct prompt that encourages a greeting, not a meta-response
-            const playerMessage = 'Greet this person who just approached you.';
+            const hasContext = context.length > 0;
+            const playerMessage = hasContext
+                ? 'Greet this person who just approached you. You have history with them — reference past conversations, shared experiences, and your relationship naturally, like greeting someone you know.'
+                : 'Greet this person who just approached you.';
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -1147,6 +1200,16 @@ export class IdleBehavior extends BaseBehavior {
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && cleanedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[IdleBehavior] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
                     }
                     
                     // Clean with ResponseProcessor if available
