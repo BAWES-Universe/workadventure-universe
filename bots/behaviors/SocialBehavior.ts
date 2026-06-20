@@ -495,14 +495,17 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
         
-        // Claim this slot — prevent onSpaceJoined leading-completion from
-        // also sending a greeting if addSpaceUserMessage arrived first.
-        this.leadingGreetedPlayers.add(playerId);
-        
         const botId = this.bot.getBotId();
 
         // Only send greeting for bot-initiated conversations (already tracked in activeConversations)
         if (this.activeConversations.has(playerId)) {
+            // Claim this slot — prevent onSpaceJoined leading-completion from
+            // also sending a greeting if addSpaceUserMessage arrived first.
+            // IMPORTANT: Only claim when we actually send the greeting. If the player isn't in
+            // activeConversations yet (WebSocket out-of-order: onSpaceUserJoined before
+            // onSpaceJoined), leave the slot open for onSpaceJoined to handle.
+            this.leadingGreetedPlayers.add(playerId);
+            
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[SocialBehavior] onMemoryReady: sending deferred greeting for player ${playerId}`);
             }
