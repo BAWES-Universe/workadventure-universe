@@ -469,7 +469,7 @@ export class PersistentMemory extends ConversationMemory {
                 }
             }
         } catch (error) {
-            console.error('[PersistentMemory] Error loading memories for bot ${botId}:', error);
+            console.error(`[PersistentMemory] Error loading memories for bot ${botId}:`, error);
             throw error;
         }
     }
