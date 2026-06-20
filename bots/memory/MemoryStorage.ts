@@ -196,9 +196,7 @@ export class MemoryStorage {
                 }
                 return [];
             }
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[MemoryStorage] Error loading memories:', error.message);
-            }
+            console.error('[MemoryStorage] Error loading memories:', error.message);
             return [];
         }
     }
