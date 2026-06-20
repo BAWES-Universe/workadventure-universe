@@ -690,20 +690,31 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         }
         
-        // Send greeting if:
-        // 1. Player actively approached (nearbyPlayers.size > 0) - normal case
-        // 2. Bot is summoned - when summoned, bot should greet even if player not in nearbyPlayers yet
-        const shouldGreet = this.bot && (this.nearbyPlayers.size > 0 || this.isSummoned);
+        // Track the space - greeting is now deferred to onMemoryReady
+        // which fires after UUID is known and memory is restored
+    }
+    
+    /**
+     * Called after memory is restored for a user joining the space.
+     * This is the correct time to generate greetings — after UUID is known
+     * and setUserUuidInMemory has restored pre-loaded memories.
+     */
+    protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
+        if (!this.bot || !this.currentSpaceName) return;
         
-        if (shouldGreet) {
-            // Find the player to greet (first nearby player)
-            let playerId: number | null = null;
-            const nearbyPlayers = this.bot?.getNearbyPlayers(100);
-            if (nearbyPlayers && nearbyPlayers.length > 0) {
-                playerId = nearbyPlayers[0].userId;
-            }
-            
-            if (playerId && this.bot) {
+        const config = this.config as PatrolBehaviorConfig;
+        const shouldRespond = config.respondToPlayers !== false;
+        if (!shouldRespond) return;
+        
+        // Find the player to greet
+        let playerId: number | null = null;
+        const nearbyPlayers = this.bot?.getNearbyPlayers(100);
+        if (nearbyPlayers && nearbyPlayers.length > 0) {
+            // Greet the player who just triggered the space (first nearby)
+            playerId = user.id;
+        }
+        
+        if (playerId && this.bot) {
                 const botId = this.bot.getBotId();
                 // Generate AI greeting instead of preset
                 this.generateAIGreeting(spaceName, playerId, botId).catch(error => {

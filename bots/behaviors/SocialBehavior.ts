@@ -346,18 +346,12 @@ export class SocialBehavior extends BaseBehavior {
             // Start conversation in memory
             this.conversationMemory?.startConversation(botId, this.targetPlayerId);
 
-            // Start conversation
+            // Start conversation (greeting deferred to onMemoryReady)
             this.activeConversations.set(this.targetPlayerId, {
                 playerId: this.targetPlayerId,
                 spaceName,
                 startTime: currentTime,
                 lastMessageTime: currentTime,
-            });
-
-            // Generate AI greeting instead of preset
-            this.generateAIGreeting(spaceName, this.targetPlayerId, botId).catch(error => {
-                console.error(`[SocialBehavior] Error generating AI greeting:`, error);
-                // Fallback: don't send anything if AI fails (no preset greeting)
             });
 
             // Clear target
@@ -508,7 +502,7 @@ export class SocialBehavior extends BaseBehavior {
         });
     }
 
-    onSpaceUserJoined(spaceName: string, user: SpaceUser): void {
+    onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): void {
         if (!this.bot) return;
 
         // Call base behavior first to track engagement

@@ -116,6 +116,15 @@ export abstract class BaseBehavior {
     protected setUserUuidInMemory?(botId: string, userId: number, userUuid: string, isLogged: boolean): void;
 
     /**
+     * Called after memory is restored for a user joining the space.
+     * This fires AFTER setUserUuidInMemory() so behaviors have access to restored memory.
+     * Override this in behavior implementations to trigger greetings at the correct time.
+     * @param spaceName Space name
+     * @param user User that joined, with id field
+     */
+    protected onMemoryReady?(spaceName: string, user: SpaceUser & { id: number }): void;
+
+    /**
      * Update behavior (called every frame/tick)
      * @param deltaTime Time since last update in milliseconds
      */
@@ -956,6 +965,12 @@ export abstract class BaseBehavior {
             const botId = this.bot?.getBotId();
             if (botId && this.setUserUuidInMemory) {
                 this.setUserUuidInMemory(botId, user.id, user.uuid, user.isLogged || false);
+            }
+            
+            // Notify behavior that memory is restored and UUID is available
+            // This is the correct time to generate greetings (after memory is ready)
+            if (botId) {
+                this.onMemoryReady?.(spaceName, user);
             }
         }
 

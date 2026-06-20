@@ -274,24 +274,21 @@ export class IdleBehavior extends BaseBehavior {
     }
 
     onSpaceJoined(spaceName: string): void {
-        // Bot joined a conversation, greet everyone
+        // Bot joined a conversation space - track it but defer greeting
+        // Greeting is now in onMemoryReady (fires after UUID is known and memory restored)
         if (!this.bot) return;
-
-        // Find the player who triggered the space join (first nearby player)
-        const nearbyPlayers = this.bot.getNearbyPlayers(100); // Use reasonable radius
+        
+        // Check if we just completed leading someone to this person
+        const nearbyPlayers = this.bot.getNearbyPlayers(100);
         if (nearbyPlayers.length > 0) {
             const playerId = nearbyPlayers[0].userId;
             const botId = this.bot.getBotId();
             
-            // Check if we just completed leading someone to this person
             if (this.justCompletedLeading && this.justCompletedLeading.targetPersonId === playerId) {
                 const followerUuid = this.justCompletedLeading.followerUuid;
-                // Clear the flag
                 this.justCompletedLeading = null;
                 
-                // Generate special greeting explaining we brought someone, then say goodbye and return
                 this.generateAIGreetingWithLeadingContext(spaceName, playerId, botId, followerUuid).then(() => {
-                    // After greeting, send goodbye message and return
                     this.sendGoodbyeAndReturn(spaceName, playerId, botId, 'person').catch(error => {
                         console.error(`[IdleBehavior] Error sending goodbye and returning:`, error);
                     });
@@ -300,13 +297,22 @@ export class IdleBehavior extends BaseBehavior {
                 });
                 return;
             }
-            
-            // Generate AI greeting instead of preset
-            this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
-                console.error(`[IdleBehavior] Error generating AI greeting:`, error);
-                // Fallback: don't send anything if AI fails (no preset greeting)
-            });
         }
+    }
+    
+    /**
+     * Called after memory is restored for a user joining the space.
+     */
+    protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
+        if (!this.bot) return;
+        
+        const botId = this.bot.getBotId();
+        const playerId = user.id;
+        
+        // Generate AI greeting — memory is now restored
+        this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
+            console.error(`[IdleBehavior] Error generating AI greeting:`, error);
+        });
     }
 
     onSpaceLeft(spaceName: string): void {
