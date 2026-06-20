@@ -710,6 +710,17 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
         if (!this.bot || !this.currentSpaceName) return;
         
+        // If we just completed leading to this person, defer to onSpaceJoined
+        // for the special leading-completion greeting with context. Otherwise
+        // onMemoryReady will send a generic greeting and onSpaceJoined will see
+        // the Set claimed and skip the special greeting entirely.
+        if (this.justCompletedLeading && this.justCompletedLeading.targetPersonId === user.id) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[PatrolBehavior] onMemoryReady: deferring to onSpaceJoined for player ${user.id} — leading-completion greeting pending`);
+            }
+            return;
+        }
+        
         // Skip if this player already received a leading-completion greeting
         // (from onSpaceJoined). Use a Set instead of justCompletedLeading flag
         // because spaceJoined and addSpaceUserMessage can arrive in any order.
