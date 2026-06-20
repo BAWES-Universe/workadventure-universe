@@ -21,6 +21,7 @@ import { ConversationCleanup } from '../memory/ConversationCleanup';
 import { AutoImprovement } from '../improvement/AutoImprovement';
 import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
+import * as Sentry from '@sentry/node';
 
 export interface BotInstance {
     botId: string;
@@ -405,16 +406,22 @@ export class BotManager {
         const hasLoadMemories = 'loadMemories' in this.conversationMemory && typeof (this.conversationMemory as any).loadMemories === 'function';
         
         if (hasLoadMemories) {
-            try {
-                await (this.conversationMemory as any).loadMemories(botId);
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[BotManager] Loaded persisted memories for bot ${botId}`);
+            const MAX_LOAD_RETRIES = 2;
+            for (let attempt = 1; attempt <= MAX_LOAD_RETRIES; attempt++) {
+                try {
+                    await (this.conversationMemory as any).loadMemories(botId);
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[BotManager] Loaded persisted memories for bot ${botId}`);
+                    }
+                    break;
+                } catch (error) {
+                    console.warn(`[BotManager] Failed to load memories for bot ${botId} (attempt ${attempt}/${MAX_LOAD_RETRIES}):`, error);
+                    if (attempt === MAX_LOAD_RETRIES) {
+                        Sentry.captureException(error);
+                    } else {
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
                 }
-            } catch (error) {
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.warn(`[BotManager] Failed to load persisted memories for bot ${botId}:`, error);
-                }
-                // Continue without persisted memories - they'll be created fresh
             }
         }
 

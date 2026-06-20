@@ -469,9 +469,8 @@ export class PersistentMemory extends ConversationMemory {
                 }
             }
         } catch (error) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[PersistentMemory] Error loading memories:', error);
-            }
+            console.error(`[PersistentMemory] Error loading memories for bot ${botId}:`, error);
+            throw error;
         }
     }
 
