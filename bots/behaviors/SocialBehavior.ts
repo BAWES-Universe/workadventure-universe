@@ -545,6 +545,10 @@ export class SocialBehavior extends BaseBehavior {
             lastMessageTime: currentTime,
         });
         
+        // Claim this slot — prevent onMemoryReady from also greeting this player
+        // (e.g., when onSpaceJoined triggers this and onSpaceUserJoined fires next).
+        this.leadingGreetedPlayers.add(playerId);
+        
         // Generate AI greeting instead of preset
         this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
             console.error(`[SocialBehavior] Error generating AI greeting:`, error);
