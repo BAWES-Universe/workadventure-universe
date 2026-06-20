@@ -706,23 +706,13 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const shouldRespond = config.respondToPlayers !== false;
         if (!shouldRespond) return;
         
-        // Find the player to greet
-        let playerId: number | null = null;
-        const nearbyPlayers = this.bot?.getNearbyPlayers(100);
-        if (nearbyPlayers && nearbyPlayers.length > 0) {
-            // Greet the player who just triggered the space (first nearby)
-            playerId = user.id;
-        }
-        
-        if (playerId && this.bot) {
-                const botId = this.bot.getBotId();
-                // Generate AI greeting instead of preset
-                this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
-                    console.error(`[PatrolBehavior] Error generating AI greeting:`, error);
-                    // Fallback: don't send anything if AI fails (no preset greeting)
-                });
-            }
-        }
+        // Greet the user who triggered onSpaceUserJoined — no need to re-check nearby
+        // (they're already in the space by definition)
+        const botId = this.bot.getBotId();
+        this.generateAIGreeting(spaceName, user.id, botId).catch(error => {
+            console.error(`[PatrolBehavior] Error generating AI greeting:`, error);
+            // Fallback: don't send anything if AI fails (no preset greeting)
+        });
     }
     
     onSpaceUserJoined(spaceName: string, user: any): void {

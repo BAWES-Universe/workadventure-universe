@@ -306,6 +306,15 @@ export class IdleBehavior extends BaseBehavior {
     protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
         if (!this.bot) return;
         
+        // Skip if we just completed leading to this person —
+        // the leading-completion greeting in onSpaceJoined handles this
+        if (this.justCompletedLeading && this.justCompletedLeading.targetPersonId === user.id) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] onMemoryReady: skipping greeting for player ${user.id} — leading-completion greeting was already sent`);
+            }
+            return;
+        }
+        
         const botId = this.bot.getBotId();
         const playerId = user.id;
         
