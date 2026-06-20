@@ -708,7 +708,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
      * and setUserUuidInMemory has restored pre-loaded memories.
      */
     protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
-        if (!this.bot || !this.currentSpaceName) return;
+        if (!this.bot) return;
         
         // If we just completed leading to this person, defer to onSpaceJoined
         // for the special leading-completion greeting with context. Otherwise
