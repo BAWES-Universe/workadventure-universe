@@ -313,6 +313,11 @@ export class SocialBehavior extends BaseBehavior {
                 // Clear the flag
                 this.justCompletedLeading = null;
                 
+                // Check if onMemoryReady already greeted this player (addSpaceUserMessage arrived first).
+                if (this.leadingGreetedPlayers.has(targetPersonId)) {
+                    return;
+                }
+                
                 // Start conversation in memory
                 this.conversationMemory?.startConversation(botId, targetPersonId);
                 
@@ -324,7 +329,7 @@ export class SocialBehavior extends BaseBehavior {
                     lastMessageTime: currentTime,
                 });
                 
-                // Mark as greeted so onMemoryReady doesn't send a duplicate
+                // Claim this slot — prevent onMemoryReady from also greeting this player.
                 this.leadingGreetedPlayers.add(targetPersonId);
                 
                 // Generate special greeting explaining we brought someone, then say goodbye and return
@@ -489,6 +494,10 @@ export class SocialBehavior extends BaseBehavior {
             this.leadingGreetedPlayers.delete(playerId);
             return;
         }
+        
+        // Claim this slot — prevent onSpaceJoined leading-completion from
+        // also sending a greeting if addSpaceUserMessage arrived first.
+        this.leadingGreetedPlayers.add(playerId);
         
         const botId = this.bot.getBotId();
 

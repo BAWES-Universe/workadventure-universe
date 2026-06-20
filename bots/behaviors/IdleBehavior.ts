@@ -288,8 +288,15 @@ export class IdleBehavior extends BaseBehavior {
                 const followerUuid = this.justCompletedLeading.followerUuid;
                 this.justCompletedLeading = null;
                 
+                // Check if onMemoryReady already greeted this player (addSpaceUserMessage arrived first).
+                if (this.leadingGreetedPlayers.has(playerId)) {
+                    return;
+                }
+                
+                // Claim this slot — prevent onMemoryReady from also greeting this player.
+                this.leadingGreetedPlayers.add(playerId);
+                
                 this.generateAIGreetingWithLeadingContext(spaceName, playerId, botId, followerUuid).then(() => {
-                    this.leadingGreetedPlayers.add(playerId);
                     this.sendGoodbyeAndReturn(spaceName, playerId, botId, 'person').catch(error => {
                         console.error(`[IdleBehavior] Error sending goodbye and returning:`, error);
                     });
@@ -318,6 +325,10 @@ export class IdleBehavior extends BaseBehavior {
             this.leadingGreetedPlayers.delete(user.id);
             return;
         }
+        
+        // Claim this slot — prevent onSpaceJoined leading-completion from
+        // also sending a greeting if addSpaceUserMessage arrived first.
+        this.leadingGreetedPlayers.add(user.id);
         
         const botId = this.bot.getBotId();
         const playerId = user.id;

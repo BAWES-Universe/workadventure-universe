@@ -681,13 +681,19 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 // Clear the flag
                 this.justCompletedLeading = null;
                 
+                // Check if onMemoryReady already greeted this player (addSpaceUserMessage arrived first).
+                if (this.leadingGreetedPlayers.has(targetPersonId)) {
+                    return;
+                }
+                
+                // Claim this slot — prevent onMemoryReady from also greeting this player.
+                this.leadingGreetedPlayers.add(targetPersonId);
+                
                 const botId = this.bot.getBotId();
                 // Generate special greeting explaining we brought someone
                 this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).catch(error => {
-                    this.leadingGreetedPlayers.add(targetPersonId);
                     console.error(`[PatrolBehavior] Error generating leading completion greeting:`, error);
                 });
-                this.leadingGreetedPlayers.add(targetPersonId);
                 return; // Don't continue with normal greeting
             }
         }
@@ -714,6 +720,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             this.leadingGreetedPlayers.delete(user.id);
             return;
         }
+        
+        // Claim this slot — prevent onSpaceJoined leading-completion from
+        // also sending a greeting if addSpaceUserMessage arrived first.
+        this.leadingGreetedPlayers.add(user.id);
         
         const config = this.config as PatrolBehaviorConfig;
         const shouldRespond = config.respondToPlayers !== false;
