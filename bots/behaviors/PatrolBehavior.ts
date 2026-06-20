@@ -684,8 +684,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 const botId = this.bot.getBotId();
                 // Generate special greeting explaining we brought someone
                 this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).catch(error => {
+                    this.leadingGreetedPlayers.add(targetPersonId);
                     console.error(`[PatrolBehavior] Error generating leading completion greeting:`, error);
                 });
+                this.leadingGreetedPlayers.add(targetPersonId);
                 return; // Don't continue with normal greeting
             }
         }
@@ -702,12 +704,22 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
         if (!this.bot || !this.currentSpaceName) return;
         
+        // Skip if this player already received a leading-completion greeting
+        // (from onSpaceJoined). Use a Set instead of justCompletedLeading flag
+        // because spaceJoined and addSpaceUserMessage can arrive in any order.
+        if (this.leadingGreetedPlayers.has(user.id)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[PatrolBehavior] onMemoryReady: skipping greeting for player ${user.id} — leading-completion greeting was already sent`);
+            }
+            this.leadingGreetedPlayers.delete(user.id);
+            return;
+        }
+        
         const config = this.config as PatrolBehaviorConfig;
         const shouldRespond = config.respondToPlayers !== false;
         if (!shouldRespond) return;
         
-        // Greet the user who triggered onSpaceUserJoined — no need to re-check nearby
-        // (they're already in the space by definition)
+        // Greet the user who triggered onSpaceUserJoined
         const botId = this.bot.getBotId();
         this.generateAIGreeting(spaceName, user.id, botId).catch(error => {
             console.error(`[PatrolBehavior] Error generating AI greeting:`, error);

@@ -65,6 +65,10 @@ export abstract class BaseBehavior {
     protected leadingSpaceName: string | null = null; // Space name that was active during leading (for goodbye message)
     protected isSendingGoodbye = false; // Track if we're currently sending goodbye message (prevent returnToAssignedSpace)
     protected justCompletedLeading: { targetPersonId: number | null; followerUuid: string | null } | null = null; // Track when we just completed leading to trigger special greeting
+    // Track players who already received a leading-completion greeting (from onSpaceJoined).
+    // Used to prevent a duplicate generic greeting from onMemoryReady when
+    // spaceJoined and addSpaceUserMessage arrive in any order.
+    protected leadingGreetedPlayers = new Set<number>();
     protected preparedGoodbyeMessage: string | null = null; // Message prepared in advance while still leading
     protected isPreparingGoodbye = false; // Track if we're currently preparing the goodbye message
 
@@ -408,6 +412,7 @@ export abstract class BaseBehavior {
         // BUT: Don't clear it if we're still leading (we intentionally left to join target's space)
         if (!this.isLeading) {
             this.justCompletedLeading = null;
+            this.leadingGreetedPlayers.clear();
         }
         
         // If we just finished leading (not currently leading but have leadingStartPosition), check if follower left

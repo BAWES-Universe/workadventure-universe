@@ -324,6 +324,9 @@ export class SocialBehavior extends BaseBehavior {
                     lastMessageTime: currentTime,
                 });
                 
+                // Mark as greeted so onMemoryReady doesn't send a duplicate
+                this.leadingGreetedPlayers.add(targetPersonId);
+                
                 // Generate special greeting explaining we brought someone, then say goodbye and return
                 this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).then(() => {
                     // After greeting, send goodbye message and return
@@ -475,6 +478,18 @@ export class SocialBehavior extends BaseBehavior {
         if (!this.bot) return;
 
         const playerId = user.id;
+        
+        // Skip if this player already received a leading-completion greeting
+        // (from onSpaceJoined). Use a Set instead of justCompletedLeading flag
+        // because spaceJoined and addSpaceUserMessage can arrive in any order.
+        if (this.leadingGreetedPlayers.has(playerId)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] onMemoryReady: skipping greeting for player ${playerId} — leading-completion greeting was already sent`);
+            }
+            this.leadingGreetedPlayers.delete(playerId);
+            return;
+        }
+        
         const botId = this.bot.getBotId();
 
         // Only send greeting for bot-initiated conversations (already tracked in activeConversations)
