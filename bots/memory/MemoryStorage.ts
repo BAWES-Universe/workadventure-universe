@@ -197,7 +197,7 @@ export class MemoryStorage {
                 return [];
             }
             console.error('[MemoryStorage] Error loading memories:', error.message);
-            return [];
+            throw error;
         }
     }
 
