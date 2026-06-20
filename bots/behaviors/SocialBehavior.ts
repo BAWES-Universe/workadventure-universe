@@ -613,6 +613,7 @@ export class SocialBehavior extends BaseBehavior {
         // Clean up justCompletedLeading flag (mirrors BaseBehavior.onSpaceLeft behavior)
         if (!this.isLeading) {
             this.justCompletedLeading = null;
+            this.leadingGreetedPlayers.clear();
         }
 
         // Clean up engagedWithUsers for departing space

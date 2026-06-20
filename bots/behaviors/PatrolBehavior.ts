@@ -769,6 +769,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // The bot then moves back to its assigned space, bypassing the cooldown.
         if (!this.isLeading) {
             this.justCompletedLeading = null;
+            this.leadingGreetedPlayers.clear();
         }
         // Do NOT call returnAfterLeading() here — the patrol bot should respect the
         // cooldown before returning to its assigned space.
