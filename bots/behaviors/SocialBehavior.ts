@@ -463,6 +463,32 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     /**
+     * Called after memory is restored for a user joining the space.
+     * This is the correct time to generate greetings — after UUID is known
+     * and setUserUuidInMemory has restored pre-loaded memories.
+     * For bot-initiated conversations, this fires the greeting that was
+     * deferred from onSpaceJoined (line 349).
+     * Player-initiated conversations handle their greeting in startConversationWithPlayer,
+     * so we only act for already-tracked conversations here.
+     */
+    protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
+        if (!this.bot) return;
+
+        const playerId = user.id;
+        const botId = this.bot.getBotId();
+
+        // Only send greeting for bot-initiated conversations (already tracked in activeConversations)
+        if (this.activeConversations.has(playerId)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] onMemoryReady: sending deferred greeting for player ${playerId}`);
+            }
+            this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
+                console.error(`[SocialBehavior] Error generating AI greeting:`, error);
+            });
+        }
+    }
+
+    /**
      * Helper method to start a conversation with a person (used by both onSpaceJoined and onSpaceUserJoined)
      */
     private startConversationWithPlayer(
