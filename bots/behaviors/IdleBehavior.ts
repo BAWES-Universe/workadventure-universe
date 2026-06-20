@@ -301,7 +301,8 @@ export class IdleBehavior extends BaseBehavior {
                         console.error(`[IdleBehavior] Error sending goodbye and returning:`, error);
                     });
                 }).catch(error => {
-                    this.leadingGreetedPlayers.add(playerId);
+                    // Release the slot so onMemoryReady can send a fallback greeting
+                    this.leadingGreetedPlayers.delete(playerId);
                     console.error(`[IdleBehavior] Error generating leading completion greeting:`, error);
                 });
                 return;

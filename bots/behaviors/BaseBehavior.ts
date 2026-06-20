@@ -1027,6 +1027,9 @@ export abstract class BaseBehavior {
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
         
+        // Clear the greeting-dedup slot so the player gets a fresh greeting on return
+        this.leadingGreetedPlayers.delete(userId);
+        
         // End conversation for this user when they leave the space
         const userUuid = this.userIdToUuid.get(userId);
         if (userUuid && this.conversationStorage && this.bot) {
