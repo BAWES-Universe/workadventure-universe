@@ -313,6 +313,11 @@ export class SocialBehavior extends BaseBehavior {
                 // Clear the flag
                 this.justCompletedLeading = null;
                 
+                // Check if onMemoryReady already greeted this player (addSpaceUserMessage arrived first).
+                if (this.leadingGreetedPlayers.has(targetPersonId)) {
+                    return;
+                }
+                
                 // Start conversation in memory
                 this.conversationMemory?.startConversation(botId, targetPersonId);
                 
@@ -324,13 +329,11 @@ export class SocialBehavior extends BaseBehavior {
                     lastMessageTime: currentTime,
                 });
                 
+                // Claim this slot — prevent onMemoryReady from also greeting this player.
+                this.leadingGreetedPlayers.add(targetPersonId);
+                
                 // Generate special greeting explaining we brought someone, then say goodbye and return
-                this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).then(() => {
-                    // After greeting, send goodbye message and return
-                    this.sendGoodbyeAndReturn(spaceName, targetPersonId, botId, 'person').catch(error => {
-                        console.error(`[SocialBehavior] Error sending goodbye and returning:`, error);
-                    });
-                }).catch(error => {
+                this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).catch(error => {
                     console.error(`[SocialBehavior] Error generating leading completion greeting:`, error);
                 });
                 return; // Don't continue with normal greeting
@@ -346,18 +349,12 @@ export class SocialBehavior extends BaseBehavior {
             // Start conversation in memory
             this.conversationMemory?.startConversation(botId, this.targetPlayerId);
 
-            // Start conversation
+            // Start conversation (greeting deferred to onMemoryReady)
             this.activeConversations.set(this.targetPlayerId, {
                 playerId: this.targetPlayerId,
                 spaceName,
                 startTime: currentTime,
                 lastMessageTime: currentTime,
-            });
-
-            // Generate AI greeting instead of preset
-            this.generateAIGreeting(spaceName, this.targetPlayerId, botId).catch(error => {
-                console.error(`[SocialBehavior] Error generating AI greeting:`, error);
-                // Fallback: don't send anything if AI fails (no preset greeting)
             });
 
             // Clear target
@@ -469,6 +466,51 @@ export class SocialBehavior extends BaseBehavior {
     }
 
     /**
+     * Called after memory is restored for a user joining the space.
+     * This is the correct time to generate greetings — after UUID is known
+     * and setUserUuidInMemory has restored pre-loaded memories.
+     * For bot-initiated conversations, this fires the greeting that was
+     * deferred from onSpaceJoined (line 349).
+     * Player-initiated conversations handle their greeting in startConversationWithPlayer,
+     * so we only act for already-tracked conversations here.
+     */
+    protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
+        if (!this.bot) return;
+
+        const playerId = user.id;
+        
+        // Skip if this player already received a leading-completion greeting
+        // (from onSpaceJoined). Use a Set instead of justCompletedLeading flag
+        // because spaceJoined and addSpaceUserMessage can arrive in any order.
+        if (this.leadingGreetedPlayers.has(playerId)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] onMemoryReady: skipping greeting for player ${playerId} — leading-completion greeting was already sent`);
+            }
+            this.leadingGreetedPlayers.delete(playerId);
+            return;
+        }
+        
+        const botId = this.bot.getBotId();
+
+        // Only send greeting for bot-initiated conversations (already tracked in activeConversations)
+        if (this.activeConversations.has(playerId)) {
+            // Claim this slot — prevent onSpaceJoined leading-completion from
+            // also sending a greeting if addSpaceUserMessage arrived first.
+            // IMPORTANT: Only claim when we actually send the greeting. If the player isn't in
+            // activeConversations yet (WebSocket out-of-order: onSpaceUserJoined before
+            // onSpaceJoined), leave the slot open for onSpaceJoined to handle.
+            this.leadingGreetedPlayers.add(playerId);
+            
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] onMemoryReady: sending deferred greeting for player ${playerId}`);
+            }
+            this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
+                console.error(`[SocialBehavior] Error generating AI greeting:`, error);
+            });
+        }
+    }
+
+    /**
      * Helper method to start a conversation with a person (used by both onSpaceJoined and onSpaceUserJoined)
      */
     private startConversationWithPlayer(
@@ -501,6 +543,10 @@ export class SocialBehavior extends BaseBehavior {
             lastMessageTime: currentTime,
         });
         
+        // Claim this slot — prevent onMemoryReady from also greeting this player
+        // (e.g., when onSpaceJoined triggers this and onSpaceUserJoined fires next).
+        this.leadingGreetedPlayers.add(playerId);
+        
         // Generate AI greeting instead of preset
         this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
             console.error(`[SocialBehavior] Error generating AI greeting:`, error);
@@ -508,7 +554,7 @@ export class SocialBehavior extends BaseBehavior {
         });
     }
 
-    onSpaceUserJoined(spaceName: string, user: SpaceUser): void {
+    onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): void {
         if (!this.bot) return;
 
         // Call base behavior first to track engagement
@@ -565,6 +611,7 @@ export class SocialBehavior extends BaseBehavior {
         // Clean up justCompletedLeading flag (mirrors BaseBehavior.onSpaceLeft behavior)
         if (!this.isLeading) {
             this.justCompletedLeading = null;
+            this.leadingGreetedPlayers.clear();
         }
 
         // Clean up engagedWithUsers for departing space
