@@ -65,6 +65,10 @@ export abstract class BaseBehavior {
     protected leadingSpaceName: string | null = null; // Space name that was active during leading (for goodbye message)
     protected isSendingGoodbye = false; // Track if we're currently sending goodbye message (prevent returnToAssignedSpace)
     protected justCompletedLeading: { targetPersonId: number | null; followerUuid: string | null } | null = null; // Track when we just completed leading to trigger special greeting
+    // Track players who already received a leading-completion greeting (from onSpaceJoined).
+    // Used to prevent a duplicate generic greeting from onMemoryReady when
+    // spaceJoined and addSpaceUserMessage arrive in any order.
+    protected leadingGreetedPlayers = new Set<number>();
     protected preparedGoodbyeMessage: string | null = null; // Message prepared in advance while still leading
     protected isPreparingGoodbye = false; // Track if we're currently preparing the goodbye message
 
@@ -114,6 +118,15 @@ export abstract class BaseBehavior {
      * This is called when a user joins a space to ensure UUID tracking
      */
     protected setUserUuidInMemory?(botId: string, userId: number, userUuid: string, isLogged: boolean): void;
+
+    /**
+     * Called after memory is restored for a user joining the space.
+     * This fires AFTER setUserUuidInMemory() so behaviors have access to restored memory.
+     * Override this in behavior implementations to trigger greetings at the correct time.
+     * @param spaceName Space name
+     * @param user User that joined, with id field
+     */
+    protected onMemoryReady?(spaceName: string, user: SpaceUser & { id: number }): void;
 
     /**
      * Update behavior (called every frame/tick)
@@ -399,6 +412,7 @@ export abstract class BaseBehavior {
         // BUT: Don't clear it if we're still leading (we intentionally left to join target's space)
         if (!this.isLeading) {
             this.justCompletedLeading = null;
+            this.leadingGreetedPlayers.clear();
         }
         
         // If we just finished leading (not currently leading but have leadingStartPosition), check if follower left
@@ -957,6 +971,12 @@ export abstract class BaseBehavior {
             if (botId && this.setUserUuidInMemory) {
                 this.setUserUuidInMemory(botId, user.id, user.uuid, user.isLogged || false);
             }
+            
+            // Notify behavior that memory is restored and UUID is available
+            // This is the correct time to generate greetings (after memory is ready)
+            if (botId) {
+                this.onMemoryReady?.(spaceName, user);
+            }
         }
 
         // Track this user as engaged
@@ -1006,6 +1026,9 @@ export abstract class BaseBehavior {
         // Remove from engaged users
         this.engagedWithUsers.delete(userId);
         this.isEngaged = this.engagedWithUsers.size > 0;
+        
+        // Clear the greeting-dedup slot so the player gets a fresh greeting on return
+        this.leadingGreetedPlayers.delete(userId);
         
         // End conversation for this user when they leave the space
         const userUuid = this.userIdToUuid.get(userId);
