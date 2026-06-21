@@ -333,12 +333,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.leadingGreetedPlayers.add(targetPersonId);
                 
                 // Generate special greeting explaining we brought someone, then say goodbye and return
-                this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).then(() => {
-                    // After greeting, send goodbye message and return
-                    this.sendGoodbyeAndReturn(spaceName, targetPersonId, botId, 'person').catch(error => {
-                        console.error(`[SocialBehavior] Error sending goodbye and returning:`, error);
-                    });
-                }).catch(error => {
+                this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).catch(error => {
                     console.error(`[SocialBehavior] Error generating leading completion greeting:`, error);
                 });
                 return; // Don't continue with normal greeting

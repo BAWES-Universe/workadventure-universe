@@ -296,11 +296,7 @@ export class IdleBehavior extends BaseBehavior {
                 // Claim this slot — prevent onMemoryReady from also greeting this player.
                 this.leadingGreetedPlayers.add(playerId);
                 
-                this.generateAIGreetingWithLeadingContext(spaceName, playerId, botId, followerUuid).then(() => {
-                    this.sendGoodbyeAndReturn(spaceName, playerId, botId, 'person').catch(error => {
-                        console.error(`[IdleBehavior] Error sending goodbye and returning:`, error);
-                    });
-                }).catch(error => {
+                this.generateAIGreetingWithLeadingContext(spaceName, playerId, botId, followerUuid).catch(error => {
                     // Release the slot so onMemoryReady can send a fallback greeting
                     this.leadingGreetedPlayers.delete(playerId);
                     console.error(`[IdleBehavior] Error generating leading completion greeting:`, error);
