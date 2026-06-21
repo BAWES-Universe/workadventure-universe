@@ -274,39 +274,77 @@ export class IdleBehavior extends BaseBehavior {
     }
 
     onSpaceJoined(spaceName: string): void {
-        // Bot joined a conversation, greet everyone
+        // Bot joined a conversation space - track it but defer greeting
+        // Greeting is now in onMemoryReady (fires after UUID is known and memory restored)
         if (!this.bot) return;
-
-        // Find the player who triggered the space join (first nearby player)
-        const nearbyPlayers = this.bot.getNearbyPlayers(100); // Use reasonable radius
+        
+        // Check if we just completed leading someone to this person
+        const nearbyPlayers = this.bot.getNearbyPlayers(100);
         if (nearbyPlayers.length > 0) {
             const playerId = nearbyPlayers[0].userId;
             const botId = this.bot.getBotId();
             
-            // Check if we just completed leading someone to this person
             if (this.justCompletedLeading && this.justCompletedLeading.targetPersonId === playerId) {
                 const followerUuid = this.justCompletedLeading.followerUuid;
-                // Clear the flag
                 this.justCompletedLeading = null;
                 
-                // Generate special greeting explaining we brought someone, then say goodbye and return
-                this.generateAIGreetingWithLeadingContext(spaceName, playerId, botId, followerUuid).then(() => {
-                    // After greeting, send goodbye message and return
-                    this.sendGoodbyeAndReturn(spaceName, playerId, botId, 'person').catch(error => {
-                        console.error(`[IdleBehavior] Error sending goodbye and returning:`, error);
-                    });
-                }).catch(error => {
+                // Check if onMemoryReady already greeted this player (addSpaceUserMessage arrived first).
+                if (this.leadingGreetedPlayers.has(playerId)) {
+                    return;
+                }
+                
+                // Claim this slot — prevent onMemoryReady from also greeting this player.
+                this.leadingGreetedPlayers.add(playerId);
+                
+                this.generateAIGreetingWithLeadingContext(spaceName, playerId, botId, followerUuid).catch(error => {
+                    // Release the slot so onMemoryReady can send a fallback greeting
+                    this.leadingGreetedPlayers.delete(playerId);
                     console.error(`[IdleBehavior] Error generating leading completion greeting:`, error);
                 });
                 return;
             }
-            
-            // Generate AI greeting instead of preset
-            this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
-                console.error(`[IdleBehavior] Error generating AI greeting:`, error);
-                // Fallback: don't send anything if AI fails (no preset greeting)
-            });
         }
+    }
+    
+    /**
+     * Called after memory is restored for a user joining the space.
+     */
+    protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
+        if (!this.bot) return;
+        
+        // If we just completed leading to this person, defer to onSpaceJoined
+        // for the special leading-completion greeting with context. Otherwise
+        // onMemoryReady will send a generic greeting and onSpaceJoined will see
+        // the Set claimed and skip the special greeting entirely.
+        if (this.justCompletedLeading && this.justCompletedLeading.targetPersonId === user.id) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] onMemoryReady: deferring to onSpaceJoined for player ${user.id} — leading-completion greeting pending`);
+            }
+            return;
+        }
+        
+        // Skip if this player already received a leading-completion greeting
+        // (from onSpaceJoined). Use a Set instead of justCompletedLeading flag
+        // because spaceJoined and addSpaceUserMessage can arrive in any order.
+        if (this.leadingGreetedPlayers.has(user.id)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[IdleBehavior] onMemoryReady: skipping greeting for player ${user.id} — leading-completion greeting was already sent`);
+            }
+            this.leadingGreetedPlayers.delete(user.id);
+            return;
+        }
+        
+        // Claim this slot — prevent onSpaceJoined leading-completion from
+        // also sending a greeting if addSpaceUserMessage arrived first.
+        this.leadingGreetedPlayers.add(user.id);
+        
+        const botId = this.bot.getBotId();
+        const playerId = user.id;
+        
+        // Generate AI greeting — memory is now restored
+        this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
+            console.error(`[IdleBehavior] Error generating AI greeting:`, error);
+        });
     }
 
     onSpaceLeft(spaceName: string): void {

@@ -681,6 +681,14 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 // Clear the flag
                 this.justCompletedLeading = null;
                 
+                // Check if onMemoryReady already greeted this player (addSpaceUserMessage arrived first).
+                if (this.leadingGreetedPlayers.has(targetPersonId)) {
+                    return;
+                }
+                
+                // Claim this slot — prevent onMemoryReady from also greeting this player.
+                this.leadingGreetedPlayers.add(targetPersonId);
+                
                 const botId = this.bot.getBotId();
                 // Generate special greeting explaining we brought someone
                 this.generateAIGreetingWithLeadingContext(spaceName, targetPersonId, botId, followerUuid).catch(error => {
@@ -690,28 +698,54 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         }
         
-        // Send greeting if:
-        // 1. Player actively approached (nearbyPlayers.size > 0) - normal case
-        // 2. Bot is summoned - when summoned, bot should greet even if player not in nearbyPlayers yet
-        const shouldGreet = this.bot && (this.nearbyPlayers.size > 0 || this.isSummoned);
+        // Track the space - greeting is now deferred to onMemoryReady
+        // which fires after UUID is known and memory is restored
+    }
+    
+    /**
+     * Called after memory is restored for a user joining the space.
+     * This is the correct time to generate greetings — after UUID is known
+     * and setUserUuidInMemory has restored pre-loaded memories.
+     */
+    protected onMemoryReady(spaceName: string, user: SpaceUser & { id: number }): void {
+        if (!this.bot) return;
         
-        if (shouldGreet) {
-            // Find the player to greet (first nearby player)
-            let playerId: number | null = null;
-            const nearbyPlayers = this.bot?.getNearbyPlayers(100);
-            if (nearbyPlayers && nearbyPlayers.length > 0) {
-                playerId = nearbyPlayers[0].userId;
+        // If we just completed leading to this person, defer to onSpaceJoined
+        // for the special leading-completion greeting with context. Otherwise
+        // onMemoryReady will send a generic greeting and onSpaceJoined will see
+        // the Set claimed and skip the special greeting entirely.
+        if (this.justCompletedLeading && this.justCompletedLeading.targetPersonId === user.id) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[PatrolBehavior] onMemoryReady: deferring to onSpaceJoined for player ${user.id} — leading-completion greeting pending`);
             }
-            
-            if (playerId && this.bot) {
-                const botId = this.bot.getBotId();
-                // Generate AI greeting instead of preset
-                this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
-                    console.error(`[PatrolBehavior] Error generating AI greeting:`, error);
-                    // Fallback: don't send anything if AI fails (no preset greeting)
-                });
-            }
+            return;
         }
+        
+        // Skip if this player already received a leading-completion greeting
+        // (from onSpaceJoined). Use a Set instead of justCompletedLeading flag
+        // because spaceJoined and addSpaceUserMessage can arrive in any order.
+        if (this.leadingGreetedPlayers.has(user.id)) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[PatrolBehavior] onMemoryReady: skipping greeting for player ${user.id} — leading-completion greeting was already sent`);
+            }
+            this.leadingGreetedPlayers.delete(user.id);
+            return;
+        }
+        
+        // Claim this slot — prevent onSpaceJoined leading-completion from
+        // also sending a greeting if addSpaceUserMessage arrived first.
+        this.leadingGreetedPlayers.add(user.id);
+        
+        const config = this.config as PatrolBehaviorConfig;
+        const shouldRespond = config.respondToPlayers !== false;
+        if (!shouldRespond) return;
+        
+        // Greet the user who triggered onSpaceUserJoined
+        const botId = this.bot.getBotId();
+        this.generateAIGreeting(spaceName, user.id, botId).catch(error => {
+            console.error(`[PatrolBehavior] Error generating AI greeting:`, error);
+            // Fallback: don't send anything if AI fails (no preset greeting)
+        });
     }
     
     onSpaceUserJoined(spaceName: string, user: any): void {
@@ -746,6 +780,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // The bot then moves back to its assigned space, bypassing the cooldown.
         if (!this.isLeading) {
             this.justCompletedLeading = null;
+            this.leadingGreetedPlayers.clear();
         }
         // Do NOT call returnAfterLeading() here — the patrol bot should respect the
         // cooldown before returning to its assigned space.
