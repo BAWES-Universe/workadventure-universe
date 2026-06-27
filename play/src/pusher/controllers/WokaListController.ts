@@ -17,8 +17,8 @@ export class WokaListController extends AuthenticatedProviderController<WokaList
         this.wokaService = wokaService;
     }
 
-    protected getData(roomUrl: string, uuid: string): Promise<WokaList | undefined> {
-        return this.wokaService?.getWokaList(roomUrl, uuid) || Promise.resolve(undefined);
+    protected getData(roomUrl: string, uuid: string, context?: string, botId?: string): Promise<WokaList | undefined> {
+        return this.wokaService?.getWokaList(roomUrl, uuid, context, botId) || Promise.resolve(undefined);
     }
 
     routes(): void {
