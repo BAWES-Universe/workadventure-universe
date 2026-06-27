@@ -1120,12 +1120,18 @@ CRITICAL RESPONSE RULES:
         // Add MCP tools
         if (botId && adminApiService) {
             try {
-                const { tools: mcpTools, toolServerMap } = await MCPConnector.discoverToolsWithMapping(
+                const mcpResult = await MCPConnector.discoverToolsWithMapping(
                     botId,
                     this.adminApiUrl,
                     adminApiService['adminApiToken'],
                     process.env.BOT_SERVICE_TOKEN || ''
                 );
+                const mcpTools = mcpResult.tools;
+
+                // Transfer tool→server mapping to the outer-scope map
+                for (const [key, value] of mcpResult.toolServerMap) {
+                    toolServerMap.set(key, value);
+                }
 
                 for (const mcpTool of mcpTools) {
                     tools.push(mcpTool);
