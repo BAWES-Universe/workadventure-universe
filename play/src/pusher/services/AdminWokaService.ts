@@ -10,7 +10,7 @@ class AdminWokaService implements WokaServiceInterface {
     /**
      * Returns the list of all available Wokas for the current user.
      */
-    getWokaList(roomUrl: string, token: string): Promise<WokaList | undefined> {
+    getWokaList(roomUrl: string, token: string, context?: string, botId?: string): Promise<WokaList | undefined> {
         /**
          * @openapi
          * /api/woka/list:
@@ -50,6 +50,8 @@ class AdminWokaService implements WokaServiceInterface {
                 params: {
                     roomUrl,
                     uuid: token,
+                    ...(context ? { context } : {}),
+                    ...(botId ? { botId } : {}),
                 },
             })
             .then((res) => {
