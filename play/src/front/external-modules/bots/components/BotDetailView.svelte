@@ -11,6 +11,7 @@
     import BotTexturePicker from "./BotTexturePicker.svelte";
     import BotBehaviorEditor from "./BotBehaviorEditor.svelte";
     import BotInstructionsEditor from "./BotInstructionsEditor.svelte";
+    import BotMcpServersEditor from "./BotMcpServersEditor.svelte";
     import { IconChevronLeft } from "@wa-icons";
 
     export let bot: BotData | null = null;
@@ -573,6 +574,11 @@
                             </div>
                         </div>
                     {/if}
+                </div>
+
+                <!-- MCP Servers -->
+                <div class="border-b border-white/10 pb-4">
+                    <BotMcpServersEditor botId={currentBot.id} />
                 </div>
 
                 <!-- Metadata (Audit Trail) -->
