@@ -41,7 +41,6 @@ export class AIService {
     private readonly CREDENTIAL_TTL = 60 * 60 * 1000; // 1 hour
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
-    private mcpToolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }> = new Map();
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -405,7 +404,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const tools = await this.buildTools(botId, botClient, adminApiService || this.adminApiService);
+            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService);
 
             // Generate stream with tools
             let tokensUsed = 0;
@@ -622,7 +621,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             })));
                         }
                         // Execute tool calls and continue conversation
-                        const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
+                        const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap);
                         pendingToolCalls = [];
                         toolCallAccumulator.clear();
                         hadToolCalls = true;
@@ -1044,8 +1043,9 @@ CRITICAL RESPONSE RULES:
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<any[]> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }> }> {
         const tools: any[] = [];
+        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -1127,9 +1127,6 @@ CRITICAL RESPONSE RULES:
                     process.env.BOT_SERVICE_TOKEN || ''
                 );
 
-                // Store the tool → server mapping for routing in executeToolCalls
-                this.mcpToolServerMap = toolServerMap;
-
                 for (const mcpTool of mcpTools) {
                     tools.push(mcpTool);
                 }
@@ -1143,7 +1140,7 @@ CRITICAL RESPONSE RULES:
             }
         }
 
-        return tools;
+        return { tools, toolServerMap };
     }
 
     /**
@@ -1153,7 +1150,8 @@ CRITICAL RESPONSE RULES:
     private async executeToolCalls(
         toolCalls: ToolCall[],
         botClient?: BotClient,
-        adminApiService?: AdminApiService
+        adminApiService?: AdminApiService,
+        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }>
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1359,7 +1357,7 @@ CRITICAL RESPONSE RULES:
 
                     default:
                         // Check if this is an MCP tool (not a hardcoded one)
-                        const mcpServerConfig = this.mcpToolServerMap.get(toolCall.name);
+                        const mcpServerConfig = toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
                             try {
                                 const parsedArgs = typeof toolCall.arguments === 'string'
