@@ -63,7 +63,10 @@ export abstract class AuthenticatedProviderController<T> extends BaseHttpControl
                 return;
             }
 
-            const data = await this.getData(decodeURIComponent(query.roomUrl), uuid);
+            const context = typeof req.query.context === "string" ? req.query.context : undefined;
+            const botId = typeof req.query.botId === "string" ? req.query.botId : undefined;
+
+            const data = await this.getData(decodeURIComponent(query.roomUrl), uuid, context, botId);
 
             if (!data) {
                 res.status(500).send("Error on getting data");
@@ -75,5 +78,5 @@ export abstract class AuthenticatedProviderController<T> extends BaseHttpControl
         });
     }
 
-    protected abstract getData(roomUrl: string, uuid: string): Promise<T | undefined>;
+    protected abstract getData(roomUrl: string, uuid: string, context?: string, botId?: string): Promise<T | undefined>;
 }

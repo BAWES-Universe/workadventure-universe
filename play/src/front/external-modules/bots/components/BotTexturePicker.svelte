@@ -8,6 +8,7 @@
 
     export let selectedTextureId: string = "";
     export let onSelect: (textureId: string) => void;
+    export let botId: string = "";
 
     let wokaData: WokaData | null = null;
     let isLoading = true;
@@ -35,7 +36,12 @@
                 throw new Error("Unable to determine room URL");
             }
 
-            const response = await fetch(`${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}`, {
+            let url = `${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}&context=bot`;
+            if (botId) {
+                url += `&botId=${encodeURIComponent(botId)}`;
+            }
+
+            const response = await fetch(url, {
                 headers: {
                     Authorization: localUserStore.getAuthToken() || "",
                 },

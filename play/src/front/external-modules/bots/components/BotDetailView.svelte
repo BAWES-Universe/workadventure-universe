@@ -202,12 +202,15 @@
                 return;
             }
 
-            const response = await fetch(`${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}`, {
-                headers: {
-                    Authorization: localUserStore.getAuthToken() || "",
-                },
-                credentials: "include",
-            });
+            const response = await fetch(
+                `${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}&context=bot`,
+                {
+                    headers: {
+                        Authorization: localUserStore.getAuthToken() || "",
+                    },
+                    credentials: "include",
+                }
+            );
 
             if (response.ok) {
                 wokaData = await response.json();
@@ -628,7 +631,11 @@
             on:click|stopPropagation
         >
             <h3 class="text-xl font-semibold text-white mb-4">Select Character Texture</h3>
-            <BotTexturePicker selectedTextureId={currentBot.characterTexture || ""} onSelect={handleTextureSelect} />
+            <BotTexturePicker
+                selectedTextureId={currentBot.characterTexture || ""}
+                botId={currentBot.id}
+                onSelect={handleTextureSelect}
+            />
             <div class="flex justify-end mt-4">
                 <button
                     class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
