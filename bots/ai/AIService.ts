@@ -16,6 +16,7 @@ import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+import { MCPConnector } from '../mcp/MCPConnector';
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -40,6 +41,7 @@ export class AIService {
     private readonly CREDENTIAL_TTL = 60 * 60 * 1000; // 1 hour
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
+    private mcpToolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }> = new Map();
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -403,7 +405,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
+            const tools = await this.buildTools(botId, botClient, adminApiService || this.adminApiService);
 
             // Generate stream with tools
             let tokensUsed = 0;
@@ -1042,7 +1044,7 @@ CRITICAL RESPONSE RULES:
     /**
      * Build tool definitions for function calling
      */
-    private buildTools(botClient?: BotClient, adminApiService?: AdminApiService): any[] {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<any[]> {
         const tools: any[] = [];
 
         if (botClient) {
@@ -1113,6 +1115,32 @@ CRITICAL RESPONSE RULES:
                     },
                 },
             });
+        }
+
+        // Add MCP tools
+        if (botId && adminApiService) {
+            try {
+                const { tools: mcpTools, toolServerMap } = await MCPConnector.discoverToolsWithMapping(
+                    botId,
+                    this.adminApiUrl,
+                    adminApiService['adminApiToken'],
+                    process.env.BOT_SERVICE_TOKEN || ''
+                );
+
+                // Store the tool → server mapping for routing in executeToolCalls
+                this.mcpToolServerMap = toolServerMap;
+
+                for (const mcpTool of mcpTools) {
+                    tools.push(mcpTool);
+                }
+
+                if (mcpTools.length > 0) {
+                    console.log(`[AIService] Added ${mcpTools.length} MCP tools for bot ${botId}`);
+                }
+            } catch (e) {
+                console.warn('[AIService] Failed to discover MCP tools:', e);
+                Sentry.captureException(e instanceof Error ? e : new Error(String(e)));
+            }
         }
 
         return tools;
@@ -1330,11 +1358,33 @@ CRITICAL RESPONSE RULES:
 
 
                     default:
-                        // Log unknown tool for debugging
-                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
+                        // Check if this is an MCP tool (not a hardcoded one)
+                        const mcpServerConfig = this.mcpToolServerMap.get(toolCall.name);
+                        if (mcpServerConfig) {
+                            try {
+                                const parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? JSON.parse(toolCall.arguments)
+                                    : toolCall.arguments || {};
+                                result = await MCPConnector.executeToolCall(
+                                    mcpServerConfig.serverId,
+                                    mcpServerConfig.serverUrl,
+                                    toolCall.name,
+                                    parsedArgs,
+                                    mcpServerConfig.authType,
+                                    mcpServerConfig.authConfig
+                                );
+                            } catch (mcpError: any) {
+                                console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);
+                                Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+                                result = { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
+                            }
+                        } else {
+                            // Log unknown tool for debugging
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
+                            }
+                            result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
                         }
-                        result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
                 }
 
                 return { id: toolCall.id, name: toolCall.name, result };
