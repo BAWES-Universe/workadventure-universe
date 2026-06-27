@@ -202,12 +202,15 @@
                 return;
             }
 
-            const response = await fetch(`${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}`, {
-                headers: {
-                    Authorization: localUserStore.getAuthToken() || "",
-                },
-                credentials: "include",
-            });
+            const response = await fetch(
+                `${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}&context=bot`,
+                {
+                    headers: {
+                        Authorization: localUserStore.getAuthToken() || "",
+                    },
+                    credentials: "include",
+                }
+            );
 
             if (response.ok) {
                 wokaData = await response.json();
