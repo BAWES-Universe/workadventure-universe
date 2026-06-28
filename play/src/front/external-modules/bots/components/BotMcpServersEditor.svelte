@@ -1,6 +1,11 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { botApiService, type McpServer, type CreateMcpServerDto, type McpServerTestResult } from "../services/BotApiService";
+    import {
+        botApiService,
+        type McpServer,
+        type CreateMcpServerDto,
+        type McpServerTestResult,
+    } from "../services/BotApiService";
 
     export let botId: string;
 
@@ -146,6 +151,7 @@
             removingServerId = null;
         } catch (error) {
             console.error("[BotMcpServersEditor] Error removing MCP server:", error);
+            removingServerId = null;
         } finally {
             removingLoading = false;
         }
@@ -204,13 +210,13 @@
         <div class="space-y-3">
             {#each [1, 2, 3] as _i (_i)}
                 <div class="p-4 border border-white/20 rounded bg-white/5 animate-pulse">
-                    <div class="h-4 bg-white/10 rounded w-3/4 mb-2"></div>
-                    <div class="h-3 bg-white/10 rounded w-1/2"></div>
+                    <div class="h-4 bg-white/10 rounded w-3/4 mb-2" />
+                    <div class="h-3 bg-white/10 rounded w-1/2" />
                 </div>
             {/each}
         </div>
 
-    <!-- Error loading -->
+        <!-- Error loading -->
     {:else if loadError}
         <div class="p-4 border border-red-500/50 rounded bg-red-500/10 text-red-400 text-sm mb-2">
             {loadError}
@@ -222,12 +228,10 @@
             Retry
         </button>
 
-    <!-- Empty state -->
+        <!-- Empty state -->
     {:else if servers.length === 0}
         <div class="p-6 border border-dashed border-white/20 rounded bg-white/5 text-center">
-            <p class="text-sm text-white/60 mb-3">
-                No MCP servers configured. Add one to give your bot custom tools.
-            </p>
+            <p class="text-sm text-white/60 mb-3">No MCP servers configured. Add one to give your bot custom tools.</p>
             <button
                 class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
                 on:click={openAddModal}
@@ -236,7 +240,7 @@
             </button>
         </div>
 
-    <!-- Server list -->
+        <!-- Server list -->
     {:else}
         <div class="space-y-3">
             {#each servers as server (server.id)}
@@ -250,9 +254,9 @@
                                     title={testResults[server.id]?.success
                                         ? "Connected"
                                         : testResults[server.id]
-                                          ? "Error"
-                                          : "Untested"}
-                                ></div>
+                                        ? "Error"
+                                        : "Untested"}
+                                />
                             </div>
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 flex-wrap">
@@ -267,7 +271,9 @@
                                 </div>
                                 <p class="text-xs text-white/50 mt-0.5 truncate">{server.serverUrl}</p>
                                 {#if server.authType !== "none"}
-                                    <span class="inline-block mt-1 text-[10px] uppercase text-white/30 bg-white/5 px-1.5 py-0.5 rounded">
+                                    <span
+                                        class="inline-block mt-1 text-[10px] uppercase text-white/30 bg-white/5 px-1.5 py-0.5 rounded"
+                                    >
                                         {server.authType}
                                     </span>
                                 {/if}
@@ -407,8 +413,12 @@
                         style="color: white; background-color: rgba(255, 255, 255, 0.05);"
                     >
                         <option value="none" style="background-color: rgba(0, 0, 0, 0.8); color: white;">None</option>
-                        <option value="bearer" style="background-color: rgba(0, 0, 0, 0.8); color: white;">Bearer Token</option>
-                        <option value="api-key" style="background-color: rgba(0, 0, 0, 0.8); color: white;">API Key</option>
+                        <option value="bearer" style="background-color: rgba(0, 0, 0, 0.8); color: white;"
+                            >Bearer Token</option
+                        >
+                        <option value="api-key" style="background-color: rgba(0, 0, 0, 0.8); color: white;"
+                            >API Key</option
+                        >
                     </select>
                 </div>
 
