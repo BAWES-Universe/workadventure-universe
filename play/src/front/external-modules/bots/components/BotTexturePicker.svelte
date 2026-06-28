@@ -28,14 +28,20 @@
             isLoading = true;
             error = null;
 
-            // Get room URL - try gameManager first, fallback to window.location
+            // Get room URL - try current game scene first (updates on portal teleport),
+            // fallback to start room (initial entry), then window.location
             let roomUrl: string;
-            if (gameManager?.currentStartedRoom?.href) {
-                roomUrl = gameManager.currentStartedRoom.href;
-            } else if (window.location.href) {
-                roomUrl = window.location.href;
+            if (gameManager) {
+                const scene = gameManager.getCurrentGameScene();
+                if (scene?.room?.href) {
+                    roomUrl = scene.room.href;
+                } else if (gameManager.currentStartedRoom?.href) {
+                    roomUrl = gameManager.currentStartedRoom.href;
+                } else {
+                    roomUrl = window.location.href;
+                }
             } else {
-                throw new Error("Unable to determine room URL");
+                roomUrl = window.location.href;
             }
 
             let url = `${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}&context=bot`;
