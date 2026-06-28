@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
+    import { roomChangeTriggerStore } from "../stores/BotEditorStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
@@ -15,6 +16,7 @@
     let error: string | null = null;
     let assetsDirection: number = 0;
     let currentSelectedId: string = selectedTextureId;
+    let roomChangeUnsubscribe: () => void;
 
     // Sync with prop changes
     $: if (selectedTextureId && selectedTextureId !== currentSelectedId) {
@@ -92,6 +94,22 @@
 
     onMount(() => {
         void loadWokaData();
+
+        // Re-fetch when room changes (e.g. teleported between worlds)
+        let isFirstEmission = true;
+        roomChangeUnsubscribe = roomChangeTriggerStore.subscribe(() => {
+            if (isFirstEmission) {
+                isFirstEmission = false;
+                return;
+            }
+            void loadWokaData();
+        });
+    });
+
+    onDestroy(() => {
+        if (roomChangeUnsubscribe) {
+            roomChangeUnsubscribe();
+        }
     });
 </script>
 
