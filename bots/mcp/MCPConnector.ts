@@ -11,6 +11,7 @@
 
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
+import { decryptApiKey } from '../ai/encryption';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -215,6 +216,21 @@ export class MCPConnector {
                 }
             );
             servers = response.data || [];
+
+            // Decrypt authConfig for each server (admin API stores it encrypted)
+            for (const server of servers) {
+                if (server.authConfig) {
+                    try {
+                        server.authConfig = decryptApiKey(server.authConfig) || undefined;
+                    } catch (e) {
+                        console.warn(
+                            `[MCPConnector] Failed to decrypt authConfig for server ${server.name} (${server.id}):`,
+                            e
+                        );
+                        server.authConfig = undefined;
+                    }
+                }
+            }
         } catch (error: any) {
             if (axios.isAxiosError(error) && error.response?.status === 404) {
                 // No MCP servers configured — not an error
