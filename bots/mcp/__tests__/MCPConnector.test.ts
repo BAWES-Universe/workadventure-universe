@@ -20,6 +20,10 @@ import { MCPConnector, type McpToolDefinition } from '../MCPConnector';
 // Mocks
 // ---------------------------------------------------------------------------
 
+vi.mock('../../ai/encryption', () => ({
+    decryptApiKey: (val: string | null | undefined) => val || null,
+}));
+
 vi.mock('axios', () => ({
     default: {
         get: vi.fn(),
