@@ -28,7 +28,7 @@
 
     // Test connection state
     let testingServerId: string | null = null;
-    let testResults: Record<string, McpServerTestResult> = {};
+    let testError: Record<string, string> = {};
 
     // Remove confirmation state
     let removingServerId: string | null = null;
@@ -155,8 +155,8 @@
         try {
             await botApiService.deleteBotMcpServer(botId, serverId);
             servers = servers.filter((s) => s.id !== serverId);
-            // Clean up test results and remove state
-            delete testResults[serverId];
+            // Clean up error state
+            delete testError[serverId];
             removingServerId = null;
         } catch (error) {
             console.error("[BotMcpServersEditor] Error removing MCP server:", error);
@@ -171,39 +171,40 @@
         try {
             const rawResult = (await botApiService.testBotMcpServer(botId, serverId)) as Record<string, unknown>;
             // Transform API response ({toolNames}) to component format ({tools})
-            testResults = {
-                ...testResults,
-                [serverId]: {
-                    success: rawResult.success === true,
-                    tools: ((rawResult.toolNames as string[]) || []).map((name: string) => ({ name })),
-                    error: rawResult.error as string | undefined,
-                },
+            const result: McpServerTestResult = {
+                success: rawResult.success === true,
+                tools: ((rawResult.toolNames as string[]) || []).map((name: string) => ({ name })),
+                error: rawResult.error as string | undefined,
             };
+
+            if (result.success) {
+                // Reload servers from API to get updated lastTestResult / lastTestedAt
+                void loadServers();
+            } else {
+                testError = { ...testError, [serverId]: result.error || "Connection failed" };
+            }
         } catch (error) {
             console.error("[BotMcpServersEditor] Error testing MCP server:", error);
-            testResults = {
-                ...testResults,
-                [serverId]: { success: false, tools: [], error: "Connection test failed" },
-            };
+            testError = { ...testError, [serverId]: "Connection test failed" };
         } finally {
             testingServerId = null;
         }
     }
 
-    function getStatusDot(serverId: string): string {
-        const result = testResults[serverId];
+    function getStatusDot(server: McpServer): string {
+        const result = server.lastTestResult;
         if (!result) return "bg-gray-500"; // untested
         return result.success ? "bg-green-500" : "bg-red-500";
     }
 
-    function getToolCount(serverId: string): string {
-        const result = testResults[serverId];
+    function getToolCount(server: McpServer): string {
+        const result = server.lastTestResult;
         if (!result) return "";
         if (result.success) {
-            const count = result.tools?.length ?? 0;
+            const count = result.toolCount ?? 0;
             return `${count} tool${count !== 1 ? "s" : ""}`;
         }
-        return result.error || "Error";
+        return testError[server.id] || result.error || "Error";
     }
 </script>
 
@@ -268,10 +269,10 @@
                             <!-- Status dot -->
                             <div class="flex-shrink-0 mt-1.5">
                                 <div
-                                    class="w-2.5 h-2.5 rounded-full {getStatusDot(server.id)}"
-                                    title={testResults[server.id]?.success
+                                    class="w-2.5 h-2.5 rounded-full {getStatusDot(server)}"
+                                    title={server.lastTestResult?.success
                                         ? "Connected"
-                                        : testResults[server.id]
+                                        : server.lastTestResult
                                         ? "Error"
                                         : "Untested"}
                                 />
@@ -279,11 +280,11 @@
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-sm text-white font-semibold">{server.name}</span>
-                                    {#if testResults[server.id]?.success}
-                                        <span class="text-xs text-green-400">{getToolCount(server.id)}</span>
-                                    {:else if testResults[server.id] && !testResults[server.id].success}
-                                        <span class="text-xs text-red-400" title={testResults[server.id].error}>
-                                            {getToolCount(server.id)}
+                                    {#if server.lastTestResult?.success}
+                                        <span class="text-xs text-green-400">{getToolCount(server)}</span>
+                                    {:else if server.lastTestResult && !server.lastTestResult.success}
+                                        <span class="text-xs text-red-400" title={testError[server.id] || server.lastTestResult.error}>
+                                            {getToolCount(server)}
                                         </span>
                                     {/if}
                                 </div>
@@ -349,16 +350,15 @@
                     </div>
 
                     <!-- Test result details -->
-                    {#if testResults[server.id]?.success && testResults[server.id]?.tools?.length > 0}
+                    {#if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
                         <div class="mt-3 pt-2 border-t border-white/10">
-                            <p class="text-xs text-white/50 mb-1">Available tools:</p>
+                            <p class="text-xs text-white/50 mb-1">Available tools ({server.lastTestResult.toolCount}):</p>
                             <div class="flex flex-wrap gap-1.5">
-                                {#each testResults[server.id].tools as tool (tool.name)}
+                                {#each server.lastTestResult.toolNames as toolName (toolName)}
                                     <span
                                         class="text-[11px] text-green-300/80 bg-green-500/10 px-2 py-0.5 rounded"
-                                        title={tool.description || tool.name}
                                     >
-                                        {tool.name}
+                                        {toolName}
                                     </span>
                                 {/each}
                             </div>
@@ -451,8 +451,13 @@
                             type="password"
                             class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             bind:value={modalAuthConfig}
-                            placeholder={modalAuthType === "bearer" ? "Enter bearer token..." : "Enter API key..."}
+                            placeholder={editingServer ? "Leave empty to keep existing" : modalAuthType === "bearer" ? "Enter bearer token..." : "Enter API key..."}
                         />
+                        {#if editingServer}
+                            <p class="text-xs text-white/40 mt-1">
+                                Token hidden for security. Leave blank to keep the current value.
+                            </p>
+                        {/if}
                     </div>
                 {/if}
 

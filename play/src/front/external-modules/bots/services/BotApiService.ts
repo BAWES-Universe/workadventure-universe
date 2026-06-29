@@ -722,6 +722,13 @@ export interface McpServer {
     authConfig?: string;
     headers?: Record<string, string>;
     enabled: boolean;
+    lastTestedAt?: string | null;
+    lastTestResult?: {
+        success: boolean;
+        toolCount: number;
+        toolNames: string[];
+        error: string | null;
+    } | null;
     createdAt: string;
 }
 
