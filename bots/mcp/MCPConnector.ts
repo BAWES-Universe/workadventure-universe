@@ -23,6 +23,7 @@ export interface McpServerConfig {
     serverUrl: string;
     authType: 'none' | 'bearer' | 'api-key';
     authConfig?: string; // Decrypted auth value (plaintext at this point)
+    headers?: Record<string, string>; // Extra headers
     enabled: boolean;
 }
 
@@ -58,7 +59,8 @@ const REQUEST_TIMEOUT = 10_000; // 10 seconds
  */
 function buildAuthHeaders(
     authType: string,
-    authConfig?: string
+    authConfig?: string,
+    extraHeaders?: Record<string, string>
 ): Record<string, string> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -69,6 +71,13 @@ function buildAuthHeaders(
             headers['Authorization'] = `Bearer ${authConfig}`;
         } else if (authType === 'api-key') {
             headers['X-API-Key'] = authConfig;
+        }
+    }
+
+    // Merge extra headers (overrides any defaults with same key)
+    if (extraHeaders) {
+        for (const [key, value] of Object.entries(extraHeaders)) {
+            headers[key] = value;
         }
     }
 
@@ -84,7 +93,8 @@ async function jsonRpcRequest(
     method: string,
     params: Record<string, any> | undefined,
     authType: string,
-    authConfig?: string
+    authConfig?: string,
+    extraHeaders?: Record<string, string>
 ): Promise<any> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
@@ -100,7 +110,7 @@ async function jsonRpcRequest(
         }
 
         const response = await axios.post(serverUrl, body, {
-            headers: buildAuthHeaders(authType, authConfig),
+            headers: buildAuthHeaders(authType, authConfig, extraHeaders),
             signal: controller.signal,
         });
 
@@ -177,6 +187,7 @@ export class MCPConnector {
                 serverUrl: string;
                 authType: string;
                 authConfig?: string;
+                headers?: Record<string, string>;
             }
         >;
     }> {
@@ -187,6 +198,7 @@ export class MCPConnector {
                 serverUrl: string;
                 authType: string;
                 authConfig?: string;
+                headers?: Record<string, string>;
             }
         >();
 
@@ -237,6 +249,7 @@ export class MCPConnector {
                             serverUrl: server.serverUrl,
                             authType: server.authType,
                             authConfig: server.authConfig,
+                            headers: server.headers,
                         });
                     }
                 }
@@ -249,7 +262,8 @@ export class MCPConnector {
                 'tools/list',
                 undefined,
                 server.authType,
-                server.authConfig
+                server.authConfig,
+                server.headers
             );
 
             if (response && response.result && Array.isArray(response.result.tools)) {
@@ -279,6 +293,7 @@ export class MCPConnector {
                             serverUrl: server.serverUrl,
                             authType: server.authType,
                             authConfig: server.authConfig,
+                            headers: server.headers,
                         });
                     }
                 }
@@ -306,14 +321,16 @@ export class MCPConnector {
         toolName: string,
         args: any,
         authType: string,
-        authConfig?: string
+        authConfig?: string,
+        extraHeaders?: Record<string, string>
     ): Promise<any> {
         const response = await jsonRpcRequest(
             serverUrl,
             'tools/call',
             { name: toolName, arguments: args },
             authType,
-            authConfig
+            authConfig,
+            extraHeaders
         );
 
         if (!response) {

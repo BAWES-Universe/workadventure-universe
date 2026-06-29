@@ -1043,9 +1043,9 @@ CRITICAL RESPONSE RULES:
     /**
      * Build tool definitions for function calling
      */
-    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }> }> {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
         const tools: any[] = [];
-        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }>();
+        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -1157,7 +1157,7 @@ CRITICAL RESPONSE RULES:
         toolCalls: ToolCall[],
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string }>
+        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1375,7 +1375,8 @@ CRITICAL RESPONSE RULES:
                                     toolCall.name,
                                     parsedArgs,
                                     mcpServerConfig.authType,
-                                    mcpServerConfig.authConfig
+                                    mcpServerConfig.authConfig,
+                                    mcpServerConfig.headers
                                 );
                             } catch (mcpError: any) {
                                 console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);

@@ -720,6 +720,7 @@ export interface McpServer {
     serverUrl: string;
     authType: "none" | "bearer" | "api-key";
     authConfig?: string;
+    headers?: Record<string, string>;
     enabled: boolean;
     createdAt: string;
 }
@@ -729,6 +730,7 @@ export interface CreateMcpServerDto {
     serverUrl: string;
     authType: "none" | "bearer" | "api-key";
     authConfig?: string;
+    headers?: Record<string, string>;
 }
 
 export interface McpServerTestResult {

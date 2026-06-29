@@ -22,6 +22,7 @@
     let modalServerUrl = "";
     let modalAuthType: "none" | "bearer" | "api-key" = "none";
     let modalAuthConfig = "";
+    let modalHeaders: { key: string; value: string }[] = [];
     let modalLoading = false;
     let modalError: string | null = null;
 
@@ -77,6 +78,7 @@
         modalServerUrl = "";
         modalAuthType = "none";
         modalAuthConfig = "";
+        modalHeaders = [];
         modalError = null;
         showModal = true;
     }
@@ -87,6 +89,7 @@
         modalServerUrl = server.serverUrl;
         modalAuthType = server.authType;
         modalAuthConfig = server.authConfig || "";
+        modalHeaders = server.headers ? Object.entries(server.headers).map(([key, value]) => ({ key, value })) : [];
         modalError = null;
         showModal = true;
     }
@@ -120,6 +123,12 @@
             };
             if (modalAuthType !== "none" && modalAuthConfig.trim()) {
                 data.authConfig = modalAuthConfig.trim();
+            }
+            if (modalHeaders.length > 0) {
+                const filtered = modalHeaders.filter((h) => h.key.trim());
+                if (filtered.length > 0) {
+                    data.headers = Object.fromEntries(filtered.map((h) => [h.key.trim(), h.value]));
+                }
             }
 
             if (editingServer) {
@@ -437,6 +446,43 @@
                         />
                     </div>
                 {/if}
+
+                <!-- Extra Headers -->
+                <div>
+                    <label class="block text-sm text-white/80 mb-1.5 font-medium">Extra Headers</label>
+                    {#each modalHeaders as header, i (i)}
+                        <div class="flex items-center gap-2 mb-2">
+                            <input
+                                type="text"
+                                class="flex-1 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                bind:value={modalHeaders[i].key}
+                                placeholder="Header name"
+                            />
+                            <input
+                                type="password"
+                                class="flex-1 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                bind:value={modalHeaders[i].value}
+                                placeholder="Value"
+                            />
+                            <button
+                                class="px-2 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors flex-shrink-0"
+                                on:click={() => {
+                                    modalHeaders = modalHeaders.filter((_, idx) => idx !== i);
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    {/each}
+                    <button
+                        class="mt-1 px-3 py-1.5 text-xs text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 rounded transition-colors"
+                        on:click={() => {
+                            modalHeaders = [...modalHeaders, { key: "", value: "" }];
+                        }}
+                    >
+                        + Add Header
+                    </button>
+                </div>
             </div>
 
             <!-- Error -->
