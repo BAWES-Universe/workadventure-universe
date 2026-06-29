@@ -16,6 +16,7 @@ import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+import { MCPConnector } from '../mcp/MCPConnector';
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -403,7 +404,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
+            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService);
 
             // Generate stream with tools
             let tokensUsed = 0;
@@ -620,7 +621,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             })));
                         }
                         // Execute tool calls and continue conversation
-                        const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
+                        const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap);
                         pendingToolCalls = [];
                         toolCallAccumulator.clear();
                         hadToolCalls = true;
@@ -1042,8 +1043,9 @@ CRITICAL RESPONSE RULES:
     /**
      * Build tool definitions for function calling
      */
-    private buildTools(botClient?: BotClient, adminApiService?: AdminApiService): any[] {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
         const tools: any[] = [];
+        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -1115,7 +1117,36 @@ CRITICAL RESPONSE RULES:
             });
         }
 
-        return tools;
+        // Add MCP tools
+        if (botId && adminApiService) {
+            try {
+                const mcpResult = await MCPConnector.discoverToolsWithMapping(
+                    botId,
+                    this.adminApiUrl,
+                    adminApiService['adminApiToken'],
+                    process.env.BOT_SERVICE_TOKEN || ''
+                );
+                const mcpTools = mcpResult.tools;
+
+                // Transfer tool→server mapping to the outer-scope map
+                for (const [key, value] of mcpResult.toolServerMap) {
+                    toolServerMap.set(key, value);
+                }
+
+                for (const mcpTool of mcpTools) {
+                    tools.push(mcpTool);
+                }
+
+                if (mcpTools.length > 0) {
+                    console.log(`[AIService] Added ${mcpTools.length} MCP tools for bot ${botId}`);
+                }
+            } catch (e) {
+                console.warn('[AIService] Failed to discover MCP tools:', e);
+                Sentry.captureException(e instanceof Error ? e : new Error(String(e)));
+            }
+        }
+
+        return { tools, toolServerMap };
     }
 
     /**
@@ -1125,7 +1156,8 @@ CRITICAL RESPONSE RULES:
     private async executeToolCalls(
         toolCalls: ToolCall[],
         botClient?: BotClient,
-        adminApiService?: AdminApiService
+        adminApiService?: AdminApiService,
+        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1330,11 +1362,34 @@ CRITICAL RESPONSE RULES:
 
 
                     default:
-                        // Log unknown tool for debugging
-                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
+                        // Check if this is an MCP tool (not a hardcoded one)
+                        const mcpServerConfig = toolServerMap?.get(toolCall.name);
+                        if (mcpServerConfig) {
+                            try {
+                                const parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? JSON.parse(toolCall.arguments)
+                                    : toolCall.arguments || {};
+                                result = await MCPConnector.executeToolCall(
+                                    mcpServerConfig.serverId,
+                                    mcpServerConfig.serverUrl,
+                                    toolCall.name,
+                                    parsedArgs,
+                                    mcpServerConfig.authType,
+                                    mcpServerConfig.authConfig,
+                                    mcpServerConfig.headers
+                                );
+                            } catch (mcpError: any) {
+                                console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);
+                                Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+                                result = { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
+                            }
+                        } else {
+                            // Log unknown tool for debugging
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
+                            }
+                            result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
                         }
-                        result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
                 }
 
                 return { id: toolCall.id, name: toolCall.name, result };

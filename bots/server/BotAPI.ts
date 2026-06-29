@@ -8,6 +8,7 @@ import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import type { BotConfiguration } from './AdminApiService';
 import { movementLogger } from '../utils/MovementLogger';
+import { MCPConnector } from '../mcp/MCPConnector';
 
 export interface BotAPIRequest extends Request {
     userIdentifier?: string;
@@ -384,6 +385,9 @@ export class BotAPI {
                     res.status(404).json({ error: 'Bot not found in Admin API' });
                     return;
                 }
+
+                // Clear cached MCP tools so fresh tool definitions are fetched on respawn
+                MCPConnector.clearCache(botId);
 
                 // Spawn the bot
                 await this.botManager.spawnBot(botId, botConfig);
