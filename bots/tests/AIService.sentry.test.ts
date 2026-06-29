@@ -67,6 +67,7 @@ vi.mock("../mcp/MCPConnector", () => ({
             tools: [],
             toolServerMap: new Map(),
         }),
+        executeToolCall: vi.fn().mockResolvedValue({ content: [] }),
         clearCache: vi.fn(),
     },
 }));
