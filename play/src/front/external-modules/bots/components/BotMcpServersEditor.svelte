@@ -44,10 +44,9 @@
     }
 
     onMount(() => {
-        if (botId) {
-            lastBotId = botId;
-            void loadServers();
-        }
+        // onMount is not needed — the reactive statement above already
+        // triggers loadServers when botId is first assigned during init.
+        // Keeping both would fire a redundant duplicate API call.
     });
 
     // ─── API calls ──────────────────────────────────────────────────────────────────
@@ -155,8 +154,10 @@
         try {
             await botApiService.deleteBotMcpServer(botId, serverId);
             servers = servers.filter((s) => s.id !== serverId);
-            // Clean up error state
-            delete testError[serverId];
+            // Clean up error state (reassign to trigger Svelte reactivity)
+            testError = Object.fromEntries(
+                Object.entries(testError).filter(([id]) => id !== serverId)
+            );
             removingServerId = null;
         } catch (error) {
             console.error("[BotMcpServersEditor] Error removing MCP server:", error);
