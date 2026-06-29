@@ -169,8 +169,16 @@
     async function handleTestConnection(serverId: string) {
         testingServerId = serverId;
         try {
-            const result = await botApiService.testBotMcpServer(botId, serverId);
-            testResults = { ...testResults, [serverId]: result };
+            const rawResult = (await botApiService.testBotMcpServer(botId, serverId)) as Record<string, unknown>;
+            // Transform API response ({toolNames}) to component format ({tools})
+            testResults = {
+                ...testResults,
+                [serverId]: {
+                    success: rawResult.success === true,
+                    tools: ((rawResult.toolNames as string[]) || []).map((name: string) => ({ name })),
+                    error: rawResult.error as string | undefined,
+                },
+            };
         } catch (error) {
             console.error("[BotMcpServersEditor] Error testing MCP server:", error);
             testResults = {
@@ -192,7 +200,8 @@
         const result = testResults[serverId];
         if (!result) return "";
         if (result.success) {
-            return `${result.tools.length} tool${result.tools.length !== 1 ? "s" : ""}`;
+            const count = result.tools?.length ?? 0;
+            return `${count} tool${count !== 1 ? "s" : ""}`;
         }
         return result.error || "Error";
     }
@@ -340,7 +349,7 @@
                     </div>
 
                     <!-- Test result details -->
-                    {#if testResults[server.id]?.success && testResults[server.id].tools.length > 0}
+                    {#if testResults[server.id]?.success && testResults[server.id]?.tools?.length > 0}
                         <div class="mt-3 pt-2 border-t border-white/10">
                             <p class="text-xs text-white/50 mb-1">Available tools:</p>
                             <div class="flex flex-wrap gap-1.5">
