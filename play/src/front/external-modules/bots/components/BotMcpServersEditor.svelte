@@ -451,21 +451,21 @@
                 <div>
                     <label class="block text-sm text-white/80 mb-1.5 font-medium">Extra Headers</label>
                     {#each modalHeaders as header, i (i)}
-                        <div class="flex items-center gap-2 mb-2">
+                        <div class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">
                             <input
                                 type="text"
-                                class="flex-1 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="min-w-0 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 bind:value={modalHeaders[i].key}
                                 placeholder="Header name"
                             />
                             <input
                                 type="password"
-                                class="flex-1 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                class="min-w-0 px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 bind:value={modalHeaders[i].value}
                                 placeholder="Value"
                             />
                             <button
-                                class="px-2 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors flex-shrink-0"
+                                class="px-2 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors"
                                 on:click={() => {
                                     modalHeaders = modalHeaders.filter((_, idx) => idx !== i);
                                 }}
