@@ -1134,12 +1134,12 @@ CRITICAL RESPONSE RULES:
                 }
 
                 // Build a set of existing tool names for deduplication
-                const existingToolNames = new Set(tools.map(t => t.name));
+                const existingToolNames = new Set(tools.map(t => t.function.name));
 
                 for (const mcpTool of mcpTools) {
-                    if (!existingToolNames.has(mcpTool.name)) {
+                    if (!existingToolNames.has(mcpTool.function.name)) {
                         tools.push(mcpTool);
-                        existingToolNames.add(mcpTool.name);
+                        existingToolNames.add(mcpTool.function.name);
                     }
                 }
 
