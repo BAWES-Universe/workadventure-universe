@@ -145,6 +145,18 @@ const MOCK_WEATHER_CALL_RESPONSE = {
     },
 };
 
+const MOCK_INIT_RESPONSE = {
+    data: {
+        jsonrpc: '2.0',
+        id: 'init',
+        result: {
+            protocolVersion: '2024-11-05',
+            serverInfo: { name: 'mock-mcp-server', version: '1.0.0' },
+            capabilities: {},
+        },
+    },
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -172,6 +184,9 @@ describe('MCPConnector', () => {
             // Mock tools/list for weather server (bearer auth)
             mockedAxios.post.mockImplementation(async (url: string, body: any, config?: any) => {
                 if (url === 'https://weather.example.com/mcp') {
+                    if (body?.method === 'initialize') {
+                        return MOCK_INIT_RESPONSE;
+                    }
                     expect(body).toEqual({
                         jsonrpc: '2.0',
                         id: '1',
@@ -182,6 +197,9 @@ describe('MCPConnector', () => {
                     return { data: MOCK_WEATHER_TOOLS_RESPONSE };
                 }
                 if (url === 'https://math.example.com/mcp') {
+                    if (body?.method === 'initialize') {
+                        return MOCK_INIT_RESPONSE;
+                    }
                     expect(body).toEqual({
                         jsonrpc: '2.0',
                         id: '1',
@@ -271,7 +289,10 @@ describe('MCPConnector', () => {
 
             // Weather server works, math server fails
             let callCount = 0;
-            mockedAxios.post.mockImplementation(async (url: string) => {
+            mockedAxios.post.mockImplementation(async (url: string, body: any) => {
+                if (body?.method === 'initialize') {
+                    return MOCK_INIT_RESPONSE;
+                }
                 callCount++;
                 if (url === 'https://weather.example.com/mcp') {
                     return { data: MOCK_WEATHER_TOOLS_RESPONSE };
@@ -303,7 +324,10 @@ describe('MCPConnector', () => {
             mockedAxios.get.mockResolvedValue({ data: MOCK_CONFIGS });
 
             let postCallCount = 0;
-            mockedAxios.post.mockImplementation(async (url: string) => {
+            mockedAxios.post.mockImplementation(async (url: string, body: any) => {
+                if (body?.method === 'initialize') {
+                    return MOCK_INIT_RESPONSE;
+                }
                 postCallCount++;
                 if (url === 'https://weather.example.com/mcp') {
                     return { data: MOCK_WEATHER_TOOLS_RESPONSE };
@@ -322,7 +346,7 @@ describe('MCPConnector', () => {
                 'bot-service-token'
             );
             expect(tools1).toHaveLength(3); // 2 weather + 1 math
-            expect(postCallCount).toBe(2); // 2 servers
+            expect(postCallCount).toBe(2); // 2 servers, 1 method call each (init not counted)
 
             // Second call — should use cache for server tools but still call admin API
             vi.advanceTimersByTime(30 * 60 * 1000); // 30 min (within TTL)
@@ -334,15 +358,18 @@ describe('MCPConnector', () => {
                 'bot-service-token'
             );
             expect(tools2).toHaveLength(3);
-            // Should NOT have made additional POST calls (cached)
-            expect(mockedAxios.post).toHaveBeenCalledTimes(postCallCount);
+            // Should NOT have made additional method calls (cached) — postCallCount unchanged
+            expect(postCallCount).toBe(2);
         });
 
         it('fetches fresh data after TTL expires', async () => {
             mockedAxios.get.mockResolvedValue({ data: MOCK_CONFIGS });
 
             let postCallCount = 0;
-            mockedAxios.post.mockImplementation(async (url: string) => {
+            mockedAxios.post.mockImplementation(async (url: string, body: any) => {
+                if (body?.method === 'initialize') {
+                    return MOCK_INIT_RESPONSE;
+                }
                 postCallCount++;
                 return { data: MOCK_WEATHER_TOOLS_RESPONSE };
             });
@@ -375,7 +402,12 @@ describe('MCPConnector', () => {
 
         it('clearCache removes entries for a specific bot', async () => {
             mockedAxios.get.mockResolvedValue({ data: MOCK_CONFIGS });
-            mockedAxios.post.mockResolvedValue({ data: MOCK_WEATHER_TOOLS_RESPONSE });
+            mockedAxios.post.mockImplementation(async (url: string, body: any) => {
+                if (body?.method === 'initialize') {
+                    return MOCK_INIT_RESPONSE;
+                }
+                return { data: MOCK_WEATHER_TOOLS_RESPONSE };
+            });
 
             await MCPConnector.discoverTools(
                 'bot-123',
@@ -396,6 +428,9 @@ describe('MCPConnector', () => {
     describe('executeToolCall', () => {
         it('sends correct JSON-RPC and returns content array', async () => {
             mockedAxios.post.mockImplementation(async (url: string, body: any, config?: any) => {
+                if (body?.method === 'initialize') {
+                    return MOCK_INIT_RESPONSE;
+                }
                 expect(url).toBe('https://weather.example.com/mcp');
                 expect(body).toEqual({
                     jsonrpc: '2.0',
@@ -422,7 +457,9 @@ describe('MCPConnector', () => {
         });
 
         it('returns error object on network failure', async () => {
-            mockedAxios.post.mockRejectedValueOnce(new Error('Network error'));
+            mockedAxios.post
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                .mockRejectedValueOnce(new Error('Network error'));
 
             const result = await MCPConnector.executeToolCall(
                 'server-1',
@@ -439,7 +476,9 @@ describe('MCPConnector', () => {
         });
 
         it('returns error when tool call has an error response', async () => {
-            mockedAxios.post.mockResolvedValueOnce({
+            mockedAxios.post
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                .mockResolvedValueOnce({
                 data: {
                     jsonrpc: '2.0',
                     id: '2',
@@ -463,13 +502,15 @@ describe('MCPConnector', () => {
         });
 
         it('returns error when no content in response', async () => {
-            mockedAxios.post.mockResolvedValueOnce({
-                data: {
-                    jsonrpc: '2.0',
-                    id: '2',
-                    result: { content: [] },
-                },
-            });
+            mockedAxios.post
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                .mockResolvedValueOnce({
+                    data: {
+                        jsonrpc: '2.0',
+                        id: '2',
+                        result: { content: [] },
+                    },
+                });
 
             const result = await MCPConnector.executeToolCall(
                 'server-1',
@@ -562,7 +603,10 @@ describe('MCPConnector', () => {
         it('returns both tools and tool→server map', async () => {
             mockedAxios.get.mockResolvedValueOnce({ data: MOCK_CONFIGS });
 
-            mockedAxios.post.mockImplementation(async (url: string) => {
+            mockedAxios.post.mockImplementation(async (url: string, body: any) => {
+                if (body?.method === 'initialize') {
+                    return MOCK_INIT_RESPONSE;
+                }
                 if (url === 'https://weather.example.com/mcp') {
                     return { data: MOCK_WEATHER_TOOLS_RESPONSE };
                 }
@@ -613,7 +657,9 @@ describe('MCPConnector', () => {
             const abortError: any = new Error('canceled');
             abortError.isCanceled = true;
 
-            mockedAxios.post.mockImplementationOnce(async () => {
+            mockedAxios.post
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                .mockImplementationOnce(async () => {
                 // Simulate signal abort
                 const err: any = new Error('canceled');
                 err.code = 'ERR_CANCELED';
@@ -652,7 +698,9 @@ describe('AIService MCP integration', () => {
     it('MCPConnector.discoverTools returns McpToolDefinition compatible with AIService tools array', async () => {
         // This test validates the shape compatibility
         mockedAxios.get.mockResolvedValueOnce({ data: [MOCK_CONFIGS[0]] }); // only weather server
-        mockedAxios.post.mockResolvedValueOnce({ data: MOCK_WEATHER_TOOLS_RESPONSE });
+        mockedAxios.post
+            .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+            .mockResolvedValueOnce({ data: MOCK_WEATHER_TOOLS_RESPONSE });
 
         const tools = await MCPConnector.discoverTools(
             'bot-123',
@@ -697,7 +745,9 @@ describe('AIService MCP integration', () => {
 
     it('executeToolCall can be routed from tool name lookup (simulating AIService routing)', async () => {
         // This test validates the routing pattern used by AIService.executeToolCalls
-        mockedAxios.post.mockResolvedValueOnce({ data: MOCK_WEATHER_CALL_RESPONSE });
+        mockedAxios.post
+            .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+            .mockResolvedValueOnce({ data: MOCK_WEATHER_CALL_RESPONSE });
 
         // Simulate the mcpToolServerMap in AIService
         const toolServerMap = new Map<string, any>();

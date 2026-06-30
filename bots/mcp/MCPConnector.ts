@@ -205,6 +205,55 @@ async function jsonRpcRequest(
         return null;
     }
 
+    const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
+
+    // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
+    // Some servers (like Linear) tolerate tools/list without initialize,
+    // but spec-compliant servers (like Brick) require it.
+    let sessionId: string | undefined;
+    if (method !== 'initialize') {
+        try {
+            const initController = new AbortController();
+            const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+            try {
+                const initResponse = await axios.post(
+                    serverUrl,
+                    {
+                        jsonrpc: '2.0',
+                        id: 'init',
+                        method: 'initialize',
+                        params: {
+                            protocolVersion: '2024-11-05',
+                            capabilities: {},
+                            clientInfo: {
+                                name: 'workadventure-mcp-bot',
+                                version: '1.0.0',
+                            },
+                        },
+                    },
+                    {
+                        headers: baseHeaders,
+                        signal: initController.signal,
+                    }
+                );
+                const parsed = parseMcpResponse(initResponse);
+                if (parsed?.data?.result?.sessionId) {
+                    sessionId = parsed.data.result.sessionId;
+                }
+            } finally {
+                clearTimeout(initTimeoutId);
+            }
+        } catch {
+            // Some servers don't require initialize — continue without session.
+            // The actual method request will fail naturally if init is required.
+        }
+    }
+
+    const headers = { ...baseHeaders };
+    if (sessionId) {
+        headers['Mcp-Session-Id'] = sessionId;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -219,7 +268,7 @@ async function jsonRpcRequest(
         }
 
         const response = await axios.post(serverUrl, body, {
-            headers: buildAuthHeaders(authType, authConfig, extraHeaders),
+            headers,
             signal: controller.signal,
         });
 
