@@ -183,6 +183,10 @@
                 void loadServers();
             } else {
                 testError = { ...testError, [serverId]: result.error || "Connection failed" };
+                // Reload servers so the persisted lastTestResult (with error details) is
+                // reflected immediately — otherwise the template won't render the error
+                // because server.lastTestResult is still null in the cached array
+                void loadServers();
             }
         } catch (error) {
             console.error("[BotMcpServersEditor] Error testing MCP server:", error);
