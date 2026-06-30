@@ -52,15 +52,19 @@ const toolListCache = new Map<string, CachedTools>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const REQUEST_TIMEOUT = 10_000; // 10 seconds
 
-// Cache of initialized MCP sessions per server URL.
-// Stores the session ID (if any) and when init was last performed,
-// so subsequent requests can skip redundant initialization.
+// Cache of initialized MCP sessions per (server URL + auth context).
+// Includes auth type/config in the key so bots with different credentials
+// on the same URL don't share sessions.
 const SESSION_INIT_TTL = 60 * 60 * 1000; // 1 hour
 interface SessionEntry {
     sessionId?: string;
     initializedAt: number;
 }
 const mcpSessionInitCache = new Map<string, SessionEntry>();
+
+function sessionCacheKey(serverUrl: string, authType: string, authConfig?: string): string {
+    return `${serverUrl}|${authType}|${authConfig || ''}`;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -223,7 +227,7 @@ async function jsonRpcRequest(
     // Cache sessions per server URL to avoid initializing before every call.
     let sessionId: string | undefined;
     if (method !== 'initialize') {
-        const cachedSession = mcpSessionInitCache.get(serverUrl);
+        const cachedSession = mcpSessionInitCache.get(sessionCacheKey(serverUrl, authType, authConfig));
         if (cachedSession && Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL) {
             // Reuse cached session without redundant init
             if (cachedSession.sessionId) {
@@ -265,7 +269,7 @@ async function jsonRpcRequest(
                         sessionId = newSessionId;
                     }
                     // Cache the result so subsequent calls skip init revalidation
-                    mcpSessionInitCache.set(serverUrl, {
+                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig), {
                         sessionId: newSessionId || undefined,
                         initializedAt: Date.now(),
                     });
@@ -597,6 +601,10 @@ export class MCPConnector {
                     toolListCache.delete(key);
                 }
             }
+            // Clear all session cache on bot respawn to prevent stale session reuse.
+            // Session cache keys use (serverUrl|authType|authConfig) and don't carry
+            // a botId, so per-bot selective clearing isn't feasible.
+            mcpSessionInitCache.clear();
         } else {
             toolListCache.clear();
             mcpSessionInitCache.clear();
