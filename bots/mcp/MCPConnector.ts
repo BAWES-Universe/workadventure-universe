@@ -52,6 +52,20 @@ const toolListCache = new Map<string, CachedTools>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const REQUEST_TIMEOUT = 10_000; // 10 seconds
 
+// Cache of initialized MCP sessions per (server URL + auth context).
+// Includes auth type/config in the key so bots with different credentials
+// on the same URL don't share sessions.
+const SESSION_INIT_TTL = 60 * 60 * 1000; // 1 hour
+interface SessionEntry {
+    sessionId?: string;
+    initializedAt: number;
+}
+const mcpSessionInitCache = new Map<string, SessionEntry>();
+
+function sessionCacheKey(serverUrl: string, authType: string, authConfig?: string): string {
+    return `${serverUrl}|${authType}|${authConfig || ''}`;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -205,6 +219,75 @@ async function jsonRpcRequest(
         return null;
     }
 
+    const baseHeaders = buildAuthHeaders(authType, authConfig, extraHeaders);
+
+    // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
+    // Some servers (like Linear) tolerate tools/list without initialize,
+    // but spec-compliant servers (like Brick) require it.
+    // Cache sessions per server URL to avoid initializing before every call.
+    let sessionId: string | undefined;
+    if (method !== 'initialize') {
+        const cachedSession = mcpSessionInitCache.get(sessionCacheKey(serverUrl, authType, authConfig));
+        if (cachedSession && Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL) {
+            // Reuse cached session without redundant init
+            if (cachedSession.sessionId) {
+                sessionId = cachedSession.sessionId;
+            }
+        } else {
+            try {
+                const initController = new AbortController();
+                const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+                try {
+                    const initResponse = await axios.post(
+                        serverUrl,
+                        {
+                            jsonrpc: '2.0',
+                            id: 'init',
+                            method: 'initialize',
+                            params: {
+                                protocolVersion: '2024-11-05',
+                                capabilities: {},
+                                clientInfo: {
+                                    name: 'workadventure-mcp-bot',
+                                    version: '1.0.0',
+                                },
+                            },
+                        },
+                        {
+                            headers: baseHeaders,
+                            signal: initController.signal,
+                        }
+                    );
+                    const parsed = parseMcpResponse(initResponse);
+                    // Per MCP Streamable HTTP spec, session ID is transmitted in the
+                    // Mcp-Session-Id HTTP response header, not in the JSON body.
+                    // Check header first, then fall back to body for non-spec servers.
+                    const sessionFromHeader = initResponse.headers?.['mcp-session-id'];
+                    const sessionFromBody = parsed?.data?.result?.sessionId;
+                    const newSessionId = sessionFromHeader || sessionFromBody;
+                    if (newSessionId) {
+                        sessionId = newSessionId;
+                    }
+                    // Cache the result so subsequent calls skip init revalidation
+                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig), {
+                        sessionId: newSessionId || undefined,
+                        initializedAt: Date.now(),
+                    });
+                } finally {
+                    clearTimeout(initTimeoutId);
+                }
+            } catch {
+                // Some servers don't require initialize — continue without session.
+                // The actual method request will fail naturally if init is required.
+            }
+        }
+    }
+
+    const headers = { ...baseHeaders };
+    if (sessionId) {
+        headers['Mcp-Session-Id'] = sessionId;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -219,7 +302,7 @@ async function jsonRpcRequest(
         }
 
         const response = await axios.post(serverUrl, body, {
-            headers: buildAuthHeaders(authType, authConfig, extraHeaders),
+            headers,
             signal: controller.signal,
         });
 
@@ -247,6 +330,13 @@ async function jsonRpcRequest(
                 `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}: ${detail}`
             );
             Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
+            // Invalidate session cache on HTTP errors for non-initialize methods.
+            // Handles server restarts, session expiry, and stale session reuse
+            // after bot respawn — without this, a dead session is retried for up
+            // to 1 hour (SESSION_INIT_TTL).
+            if (method !== 'initialize' && status) {
+                mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig));
+            }
         } else {
             console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
@@ -520,6 +610,7 @@ export class MCPConnector {
             }
         } else {
             toolListCache.clear();
+            mcpSessionInitCache.clear();
         }
     }
 
