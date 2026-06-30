@@ -682,7 +682,7 @@ describe('AIService MCP integration', () => {
             },
         };
 
-        const hardcodedTool = {
+        const hardcodedTool: McpToolDefinition = {
             type: 'function',
             function: {
                 name: 'get_people_on_map',
@@ -691,7 +691,7 @@ describe('AIService MCP integration', () => {
             },
         };
 
-        const tools: any[] = [hardcodedTool, mcpTool];
+        const tools: McpToolDefinition[] = [hardcodedTool, mcpTool];
         expect(tools).toHaveLength(2);
     });
 
