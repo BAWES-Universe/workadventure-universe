@@ -1133,8 +1133,14 @@ CRITICAL RESPONSE RULES:
                     toolServerMap.set(key, value);
                 }
 
+                // Build a set of existing tool names for deduplication
+                const existingToolNames = new Set(tools.map(t => t.function.name));
+
                 for (const mcpTool of mcpTools) {
-                    tools.push(mcpTool);
+                    if (!existingToolNames.has(mcpTool.function.name)) {
+                        tools.push(mcpTool);
+                        existingToolNames.add(mcpTool.function.name);
+                    }
                 }
 
                 if (mcpTools.length > 0) {
@@ -1361,7 +1367,7 @@ CRITICAL RESPONSE RULES:
                         break;
 
 
-                    default:
+                    default: {
                         // Check if this is an MCP tool (not a hardcoded one)
                         const mcpServerConfig = toolServerMap?.get(toolCall.name);
                         if (mcpServerConfig) {
@@ -1390,6 +1396,7 @@ CRITICAL RESPONSE RULES:
                             }
                             result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
                         }
+                    }
                 }
 
                 return { id: toolCall.id, name: toolCall.name, result };

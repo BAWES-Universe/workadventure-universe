@@ -711,6 +711,8 @@ export class BotAPI {
                 // If name or texture changed and bot is running, despawn and respawn immediately
                 if ((nameChanged || textureChanged) && this.botManager.getBot(botId)) {
                     console.log(`[BotAPI] Bot ${botId} name or texture changed, respawning with new config`);
+                    // Clear cached MCP tools so fresh tool definitions are fetched on respawn
+                    MCPConnector.clearCache(botId);
                     // Despawn first
                     await this.botManager.despawnBot(botId);
                     // Wait a brief moment
@@ -774,6 +776,9 @@ export class BotAPI {
                     res.status(404).json({ error: 'Bot configuration not found' });
                     return;
                 }
+
+                // Clear cached MCP tools so fresh tool definitions are fetched on respawn
+                MCPConnector.clearCache(botId);
 
                 // Spawn bot
                 await this.botManager.spawnBot(botId, config);

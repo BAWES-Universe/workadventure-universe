@@ -65,6 +65,7 @@ function buildAuthHeaders(
 ): Record<string, string> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
     };
 
     if (authConfig) {
@@ -86,6 +87,71 @@ function buildAuthHeaders(
 }
 
 /**
+ * Parse an MCP response, handling both standard JSON and SSE (Streamable HTTP).
+ */
+function parseMcpResponse(response: any): any {
+    const contentType = response.headers?.['content-type'] || '';
+    const data = response.data;
+
+    if (
+        contentType.includes('text/event-stream') ||
+        (typeof data === 'string' && (data.trimStart().startsWith('event:') || data.trimStart().startsWith('data:')))
+    ) {
+        const text = typeof data === 'string' ? data : String(data);
+        const messages = text.split('\n\n');
+        for (const msg of messages) {
+            const dataLines: string[] = [];
+            for (const line of msg.trim().split('\n')) {
+                if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).replace(/^ /, ''));
+                }
+            }
+            if (dataLines.length > 0) {
+                try {
+                    const parsed = JSON.parse(dataLines.join('\n'));
+                    return { data: parsed, headers: response.headers, status: response.status };
+                } catch {
+                    continue;
+                }
+            }
+        }
+        return response; // fallback to raw
+    }
+
+    return response;
+}
+
+/**
+ * Validate that a URL is safe to send MCP requests to (basic SSRF guard).
+ */
+const ALLOWED_PROTOCOLS = ['http:', 'https:'];
+const BLOCKED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    '0.0.0.0',
+    '::1',
+    '[::1]',
+    'metadata.google.internal',
+    '169.254.169.254',
+];
+
+function isValidMcpServerUrl(url: string): { valid: boolean; error?: string } {
+    try {
+        const parsed = new URL(url);
+        if (!ALLOWED_PROTOCOLS.includes(parsed.protocol)) {
+            return { valid: false, error: `Unsupported protocol: ${parsed.protocol}` };
+        }
+        const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+        if (BLOCKED_HOSTS.includes(hostname)) {
+            return { valid: false, error: `Blocked host: ${parsed.hostname}` };
+        }
+        return { valid: true };
+    } catch {
+        return { valid: false, error: 'Invalid URL' };
+    }
+}
+
+/**
  * Execute a JSON-RPC request to an MCP server with timeout and error handling.
  * Never throws — returns the response data or null on failure.
  */
@@ -97,6 +163,12 @@ async function jsonRpcRequest(
     authConfig?: string,
     extraHeaders?: Record<string, string>
 ): Promise<any> {
+    const urlCheck = isValidMcpServerUrl(serverUrl);
+    if (!urlCheck.valid) {
+        console.warn(`[MCPConnector] Invalid server URL for ${method}: ${urlCheck.error}`);
+        return null;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
@@ -115,24 +187,34 @@ async function jsonRpcRequest(
             signal: controller.signal,
         });
 
-        return response.data;
+        const parsed = parseMcpResponse(response);
+        return parsed.data;
     } catch (error: any) {
         if (axios.isCancel(error)) {
-            console.warn(`[MCPConnector] Request timed out after ${REQUEST_TIMEOUT}ms for ${method} at ${serverUrl}`);
+            console.warn(`[MCPConnector] Request timed out after ${REQUEST_TIMEOUT}ms for ${method}`);
         } else if (axios.isAxiosError(error)) {
             const status = error.response?.status;
             const detail = error.response?.data
                 ? typeof error.response.data === 'string'
-                    ? error.response.data
+                    ? error.response.data.slice(0, 200)
                     : JSON.stringify(error.response.data).slice(0, 200)
                 : error.message;
+            const sanitizedUrl = (() => {
+                try {
+                    const u = new URL(serverUrl);
+                    return `${u.protocol}//${u.host}${u.pathname}`;
+                } catch {
+                    return '(invalid url)';
+                }
+            })();
             console.warn(
-                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${serverUrl}: ${detail}`
+                `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}: ${detail}`
             );
+            Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
         } else {
-            console.warn(`[MCPConnector] Error on ${method} at ${serverUrl}: ${error.message || error}`);
+            console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
+            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
         }
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
         return null;
     } finally {
         clearTimeout(timeoutId);
@@ -206,16 +288,23 @@ export class MCPConnector {
         // Fetch MCP server configs from admin API
         let servers: McpServerConfig[] = [];
         try {
-            const response = await axios.get(
-                `${adminApiUrl}/api/bots/${botId}/mcp-servers`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${adminApiToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                }
-            );
-            servers = response.data || [];
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+            try {
+                const response = await axios.get(
+                    `${adminApiUrl}/api/bots/${botId}/mcp-servers`,
+                    {
+                        headers: {
+                            Authorization: `Bearer ${adminApiToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        signal: controller.signal,
+                    }
+                );
+                servers = response.data || [];
+            } finally {
+                clearTimeout(timeoutId);
+            }
 
             // Decrypt authConfig for each server (admin API stores it encrypted)
             for (const server of servers) {
@@ -251,28 +340,38 @@ export class MCPConnector {
         const allTools: McpToolDefinition[] = [];
         const enabledServers = servers.filter((s) => s.enabled);
 
-        for (const server of enabledServers) {
-            // Check cache
+        // Track seen tool names across all servers to avoid duplicates
+        const seenToolNames = new Set<string>();
+
+        // Helper to push a tool def only if its name is unique
+        function addUniqueTool(tool: McpToolDefinition, server: McpServerConfig) {
+            if (!seenToolNames.has(tool.function.name)) {
+                seenToolNames.add(tool.function.name);
+                allTools.push(tool);
+                toolServerMap.set(tool.function.name, {
+                    serverId: server.id,
+                    serverUrl: server.serverUrl,
+                    authType: server.authType,
+                    authConfig: server.authConfig,
+                    headers: server.headers,
+                });
+            }
+        }
+
+        // Process all servers concurrently with a concurrency cap
+        async function discoverServerTools(
+            server: McpServerConfig
+        ): Promise<void> {
             const cacheKey = `${botId}:${server.id}`;
             const cached = toolListCache.get(cacheKey);
+
             if (cached && Date.now() < cached.cachedAt + CACHE_TTL) {
-                allTools.push(...cached.tools);
-                // Re-build mapping from cached tools
                 for (const tool of cached.tools) {
-                    if (!toolServerMap.has(tool.function.name)) {
-                        toolServerMap.set(tool.function.name, {
-                            serverId: server.id,
-                            serverUrl: server.serverUrl,
-                            authType: server.authType,
-                            authConfig: server.authConfig,
-                            headers: server.headers,
-                        });
-                    }
+                    addUniqueTool(tool, server);
                 }
-                continue;
+                return;
             }
 
-            // Fetch tools from server
             const response = await jsonRpcRequest(
                 server.serverUrl,
                 'tools/list',
@@ -301,23 +400,24 @@ export class MCPConnector {
                     serverId: server.id,
                 });
 
-                // Build tool → server mapping
                 for (const toolDef of toolDefs) {
-                    if (!toolServerMap.has(toolDef.function.name)) {
-                        toolServerMap.set(toolDef.function.name, {
-                            serverId: server.id,
-                            serverUrl: server.serverUrl,
-                            authType: server.authType,
-                            authConfig: server.authConfig,
-                            headers: server.headers,
-                        });
-                    }
+                    addUniqueTool(toolDef, server);
                 }
-
-                allTools.push(...toolDefs);
             } else {
                 console.warn(
                     `[MCPConnector] Server ${server.name} (${server.id}) returned no tools or invalid response`
+                );
+            }
+        }
+
+        // Run all server discovery tasks concurrently
+        const results = await Promise.allSettled(
+            enabledServers.map((server) => discoverServerTools(server))
+        );
+        for (const result of results) {
+            if (result.status === 'rejected') {
+                console.warn(
+                    `[MCPConnector] Server discovery failed: ${result.reason?.message || result.reason}`
                 );
             }
         }

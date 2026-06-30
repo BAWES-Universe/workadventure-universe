@@ -123,11 +123,11 @@
             if (modalAuthType !== "none" && modalAuthConfig.trim()) {
                 data.authConfig = modalAuthConfig.trim();
             }
-            if (modalHeaders.length > 0) {
-                const filtered = modalHeaders.filter((h) => h.key.trim());
-                if (filtered.length > 0) {
-                    data.headers = Object.fromEntries(filtered.map((h) => [h.key.trim(), h.value]));
-                }
+            const filtered = modalHeaders.filter((h) => h.key.trim());
+            if (filtered.length > 0) {
+                data.headers = Object.fromEntries(filtered.map((h) => [h.key.trim(), h.value]));
+            } else {
+                data.headers = {};
             }
 
             if (editingServer) {
