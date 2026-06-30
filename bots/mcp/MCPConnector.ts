@@ -135,6 +135,26 @@ const BLOCKED_HOSTS = [
     '169.254.169.254',
 ];
 
+/** Check if an IP string falls within a private/reserved range. */
+function isPrivateIp(ip: string): boolean {
+    // IPv4 private ranges
+    if (ip.startsWith('10.')) return true;                                  // 10.0.0.0/8
+    if (ip.startsWith('172.16.') || ip.startsWith('172.17.') ||
+        ip.startsWith('172.18.') || ip.startsWith('172.19.') ||
+        ip.startsWith('172.20.') || ip.startsWith('172.21.') ||
+        ip.startsWith('172.22.') || ip.startsWith('172.23.') ||
+        ip.startsWith('172.24.') || ip.startsWith('172.25.') ||
+        ip.startsWith('172.26.') || ip.startsWith('172.27.') ||
+        ip.startsWith('172.28.') || ip.startsWith('172.29.') ||
+        ip.startsWith('172.30.') || ip.startsWith('172.31.')) return true; // 172.16.0.0/12
+    if (ip.startsWith('192.168.')) return true;                              // 192.168.0.0/16
+    if (ip.startsWith('169.254.')) return true;                              // link-local
+    // IPv6 private / unique-local
+    if (ip.startsWith('fc') || ip.startsWith('fd')) return true;             // fc00::/7
+    if (ip === '::1') return true;
+    return false;
+}
+
 function isValidMcpServerUrl(url: string): { valid: boolean; error?: string } {
     try {
         const parsed = new URL(url);
@@ -144,6 +164,10 @@ function isValidMcpServerUrl(url: string): { valid: boolean; error?: string } {
         const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
         if (BLOCKED_HOSTS.includes(hostname)) {
             return { valid: false, error: `Blocked host: ${parsed.hostname}` };
+        }
+        // Check if hostname is a private IP
+        if (isPrivateIp(hostname)) {
+            return { valid: false, error: `Blocked private IP: ${parsed.hostname}` };
         }
         return { valid: true };
     } catch {
