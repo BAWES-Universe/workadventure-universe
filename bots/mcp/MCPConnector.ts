@@ -330,6 +330,13 @@ async function jsonRpcRequest(
                 `[MCPConnector] HTTP ${status || 'error'} on ${method} at ${sanitizedUrl}: ${detail}`
             );
             Sentry.captureException(new Error(`MCPConnector HTTP ${status || 'error'} on ${method}`));
+            // Invalidate session cache on HTTP errors for non-initialize methods.
+            // Handles server restarts, session expiry, and stale session reuse
+            // after bot respawn — without this, a dead session is retried for up
+            // to 1 hour (SESSION_INIT_TTL).
+            if (method !== 'initialize' && status) {
+                mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig));
+            }
         } else {
             console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
