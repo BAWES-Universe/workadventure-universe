@@ -85,10 +85,8 @@
                     const firstTexture = data["woka"]?.collections?.[0]?.textures?.[0];
                     if (firstTexture) {
                         currentSelectedId = firstTexture.id;
-                        onSelect(firstTexture.id);
                     } else {
                         currentSelectedId = "";
-                        onSelect("");
                     }
                 }
             } else if (data["woka"]?.collections?.[0]?.textures?.[0]) {
