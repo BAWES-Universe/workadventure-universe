@@ -773,13 +773,14 @@ CRITICAL RESPONSE RULES:
                                         playerId: String(playerId),
                                         space: spaceName,
                                     });
-                                    // Reset per-round tracking for next follow-up iteration
-                                    followUpContent = '';
-                                    followUpTokens = 0;
-                                    followUpPromptTokens = 0;
-                                    followUpCompletionTokens = 0;
-                                    followUpError = false;
                                 }
+                                // Reset per-round tracking unconditionally for next follow-up iteration
+                                // (must run even when round produces tool calls with zero text content)
+                                followUpContent = '';
+                                followUpTokens = 0;
+                                followUpPromptTokens = 0;
+                                followUpCompletionTokens = 0;
+                                followUpError = false;
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
@@ -812,12 +813,12 @@ CRITICAL RESPONSE RULES:
                                 output: followUpContent,
                                 inputTokens: followUpPromptTokens,
                                 outputTokens: followUpCompletionTokens,
-                                latency: (Date.now() - overallFollowUpStartTime) / 1000,
+                                latency: (Date.now() - followUpStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
                                     tokensUsed: followUpTokens,
                                     promptTokens: followUpPromptTokens,
                                     completionTokens: followUpCompletionTokens,
-                                    latency: Date.now() - overallFollowUpStartTime,
+                                    latency: Date.now() - followUpStartTime,
                                     error: followUpError,
                                 }),
                                 botId,
