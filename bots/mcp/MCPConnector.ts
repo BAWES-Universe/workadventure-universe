@@ -11,6 +11,7 @@
 
 import axios from 'axios';
 import * as Sentry from '@sentry/node';
+import { isIP } from 'net';
 import { decryptApiKey } from '../ai/encryption';
 
 // ---------------------------------------------------------------------------
@@ -135,6 +136,37 @@ const BLOCKED_HOSTS = [
     '169.254.169.254',
 ];
 
+/** Check if an IP address falls within a private/reserved range. */
+function isPrivateIp(ip: string): boolean {
+    // Handle IPv4-mapped IPv6 (e.g., ::ffff:10.0.0.1) — extract embedded IPv4 and recurse
+    const lowerIp = ip.toLowerCase();
+    const v4MappedPrefix = '::ffff:';
+    if (lowerIp.startsWith(v4MappedPrefix)) {
+        return isPrivateIp(ip.slice(v4MappedPrefix.length));
+    }
+
+    // IPv4 private ranges
+    if (ip.startsWith('10.')) return true;                                  // 10.0.0.0/8
+    if (ip.startsWith('172.16.') || ip.startsWith('172.17.') ||
+        ip.startsWith('172.18.') || ip.startsWith('172.19.') ||
+        ip.startsWith('172.20.') || ip.startsWith('172.21.') ||
+        ip.startsWith('172.22.') || ip.startsWith('172.23.') ||
+        ip.startsWith('172.24.') || ip.startsWith('172.25.') ||
+        ip.startsWith('172.26.') || ip.startsWith('172.27.') ||
+        ip.startsWith('172.28.') || ip.startsWith('172.29.') ||
+        ip.startsWith('172.30.') || ip.startsWith('172.31.')) return true; // 172.16.0.0/12
+    if (ip.startsWith('192.168.')) return true;                              // 192.168.0.0/16
+    if (ip.startsWith('169.254.')) return true;                              // link-local
+
+    // IPv6 private / unique-local — only match when string looks like an actual IPv6 address
+    if (ip.includes(':')) {
+        if (ip.startsWith('fc') || ip.startsWith('fd')) return true;         // fc00::/7
+        if (ip === '::1') return true;
+    }
+
+    return false;
+}
+
 function isValidMcpServerUrl(url: string): { valid: boolean; error?: string } {
     try {
         const parsed = new URL(url);
@@ -144,6 +176,10 @@ function isValidMcpServerUrl(url: string): { valid: boolean; error?: string } {
         const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
         if (BLOCKED_HOSTS.includes(hostname)) {
             return { valid: false, error: `Blocked host: ${parsed.hostname}` };
+        }
+        // Check if hostname is a private IP — only when it's actually an IP address
+        if (isIP(hostname) > 0 && isPrivateIp(hostname)) {
+            return { valid: false, error: `Blocked private IP: ${parsed.hostname}` };
         }
         return { valid: true };
     } catch {

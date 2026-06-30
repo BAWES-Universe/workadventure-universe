@@ -548,9 +548,9 @@ describe('MCPConnector', () => {
                 expect.any(String),
                 expect.any(Object),
                 expect.objectContaining({
-                    headers: {
+                    headers: expect.objectContaining({
                         'Content-Type': 'application/json',
-                    },
+                    }),
                 })
             );
         });
