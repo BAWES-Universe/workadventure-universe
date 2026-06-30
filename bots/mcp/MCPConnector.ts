@@ -237,8 +237,15 @@ async function jsonRpcRequest(
                     }
                 );
                 const parsed = parseMcpResponse(initResponse);
-                if (parsed?.data?.result?.sessionId) {
-                    sessionId = parsed.data.result.sessionId;
+                // Per MCP Streamable HTTP spec, session ID is transmitted in the
+                // Mcp-Session-Id HTTP response header, not in the JSON body.
+                // Check header first, then fall back to body for non-spec servers.
+                const sessionFromHeader = initResponse.headers?.['mcp-session-id'];
+                const sessionFromBody = parsed?.data?.result?.sessionId;
+                if (sessionFromHeader) {
+                    sessionId = sessionFromHeader;
+                } else if (sessionFromBody) {
+                    sessionId = sessionFromBody;
                 }
             } finally {
                 clearTimeout(initTimeoutId);
