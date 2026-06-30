@@ -52,6 +52,16 @@ const toolListCache = new Map<string, CachedTools>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const REQUEST_TIMEOUT = 10_000; // 10 seconds
 
+// Cache of initialized MCP sessions per server URL.
+// Stores the session ID (if any) and when init was last performed,
+// so subsequent requests can skip redundant initialization.
+const SESSION_INIT_TTL = 60 * 60 * 1000; // 1 hour
+interface SessionEntry {
+    sessionId?: string;
+    initializedAt: number;
+}
+const mcpSessionInitCache = new Map<string, SessionEntry>();
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -210,49 +220,62 @@ async function jsonRpcRequest(
     // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
     // Some servers (like Linear) tolerate tools/list without initialize,
     // but spec-compliant servers (like Brick) require it.
+    // Cache sessions per server URL to avoid initializing before every call.
     let sessionId: string | undefined;
     if (method !== 'initialize') {
-        try {
-            const initController = new AbortController();
-            const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+        const cachedSession = mcpSessionInitCache.get(serverUrl);
+        if (cachedSession && Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL) {
+            // Reuse cached session without redundant init
+            if (cachedSession.sessionId) {
+                sessionId = cachedSession.sessionId;
+            }
+        } else {
             try {
-                const initResponse = await axios.post(
-                    serverUrl,
-                    {
-                        jsonrpc: '2.0',
-                        id: 'init',
-                        method: 'initialize',
-                        params: {
-                            protocolVersion: '2024-11-05',
-                            capabilities: {},
-                            clientInfo: {
-                                name: 'workadventure-mcp-bot',
-                                version: '1.0.0',
+                const initController = new AbortController();
+                const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+                try {
+                    const initResponse = await axios.post(
+                        serverUrl,
+                        {
+                            jsonrpc: '2.0',
+                            id: 'init',
+                            method: 'initialize',
+                            params: {
+                                protocolVersion: '2024-11-05',
+                                capabilities: {},
+                                clientInfo: {
+                                    name: 'workadventure-mcp-bot',
+                                    version: '1.0.0',
+                                },
                             },
                         },
-                    },
-                    {
-                        headers: baseHeaders,
-                        signal: initController.signal,
+                        {
+                            headers: baseHeaders,
+                            signal: initController.signal,
+                        }
+                    );
+                    const parsed = parseMcpResponse(initResponse);
+                    // Per MCP Streamable HTTP spec, session ID is transmitted in the
+                    // Mcp-Session-Id HTTP response header, not in the JSON body.
+                    // Check header first, then fall back to body for non-spec servers.
+                    const sessionFromHeader = initResponse.headers?.['mcp-session-id'];
+                    const sessionFromBody = parsed?.data?.result?.sessionId;
+                    const newSessionId = sessionFromHeader || sessionFromBody;
+                    if (newSessionId) {
+                        sessionId = newSessionId;
                     }
-                );
-                const parsed = parseMcpResponse(initResponse);
-                // Per MCP Streamable HTTP spec, session ID is transmitted in the
-                // Mcp-Session-Id HTTP response header, not in the JSON body.
-                // Check header first, then fall back to body for non-spec servers.
-                const sessionFromHeader = initResponse.headers?.['mcp-session-id'];
-                const sessionFromBody = parsed?.data?.result?.sessionId;
-                if (sessionFromHeader) {
-                    sessionId = sessionFromHeader;
-                } else if (sessionFromBody) {
-                    sessionId = sessionFromBody;
+                    // Cache the result so subsequent calls skip init revalidation
+                    mcpSessionInitCache.set(serverUrl, {
+                        sessionId: newSessionId || undefined,
+                        initializedAt: Date.now(),
+                    });
+                } finally {
+                    clearTimeout(initTimeoutId);
                 }
-            } finally {
-                clearTimeout(initTimeoutId);
+            } catch {
+                // Some servers don't require initialize — continue without session.
+                // The actual method request will fail naturally if init is required.
             }
-        } catch {
-            // Some servers don't require initialize — continue without session.
-            // The actual method request will fail naturally if init is required.
         }
     }
 
@@ -576,6 +599,7 @@ export class MCPConnector {
             }
         } else {
             toolListCache.clear();
+            mcpSessionInitCache.clear();
         }
     }
 
