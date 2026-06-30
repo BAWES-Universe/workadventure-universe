@@ -5,6 +5,7 @@
         type McpServer,
         type CreateMcpServerDto,
         type McpServerTestResult,
+        type McpServerTestResponse,
     } from "../services/BotApiService";
 
     export let botId: string;
@@ -170,12 +171,11 @@
     async function handleTestConnection(serverId: string) {
         testingServerId = serverId;
         try {
-            const rawResult = (await botApiService.testBotMcpServer(botId, serverId)) as Record<string, unknown>;
-            // Transform API response ({toolNames}) to component format ({tools})
+            const rawResult = await botApiService.testBotMcpServer(botId, serverId);
             const result: McpServerTestResult = {
                 success: rawResult.success === true,
-                tools: ((rawResult.toolNames as string[]) || []).map((name: string) => ({ name })),
-                error: rawResult.error as string | undefined,
+                tools: (rawResult.toolNames || []).map((name: string) => ({ name })),
+                error: rawResult.error || undefined,
             };
 
             if (result.success) {

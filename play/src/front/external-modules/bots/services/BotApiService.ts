@@ -704,7 +704,7 @@ export class BotApiService {
     /**
      * Test connection to an MCP server and return tool names
      */
-    async testBotMcpServer(botId: string, id: string): Promise<McpServerTestResult> {
+    async testBotMcpServer(botId: string, id: string): Promise<McpServerTestResponse> {
         const response = await this.fetch(`/api/bots/${botId}/mcp-servers/${id}/test`, {
             method: "POST",
         });
@@ -738,6 +738,13 @@ export interface CreateMcpServerDto {
     authType: "none" | "bearer" | "api-key";
     authConfig?: string;
     headers?: Record<string, string>;
+}
+
+export interface McpServerTestResponse {
+    success: boolean;
+    toolCount: number;
+    toolNames: string[];
+    error?: string | null;
 }
 
 export interface McpServerTestResult {
