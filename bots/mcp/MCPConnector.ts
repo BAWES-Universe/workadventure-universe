@@ -601,10 +601,6 @@ export class MCPConnector {
                     toolListCache.delete(key);
                 }
             }
-            // Clear all session cache on bot respawn to prevent stale session reuse.
-            // Session cache keys use (serverUrl|authType|authConfig) and don't carry
-            // a botId, so per-bot selective clearing isn't feasible.
-            mcpSessionInitCache.clear();
         } else {
             toolListCache.clear();
             mcpSessionInitCache.clear();
