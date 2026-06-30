@@ -427,6 +427,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let followUpError = false;
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
+            let overallFollowUpStartTime = 0;
+            let lastFollowUpDoneChunk: AIStreamChunk | null = null;
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
 
@@ -659,9 +661,10 @@ CRITICAL RESPONSE RULES:
                                 : followUpMessage;
                             followUpInput = followUpMessageWithNoThink;
 
-                            if (followUpStartTime === 0) {
-                                followUpStartTime = Date.now();
+                            if (overallFollowUpStartTime === 0) {
+                                overallFollowUpStartTime = Date.now();
                             }
+                            followUpStartTime = Date.now();
 
                             for await (const resultChunk of this.providerRegistry.generateStream(
                                 providerId,
@@ -727,8 +730,13 @@ CRITICAL RESPONSE RULES:
                                 }
                                 if (resultChunk.done) {
                                     streamCompleted = true;
+                                    // Buffer done chunk instead of yielding it — callers break
+                                    // on done:true which would terminate the generator and lose
+                                    // subsequent tool-calling rounds in the while loop.
+                                    lastFollowUpDoneChunk = resultChunk;
+                                } else {
+                                    yield resultChunk;
                                 }
-                                yield resultChunk;
                             }
 
                             // Convert any accumulated tool calls from the follow-up response for the next round
@@ -785,6 +793,13 @@ CRITICAL RESPONSE RULES:
                             pendingToolCalls = [];
                         }
 
+                        // Yield the buffered done chunk now — outside the while loop so callers
+                        // don't break early and lose subsequent tool-calling rounds.
+                        if (lastFollowUpDoneChunk) {
+                            yield lastFollowUpDoneChunk;
+                            lastFollowUpDoneChunk = null;
+                        }
+
                         // Capture $ai_generation for the final tool follow-up LLM call
                         if (followUpContent || followUpError) {
                             captureAiGeneration({
@@ -797,12 +812,12 @@ CRITICAL RESPONSE RULES:
                                 output: followUpContent,
                                 inputTokens: followUpPromptTokens,
                                 outputTokens: followUpCompletionTokens,
-                                latency: (Date.now() - followUpStartTime) / 1000,
+                                latency: (Date.now() - overallFollowUpStartTime) / 1000,
                                 cost: this.calculateCost(providerId, {
                                     tokensUsed: followUpTokens,
                                     promptTokens: followUpPromptTokens,
                                     completionTokens: followUpCompletionTokens,
-                                    latency: Date.now() - followUpStartTime,
+                                    latency: Date.now() - overallFollowUpStartTime,
                                     error: followUpError,
                                 }),
                                 botId,
