@@ -334,7 +334,7 @@ async function jsonRpcRequest(
             // Handles server restarts, session expiry, and stale session reuse
             // after bot respawn — without this, a dead session is retried for up
             // to 1 hour (SESSION_INIT_TTL).
-            if (method !== 'initialize' && status) {
+            if (method !== 'initialize') {
                 mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig));
             }
         } else {
