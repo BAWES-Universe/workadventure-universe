@@ -619,10 +619,6 @@ export class MCPConnector {
                     toolListCache.delete(key);
                 }
             }
-            // Clear all MCP sessions — keys don't include botId so per-bot filtering
-            // isn't possible. Stale sessions on respawn cause transient failures.
-            // Sessions are re-established lazily on next tool call.
-            mcpSessionInitCache.clear();
         } else {
             toolListCache.clear();
             mcpSessionInitCache.clear();
