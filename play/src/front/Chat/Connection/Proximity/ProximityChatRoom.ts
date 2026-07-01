@@ -647,6 +647,12 @@ export class ProximityChatRoom implements ChatRoom {
                 this.lastMessageTimestamp = newMessage.date.getTime();
                 this.notifyNewMessage(newMessage);
 
+                // Track unread messages when chat room is not active
+                if (get(selectedRoomStore) !== this) {
+                    this.hasUnreadMessages.set(true);
+                    this.unreadNotificationCount.set(get(this.unreadNotificationCount) + 1);
+                }
+
                 // If this was also the final chunk, finalize immediately
                 if (stream.isFinal) {
                     this.streamMessages.delete(stream.responseId);
