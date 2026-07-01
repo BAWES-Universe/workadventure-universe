@@ -496,6 +496,9 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -744,6 +747,9 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -855,6 +861,9 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -985,6 +994,9 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 chunkCount++;
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendAreaArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
@@ -1125,6 +1137,9 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 chunkCount++;
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendPersonArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
@@ -1259,6 +1274,9 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
