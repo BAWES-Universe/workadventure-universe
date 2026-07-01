@@ -706,8 +706,6 @@ export class IdleBehavior extends BaseBehavior {
             console.error(`[IdleBehavior] AI error:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
-            // Send error chunk to frontend
-            this.bot?.sendStreamMessage(spaceName, responseId, '', true, undefined, true, "I'm having trouble processing that. Could you rephrase?");
             this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }

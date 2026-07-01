@@ -584,24 +584,37 @@ export class ProximityChatRoom implements ChatRoom {
 
                 if (stream.reset && existing) {
                     // Regeneration: clear the buffer, start fresh
-                    existing.content.set({ body: stream.token, url: undefined });
+                    (existing.content as Writable<ChatMessageContent>).set({ body: stream.token, url: undefined });
                     return;
                 }
 
                 if (existing) {
                     // Update existing stream message
                     const currentBody = get(existing.content).body;
+                    if (stream.isError) {
+                        // Error: display error message and finalize
+                        (existing.content as Writable<ChatMessageContent>).set({
+                            body: stream.errorMessage || "An error occurred",
+                            url: undefined,
+                        });
+                        this.streamMessages.delete(stream.responseId);
+                        return;
+                    }
                     if (stream.isFinal) {
                         // Final chunk: replace with complete cleaned content
-                        existing.content.set({
-                            body: stream.finalContent ?? currentBody + stream.token,
+                        // (finalContent may be empty string for tokens-only final — use accumulated content)
+                        (existing.content as Writable<ChatMessageContent>).set({
+                            body: stream.finalContent || currentBody || "",
                             url: undefined,
                         });
                         // Remove from active streams
                         this.streamMessages.delete(stream.responseId);
                     } else {
                         // Append incremental token
-                        existing.content.set({ body: currentBody + stream.token, url: undefined });
+                        (existing.content as Writable<ChatMessageContent>).set({
+                            body: currentBody + stream.token,
+                            url: undefined,
+                        });
                     }
                     return;
                 }
