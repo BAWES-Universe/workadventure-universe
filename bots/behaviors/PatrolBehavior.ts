@@ -1298,6 +1298,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
@@ -1411,6 +1414,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
