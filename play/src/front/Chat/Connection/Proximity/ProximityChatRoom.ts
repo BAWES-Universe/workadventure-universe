@@ -96,6 +96,9 @@ export class ProximityChatRoom implements ChatRoom {
     private _spacePromise: Promise<SpaceInterface | undefined> = Promise.resolve(undefined);
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
+    private spaceStreamMessageSubscription: Subscription | undefined;
+    // Active stream messages by responseId — updated incrementally as tokens arrive
+    private streamMessages: Map<string, ProximityChatMessage> = new Map();
     private observeUserJoinedSubscription: Subscription | undefined;
     private observeUserLeftSubscription: Subscription | undefined;
     // Users by spaceUserId
@@ -537,6 +540,8 @@ export class ProximityChatRoom implements ChatRoom {
         };
 
         this.spaceMessageSubscription?.unsubscribe();
+        this.spaceStreamMessageSubscription?.unsubscribe();
+        this.streamMessages.clear();
         this.spaceMessageSubscription = this._space.observePublicEvent("spaceMessage").subscribe((event) => {
             if (isBlackListed(event.sender)) {
                 return;
@@ -565,6 +570,78 @@ export class ProximityChatRoom implements ChatRoom {
                 this.removeTypingUser(event.sender);
             }
         });
+
+        // Subscribe to streaming bot responses — tokens arrive incrementally
+        this.spaceStreamMessageSubscription = this._space
+            .observePublicEvent("spaceStreamMessage")
+            .subscribe((event) => {
+                if (isBlackListed(event.sender)) {
+                    return;
+                }
+
+                const stream = event.spaceStreamMessage;
+                const existing = this.streamMessages.get(stream.responseId);
+
+                if (stream.reset && existing) {
+                    // Regeneration: clear the buffer, start fresh
+                    existing.content = writable({ body: stream.token, url: undefined });
+                    return;
+                }
+
+                if (existing) {
+                    // Update existing stream message
+                    const currentBody = get(existing.content).body;
+                    let newBody: string;
+                    if (stream.isFinal) {
+                        // Final chunk: replace with complete cleaned content
+                        newBody = stream.finalContent ?? currentBody + stream.token;
+                        // Remove from active streams
+                        this.streamMessages.delete(stream.responseId);
+                    } else {
+                        // Append incremental token
+                        newBody = currentBody + stream.token;
+                    }
+                    existing.content = writable({ body: newBody, url: undefined });
+                    return;
+                }
+
+                if (stream.reset) {
+                    // Reset on a non-existent stream — ignore
+                    return;
+                }
+
+                // First chunk of a new streaming response — create message entry
+                const spaceUser = this.users?.get(event.sender);
+                let chatUser: AnyKindOfUser = this.unknownUser;
+                if (spaceUser) {
+                    chatUser = mapExtendedSpaceUserToChatUser(spaceUser);
+                }
+
+                const newMessage = new ProximityChatMessage(
+                    uuidv4(),
+                    chatUser,
+                    writable({ body: stream.token, url: undefined }),
+                    new Date(),
+                    false,
+                    "proximity"
+                );
+
+                this.streamMessages.set(stream.responseId, newMessage);
+                this.messages.push(newMessage);
+
+                this.lastMessageTimestamp = newMessage.date.getTime();
+                this.notifyNewMessage(newMessage);
+
+                // If this was also the final chunk, finalize immediately
+                if (stream.isFinal) {
+                    const finalBody = stream.finalContent ?? stream.token;
+                    newMessage.content = writable({ body: finalBody, url: undefined });
+                    this.streamMessages.delete(stream.responseId);
+                }
+
+                chatVisibilityStore.set(true);
+                if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
+            });
 
         this.saveChatState();
 
@@ -596,6 +673,8 @@ export class ProximityChatRoom implements ChatRoom {
                 this.usersUnsubscriber?.();
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
+                this.spaceStreamMessageSubscription?.unsubscribe();
+                this.streamMessages.clear();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
                         console.error("Error leaving space: ", error);
@@ -793,6 +872,8 @@ export class ProximityChatRoom implements ChatRoom {
 
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceStreamMessageSubscription?.unsubscribe();
+        this.streamMessages.clear();
 
         this.scriptingOutputAudioStreamManager?.close();
         this.scriptingInputAudioStreamManager?.close();
@@ -839,6 +920,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.stopListeningToStreamInBubbleStreamUnsubscriber.unsubscribe();
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceStreamMessageSubscription?.unsubscribe();
+        this.streamMessages.clear();
 
         this.scriptingOutputAudioStreamManager?.close();
         this.scriptingInputAudioStreamManager?.close();

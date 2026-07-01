@@ -798,6 +798,8 @@ export class SocialBehavior extends BaseBehavior {
         const startTime = Date.now(); // Track response time BEFORE streaming starts
         let tokensUsed = 0;
         let latency = 0;
+        // Unique ID for this streamed response — used by frontend to correlate chunks
+        const responseId = `bot-${botId}-player-${playerId}-${Date.now()}`;
         
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -813,6 +815,8 @@ export class SocialBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+                    // Stream incremental token to frontend in real-time
+                    this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                 }
                 
                 // Extract token usage and latency from chunk metadata
@@ -828,7 +832,7 @@ export class SocialBehavior extends BaseBehavior {
                 
                 if (chunk.done) {
                     // Stop typing indicator
-                    this.bot.stopTyping(spaceName);
+                    this.bot?.stopTyping(spaceName);
                     
                     // Calculate response time (use latency from metadata if available, otherwise calculate)
                     const responseTime = latency || (Date.now() - startTime);
@@ -885,7 +889,9 @@ export class SocialBehavior extends BaseBehavior {
                                 console.warn(`[SocialBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
                             }
                             
-                            // BLOCK the duplicate - don't send it
+                            // BLOCK the duplicate - clear frontend buffer and start fresh
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                            
                             // Instead, generate a new response with explicit anti-repetition instruction
                             const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
                             const antiRepetitionPrompt = `${chatInstructions}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
@@ -906,6 +912,8 @@ export class SocialBehavior extends BaseBehavior {
                                 )) {
                                     if (chunk.content) {
                                         regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
+                                        // Stream regenerated tokens to frontend (same responseId, after reset)
+                                        this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                                     }
                                     if (chunk.done) break;
                                 }
@@ -982,9 +990,14 @@ export class SocialBehavior extends BaseBehavior {
                     // Metrics are now recorded in ResponseProcessor (combined into one record)
                     // No need to record separately here - prevents duplicate metrics
                     
-                    // Send processed message
+                    // Send processed message via stream final chunk
                     if (processedMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, processedMessage);
+                        // Send the final chunk with the complete cleaned message
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
+                        
+                        // Also send via traditional chat message for backward compatibility
+                        // (other chat renderers that don't support streaming will receive it)
+                        this.bot?.sendChatMessage(spaceName, processedMessage);
                         
                         // Store in memory
                         if (this.conversationMemory) {
@@ -1008,8 +1021,10 @@ export class SocialBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[SocialBehavior] AI error:`, error);
             // Stop typing indicator on error
-            this.bot.stopTyping(spaceName);
-            this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            this.bot?.stopTyping(spaceName);
+            // Send error chunk to frontend
+            this.bot?.sendStreamMessage(spaceName, responseId, '', true, undefined, true, "I'm having trouble processing that. Could you rephrase?");
+            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }
 

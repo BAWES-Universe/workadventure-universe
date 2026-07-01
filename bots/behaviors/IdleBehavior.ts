@@ -482,7 +482,9 @@ export class IdleBehavior extends BaseBehavior {
         const startTime = Date.now(); // Track response time BEFORE streaming starts
         let tokensUsed = 0;
         let latency = 0;
-        
+        // Unique ID for this streamed response — used by frontend to correlate chunks
+        const responseId = `bot-${botId}-player-${playerId}-${Date.now()}`;
+
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -497,8 +499,10 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+                    // Stream incremental token to frontend in real-time
+                    this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                 }
-                
+
                 // Extract token usage and latency from chunk metadata
                 if (chunk.tokensUsed) {
                     tokensUsed = chunk.tokensUsed;
@@ -509,18 +513,18 @@ export class IdleBehavior extends BaseBehavior {
                 if (chunk.metadata?.latency) {
                     latency = chunk.metadata.latency;
                 }
-                
+
                 if (chunk.done) {
                     // Stop typing indicator
-                    this.bot.stopTyping(spaceName);
-                    
+                    this.bot?.stopTyping(spaceName);
+
                     // Calculate response time (use latency from metadata if available, otherwise calculate)
                     const responseTime = latency || (Date.now() - startTime);
-                    
+
                     // Parse emotions from AI response (unified emotion system)
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let processedMessage = parsedResponse.cleanedResponse;
-                    
+
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
@@ -535,12 +539,7 @@ export class IdleBehavior extends BaseBehavior {
                             context: 'neutral',
                         });
                     }
-                    
-                    // Debug: Check if responseProcessor exists
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[IdleBehavior] ResponseProcessor available: ${!!this.responseProcessor}, fullMessage length: ${fullMessage.length}`);
-                    }
-                    
+
                     if (this.responseProcessor && processedMessage.trim()) {
                         const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
                         // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
@@ -549,7 +548,7 @@ export class IdleBehavior extends BaseBehavior {
                             completion: chunk.metadata?.completionTokens || Math.floor(tokensUsed * 0.3),
                             total: tokensUsed
                         } : undefined;
-                        
+
                         // Note: Emotions already parsed above, use processedMessage (cleaned response)
                         let processed = this.responseProcessor.processResponse(
                             botId,
@@ -560,7 +559,7 @@ export class IdleBehavior extends BaseBehavior {
                             tokenUsage
                         );
                         processedMessage = processed.cleaned;
-                        
+
                         // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
                         // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
                         let regenerationAttempts = 0;
@@ -568,18 +567,20 @@ export class IdleBehavior extends BaseBehavior {
                         const repetitionThreshold = 0.85; // Block at 85% similarity, not just exact duplicates
                         let currentRepetitionScore = processed.metrics.repetitionScore;
                         let currentMessage = fullMessage;
-                        
+
                         while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
                             regenerationAttempts++;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[IdleBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
                             }
-                            
-                            // BLOCK the duplicate - don't send it
+
+                            // BLOCK the duplicate - clear frontend buffer and start fresh
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+
                             // Instead, generate a new response with explicit anti-repetition instruction
                             const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
-                            const antiRepetitionPrompt = `${botConfig.chatInstructions || 'You are a helpful bot.'}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
-                            
+                            const antiRepetitionPrompt = `${chatInstructions}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
+
                             // Regenerate with anti-repetition prompt
                             let regeneratedMessage = '';
                             try {
@@ -596,18 +597,20 @@ export class IdleBehavior extends BaseBehavior {
                                 )) {
                                     if (chunk.content) {
                                         regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
+                                        // Stream regenerated tokens to frontend (same responseId, after reset)
+                                        this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                                     }
                                     if (chunk.done) break;
                                 }
-                                
+
                                 // Parse emotions from regenerated response
                                 const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
-                                
+
                                 // Update emotions from regenerated response
                                 if (regeneratedParsed.emotions && this.conversationMemory) {
                                     this.conversationMemory.updateEmotionsFromAI(botId, playerId, regeneratedParsed.emotions);
                                 }
-                                
+
                                 // Process the regenerated response
                                 if (regeneratedParsed.cleanedResponse.trim() && this.responseProcessor) {
                                     // Use the same responseTime and tokenUsage from the original response
@@ -615,7 +618,7 @@ export class IdleBehavior extends BaseBehavior {
                                         botId,
                                         playerId,
                                         regeneratedParsed.cleanedResponse,
-                                        botConfig.chatInstructions || 'You are a helpful bot.',
+                                        chatInstructions,
                                         responseTime, // Use original response time
                                         tokenUsage    // Use original token usage
                                     );
@@ -623,7 +626,7 @@ export class IdleBehavior extends BaseBehavior {
                                     currentRepetitionScore = reprocessed.metrics.repetitionScore;
                                     currentMessage = regeneratedParsed.cleanedResponse;
                                     processed = reprocessed; // Update processed for next iteration check
-                                    
+
                                     if (currentRepetitionScore < 1.0) {
                                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                             console.log(`[IdleBehavior] ✅ Regenerated response after blocking duplicate (attempt ${regenerationAttempts})`);
@@ -639,7 +642,7 @@ export class IdleBehavior extends BaseBehavior {
                                 continue;
                             }
                         }
-                        
+
                         // If still too similar after max attempts, use a varied fallback
                         if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
                             console.warn(`[IdleBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
@@ -660,7 +663,7 @@ export class IdleBehavior extends BaseBehavior {
                                 this.responseProcessor.clearRecentResponses(botId, playerId);
                             }
                         }
-                        
+
                         if (processed.metrics.repetitionScore > 0.8 && processed.metrics.repetitionScore < 1.0) {
                             // High repetition (but not exact duplicate) - warn but allow
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -668,16 +671,21 @@ export class IdleBehavior extends BaseBehavior {
                             }
                         }
                     }
-                    
+
                     // Record metrics (skip for test conversations - playerId 999999 is used for tests)
                     // ResponseProcessor already records responseQuality which includes these metrics
                     // We only need to record responseTime and tokenUsage if they're not already in responseQuality
                     // For now, skip individual metrics - they're already captured in recordResponseQuality
                     // This prevents duplicate metrics (3 per response -> 1 per response)
-                    
-                    // Send processed message
+
+                    // Send processed message via stream final chunk
                     if (processedMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, processedMessage);
+                        // Send the final chunk with the complete cleaned message
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
+
+                        // Also send via traditional chat message for backward compatibility
+                        this.bot?.sendChatMessage(spaceName, processedMessage);
+                        
                         // Store bot's message in memory
                         if (this.conversationMemory) {
                             this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
@@ -700,8 +708,10 @@ export class IdleBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[IdleBehavior] AI error:`, error);
             // Stop typing indicator on error
-            this.bot.stopTyping(spaceName);
-            this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            this.bot?.stopTyping(spaceName);
+            // Send error chunk to frontend
+            this.bot?.sendStreamMessage(spaceName, responseId, '', true, undefined, true, "I'm having trouble processing that. Could you rephrase?");
+            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
         }
     }
 
