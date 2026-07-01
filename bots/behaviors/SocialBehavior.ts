@@ -905,7 +905,7 @@ export class SocialBehavior extends BaseBehavior {
                                     this.adminApiService
                                 )) {
                                     if (chunk.content) {
-                                        regeneratedMessage += chunk.content;
+                                        regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
                                     }
                                     if (chunk.done) break;
                                 }
@@ -1062,6 +1062,9 @@ export class SocialBehavior extends BaseBehavior {
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+            
             let fullMessage = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -1111,7 +1114,11 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating area arrival message:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
         } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
             // Clear flag and leave the space after message is sent
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
@@ -1165,7 +1172,10 @@ export class SocialBehavior extends BaseBehavior {
             const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
-            const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
+            const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
+            
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
             
             let fullMessage = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -1184,6 +1194,8 @@ export class SocialBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1361,9 +1373,6 @@ export class SocialBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot.stopTyping(spaceName);
-                    
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1412,8 +1421,6 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI leading completion greeting error:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
         } finally {
             // Stop typing indicator regardless of how the stream ended
@@ -1486,9 +1493,6 @@ export class SocialBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot.stopTyping(spaceName);
-                    
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1533,8 +1537,6 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI greeting error:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
         } finally {
             // Stop typing indicator regardless of how the stream ended

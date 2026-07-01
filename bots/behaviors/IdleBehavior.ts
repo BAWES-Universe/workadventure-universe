@@ -595,7 +595,7 @@ export class IdleBehavior extends BaseBehavior {
                                     this.adminApiService
                                 )) {
                                     if (chunk.content) {
-                                        regeneratedMessage += chunk.content;
+                                        regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
                                     }
                                     if (chunk.done) break;
                                 }
@@ -859,9 +859,6 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot?.stopTyping(spaceName);
-
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -910,8 +907,6 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] AI leading completion greeting error:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
         } finally {
             // Stop typing indicator regardless of how the stream ended
@@ -966,6 +961,9 @@ export class IdleBehavior extends BaseBehavior {
             const context = this.conversationMemory.getConversationContext(botId, followerUserId);
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+            
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[IdleBehavior] sendAreaArrivalMessage: Generating AI response...`);
             }
@@ -991,6 +989,8 @@ export class IdleBehavior extends BaseBehavior {
                     }
                 }
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendAreaArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
                     }
@@ -1048,7 +1048,11 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] Error generating area arrival message:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
         } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
         }
@@ -1131,9 +1135,6 @@ export class IdleBehavior extends BaseBehavior {
                     }
                 }
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot?.stopTyping(spaceName);
-
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendPersonArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
                     }
@@ -1191,8 +1192,6 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] Error generating person arrival message:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1263,9 +1262,6 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot?.stopTyping(spaceName);
-
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1310,8 +1306,6 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] AI greeting error:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
         } finally {
             // Stop typing indicator regardless of how the stream ended
