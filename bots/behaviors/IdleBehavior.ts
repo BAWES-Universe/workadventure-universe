@@ -989,8 +989,6 @@ export class IdleBehavior extends BaseBehavior {
                     }
                 }
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot?.stopTyping(spaceName);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendAreaArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
                     }
@@ -1048,8 +1046,6 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] Error generating area arrival message:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);

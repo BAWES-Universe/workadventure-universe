@@ -1114,8 +1114,6 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating area arrival message:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1194,8 +1192,6 @@ export class SocialBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot?.stopTyping(spaceName);
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1228,8 +1224,6 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating person arrival message:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);

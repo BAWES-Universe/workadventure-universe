@@ -1031,8 +1031,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 }
                 
                 if (chunk.done) {
-                    // Stop typing indicator
-                    this.bot?.stopTyping(spaceName);
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1075,8 +1073,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] Error generating area arrival message:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
