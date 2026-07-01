@@ -812,6 +812,9 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1075,6 +1078,9 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1180,6 +1186,9 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1257,6 +1266,9 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1357,6 +1369,9 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1482,6 +1497,9 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 

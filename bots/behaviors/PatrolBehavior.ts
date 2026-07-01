@@ -1024,6 +1024,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1139,6 +1142,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1240,6 +1246,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1361,6 +1370,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1534,6 +1546,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 
@@ -1769,6 +1784,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
+                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
+                        fullMessage += ' ';
+                    }
                     fullMessage += chunk.content;
                 }
                 

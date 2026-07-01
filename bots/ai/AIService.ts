@@ -429,6 +429,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
             let lastFollowUpDoneChunk: AIStreamChunk | null = null;
+            // Buffer for content received before tool calls are detected
+            // Discarded if tool calls arrive (was filler/thinking text);
+            // flushed as final response if no tool calls.
+            let preToolBuffer = '';
+            // Buffer for content from all follow-up rounds (yielded as one chunk at end)
+            let followUpContentBuffer = '';
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
 
@@ -606,6 +612,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         });
                         initialGenCaptured = true;
 
+                        // Discard pre-tool-call content buffer — the model was
+                        // generating filler/thinking text before deciding to call tools.
+                        preToolBuffer = '';
+                        // Also reset buffer for the follow-up content from any prior rounds
+                        followUpContentBuffer = '';
+
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
                             id: tc.id,
@@ -693,6 +705,9 @@ CRITICAL RESPONSE RULES:
                                 if (resultChunk.content) {
                                     accumulatedContent += resultChunk.content;
                                     followUpContent += resultChunk.content;
+                                    // Buffer follow-up content instead of yielding per-chunk
+                                    // Will be yielded as one chunk after all tool rounds complete
+                                    followUpContentBuffer += resultChunk.content;
                                 }
                                 // Handle tool calls from follow-up response (multi-round tool calling)
                                 if (resultChunk.toolCalls && resultChunk.toolCalls.length > 0) {
@@ -734,9 +749,13 @@ CRITICAL RESPONSE RULES:
                                     // on done:true which would terminate the generator and lose
                                     // subsequent tool-calling rounds in the while loop.
                                     lastFollowUpDoneChunk = resultChunk;
-                                } else {
-                                    yield resultChunk;
                                 }
+                                // Content chunks from follow-up streams are accumulated into
+                                // followUpContentBuffer and yielded as one chunk after all
+                                // tool-calling rounds complete (see below).
+                                // Individual yields are intentionally skipped to prevent
+                                // interleaved content from multiple tool-calling rounds
+                                // from appearing as concatenated filler text.
                             }
 
                             // Convert any accumulated tool calls from the follow-up response for the next round
@@ -781,6 +800,9 @@ CRITICAL RESPONSE RULES:
                                 followUpPromptTokens = 0;
                                 followUpCompletionTokens = 0;
                                 followUpError = false;
+                                // Discard this round's content — tool calls were detected,
+                                // so the text was filler/thinking that shouldn't accumulate.
+                                followUpContentBuffer = '';
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
@@ -794,12 +816,12 @@ CRITICAL RESPONSE RULES:
                             pendingToolCalls = [];
                         }
 
-                        // Yield the buffered done chunk now — outside the while loop so callers
-                        // don't break early and lose subsequent tool-calling rounds.
-                        if (lastFollowUpDoneChunk) {
-                            yield lastFollowUpDoneChunk;
-                            lastFollowUpDoneChunk = null;
-                        }
+                        // Yield the buffered follow-up content as a single chunk —
+                        // all tool-calling rounds have completed. This replaces the
+                        // per-round yields that previously caused concatenated text.
+                        yield {content: followUpContentBuffer, done: true};
+                        followUpContentBuffer = '';
+                        lastFollowUpDoneChunk = null;
 
                         // Capture $ai_generation for the final tool follow-up LLM call
                         if (followUpContent || followUpError) {
@@ -834,6 +856,10 @@ CRITICAL RESPONSE RULES:
                     if (chunk.content && pendingToolCalls.length === 0) {
                         accumulatedContent += chunk.content;
                         firstCallContent += chunk.content;
+                        // Buffer content for eventual yield — don't yield individual
+                        // chunks yet because tool calls may arrive in later chunks,
+                        // making this content filler/thinking text that should be discarded.
+                        preToolBuffer += chunk.content;
                     }
 
 // Track metadata from chunk
@@ -857,12 +883,18 @@ CRITICAL RESPONSE RULES:
                         }
                     }
 
-                    // Only yield chunk if no tool calls are pending
-                    // (If tool calls are coming, wait for them to complete first)
-                    if (pendingToolCalls.length === 0) {
-                        yield chunk;
-                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[AIService] Skipping chunk yield - waiting for tool calls to complete`);
+                    // Don't yield individual content chunks — buffer them in preToolBuffer.
+                    // If no tool calls arrive by the time done:true fires, the buffer
+                    // is flushed as the final response. If tool calls do arrive, the
+                    // buffer is discarded (it was the model's filler/thinking text).
+                    // This prevents concatenated filler text from reaching the user.
+                    if (pendingToolCalls.length === 0 && toolCallAccumulator.size === 0) {
+                        if (chunk.done) {
+                            // No tool calls seen — flush buffer as final response
+                            yield {content: preToolBuffer, done: true, metadata: chunk.metadata};
+                            preToolBuffer = '';
+                        }
+                        // Non-done chunks are intentionally not yielded — they're in preToolBuffer
                     }
                 }
                 
