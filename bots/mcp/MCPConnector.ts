@@ -62,8 +62,8 @@ interface SessionEntry {
 }
 const mcpSessionInitCache = new Map<string, SessionEntry>();
 
-function sessionCacheKey(serverUrl: string, authType: string, authConfig?: string): string {
-    return `${serverUrl}|${authType}|${authConfig || ''}`;
+function sessionCacheKey(serverUrl: string, authType: string, authConfig?: string, playerUuid?: string): string {
+    return `${serverUrl}|${authType}|${authConfig || ''}|${playerUuid || ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +211,8 @@ async function jsonRpcRequest(
     params: Record<string, any> | undefined,
     authType: string,
     authConfig?: string,
-    extraHeaders?: Record<string, string>
+    extraHeaders?: Record<string, string>,
+    playerUuid?: string
 ): Promise<any> {
     const urlCheck = isValidMcpServerUrl(serverUrl);
     if (!urlCheck.valid) {
@@ -224,10 +225,15 @@ async function jsonRpcRequest(
     // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
     // Some servers (like Linear) tolerate tools/list without initialize,
     // but spec-compliant servers (like Brick) require it.
-    // Cache sessions per server URL to avoid initializing before every call.
+    // Cache sessions per server URL + playerUuid so each player gets their
+    // own session with the correct player_id in clientInfo.
+    // When playerUuid is empty (tools/list during discovery), we still init
+    // for spec compliance but skip caching — the generic session will never
+    // be reused by a per-player tool call with a different cache key.
     let sessionId: string | undefined;
+    const skipSessionCache = !playerUuid;
     if (method !== 'initialize') {
-        const cachedSession = mcpSessionInitCache.get(sessionCacheKey(serverUrl, authType, authConfig));
+        const cachedSession = mcpSessionInitCache.get(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
         if (cachedSession && Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL) {
             // Reuse cached session without redundant init
             if (cachedSession.sessionId) {
@@ -250,6 +256,7 @@ async function jsonRpcRequest(
                                 clientInfo: {
                                     name: 'workadventure-mcp-bot',
                                     version: '1.0.0',
+                                    player_id: playerUuid || null,
                                 },
                             },
                         },
@@ -269,10 +276,12 @@ async function jsonRpcRequest(
                         sessionId = newSessionId;
                     }
                     // Cache the result so subsequent calls skip init revalidation
-                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig), {
-                        sessionId: newSessionId || undefined,
-                        initializedAt: Date.now(),
-                    });
+                    if (!skipSessionCache) {
+                        mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
+                            sessionId: newSessionId || undefined,
+                            initializedAt: Date.now(),
+                        });
+                    }
                 } finally {
                     clearTimeout(initTimeoutId);
                 }
@@ -335,7 +344,7 @@ async function jsonRpcRequest(
             // after bot respawn — without this, a dead session is retried for up
             // to 1 hour (SESSION_INIT_TTL).
             if (method !== 'initialize') {
-                mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig));
+                mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
             }
         } else {
             console.warn(`[MCPConnector] Error on ${method}: ${error.message || error}`);
@@ -564,7 +573,8 @@ export class MCPConnector {
         args: any,
         authType: string,
         authConfig?: string,
-        extraHeaders?: Record<string, string>
+        extraHeaders?: Record<string, string>,
+        playerUuid?: string
     ): Promise<any> {
         const response = await jsonRpcRequest(
             serverUrl,
@@ -572,7 +582,8 @@ export class MCPConnector {
             { name: toolName, arguments: args },
             authType,
             authConfig,
-            extraHeaders
+            extraHeaders,
+            playerUuid
         );
 
         if (!response) {

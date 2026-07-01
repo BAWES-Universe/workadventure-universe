@@ -435,6 +435,9 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let preToolBuffer = '';
             // Buffer for content from all follow-up rounds (yielded as one chunk at end)
             let followUpContentBuffer = '';
+            // Look up player UUID from conversation memory for MCP identity
+            const playerMemory = this.conversationMemory.getMemory(botId, playerId);
+            const playerUuid = playerMemory?.userUuid || `temp-${playerId}`;
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
 
@@ -641,7 +644,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid);
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -1305,7 +1308,8 @@ CRITICAL RESPONSE RULES:
         toolCalls: ToolCall[],
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>
+        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>,
+        playerUuid?: string
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1524,7 +1528,8 @@ CRITICAL RESPONSE RULES:
                                     parsedArgs,
                                     mcpServerConfig.authType,
                                     mcpServerConfig.authConfig,
-                                    mcpServerConfig.headers
+                                    mcpServerConfig.headers,
+                                    playerUuid
                                 );
                             } catch (mcpError: any) {
                                 console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);
