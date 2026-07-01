@@ -225,8 +225,13 @@ async function jsonRpcRequest(
     // Auto-initialize MCP session (required by MCP Streamable HTTP spec).
     // Some servers (like Linear) tolerate tools/list without initialize,
     // but spec-compliant servers (like Brick) require it.
-    // Cache sessions per server URL to avoid initializing before every call.
+    // Cache sessions per server URL + playerUuid so each player gets their
+    // own session with the correct player_id in clientInfo.
+    // When playerUuid is empty (tools/list during discovery), we still init
+    // for spec compliance but skip caching — the generic session will never
+    // be reused by a per-player tool call with a different cache key.
     let sessionId: string | undefined;
+    const skipSessionCache = !playerUuid;
     if (method !== 'initialize') {
         const cachedSession = mcpSessionInitCache.get(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
         if (cachedSession && Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL) {
@@ -271,10 +276,12 @@ async function jsonRpcRequest(
                         sessionId = newSessionId;
                     }
                     // Cache the result so subsequent calls skip init revalidation
-                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
-                        sessionId: newSessionId || undefined,
-                        initializedAt: Date.now(),
-                    });
+                    if (!skipSessionCache) {
+                        mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
+                            sessionId: newSessionId || undefined,
+                            initializedAt: Date.now(),
+                        });
+                    }
                 } finally {
                     clearTimeout(initTimeoutId);
                 }
