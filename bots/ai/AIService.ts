@@ -800,6 +800,9 @@ CRITICAL RESPONSE RULES:
                                 followUpPromptTokens = 0;
                                 followUpCompletionTokens = 0;
                                 followUpError = false;
+                                // Discard this round's content — tool calls were detected,
+                                // so the text was filler/thinking that shouldn't accumulate.
+                                followUpContentBuffer = '';
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
