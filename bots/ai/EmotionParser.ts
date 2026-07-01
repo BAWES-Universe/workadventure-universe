@@ -114,7 +114,7 @@ export function appendStreamedChunk(fullMessage: string, chunkContent: string): 
     }
     // Chunk starts with a non-word character (punctuation or symbol) — no space
     const firstChar = chunkContent.charAt(0);
-    if (!/[\w]/.test(firstChar)) {
+    if (!/\w/u.test(firstChar)) {
         return fullMessage + chunkContent;
     }
     return fullMessage + ' ' + chunkContent;
