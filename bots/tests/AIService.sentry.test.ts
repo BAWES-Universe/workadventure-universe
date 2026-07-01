@@ -99,7 +99,9 @@ function buildMocks() {
         getAvailableAIProviders: vi.fn().mockResolvedValue([]),
     };
 
-    const mockConversationMemory: any = {};
+    const mockConversationMemory: any = {
+        getMemory: vi.fn(() => ({ userUuid: 'test-uuid' })),
+    };
 
     return { mockAdminApiService, mockConversationMemory };
 }
