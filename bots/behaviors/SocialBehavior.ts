@@ -1228,7 +1228,11 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating person arrival message:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
         } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
             // Clear flag and leave the space after message is sent
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
