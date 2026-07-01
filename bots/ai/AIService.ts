@@ -823,8 +823,11 @@ CRITICAL RESPONSE RULES:
                         // Yield the buffered follow-up content as a single chunk —
                         // all tool-calling rounds have completed. This replaces the
                         // per-round yields that previously caused concatenated text.
-                        yield {content: followUpContentBuffer, done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                        // If the buffer is empty (e.g. max iterations with tool calls
+                        // only, no text produced), use a fallback to avoid empty response.
+                        const responseContent = followUpContentBuffer || 'Sorry, I had trouble completing that request. Could you try again?';
                         followUpContentBuffer = '';
+                        yield {content: responseContent, done: true, metadata: lastFollowUpDoneChunk?.metadata};
                         lastFollowUpDoneChunk = null;
 
                         // Capture $ai_generation for the final tool follow-up LLM call
