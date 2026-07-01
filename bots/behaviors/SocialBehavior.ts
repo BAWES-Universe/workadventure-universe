@@ -1172,7 +1172,7 @@ export class SocialBehavior extends BaseBehavior {
             const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
             
             // Generate arrival and goodbye message using AI
-            const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
+            const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
             // Start typing indicator
             this.bot?.startTyping(spaceName);
