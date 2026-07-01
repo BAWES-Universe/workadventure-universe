@@ -130,6 +130,10 @@ export class AIService {
         adminApiService?: AdminApiService
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
+        // Buffer for content received before tool calls are detected
+        // Discarded if tool calls arrive (was filler/thinking text);
+        // flushed as final response if no tool calls.
+        let preToolBuffer = '';
 
         try {
             // Get provider credentials
@@ -430,10 +434,6 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let followUpInput = '';
             let overallFollowUpStartTime = 0;
             let lastFollowUpDoneChunk: AIStreamChunk | null = null;
-            // Buffer for content received before tool calls are detected
-            // Discarded if tool calls arrive (was filler/thinking text);
-            // flushed as final response if no tool calls.
-            let preToolBuffer = '';
             // Buffer for content from all follow-up rounds (yielded as one chunk at end)
             let followUpContentBuffer = '';
             // Look up player UUID from conversation memory for MCP identity
@@ -1044,8 +1044,16 @@ CRITICAL RESPONSE RULES:
             }).catch(() => {});
 
             // Yield error chunk with any partial content accumulated before the failure
+            // Strip any incomplete [EMOTION_UPDATE] block — the error may have
+            // cut mid-tag, and parseEmotionsFromResponse would leave raw tag text.
+            let safeContent = preToolBuffer || '';
+            const emotionOpenIdx = safeContent.lastIndexOf('[EMOTION_UPDATE]');
+            const emotionCloseIdx = safeContent.lastIndexOf('[/EMOTION_UPDATE]');
+            if (emotionOpenIdx > emotionCloseIdx) {
+                safeContent = safeContent.substring(0, emotionOpenIdx).trimEnd();
+            }
             yield {
-                content: preToolBuffer || '',
+                content: safeContent,
                 done: true,
                 metadata: {
                     tokensUsed: 0,
