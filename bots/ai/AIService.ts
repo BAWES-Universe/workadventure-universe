@@ -823,7 +823,7 @@ CRITICAL RESPONSE RULES:
                         // Yield the buffered follow-up content as a single chunk —
                         // all tool-calling rounds have completed. This replaces the
                         // per-round yields that previously caused concatenated text.
-                        yield {content: followUpContentBuffer, done: true};
+                        yield {content: followUpContentBuffer, done: true, metadata: lastFollowUpDoneChunk?.metadata};
                         followUpContentBuffer = '';
                         lastFollowUpDoneChunk = null;
 
