@@ -584,24 +584,25 @@ export class ProximityChatRoom implements ChatRoom {
 
                 if (stream.reset && existing) {
                     // Regeneration: clear the buffer, start fresh
-                    existing.content = writable({ body: stream.token, url: undefined });
+                    existing.content.set({ body: stream.token, url: undefined });
                     return;
                 }
 
                 if (existing) {
                     // Update existing stream message
                     const currentBody = get(existing.content).body;
-                    let newBody: string;
                     if (stream.isFinal) {
                         // Final chunk: replace with complete cleaned content
-                        newBody = stream.finalContent ?? currentBody + stream.token;
+                        existing.content.set({
+                            body: stream.finalContent ?? currentBody + stream.token,
+                            url: undefined,
+                        });
                         // Remove from active streams
                         this.streamMessages.delete(stream.responseId);
                     } else {
                         // Append incremental token
-                        newBody = currentBody + stream.token;
+                        existing.content.set({ body: currentBody + stream.token, url: undefined });
                     }
-                    existing.content = writable({ body: newBody, url: undefined });
                     return;
                 }
 
@@ -610,7 +611,8 @@ export class ProximityChatRoom implements ChatRoom {
                     return;
                 }
 
-                // First chunk of a new streaming response — create message entry
+                // First chunk: create message entry (may also be final if response is very fast)
+                const initialBody = stream.isFinal ? stream.finalContent ?? stream.token : stream.token;
                 const spaceUser = this.users?.get(event.sender);
                 let chatUser: AnyKindOfUser = this.unknownUser;
                 if (spaceUser) {
@@ -620,7 +622,7 @@ export class ProximityChatRoom implements ChatRoom {
                 const newMessage = new ProximityChatMessage(
                     uuidv4(),
                     chatUser,
-                    writable({ body: stream.token, url: undefined }),
+                    writable({ body: initialBody, url: undefined }),
                     new Date(),
                     false,
                     "proximity"
@@ -634,8 +636,6 @@ export class ProximityChatRoom implements ChatRoom {
 
                 // If this was also the final chunk, finalize immediately
                 if (stream.isFinal) {
-                    const finalBody = stream.finalContent ?? stream.token;
-                    newMessage.content = writable({ body: finalBody, url: undefined });
                     this.streamMessages.delete(stream.responseId);
                 }
 

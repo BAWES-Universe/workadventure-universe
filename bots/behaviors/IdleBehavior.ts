@@ -683,9 +683,6 @@ export class IdleBehavior extends BaseBehavior {
                         // Send the final chunk with the complete cleaned message
                         this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
 
-                        // Also send via traditional chat message for backward compatibility
-                        this.bot?.sendChatMessage(spaceName, processedMessage);
-                        
                         // Store bot's message in memory
                         if (this.conversationMemory) {
                             this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);

@@ -994,11 +994,7 @@ export class SocialBehavior extends BaseBehavior {
                     if (processedMessage.trim()) {
                         // Send the final chunk with the complete cleaned message
                         this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
-                        
-                        // Also send via traditional chat message for backward compatibility
-                        // (other chat renderers that don't support streaming will receive it)
-                        this.bot?.sendChatMessage(spaceName, processedMessage);
-                        
+
                         // Store in memory
                         if (this.conversationMemory) {
                             this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
