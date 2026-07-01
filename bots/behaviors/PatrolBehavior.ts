@@ -1224,12 +1224,15 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
             
             const playerMessage = leadingContext;
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.',
+                botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1241,6 +1244,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
+
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1289,7 +1295,12 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] AI leading completion greeting error:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
@@ -1334,7 +1345,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             const playerMessage = hasContext
                 ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1351,6 +1365,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1395,7 +1411,12 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] AI greeting error:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 

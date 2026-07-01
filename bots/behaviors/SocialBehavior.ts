@@ -1341,6 +1341,9 @@ export class SocialBehavior extends BaseBehavior {
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
             
             const playerMessage = leadingContext;
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
             
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -1409,7 +1412,12 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI leading completion greeting error:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
@@ -1458,7 +1466,10 @@ export class SocialBehavior extends BaseBehavior {
             const playerMessage = hasContext
                 ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1522,7 +1533,12 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI greeting error:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
