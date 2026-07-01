@@ -17,6 +17,7 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
+import { appendStreamedChunk } from './EmotionParser';
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -710,7 +711,7 @@ CRITICAL RESPONSE RULES:
                                     followUpContent += resultChunk.content;
                                     // Buffer follow-up content instead of yielding per-chunk
                                     // Will be yielded as one chunk after all tool rounds complete
-                                    followUpContentBuffer += resultChunk.content;
+                                    followUpContentBuffer = appendStreamedChunk(followUpContentBuffer, resultChunk.content);
                                 }
                                 // Handle tool calls from follow-up response (multi-round tool calling)
                                 if (resultChunk.toolCalls && resultChunk.toolCalls.length > 0) {
@@ -862,7 +863,7 @@ CRITICAL RESPONSE RULES:
                         // Buffer content for eventual yield — don't yield individual
                         // chunks yet because tool calls may arrive in later chunks,
                         // making this content filler/thinking text that should be discarded.
-                        preToolBuffer += chunk.content;
+                        preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
                     }
 
 // Track metadata from chunk
