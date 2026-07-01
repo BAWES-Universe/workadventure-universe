@@ -1043,9 +1043,9 @@ CRITICAL RESPONSE RULES:
                 error: true,
             }).catch(() => {});
 
-            // Yield error chunk
+            // Yield error chunk with any partial content accumulated before the failure
             yield {
-                content: '',
+                content: preToolBuffer || '',
                 done: true,
                 metadata: {
                     tokensUsed: 0,
