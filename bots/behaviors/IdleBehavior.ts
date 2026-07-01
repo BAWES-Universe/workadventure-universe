@@ -839,7 +839,10 @@ export class IdleBehavior extends BaseBehavior {
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
             
             const playerMessage = leadingContext;
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -856,6 +859,9 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
+
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -904,6 +910,8 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] AI leading completion greeting error:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
         }
     }
@@ -1095,7 +1103,10 @@ export class IdleBehavior extends BaseBehavior {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[IdleBehavior] sendPersonArrivalMessage: Generating AI response...`);
             }
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             let fullMessage = '';
             let chunkCount = 0;
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -1117,6 +1128,9 @@ export class IdleBehavior extends BaseBehavior {
                     }
                 }
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
+
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendPersonArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
                     }
@@ -1174,6 +1188,8 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] Error generating person arrival message:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
         } finally {
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
@@ -1222,7 +1238,10 @@ export class IdleBehavior extends BaseBehavior {
             const playerMessage = hasContext
                 ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1239,6 +1258,9 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    // Stop typing indicator
+                    this.bot?.stopTyping(spaceName);
+
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
@@ -1283,6 +1305,8 @@ export class IdleBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[IdleBehavior] AI greeting error:`, error);
+            // Stop typing indicator on error
+            this.bot?.stopTyping(spaceName);
             // Don't send fallback - just fail silently
         }
     }
