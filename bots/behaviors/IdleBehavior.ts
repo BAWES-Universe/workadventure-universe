@@ -6,7 +6,7 @@ import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
@@ -496,10 +496,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 // Extract token usage and latency from chunk metadata
@@ -747,10 +744,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -861,10 +855,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -994,10 +985,7 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 chunkCount++;
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendAreaArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
                     }
@@ -1137,10 +1125,7 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 chunkCount++;
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendPersonArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
                     }
@@ -1274,10 +1259,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {

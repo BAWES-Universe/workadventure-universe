@@ -11,7 +11,7 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
     type: 'patrol';
@@ -1024,10 +1024,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1142,10 +1139,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1246,10 +1240,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1370,10 +1361,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1546,10 +1534,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 // Extract token usage and latency from chunk metadata
@@ -1784,10 +1769,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {

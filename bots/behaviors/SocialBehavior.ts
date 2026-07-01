@@ -9,7 +9,7 @@ import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
 import { movementLogger } from '../utils/MovementLogger';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 
 export interface SocialBehaviorConfig extends BehaviorConfig {
     type: 'social';
@@ -812,10 +812,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 // Extract token usage and latency from chunk metadata
@@ -1078,10 +1075,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1186,10 +1180,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1266,10 +1257,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1369,10 +1357,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1497,10 +1482,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    if (fullMessage && !fullMessage.endsWith(' ') && !fullMessage.endsWith('\n') && !chunk.content.startsWith(' ')) {
-                        fullMessage += ' ';
-                    }
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {

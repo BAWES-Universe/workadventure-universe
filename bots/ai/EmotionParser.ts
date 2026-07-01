@@ -93,3 +93,29 @@ function normalizeContext(context: string | undefined): AIEmotionData['context']
 export function hasEmotionBlock(response: string): boolean {
     return EMOTION_BLOCK_REGEX.test(response);
 }
+
+/**
+ * Append a streamed content chunk to an accumulated message with smart spacing.
+ *
+ * Inserts a single space between concatenated chunks unless:
+ * - chunkContent is the first piece of content (no previous text)
+ * - either side already has whitespace at the join
+ * - chunkContent starts with a non-word character (punctuation like "!", "?",
+ *   ".", ",", etc.), preventing artifacts like "Hello !" when streaming
+ *   splits tokens across chunk boundaries.
+ */
+export function appendStreamedChunk(fullMessage: string, chunkContent: string): string {
+    if (!fullMessage) {
+        return chunkContent;
+    }
+    // Already has whitespace on one side — no extra needed
+    if (fullMessage.endsWith(' ') || fullMessage.endsWith('\n') || chunkContent.startsWith(' ')) {
+        return fullMessage + chunkContent;
+    }
+    // Chunk starts with a non-word character (punctuation or symbol) — no space
+    const firstChar = chunkContent.charAt(0);
+    if (!/\w/u.test(firstChar)) {
+        return fullMessage + chunkContent;
+    }
+    return fullMessage + ' ' + chunkContent;
+}
