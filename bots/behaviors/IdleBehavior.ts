@@ -6,7 +6,7 @@ import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
@@ -496,7 +496,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 // Extract token usage and latency from chunk metadata
@@ -595,7 +595,7 @@ export class IdleBehavior extends BaseBehavior {
                                     this.adminApiService
                                 )) {
                                     if (chunk.content) {
-                                        regeneratedMessage += chunk.content;
+                                        regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
                                     }
                                     if (chunk.done) break;
                                 }
@@ -744,7 +744,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -839,7 +839,10 @@ export class IdleBehavior extends BaseBehavior {
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
             
             const playerMessage = leadingContext;
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -852,7 +855,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -905,6 +908,9 @@ export class IdleBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[IdleBehavior] AI leading completion greeting error:`, error);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
@@ -955,6 +961,9 @@ export class IdleBehavior extends BaseBehavior {
             const context = this.conversationMemory.getConversationContext(botId, followerUserId);
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+            
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[IdleBehavior] sendAreaArrivalMessage: Generating AI response...`);
             }
@@ -974,7 +983,7 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 chunkCount++;
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendAreaArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
                     }
@@ -1038,6 +1047,8 @@ export class IdleBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[IdleBehavior] Error generating area arrival message:`, error);
         } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
         }
@@ -1095,7 +1106,10 @@ export class IdleBehavior extends BaseBehavior {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[IdleBehavior] sendPersonArrivalMessage: Generating AI response...`);
             }
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             let fullMessage = '';
             let chunkCount = 0;
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -1111,7 +1125,7 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 chunkCount++;
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendPersonArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
                     }
@@ -1175,6 +1189,8 @@ export class IdleBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[IdleBehavior] Error generating person arrival message:`, error);
         } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
         }
@@ -1222,7 +1238,10 @@ export class IdleBehavior extends BaseBehavior {
             const playerMessage = hasContext
                 ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1235,7 +1254,7 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1284,6 +1303,9 @@ export class IdleBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[IdleBehavior] AI greeting error:`, error);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 }

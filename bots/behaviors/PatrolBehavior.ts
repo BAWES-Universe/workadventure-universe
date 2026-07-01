@@ -11,7 +11,7 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
-import { parseEmotionsFromResponse } from '../ai/EmotionParser';
+import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
     type: 'patrol';
@@ -1011,6 +1011,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+            
             let fullMessage = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -1024,7 +1027,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1071,6 +1074,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         } catch (error) {
             console.error(`[PatrolBehavior] Error generating area arrival message:`, error);
         } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
             // Clear flag and leave the space after message is sent
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
@@ -1126,6 +1131,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+            
             let fullMessage = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -1139,7 +1147,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1186,6 +1194,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         } catch (error) {
             console.error(`[PatrolBehavior] Error generating person arrival message:`, error);
         } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
             // Clear flag and leave the space after message is sent
             this.isSendingGoodbye = false;
             await this.bot.leaveAllSpaces();
@@ -1224,12 +1234,15 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
             
             const playerMessage = leadingContext;
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.',
+                botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1237,7 +1250,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1290,6 +1303,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         } catch (error) {
             console.error(`[PatrolBehavior] AI leading completion greeting error:`, error);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
@@ -1334,7 +1350,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             const playerMessage = hasContext
                 ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
-            
+
+            // Start typing indicator
+            this.bot?.startTyping(spaceName);
+
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1347,7 +1366,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {
@@ -1396,6 +1415,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         } catch (error) {
             console.error(`[PatrolBehavior] AI greeting error:`, error);
             // Don't send fallback - just fail silently
+        } finally {
+            // Stop typing indicator regardless of how the stream ended
+            this.bot?.stopTyping(spaceName);
         }
     }
 
@@ -1513,7 +1535,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 // Extract token usage and latency from chunk metadata
@@ -1607,7 +1629,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                     this.adminApiService
                                 )) {
                                     if (chunk.content) {
-                                        regeneratedMessage += chunk.content;
+                                        regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
                                     }
                                     if (chunk.done) break;
                                 }
@@ -1748,7 +1770,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.content) {
-                    fullMessage += chunk.content;
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                 }
                 
                 if (chunk.done) {

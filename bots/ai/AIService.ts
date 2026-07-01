@@ -16,6 +16,8 @@ import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
+import { MCPConnector } from '../mcp/MCPConnector';
+import { appendStreamedChunk } from './EmotionParser';
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -128,6 +130,10 @@ export class AIService {
         adminApiService?: AdminApiService
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
+        // Buffer for content received before tool calls are detected
+        // Discarded if tool calls arrive (was filler/thinking text);
+        // flushed as final response if no tool calls.
+        let preToolBuffer = '';
 
         try {
             // Get provider credentials
@@ -403,7 +409,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             const isQwenModel = config.model.toLowerCase().includes('qwen');
 
             // Define tools for function calling
-            const tools = this.buildTools(botClient, adminApiService || this.adminApiService);
+            const { tools, toolServerMap } = await this.buildTools(botId, botClient, adminApiService || this.adminApiService);
 
             // Generate stream with tools
             let tokensUsed = 0;
@@ -426,6 +432,13 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
             let followUpError = false;
             // skipping code after the loop but still reaching the finally block.
             let followUpInput = '';
+            let overallFollowUpStartTime = 0;
+            let lastFollowUpDoneChunk: AIStreamChunk | null = null;
+            // Buffer for content from all follow-up rounds (yielded as one chunk at end)
+            let followUpContentBuffer = '';
+            // Look up player UUID from conversation memory for MCP identity
+            const playerMemory = this.conversationMemory.getMemory(botId, playerId);
+            const playerUuid = playerMemory?.userUuid || `temp-${playerId}`;
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string }> = new Map();
 
@@ -603,6 +616,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         });
                         initialGenCaptured = true;
 
+                        // Discard pre-tool-call content buffer — the model was
+                        // generating filler/thinking text before deciding to call tools.
+                        preToolBuffer = '';
+                        // Also reset buffer for the follow-up content from any prior rounds
+                        followUpContentBuffer = '';
+
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
                             id: tc.id,
@@ -611,29 +630,33 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             arguments: tc.arguments || '{}'
                         }));
                         
-                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] 🔧 About to execute ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => ({ 
-                                name: tc.name, 
-                                id: tc.id, 
-                                argsPreview: tc.arguments.substring(0, 100),
-                                argsLength: tc.arguments.length
-                            })));
-                        }
-                        // Execute tool calls and continue conversation
-                        const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService);
-                        pendingToolCalls = [];
-                        toolCallAccumulator.clear();
-                        hadToolCalls = true;
+                        // Execute tool calls and continue conversation in a loop for multi-round tool calling
+                        let followUpIterations = 0;
+                        const MAX_FOLLOW_UP_ITERATIONS = 5;
 
-                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] ✅ Tool execution completed. Results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, success: tr.result?.success, error: tr.result?.error, areasCount: tr.result?.areas?.length || 0 })));
-                        }
+                        while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
+                            followUpIterations++;
 
-                        // Continue conversation with tool results
-                        const toolResultsMessage = this.formatToolResults(toolResults);
-                        // Include explicit instruction to use tool results - be very direct
-                        // Format as a clear instruction to the AI
-                        const followUpMessage = `User asked: "${message}"
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[AIService] 🔧 About to execute ${pendingToolCalls.length} tool calls:`, pendingToolCalls.map(tc => ({ 
+                                    name: tc.name, 
+                                    id: tc.id, 
+                                    argsPreview: tc.arguments.substring(0, 100),
+                                    argsLength: tc.arguments.length
+                                })));
+                            }
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid);
+                            pendingToolCalls = [];
+                            toolCallAccumulator.clear();
+                            hadToolCalls = true;
+
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[AIService] ✅ Tool execution completed. Results:`, toolResults.map(tr => ({ name: tr.name, hasResult: !!tr.result, success: tr.result?.success, error: tr.result?.error, areasCount: tr.result?.areas?.length || 0 })));
+                            }
+
+                            // Continue conversation with tool results
+                            const toolResultsMessage = this.formatToolResults(toolResults);
+                            const followUpMessage = `User asked: "${message}"
 
 You called tools and received these results:
 ${toolResultsMessage}
@@ -647,50 +670,167 @@ CRITICAL RESPONSE RULES:
 - For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location
 - Use actual names from results - never placeholders or made-up text
 - Be conversational and natural - avoid repetitive responses`;
-                        
-                        // Add /no_think for Qwen models in follow-up message
-                        const followUpMessageWithNoThink = isQwenModel 
-                            ? followUpMessage + '\n\n/no_think'
-                            : followUpMessage;
-                        followUpInput = followUpMessageWithNoThink;
 
-                        followUpStartTime = Date.now();
+                            // Add /no_think for Qwen models in follow-up message
+                            const followUpMessageWithNoThink = isQwenModel 
+                                ? followUpMessage + '\n\n/no_think'
+                                : followUpMessage;
+                            followUpInput = followUpMessageWithNoThink;
 
-                        for await (const resultChunk of this.providerRegistry.generateStream(
-                            providerId,
-                            systemPrompt,
-                            followUpMessageWithNoThink,
-                            configWithParent,
-                            tools.length > 0 ? tools : undefined
-                        )) {
-                            // Track tokens from follow-up call metadata
-                            if (resultChunk.metadata?.tokensUsed) {
-                                tokensUsed += resultChunk.metadata.tokensUsed;
-                                followUpTokens += resultChunk.metadata.tokensUsed;
+                            if (overallFollowUpStartTime === 0) {
+                                overallFollowUpStartTime = Date.now();
                             }
-                            if (resultChunk.metadata?.promptTokens) {
-                                promptTokens += resultChunk.metadata.promptTokens;
-                                followUpPromptTokens += resultChunk.metadata.promptTokens;
+                            followUpStartTime = Date.now();
+
+                            for await (const resultChunk of this.providerRegistry.generateStream(
+                                providerId,
+                                systemPrompt,
+                                followUpMessageWithNoThink,
+                                configWithParent,
+                                tools.length > 0 ? tools : undefined
+                            )) {
+                                // Track tokens from follow-up call metadata
+                                if (resultChunk.metadata?.tokensUsed) {
+                                    tokensUsed += resultChunk.metadata.tokensUsed;
+                                    followUpTokens += resultChunk.metadata.tokensUsed;
+                                }
+                                if (resultChunk.metadata?.promptTokens) {
+                                    promptTokens += resultChunk.metadata.promptTokens;
+                                    followUpPromptTokens += resultChunk.metadata.promptTokens;
+                                }
+                                if (resultChunk.metadata?.completionTokens) {
+                                    completionTokens += resultChunk.metadata.completionTokens;
+                                    followUpCompletionTokens += resultChunk.metadata.completionTokens;
+                                }
+                                if (resultChunk.metadata?.error) {
+                                    followUpError = true;
+                                }
+                                // Accumulate content from follow-up response (same as main stream)
+                                if (resultChunk.content) {
+                                    accumulatedContent += resultChunk.content;
+                                    followUpContent += resultChunk.content;
+                                    // Buffer follow-up content instead of yielding per-chunk
+                                    // Will be yielded as one chunk after all tool rounds complete
+                                    followUpContentBuffer = appendStreamedChunk(followUpContentBuffer, resultChunk.content);
+                                }
+                                // Handle tool calls from follow-up response (multi-round tool calling)
+                                if (resultChunk.toolCalls && resultChunk.toolCalls.length > 0) {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.log(`[AIService] Received tool calls from follow-up:`, resultChunk.toolCalls.map(tc => ({ name: tc.name, id: tc.id, argsLength: tc.arguments?.length || 0 })));
+                                    }
+                                    for (const toolCall of resultChunk.toolCalls) {
+                                        if (toolCall.id) {
+                                            const existing = toolCallAccumulator.get(toolCall.id);
+                                            if (existing) {
+                                                if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                                    existing.arguments += toolCall.arguments;
+                                                }
+                                                if (toolCall.name) {
+                                                    existing.name = toolCall.name;
+                                                }
+                                            } else {
+                                                const initArgs = (toolCall.arguments && toolCall.arguments !== '{}') ? toolCall.arguments : '';
+                                                toolCallAccumulator.set(toolCall.id, {
+                                                    id: toolCall.id,
+                                                    name: toolCall.name || '',
+                                                    arguments: initArgs,
+                                                });
+                                            }
+                                        } else if (toolCall.arguments && toolCall.arguments !== '{}') {
+                                            if (toolCallAccumulator.size > 0) {
+                                                const entries = Array.from(toolCallAccumulator.entries());
+                                                const lastEntry = entries[entries.length - 1];
+                                                if (lastEntry) {
+                                                    lastEntry[1].arguments += toolCall.arguments;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (resultChunk.done) {
+                                    streamCompleted = true;
+                                    // Buffer done chunk instead of yielding it — callers break
+                                    // on done:true which would terminate the generator and lose
+                                    // subsequent tool-calling rounds in the while loop.
+                                    lastFollowUpDoneChunk = resultChunk;
+                                }
+                                // Content chunks from follow-up streams are accumulated into
+                                // followUpContentBuffer and yielded as one chunk after all
+                                // tool-calling rounds complete (see below).
+                                // Individual yields are intentionally skipped to prevent
+                                // interleaved content from multiple tool-calling rounds
+                                // from appearing as concatenated filler text.
                             }
-                            if (resultChunk.metadata?.completionTokens) {
-                                completionTokens += resultChunk.metadata.completionTokens;
-                                followUpCompletionTokens += resultChunk.metadata.completionTokens;
+
+                            // Convert any accumulated tool calls from the follow-up response for the next round
+                            if (toolCallAccumulator.size > 0) {
+                                pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
+                                    id: tc.id,
+                                    name: tc.name,
+                                    arguments: tc.arguments || '{}',
+                                }));
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] 🔄 Follow-up round ${followUpIterations} produced ${pendingToolCalls.length} new tool calls, repeating...`);
+                                }
+                                // Capture $ai_generation for this round's follow-up call (not the final one)
+                                if (followUpContent || followUpError) {
+                                    captureAiGeneration({
+                                        distinctId: `bot-${botId}`,
+                                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                                        sessionId: `conversation-${botId}-player-${playerId}`,
+                                        model: config.model,
+                                        provider: config.type,
+                                        input: followUpMessageWithNoThink,
+                                        output: followUpContent,
+                                        inputTokens: followUpPromptTokens,
+                                        outputTokens: followUpCompletionTokens,
+                                        latency: (Date.now() - followUpStartTime) / 1000,
+                                        cost: this.calculateCost(providerId, {
+                                            tokensUsed: followUpTokens,
+                                            promptTokens: followUpPromptTokens,
+                                            completionTokens: followUpCompletionTokens,
+                                            latency: Date.now() - followUpStartTime,
+                                            error: followUpError,
+                                        }),
+                                        botId,
+                                        playerId: String(playerId),
+                                        space: spaceName,
+                                    });
+                                }
+                                // Reset per-round tracking unconditionally for next follow-up iteration
+                                // (must run even when round produces tool calls with zero text content)
+                                followUpContent = '';
+                                followUpTokens = 0;
+                                followUpPromptTokens = 0;
+                                followUpCompletionTokens = 0;
+                                followUpError = false;
+                                // Discard this round's content — tool calls were detected,
+                                // so the text was filler/thinking that shouldn't accumulate.
+                                followUpContentBuffer = '';
+                                continue; // Back to while loop to execute new tool calls
                             }
-                            if (resultChunk.metadata?.error) {
-                                followUpError = true;
-                            }
-                            // Accumulate content from follow-up response (same as main stream)
-                            if (resultChunk.content) {
-                                accumulatedContent += resultChunk.content;
-                                followUpContent += resultChunk.content;
-                            }
-                            if (resultChunk.done) {
-                                streamCompleted = true;
-                            }
-                            yield resultChunk;
                         }
 
-                        // Capture $ai_generation for the tool follow-up LLM call
+                        // If we hit max iterations with still-pending tool calls, log and clear
+                        if (toolCallAccumulator.size > 0) {
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
+                            }
+                            toolCallAccumulator.clear();
+                            pendingToolCalls = [];
+                        }
+
+                        // Yield the buffered follow-up content as a single chunk —
+                        // all tool-calling rounds have completed. This replaces the
+                        // per-round yields that previously caused concatenated text.
+                        // If the buffer is empty (e.g. max iterations with tool calls
+                        // only, no text produced), use a fallback to avoid empty response.
+                        const responseContent = followUpContentBuffer || 'Sorry, I had trouble completing that request. Could you try again?';
+                        followUpContentBuffer = '';
+                        yield {content: responseContent, done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                        lastFollowUpDoneChunk = null;
+
+                        // Capture $ai_generation for the final tool follow-up LLM call
                         if (followUpContent || followUpError) {
                             captureAiGeneration({
                                 distinctId: `bot-${botId}`,
@@ -698,7 +838,7 @@ CRITICAL RESPONSE RULES:
                                 sessionId: `conversation-${botId}-player-${playerId}`,
                                 model: config.model,
                                 provider: config.type,
-                                input: followUpMessageWithNoThink,
+                                input: followUpInput,
                                 output: followUpContent,
                                 inputTokens: followUpPromptTokens,
                                 outputTokens: followUpCompletionTokens,
@@ -723,6 +863,10 @@ CRITICAL RESPONSE RULES:
                     if (chunk.content && pendingToolCalls.length === 0) {
                         accumulatedContent += chunk.content;
                         firstCallContent += chunk.content;
+                        // Buffer content for eventual yield — don't yield individual
+                        // chunks yet because tool calls may arrive in later chunks,
+                        // making this content filler/thinking text that should be discarded.
+                        preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
                     }
 
 // Track metadata from chunk
@@ -746,12 +890,18 @@ CRITICAL RESPONSE RULES:
                         }
                     }
 
-                    // Only yield chunk if no tool calls are pending
-                    // (If tool calls are coming, wait for them to complete first)
-                    if (pendingToolCalls.length === 0) {
-                        yield chunk;
-                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[AIService] Skipping chunk yield - waiting for tool calls to complete`);
+                    // Don't yield individual content chunks — buffer them in preToolBuffer.
+                    // If no tool calls arrive by the time done:true fires, the buffer
+                    // is flushed as the final response. If tool calls do arrive, the
+                    // buffer is discarded (it was the model's filler/thinking text).
+                    // This prevents concatenated filler text from reaching the user.
+                    if (pendingToolCalls.length === 0 && toolCallAccumulator.size === 0) {
+                        if (chunk.done) {
+                            // No tool calls seen — flush buffer as final response
+                            yield {content: preToolBuffer, done: true, metadata: chunk.metadata};
+                            preToolBuffer = '';
+                        }
+                        // Non-done chunks are intentionally not yielded — they're in preToolBuffer
                     }
                 }
                 
@@ -893,9 +1043,17 @@ CRITICAL RESPONSE RULES:
                 error: true,
             }).catch(() => {});
 
-            // Yield error chunk
+            // Yield error chunk with any partial content accumulated before the failure
+            // Strip any incomplete [EMOTION_UPDATE] block — the error may have
+            // cut mid-tag, and parseEmotionsFromResponse would leave raw tag text.
+            let safeContent = preToolBuffer || '';
+            const emotionOpenIdx = safeContent.lastIndexOf('[EMOTION_UPDATE]');
+            const emotionCloseIdx = safeContent.lastIndexOf('[/EMOTION_UPDATE]');
+            if (emotionOpenIdx > emotionCloseIdx) {
+                safeContent = safeContent.substring(0, emotionOpenIdx).trimEnd();
+            }
             yield {
-                content: '',
+                content: safeContent,
                 done: true,
                 metadata: {
                     tokensUsed: 0,
@@ -1042,8 +1200,9 @@ CRITICAL RESPONSE RULES:
     /**
      * Build tool definitions for function calling
      */
-    private buildTools(botClient?: BotClient, adminApiService?: AdminApiService): any[] {
+    private async buildTools(botId?: string, botClient?: BotClient, adminApiService?: AdminApiService): Promise<{ tools: any[]; toolServerMap: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }> }> {
         const tools: any[] = [];
+        const toolServerMap = new Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>();
 
         if (botClient) {
             // Tool: Get people on the map
@@ -1115,7 +1274,42 @@ CRITICAL RESPONSE RULES:
             });
         }
 
-        return tools;
+        // Add MCP tools
+        if (botId && adminApiService) {
+            try {
+                const mcpResult = await MCPConnector.discoverToolsWithMapping(
+                    botId,
+                    this.adminApiUrl,
+                    adminApiService['adminApiToken'],
+                    process.env.BOT_SERVICE_TOKEN || ''
+                );
+                const mcpTools = mcpResult.tools;
+
+                // Transfer tool→server mapping to the outer-scope map
+                for (const [key, value] of mcpResult.toolServerMap) {
+                    toolServerMap.set(key, value);
+                }
+
+                // Build a set of existing tool names for deduplication
+                const existingToolNames = new Set(tools.map(t => t.function.name));
+
+                for (const mcpTool of mcpTools) {
+                    if (!existingToolNames.has(mcpTool.function.name)) {
+                        tools.push(mcpTool);
+                        existingToolNames.add(mcpTool.function.name);
+                    }
+                }
+
+                if (mcpTools.length > 0) {
+                    console.log(`[AIService] Added ${mcpTools.length} MCP tools for bot ${botId}`);
+                }
+            } catch (e) {
+                console.warn('[AIService] Failed to discover MCP tools:', e);
+                Sentry.captureException(e instanceof Error ? e : new Error(String(e)));
+            }
+        }
+
+        return { tools, toolServerMap };
     }
 
     /**
@@ -1125,7 +1319,9 @@ CRITICAL RESPONSE RULES:
     private async executeToolCalls(
         toolCalls: ToolCall[],
         botClient?: BotClient,
-        adminApiService?: AdminApiService
+        adminApiService?: AdminApiService,
+        toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>,
+        playerUuid?: string
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1329,12 +1525,37 @@ CRITICAL RESPONSE RULES:
                         break;
 
 
-                    default:
-                        // Log unknown tool for debugging
-                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
+                    default: {
+                        // Check if this is an MCP tool (not a hardcoded one)
+                        const mcpServerConfig = toolServerMap?.get(toolCall.name);
+                        if (mcpServerConfig) {
+                            try {
+                                const parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? JSON.parse(toolCall.arguments)
+                                    : toolCall.arguments || {};
+                                result = await MCPConnector.executeToolCall(
+                                    mcpServerConfig.serverId,
+                                    mcpServerConfig.serverUrl,
+                                    toolCall.name,
+                                    parsedArgs,
+                                    mcpServerConfig.authType,
+                                    mcpServerConfig.authConfig,
+                                    mcpServerConfig.headers,
+                                    playerUuid
+                                );
+                            } catch (mcpError: any) {
+                                console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);
+                                Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
+                                result = { error: `MCP tool error: ${mcpError.message || 'Unknown error'}` };
+                            }
+                        } else {
+                            // Log unknown tool for debugging
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[AIService] Unknown tool called: ${toolCall.name || '(empty)'}`, toolCall);
+                            }
+                            result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
                         }
-                        result = { error: `Unknown tool: ${toolCall.name || '(empty name)'}` };
+                    }
                 }
 
                 return { id: toolCall.id, name: toolCall.name, result };

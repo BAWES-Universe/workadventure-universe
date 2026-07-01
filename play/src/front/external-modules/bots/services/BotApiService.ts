@@ -649,6 +649,108 @@ export class BotApiService {
             return [];
         }
     }
+
+    // ─── MCP Server management ──────────────────────────────────────────────────────
+
+    /**
+     * List MCP servers for a bot
+     */
+    async getBotMcpServers(botId: string): Promise<McpServer[]> {
+        try {
+            const response = await this.fetch(`/api/bots/${botId}/mcp-servers`, {
+                method: "GET",
+            });
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error getting MCP servers:", error);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Create an MCP server for a bot
+     */
+    async createBotMcpServer(botId: string, data: CreateMcpServerDto): Promise<McpServer> {
+        const response = await this.fetch(`/api/bots/${botId}/mcp-servers`, {
+            method: "POST",
+            body: JSON.stringify(data),
+        });
+        return response.json();
+    }
+
+    /**
+     * Update an MCP server for a bot
+     */
+    async updateBotMcpServer(botId: string, id: string, data: Partial<CreateMcpServerDto>): Promise<McpServer> {
+        const response = await this.fetch(`/api/bots/${botId}/mcp-servers/${id}`, {
+            method: "PATCH",
+            body: JSON.stringify(data),
+        });
+        return response.json();
+    }
+
+    /**
+     * Delete an MCP server for a bot
+     */
+    async deleteBotMcpServer(botId: string, id: string): Promise<void> {
+        await this.fetch(`/api/bots/${botId}/mcp-servers/${id}`, {
+            method: "DELETE",
+        });
+    }
+
+    /**
+     * Test connection to an MCP server and return tool names
+     */
+    async testBotMcpServer(botId: string, id: string): Promise<McpServerTestResponse> {
+        const response = await this.fetch(`/api/bots/${botId}/mcp-servers/${id}/test`, {
+            method: "POST",
+        });
+        return response.json();
+    }
+}
+
+// ─── MCP Server Types ─────────────────────────────────────────────────────────────
+
+export interface McpServer {
+    id: string;
+    name: string;
+    serverUrl: string;
+    authType: "none" | "bearer" | "api-key";
+    authConfig?: string;
+    headers?: Record<string, string>;
+    enabled: boolean;
+    lastTestedAt?: string | null;
+    lastTestResult?: {
+        success: boolean;
+        toolCount: number;
+        toolNames: string[];
+        error: string | null;
+    } | null;
+    createdAt: string;
+}
+
+export interface CreateMcpServerDto {
+    name: string;
+    serverUrl: string;
+    authType: "none" | "bearer" | "api-key";
+    authConfig?: string;
+    headers?: Record<string, string>;
+}
+
+export interface McpServerTestResponse {
+    success: boolean;
+    toolCount: number;
+    toolNames: string[];
+    error?: string | null;
+}
+
+export interface McpServerTestResult {
+    success: boolean;
+    tools: Array<{ name: string; description?: string }>;
+    error?: string;
 }
 
 // Export singleton instance

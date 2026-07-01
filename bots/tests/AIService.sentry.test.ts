@@ -60,6 +60,18 @@ vi.mock("../client/BotClient", () => ({
     BotClient: vi.fn(),
 }));
 
+// --- Mock MCPConnector to prevent real HTTP calls during tests ---
+vi.mock("../mcp/MCPConnector", () => ({
+    MCPConnector: {
+        discoverToolsWithMapping: vi.fn().mockResolvedValue({
+            tools: [],
+            toolServerMap: new Map(),
+        }),
+        executeToolCall: vi.fn().mockResolvedValue({ content: [] }),
+        clearCache: vi.fn(),
+    },
+}));
+
 // ---- Helper: build a minimal async generator that immediately completes ----
 async function* minimalStream() {
     yield { content: "hello", done: false };
@@ -87,7 +99,9 @@ function buildMocks() {
         getAvailableAIProviders: vi.fn().mockResolvedValue([]),
     };
 
-    const mockConversationMemory: any = {};
+    const mockConversationMemory: any = {
+        getMemory: vi.fn(() => ({ userUuid: 'test-uuid' })),
+    };
 
     return { mockAdminApiService, mockConversationMemory };
 }
