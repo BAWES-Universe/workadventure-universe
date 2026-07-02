@@ -231,7 +231,13 @@ export class ConversationStorage {
             }
         } catch (error: any) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[ConversationStorage] Error creating conversation:', error);
+                // P2002 = unique constraint violation — conversation already exists
+                if (error?.response?.data?.code === 'P2002') {
+                    console.log(`[ConversationStorage] Conversation already exists for botId=${conversation.botId}, userUuid=${conversation.userUuid} (P2002)`);
+                } else {
+                    const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+                    console.error(`[ConversationStorage] Error creating conversation: ${msg}`);
+                }
             }
         }
     }
@@ -268,7 +274,8 @@ export class ConversationStorage {
             }
         } catch (error: any) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error(`[ConversationStorage] Error updating conversation ${conversationId}:`, error);
+                const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+                console.error(`[ConversationStorage] Error updating conversation ${conversationId}: ${msg}`);
             }
         }
     }
