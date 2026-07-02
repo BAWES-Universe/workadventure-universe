@@ -896,12 +896,15 @@ CRITICAL RESPONSE RULES:
                     // buffer is discarded (it was the model's filler/thinking text).
                     // This prevents concatenated filler text from reaching the user.
                     if (pendingToolCalls.length === 0 && toolCallAccumulator.size === 0) {
+                        if (chunk.content && !chunk.done) {
+                            // Yield content chunk for real-time streaming (no tool calls in progress)
+                            yield {content: chunk.content, done: false};
+                        }
                         if (chunk.done) {
-                            // No tool calls seen — flush buffer as final response
-                            yield {content: preToolBuffer, done: true, metadata: chunk.metadata};
+                            // No tool calls seen — finalize with metadata
+                            yield {content: '', done: true, metadata: chunk.metadata};
                             preToolBuffer = '';
                         }
-                        // Non-done chunks are intentionally not yielded — they're in preToolBuffer
                     }
                 }
                 
