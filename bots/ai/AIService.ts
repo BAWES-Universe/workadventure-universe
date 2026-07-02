@@ -846,7 +846,14 @@ CRITICAL RESPONSE RULES:
                         }
                         followUpContentBuffer = '';
                         if (!responseContent) {
-                            // No content at all — just finalize silently
+                            // Follow-up produced only tool calls with no text —
+                            // use firstCallContent as fallback so the user sees
+                            // at least the pre-tool thinking text.
+                            const fallback = firstCallContent || "Let me check on that for you.";
+                            const streamWords = fallback.match(/\S+\s*/g) || [fallback];
+                            for (let wi = 0; wi < streamWords.length; wi++) {
+                                yield {content: streamWords[wi], done: false, metadata: undefined};
+                            }
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;
                         } else {
@@ -929,7 +936,15 @@ CRITICAL RESPONSE RULES:
                     // When tool calls later trigger a reset, the behavior finalizes the
                     // bubble with this content.
                     if (chunk.done) {
-                        // No tool calls seen — finalize with metadata
+                        // No tool calls seen — flush pre-tool buffer as final response.
+                        // Stream word-by-word so both streaming and non-streaming
+                        // behaviors (greeting vs chat) receive the content.
+                        if (preToolBuffer) {
+                            const words = preToolBuffer.match(/\S+\s*/g) || [preToolBuffer];
+                            for (const word of words) {
+                                yield {content: word, done: false, metadata: undefined};
+                            }
+                        }
                         yield {content: '', done: true, metadata: chunk.metadata};
                         preToolBuffer = '';
                     }
