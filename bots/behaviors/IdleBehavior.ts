@@ -746,6 +746,12 @@ export class IdleBehavior extends BaseBehavior {
                                 }
                             } catch (error) {
                                 console.error(`[IdleBehavior] Error regenerating response after duplicate:`, error);
+                                // Clear pending batch timer to prevent stale partial content from leaking
+                                if (batchState.timer) {
+                                    clearTimeout(batchState.timer);
+                                    batchState.timer = null;
+                                }
+                                batchState.buffer = '';
                                 // Don't break, try again if attempts remaining
                                 continue;
                             }
