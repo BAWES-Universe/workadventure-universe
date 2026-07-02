@@ -453,7 +453,14 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             try {
-                this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), greeting, true, greeting);
+                // Stream greeting word-by-word so it appears incrementally,
+                // matching the follow-up streaming UX.
+                const responseId = crypto.randomUUID();
+                const greetingWords = greeting.match(/\S+\s*/g) || [greeting];
+                for (const word of greetingWords) {
+                    this.bot?.sendStreamMessage(spaceName, responseId, word, false);
+                }
+                this.bot?.sendStreamMessage(spaceName, responseId, '', true, greeting);
                 // Record bot's message in memory
                 this.conversationMemory?.addMessage(botId, playerId, greeting, 'bot', spaceName);
             } catch (error) {
