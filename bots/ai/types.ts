@@ -34,6 +34,7 @@ export interface ToolCall {
 export interface AIStreamChunk {
     content: string; // Token content (empty string if done)
     done: boolean; // Whether this is the final chunk
+    reset?: boolean; // If true, frontend should clear current stream content before processing this chunk
     toolCalls?: ToolCall[]; // Tool calls requested by AI
     metadata?: {
         tokensUsed?: number;

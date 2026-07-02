@@ -622,6 +622,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         // Also reset buffer for the follow-up content from any prior rounds
                         followUpContentBuffer = '';
 
+                        // Yield reset to clear any streamed pre-tool content from frontend
+                        // before executing tools — the filler text should disappear
+                        // and be replaced by clean follow-up content.
+                        yield {content: '', done: false, reset: true};
+
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
                             id: tc.id,
@@ -820,14 +825,16 @@ CRITICAL RESPONSE RULES:
                             pendingToolCalls = [];
                         }
 
-                        // Yield the buffered follow-up content as a single chunk —
-                        // all tool-calling rounds have completed. This replaces the
-                        // per-round yields that previously caused concatenated text.
-                        // If the buffer is empty (e.g. max iterations with tool calls
-                        // only, no text produced), use a fallback to avoid empty response.
+                        // Stream the follow-up content word-by-word so the frontend
+                        // shows tokens appearing incrementally instead of all at once.
+                        // Split on word boundaries to create natural streaming chunks.
                         const responseContent = followUpContentBuffer || 'Sorry, I had trouble completing that request. Could you try again?';
                         followUpContentBuffer = '';
-                        yield {content: responseContent, done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                        const streamWords = responseContent.match(/\S+\s*/g) || [responseContent];
+                        for (let wi = 0; wi < streamWords.length; wi++) {
+                            yield {content: streamWords[wi], done: false, metadata: undefined};
+                        }
+                        yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                         lastFollowUpDoneChunk = null;
 
                         // Capture $ai_generation for the final tool follow-up LLM call

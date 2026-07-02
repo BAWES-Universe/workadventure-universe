@@ -100,5 +100,17 @@ export function hasEmotionBlock(response: string): boolean {
  * on subsequent tokens (e.g. ["Hello", " world", "!"]). Simply concatenate.
  */
 export function appendStreamedChunk(fullMessage: string, chunkContent: string): string {
-    return fullMessage + chunkContent;
+    if (!fullMessage) {
+        return chunkContent;
+    }
+    // Already has whitespace on one side — no extra needed
+    if (fullMessage.endsWith(' ') || fullMessage.endsWith('\n') || chunkContent.startsWith(' ')) {
+        return fullMessage + chunkContent;
+    }
+    // Chunk starts with a non-word character (punctuation or symbol) — no space
+    const firstChar = chunkContent.charAt(0);
+    if (!/\w/u.test(firstChar)) {
+        return fullMessage + chunkContent;
+    }
+    return fullMessage + ' ' + chunkContent;
 }

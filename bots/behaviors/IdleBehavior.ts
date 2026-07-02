@@ -497,6 +497,13 @@ export class IdleBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    // Tool calls overrode streamed pre-tool content — clear frontend
+                    this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                    fullMessage = '';
+                    continue;
+                }
+
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     // Sanitize chunk to strip emotion/control blocks before streaming to frontend
@@ -597,6 +604,12 @@ export class IdleBehavior extends BaseBehavior {
                                     this.bot,
                                     this.adminApiService
                                 )) {
+                                    if (chunk.reset) {
+                                        this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                                        regeneratedMessage = '';
+                                        continue;
+                                    }
+
                                     if (chunk.content) {
                                         regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
                                         // Sanitize regenerated chunk before streaming

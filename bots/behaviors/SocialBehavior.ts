@@ -813,6 +813,13 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    // Tool calls overrode streamed pre-tool content — clear frontend
+                    this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                    fullMessage = '';
+                    continue;
+                }
+
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     // Sanitize chunk to strip emotion/control blocks before streaming to frontend
@@ -820,10 +827,10 @@ export class SocialBehavior extends BaseBehavior {
                     // Stream incremental token to frontend in real-time
                     this.bot?.sendStreamMessage(spaceName, responseId, sanitizedContent, false);
                 }
-                
+
                 // Extract token usage and latency from chunk metadata
-                if (chunk.tokensUsed) {
-                    tokensUsed = chunk.tokensUsed;
+                if ((chunk as any).tokensUsed) {
+                    tokensUsed = (chunk as any).tokensUsed;
                 }
                 if (chunk.metadata?.tokensUsed) {
                     tokensUsed = chunk.metadata.tokensUsed;
@@ -912,6 +919,12 @@ export class SocialBehavior extends BaseBehavior {
                                     this.bot,
                                     this.adminApiService
                                 )) {
+                                    if (chunk.reset) {
+                                        this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                                        regeneratedMessage = '';
+                                        continue;
+                                    }
+
                                     if (chunk.content) {
                                         regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
                                         // Sanitize regenerated chunk before streaming
