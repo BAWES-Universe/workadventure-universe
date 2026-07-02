@@ -898,7 +898,12 @@ export class IdleBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
+                            const respId = crypto.randomUUID();
+                            const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
+                            for (const w of words) {
+                                this.bot?.sendStreamMessage(spaceName, respId, w, false);
+                            }
+                            this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
                             this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                             // Store bot's message in conversation storage
                             if (this.conversationStorage) {
@@ -1010,7 +1015,12 @@ export class IdleBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
+                            const respId = crypto.randomUUID();
+                            const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
+                            for (const w of words) {
+                                this.bot?.sendStreamMessage(spaceName, respId, w, false);
+                            }
+                            this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
                             // Store bot's message in memory
                             this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1145,7 +1155,12 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[IdleBehavior] sendAreaArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
                         }
-                        this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
+                        const respId = crypto.randomUUID();
+                        const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
+                        for (const w of words) {
+                            this.bot?.sendStreamMessage(spaceName, respId, w, false);
+                        }
+                        this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
                         this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1287,7 +1302,12 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
                         }
-                        this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
+                        const respId = crypto.randomUUID();
+                        const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
+                        for (const w of words) {
+                            this.bot?.sendStreamMessage(spaceName, respId, w, false);
+                        }
+                        this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
                         this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1409,7 +1429,12 @@ export class IdleBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
+                            const respId = crypto.randomUUID();
+                            const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
+                            for (const w of words) {
+                                this.bot?.sendStreamMessage(spaceName, respId, w, false);
+                            }
+                            this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
                             // Store bot's message in memory
                             this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
