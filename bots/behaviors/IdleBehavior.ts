@@ -849,6 +849,8 @@ export class IdleBehavior extends BaseBehavior {
         try {
             const goodbyePrompt = `You've arrived at ${destinationText}. It was nice talking to them. Say goodbye and that you'll see them soon.`;
             
+            const goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -862,6 +864,27 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+                    
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EM');
+                    const emInFull = fullMessage.includes('[EM');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, chunk.content, false);
                 }
                 
                 if (chunk.done) {
@@ -898,12 +921,7 @@ export class IdleBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            const respId = crypto.randomUUID();
-                            const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
-                            for (const w of words) {
-                                this.bot?.sendStreamMessage(spaceName, respId, w, false);
-                            }
-                            this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim());
                             this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                             // Store bot's message in conversation storage
                             if (this.conversationStorage) {
@@ -917,6 +935,8 @@ export class IdleBehavior extends BaseBehavior {
                                 }
                             }
                         }
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, '');
                     }
                     break;
                 }
@@ -965,6 +985,8 @@ export class IdleBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
+            const greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -978,6 +1000,27 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+                    
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EM');
+                    const emInFull = fullMessage.includes('[EM');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, chunk.content, false);
                 }
                 
                 if (chunk.done) {
@@ -1015,15 +1058,12 @@ export class IdleBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            const respId = crypto.randomUUID();
-                            const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
-                            for (const w of words) {
-                                this.bot?.sendStreamMessage(spaceName, respId, w, false);
-                            }
-                            this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
                             // Store bot's message in memory
                             this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
                     }
                     // After greeting, send goodbye message and return
                     this.sendGoodbyeAndReturn(spaceName, playerId, botId, 'person').catch(error => {
@@ -1095,8 +1135,9 @@ export class IdleBehavior extends BaseBehavior {
                 console.log(`[IdleBehavior] sendAreaArrivalMessage: Generating AI response...`);
             }
             
+            const arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
             let fullMessage = '';
-            let chunkCount = 0;
+            let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerUserId,
@@ -1108,16 +1149,32 @@ export class IdleBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
-                chunkCount++;
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[IdleBehavior] sendAreaArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
+                    
+                    if (emotionBlockStarted) {
+                        continue;
                     }
+                    const emInChunk = chunk.content.includes('[EM');
+                    const emInFull = fullMessage.includes('[EM');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, chunk.content, false);
                 }
+                
                 if (chunk.done) {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[IdleBehavior] sendAreaArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
+                        console.log(`[IdleBehavior] sendAreaArrivalMessage: Stream completed`);
                     }
                     
                     // Parse emotions and clean the message
@@ -1155,12 +1212,7 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[IdleBehavior] sendAreaArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
                         }
-                        const respId = crypto.randomUUID();
-                        const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
-                        for (const w of words) {
-                            this.bot?.sendStreamMessage(spaceName, respId, w, false);
-                        }
-                        this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
                         this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1173,7 +1225,7 @@ export class IdleBehavior extends BaseBehavior {
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 if (!fullMessage.trim()) {
-                    console.warn(`[IdleBehavior] sendAreaArrivalMessage: Stream ended without chunk.done=true or message is empty. Chunks received: ${chunkCount}`);
+                    console.warn(`[IdleBehavior] sendAreaArrivalMessage: Stream ended without chunk.done=true or message is empty`);
                 }
             }
         } catch (error) {
@@ -1242,8 +1294,9 @@ export class IdleBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
+            const arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
             let fullMessage = '';
-            let chunkCount = 0;
+            let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerUserId,
@@ -1255,16 +1308,32 @@ export class IdleBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
-                chunkCount++;
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
-                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[IdleBehavior] sendPersonArrivalMessage: Received chunk ${chunkCount}, content length: ${chunk.content.length}, total: ${fullMessage.length}`);
+                    
+                    if (emotionBlockStarted) {
+                        continue;
                     }
+                    const emInChunk = chunk.content.includes('[EM');
+                    const emInFull = fullMessage.includes('[EM');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, chunk.content, false);
                 }
+                
                 if (chunk.done) {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[IdleBehavior] sendPersonArrivalMessage: Stream completed after ${chunkCount} chunks, final message length: ${fullMessage.length}`);
+                        console.log(`[IdleBehavior] sendPersonArrivalMessage: Stream completed`);
                     }
                     
                     // Parse emotions and clean the message
@@ -1300,14 +1369,9 @@ export class IdleBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
+                            console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message: "${cleanedMessage.trim()}"`);
                         }
-                        const respId = crypto.randomUUID();
-                        const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
-                        for (const w of words) {
-                            this.bot?.sendStreamMessage(spaceName, respId, w, false);
-                        }
-                        this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
                         this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1320,7 +1384,7 @@ export class IdleBehavior extends BaseBehavior {
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 if (!fullMessage.trim()) {
-                    console.warn(`[IdleBehavior] sendPersonArrivalMessage: Stream ended without chunk.done=true or message is empty. Chunks received: ${chunkCount}`);
+                    console.warn(`[IdleBehavior] sendPersonArrivalMessage: Stream ended without chunk.done=true or message is empty`);
                 }
             }
         } catch (error) {
@@ -1379,6 +1443,8 @@ export class IdleBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
+            const greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1392,6 +1458,27 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+                    
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EM');
+                    const emInFull = fullMessage.includes('[EM');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, chunk.content, false);
                 }
                 
                 if (chunk.done) {
@@ -1429,15 +1516,12 @@ export class IdleBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            const respId = crypto.randomUUID();
-                            const words = cleanedMessage.trim().match(/\S+\s*/g) || [cleanedMessage.trim()];
-                            for (const w of words) {
-                                this.bot?.sendStreamMessage(spaceName, respId, w, false);
-                            }
-                            this.bot?.sendStreamMessage(spaceName, respId, '', true, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
                             // Store bot's message in memory
                             this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
                     }
                     break;
                 }
