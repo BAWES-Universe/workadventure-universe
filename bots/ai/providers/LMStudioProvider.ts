@@ -30,14 +30,11 @@ export class LMStudioProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[]
     ): AsyncGenerator<AIStreamChunk> {
-        // Collect all chunks first, then yield them after the span ends.
-        // This ensures the gen_ai.chat span is properly created as a child
-        // of the parent gen_ai.agent span and its end() is called before
-        // the parent ends. startSpanManual with identity callback was the
-        // root cause of 0 child spans — it never called end() or scope
-        // cleanup properly across async generator yield points.
-        const chunks: AIStreamChunk[] = [];
-        await Sentry.startSpan(
+        const queue: AIStreamChunk[] = [];
+        let streamDone = false;
+        let streamError: Error | null = null;
+
+        const streamPromise = Sentry.startSpan(
             {
                 op: "gen_ai.chat",
                 name: `LLM ${config.model}`,
@@ -134,7 +131,7 @@ export class LMStudioProvider implements AIProvider {
                                     span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
                                     span.setAttribute("gen_ai.agent.name", config.name || '');
 
-                                    chunks.push({
+                                    queue.push({
                                         content: '',
                                         done: true,
                                         metadata: {
@@ -185,7 +182,7 @@ export class LMStudioProvider implements AIProvider {
                                             };
                                             return toolCall;
                                         });
-                                        chunks.push({
+                                        queue.push({
                                             content: '',
                                             done: false,
                                             toolCalls,
@@ -194,7 +191,7 @@ export class LMStudioProvider implements AIProvider {
 
                                     // Track content chunks
                                     if (delta?.content) {
-                                        chunks.push({
+                                        queue.push({
                                             content: delta.content,
                                             done: false,
                                         });
@@ -216,7 +213,7 @@ export class LMStudioProvider implements AIProvider {
                     span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
                     span.setAttribute("gen_ai.agent.name", config.name || '');
 
-                    chunks.push({
+                    queue.push({
                         content: '',
                         done: true,
                         metadata: {
@@ -236,7 +233,7 @@ export class LMStudioProvider implements AIProvider {
                     span.setAttribute("gen_ai.agent.name", config.name || '');
                     span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
-                    chunks.push({
+                    queue.push({
                         content: '',
                         done: true,
                         metadata: {
@@ -245,13 +242,25 @@ export class LMStudioProvider implements AIProvider {
                             error: true,
                         },
                     });
+                    streamError = error instanceof Error ? error : new Error(String(error));
                 } finally {
                     clearTimeout(timeoutId);
                     reader?.cancel();
+                    streamDone = true;
                 }
             }
         );
-        yield* chunks;
+
+        // Yield from queue as chunks arrive from the SSE stream.
+        while (!streamDone || queue.length > 0) {
+            if (queue.length > 0) {
+                yield queue.shift()!;
+            } else {
+                await new Promise(resolve => setTimeout(resolve, 1));
+            }
+        }
+
+        await streamPromise;
     }
 
     async generate(
