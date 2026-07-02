@@ -1523,6 +1523,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         let latency = 0;
         // Unique ID for this streamed response — used by frontend to correlate chunks
         const responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        // Track whether the model has started generating the emotion block at the end
+        // of the response. Once detected, stop streaming chunks to prevent raw partial
+        // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
+        let emotionBlockStarted = false;
 
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -1545,6 +1549,23 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Once the model starts generating the [EMOTION_UPDATE] block
+                    // (always at the end of every response), stop streaming chunks
+                    // to the frontend — partial tags show as raw text.
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    if (chunk.content.includes('[EMOTION')) {
+                        emotionBlockStarted = true;
+                        const emotionIdx = chunk.content.indexOf('[EMOTION');
+                        const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                        if (beforeEmotion.trim()) {
+                            this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                        }
+                        continue;
+                    }
+
                     // Sanitize chunk to strip emotion/control blocks before streaming to frontend
                     const sanitizedContent = parseEmotionsFromResponse(chunk.content).cleanedResponse;
                     // Stream incremental token to frontend in real-time
@@ -1632,6 +1653,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                             // Regenerate with anti-repetition prompt
                             let regeneratedMessage = '';
                             try {
+                                let emotionBlockStarted = false;
                                 for await (const chunk of this.aiService.generateBotResponseStream(
                                     botId,
                                     playerId,
@@ -1651,6 +1673,15 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
                                     if (chunk.content) {
                                         regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
+
+                                        if (emotionBlockStarted) {
+                                            continue;
+                                        }
+                                        if (chunk.content.includes('[EMOTION')) {
+                                            emotionBlockStarted = true;
+                                            continue;
+                                        }
+
                                         // Sanitize regenerated chunk before streaming
                                         const sanitizedContent = parseEmotionsFromResponse(chunk.content).cleanedResponse;
                                         // Stream regenerated tokens to frontend (same responseId, after reset)
