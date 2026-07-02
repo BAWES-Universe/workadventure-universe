@@ -624,6 +624,29 @@ export class ProximityChatRoom implements ChatRoom {
                     return;
                 }
 
+                // First chunk is an error with no prior stream — create message with error text
+                if (stream.isError) {
+                    const spaceUser = this.users?.get(event.sender);
+                    let chatUser: AnyKindOfUser = this.unknownUser;
+                    if (spaceUser) {
+                        chatUser = mapExtendedSpaceUserToChatUser(spaceUser);
+                    }
+                    const errorMessage = new ProximityChatMessage(
+                        uuidv4(),
+                        chatUser,
+                        writable({ body: stream.errorMessage || get(LL).chat.timeLine.streamError(), url: undefined }),
+                        new Date(),
+                        false,
+                        "proximity"
+                    );
+                    this.messages.push(errorMessage);
+                    this.lastMessageTimestamp = errorMessage.date.getTime();
+                    this.notifyNewMessage(errorMessage);
+                    chatVisibilityStore.set(true);
+                    if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
+                    return;
+                }
+
                 // First chunk: create message entry (may also be final if response is very fast)
                 const initialBody = stream.isFinal ? stream.finalContent ?? stream.token : stream.token;
                 const spaceUser = this.users?.get(event.sender);
