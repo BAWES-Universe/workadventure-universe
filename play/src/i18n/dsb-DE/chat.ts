@@ -65,6 +65,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         description: "Historija powěsćow a tšojenjow",
         incoming: "{userName} pśistupijo k diskusiji",
         outcoming: "{userName} spušćijo dikusiju",
+        streamError: "Jośnica jo se nastała",
     },
     form: {
         placeholder: "Napiš powěsć...",

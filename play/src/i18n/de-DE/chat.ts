@@ -66,6 +66,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         description: "Nachrichten- und Ereignisverlauf",
         incoming: "{userName} tritt der Diskussion bei",
         outcoming: "{userName} verlässt die Diskussion",
+        streamError: "Ein Fehler ist aufgetreten",
     },
     form: {
         placeholder: "Gib deine Nachricht ein...",

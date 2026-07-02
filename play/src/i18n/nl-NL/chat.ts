@@ -74,6 +74,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         description: "Berichten- en gebeurtenisgeschiedenis",
         incoming: "{userName} is toegetreden tot het gesprek",
         outcoming: "{userName} heeft het gesprek verlaten",
+        streamError: "Er is een fout opgetreden",
     },
     form: {
         placeholder: "Voer je bericht in...",

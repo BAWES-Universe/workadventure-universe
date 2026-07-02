@@ -594,7 +594,7 @@ export class ProximityChatRoom implements ChatRoom {
                     if (stream.isError) {
                         // Error: display error message and finalize
                         (existing.content as Writable<ChatMessageContent>).set({
-                            body: stream.errorMessage || "An error occurred",
+                            body: stream.errorMessage || get(LL).chat.timeLine.streamError(),
                             url: undefined,
                         });
                         this.streamMessages.delete(stream.responseId);

@@ -102,6 +102,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         outcoming: "{userName} a quitté la conversation",
         youLeft: "Vous avez quitté la conversation",
         youleftMeetingRoom: "Vous avez quitté la réunion",
+        streamError: "Une erreur est survenue",
         youJoinedMeetingRoom: "Vous avez rejoint la réunion",
     },
     form: {

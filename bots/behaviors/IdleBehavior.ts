@@ -483,7 +483,7 @@ export class IdleBehavior extends BaseBehavior {
         let tokensUsed = 0;
         let latency = 0;
         // Unique ID for this streamed response — used by frontend to correlate chunks
-        const responseId = `bot-${botId}-player-${playerId}-${Date.now()}`;
+        const responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
 
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
@@ -499,8 +499,10 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+                    // Sanitize chunk to strip emotion/control blocks before streaming to frontend
+                    const sanitizedContent = parseEmotionsFromResponse(chunk.content).cleanedResponse;
                     // Stream incremental token to frontend in real-time
-                    this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
+                    this.bot?.sendStreamMessage(spaceName, responseId, sanitizedContent, false);
                 }
 
                 // Extract token usage and latency from chunk metadata
@@ -597,8 +599,10 @@ export class IdleBehavior extends BaseBehavior {
                                 )) {
                                     if (chunk.content) {
                                         regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
+                                        // Sanitize regenerated chunk before streaming
+                                        const sanitizedContent = parseEmotionsFromResponse(chunk.content).cleanedResponse;
                                         // Stream regenerated tokens to frontend (same responseId, after reset)
-                                        this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
+                                        this.bot?.sendStreamMessage(spaceName, responseId, sanitizedContent, false);
                                     }
                                     if (chunk.done) break;
                                 }
@@ -706,7 +710,8 @@ export class IdleBehavior extends BaseBehavior {
             console.error(`[IdleBehavior] AI error:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
-            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            // Finalize the stream as error instead of sending a separate chat message
+            this.bot?.sendStreamMessage(spaceName, responseId, '', false, '', true, "I'm having trouble processing that. Could you rephrase?");
         }
     }
 

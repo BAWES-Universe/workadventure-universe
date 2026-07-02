@@ -65,6 +65,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         description: "Powěsćowy a podawkowy wotběh",
         incoming: "{userName} přistupi diskusiji",
         outcoming: "{userName} wopušći diskusiji",
+        streamError: "Zmylk je wustupił",
     },
     form: {
         placeholder: "Zapodaj swoju powěsć...",
