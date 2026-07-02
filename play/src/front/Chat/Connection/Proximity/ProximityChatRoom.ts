@@ -583,7 +583,8 @@ export class ProximityChatRoom implements ChatRoom {
                 const existing = this.streamMessages.get(stream.responseId);
 
                 if (stream.reset && existing) {
-                    // Regeneration: keep existing content visible until first new token arrives
+                    // Regeneration: clear old content so new tokens don't concatenate
+                    (existing.content as Writable<ChatMessageContent>).set({ body: "", url: undefined });
                     return;
                 }
 
