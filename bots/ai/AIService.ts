@@ -875,14 +875,21 @@ CRITICAL RESPONSE RULES:
                         continue;
                     }
 
-                    // Accumulate content (only if no tool calls pending)
-                    if (chunk.content && pendingToolCalls.length === 0) {
+                    // Accumulate content — always save firstCallContent for fallback
+                    // even when tool calls arrive in the same chunk, because the
+                    // follow-up may produce zero text and we need this as fallback.
+                    if (chunk.content) {
                         accumulatedContent += chunk.content;
+                        // firstCallContent accumulates ALL content from the first LLM
+                        // call regardless of tool call timing — it's a fallback for
+                        // when follow-up produces only tool calls with no text.
                         firstCallContent += chunk.content;
                         // Buffer content for eventual yield — don't yield individual
                         // chunks yet because tool calls may arrive in later chunks,
                         // making this content filler/thinking text that should be discarded.
-                        preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
+                        if (pendingToolCalls.length === 0 && toolCallAccumulator.size === 0) {
+                            preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
+                        }
                     }
 
 // Track metadata from chunk
