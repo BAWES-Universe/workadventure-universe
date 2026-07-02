@@ -1014,6 +1014,9 @@ export class SocialBehavior extends BaseBehavior {
                                 });
                             }
                         }
+                    } else {
+                        // Response contained only emotion/control blocks — finalize with empty content to close bubble
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '');
                     }
                     break;
                 }
