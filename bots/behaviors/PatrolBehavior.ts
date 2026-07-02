@@ -1550,9 +1550,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.reset) {
-                    if (chunk.reset) {
                         batchFlush(batchState, sendBatch);
-                        // Tool calls overrode streamed pre-tool content
                         this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         fullMessage = '';

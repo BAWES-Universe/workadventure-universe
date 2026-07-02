@@ -828,19 +828,17 @@ export class SocialBehavior extends BaseBehavior {
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);
-                    if (chunk.reset) {
-                        // Tool calls overrode streamed pre-tool content
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
-                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
-                        emotionBlockStarted = false;
-                        if (chunk.toolNames?.length) {
-                            const toolStatus = `🔍 ${chunk.toolNames.join(', ')}...`;
-                            fullMessage = toolStatus;
-                            this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
-                        }
-                        continue;
+                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    if (chunk.toolNames?.length) {
+                        const toolStatus = `🔍 ${chunk.toolNames.join(', ')}...`;
+                        fullMessage = toolStatus;
+                        this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
                     }
+                    continue;
+                }
 
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
