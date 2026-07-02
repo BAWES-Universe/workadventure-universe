@@ -869,16 +869,8 @@ export class SocialBehavior extends BaseBehavior {
                         continue;
                     }
 
-                    batchAppend(batchState, chunk.content, sendBatch);
-                }
-
-                // When the stream completes, flush any content still in the batch buffer.
-                if (chunk.done) {
-                    batchFlush(batchState, sendBatch);
-                    if (fullMessage) {
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
-                    }
-                    break;
+                    // Stream each content chunk directly to the frontend as it arrives
+                    this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                 }
 
                 // Extract token usage and latency from chunk metadata

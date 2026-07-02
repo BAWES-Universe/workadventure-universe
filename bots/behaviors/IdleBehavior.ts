@@ -557,7 +557,10 @@ export class IdleBehavior extends BaseBehavior {
                         continue;
                     }
 
-                    batchAppend(batchState, chunk.content, sendBatch);
+                    // Stream each content chunk directly to the frontend as it arrives
+                    // from the provider — no batching delay. The provider already streams
+                    // tokens incrementally; batching only adds latency.
+                    this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                 }
 
                 // Extract token usage and latency from chunk metadata
