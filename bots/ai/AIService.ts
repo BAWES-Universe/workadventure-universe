@@ -817,6 +817,9 @@ CRITICAL RESPONSE RULES:
                                 followUpError = false;
                                 // Discard this round's content — tool calls were detected,
                                 // so the text was filler/thinking that shouldn't accumulate.
+                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] Clearing followUpContentBuffer (${followUpContentBuffer.length} chars): toolCallAccumulator.size=${toolCallAccumulator.size}, pendingToolCalls=${pendingToolCalls.length}, preview="${followUpContentBuffer.substring(0, 60)}"`);
+                                }
                                 followUpContentBuffer = '';
                                 continue; // Back to while loop to execute new tool calls
                             }
@@ -838,6 +841,9 @@ CRITICAL RESPONSE RULES:
                         // text was already streamed and finalized in its own bubble
                         // before the reset.
                         const responseContent = followUpContentBuffer || '';
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Follow-up response: contentLength=${responseContent.length}, preview="${responseContent.substring(0, 80)}"`);
+                        }
                         followUpContentBuffer = '';
                         if (!responseContent) {
                             // No content at all — just finalize silently
