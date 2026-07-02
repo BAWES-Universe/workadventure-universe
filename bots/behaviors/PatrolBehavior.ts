@@ -1564,6 +1564,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                 responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                                 fullMessage = toolStatus;
                                 this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                                // Finalize the tool-name bubble so it doesn't linger in
+                                // the frontend's streamMessages map.
+                                this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
                             }
                             // New responseId for follow-up — separate from the tool-name bubble
                             responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;

@@ -528,6 +528,9 @@ export class IdleBehavior extends BaseBehavior {
                             responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                             fullMessage = toolStatus;
                             this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                            // Finalize the tool-name bubble so it doesn't linger in
+                            // the frontend's streamMessages map.
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
                         }
                         // Create a new responseId for follow-up content so it appears
                         // in its own bubble instead of merging into the last tool-name bubble.
