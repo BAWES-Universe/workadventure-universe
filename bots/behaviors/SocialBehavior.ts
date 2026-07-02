@@ -858,14 +858,23 @@ export class SocialBehavior extends BaseBehavior {
                     if (emotionBlockStarted) {
                         continue;
                     }
-                    if (chunk.content.includes('[EM')) {
+                    // Check for [EM both within current chunk AND across chunk boundaries.
+                    // With true per-chunk streaming, the provider may split [EMOTION_UPDATE]
+                    // across two tokens (e.g. "[" then "EMOTION_UPDATE]...").
+                    const emInChunk = chunk.content.includes('[EM');
+                    const emInFull = fullMessage.includes('[EM');
+                    if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
-                        const emotionIdx = chunk.content.indexOf('[EM');
-                        const beforeEmotion = chunk.content.substring(0, emotionIdx);
-                        if (beforeEmotion.trim()) {
-                            batchFlush(batchState, sendBatch);
-                            this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                batchFlush(batchState, sendBatch);
+                                this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                            }
                         }
+                        // else: [EM spans chunk boundary — the "[" was already sent in a
+                        // prior chunk. Don't send anything extra, just stop forwarding.
                         continue;
                     }
 
@@ -984,13 +993,18 @@ export class SocialBehavior extends BaseBehavior {
                                         if (emotionBlockStarted) {
                                             continue;
                                         }
-                                        if (chunk.content.includes('[EM')) {
+                                        // Check for [EM both within current chunk AND across chunk boundaries
+                                        const emInChunk = chunk.content.includes('[EM');
+                                        const emInFull = regeneratedMessage.includes('[EM');
+                                        if (emInChunk || emInFull) {
                                             emotionBlockStarted = true;
-                                            const emotionIdx = chunk.content.indexOf('[EM');
-                                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
-                                            if (beforeEmotion.trim()) {
-                                                batchFlush(batchState, sendBatch);
-                                                this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                                            if (emInChunk) {
+                                                const emotionIdx = chunk.content.indexOf('[EM');
+                                                const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                                                if (beforeEmotion.trim()) {
+                                                    batchFlush(batchState, sendBatch);
+                                                    this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                                                }
                                             }
                                             continue;
                                             }
