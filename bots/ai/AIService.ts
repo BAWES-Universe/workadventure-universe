@@ -828,14 +828,23 @@ CRITICAL RESPONSE RULES:
                         // Stream the follow-up content word-by-word so the frontend
                         // shows tokens appearing incrementally instead of all at once.
                         // Split on word boundaries to create natural streaming chunks.
-                        const responseContent = followUpContentBuffer || '';
+                        // If the follow-up produced only tool calls with no text, fall
+                        // back to the original pre-tool thinking text so the user still
+                        // gets a response instead of an empty bubble.
+                        const responseContent = followUpContentBuffer || firstCallContent || '';
                         followUpContentBuffer = '';
-                        const streamWords = responseContent.match(/\S+\s*/g) || [responseContent];
-                        for (let wi = 0; wi < streamWords.length; wi++) {
-                            yield {content: streamWords[wi], done: false, metadata: undefined};
+                        if (!responseContent) {
+                            // No content at all — just finalize silently
+                            yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                            lastFollowUpDoneChunk = null;
+                        } else {
+                            const streamWords = responseContent.match(/\S+\s*/g) || [responseContent];
+                            for (let wi = 0; wi < streamWords.length; wi++) {
+                                yield {content: streamWords[wi], done: false, metadata: undefined};
+                            }
+                            yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                            lastFollowUpDoneChunk = null;
                         }
-                        yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
-                        lastFollowUpDoneChunk = null;
 
                         // Capture $ai_generation for the final tool follow-up LLM call
                         if (followUpContent || followUpError) {
