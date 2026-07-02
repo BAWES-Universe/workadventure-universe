@@ -1544,6 +1544,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     // Tool calls overrode streamed pre-tool content — clear frontend
                     this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                     fullMessage = '';
+                    emotionBlockStarted = false;
                     continue;
                 }
 

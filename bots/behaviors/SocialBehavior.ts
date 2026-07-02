@@ -821,6 +821,7 @@ export class SocialBehavior extends BaseBehavior {
                     // Tool calls overrode streamed pre-tool content — clear frontend
                     this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                     fullMessage = '';
+                    emotionBlockStarted = false;
                     continue;
                 }
 
