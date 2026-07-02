@@ -767,12 +767,6 @@ CRITICAL RESPONSE RULES:
                                     // subsequent tool-calling rounds in the while loop.
                                     lastFollowUpDoneChunk = resultChunk;
                                 }
-                                // Content chunks from follow-up streams are accumulated into
-                                // followUpContentBuffer and yielded as one chunk after all
-                                // tool-calling rounds complete (see below).
-                                // Individual yields are intentionally skipped to prevent
-                                // interleaved content from multiple tool-calling rounds
-                                // from appearing as concatenated filler text.
                             }
 
                             // Convert any accumulated tool calls from the follow-up response for the next round
@@ -823,6 +817,11 @@ CRITICAL RESPONSE RULES:
                                     console.log(`[AIService] Clearing followUpContentBuffer (${followUpContentBuffer.length} chars): toolCallAccumulator.size=${toolCallAccumulator.size}, pendingToolCalls=${pendingToolCalls.length}, preview="${followUpContentBuffer.substring(0, 60)}"`);
                                 }
                                 followUpContentBuffer = '';
+                                // Yield reset so the behavior creates a new bubble
+                                // for the next follow-up round's content, instead of
+                                // concatenating all rounds into the current bubble.
+                                const followUpToolNames = pendingToolCalls.map(tc => tc.name).filter(Boolean);
+                                yield {content: '', done: false, reset: true, toolNames: followUpToolNames};
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
@@ -856,8 +855,9 @@ CRITICAL RESPONSE RULES:
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;
                         } else {
-                            // Content was already streamed per-chunk above via immediate yields.
-                            // Just yield done — the behavior finalizes with fullMessage.
+                            // Content was streamed per-chunk during each round via immediate yields.
+                            // Each round's content was properly separated by chunk.reset signals.
+                            // Just yield done — the behavior finalizes the last bubble.
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;
                         }
