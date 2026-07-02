@@ -298,10 +298,12 @@ export class OpenAIProvider implements AIProvider {
                                 responseModel = json.model;
                             }
 
-                            // YIELD directly per-chunk for true incremental streaming
-                            if (delta?.content) {
-                                yield {content: delta.content, done: false};
-                            }
+                            // YIELD directly per-chunk with event-loop yield so the frontend
+                                                        // can render each token before the next arrives
+                                                        if (delta?.content) {
+                                                            yield {content: delta.content, done: false};
+                                                            await new Promise(resolve => setTimeout(resolve, 0));
+                                                        }
 
                             // Handle tool calls
                             if (delta?.tool_calls) {
