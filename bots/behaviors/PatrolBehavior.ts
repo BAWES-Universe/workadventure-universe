@@ -1550,15 +1550,20 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.reset) {
-                    batchFlush(batchState, sendBatch);
-                    // Tool calls overrode streamed pre-tool content — finalize current bubble
-                    // and start a new one so follow-up response has its own audit entry.
-                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
-                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                    fullMessage = '';
-                    emotionBlockStarted = false;
-                    continue;
-                }
+                    if (chunk.reset) {
+                        batchFlush(batchState, sendBatch);
+                        // Tool calls overrode streamed pre-tool content
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                        emotionBlockStarted = false;
+                        if (chunk.toolNames?.length) {
+                            const toolStatus = `🔍 ${chunk.toolNames.join(', ')}...`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                        }
+                        continue;
+                    }
 
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);

@@ -621,16 +621,14 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         preToolBuffer = '';
                         // Also reset buffer for the follow-up content from any prior rounds
                         followUpContentBuffer = '';
-                        // firstCallContent was already streamed per-chunk and finalized
-                        // by the reset — clear it so the follow-up fallback doesn't
-                        // send it again as a duplicate bubble.
-                        const firstCallContentForCapture = firstCallContent;
-                        firstCallContent = '';
 
+                        // Extract tool names for the status bubble before yielding reset
+                        const toolNames = Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean);
+                        
                         // Yield reset to clear any streamed pre-tool content from frontend
                         // before executing tools — the filler text should disappear
                         // and be replaced by clean follow-up content.
-                        yield {content: '', done: false, reset: true};
+                        yield {content: '', done: false, reset: true, toolNames};
 
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
@@ -833,10 +831,10 @@ CRITICAL RESPONSE RULES:
                         // Stream the follow-up content word-by-word so the frontend
                         // shows tokens appearing incrementally instead of all at once.
                         // Split on word boundaries to create natural streaming chunks.
-                        // If the follow-up produced only tool calls with no text, fall
-                        // back to the original pre-tool thinking text so the user still
-                        // gets a response instead of an empty bubble.
-                        const responseContent = followUpContentBuffer || firstCallContent || '';
+                        // Use only the actual follow-up text — the pre-tool thinking
+                        // text was already streamed and finalized in its own bubble
+                        // before the reset.
+                        const responseContent = followUpContentBuffer || '';
                         followUpContentBuffer = '';
                         if (!responseContent) {
                             // No content at all — just finalize silently

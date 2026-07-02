@@ -518,6 +518,12 @@ export class IdleBehavior extends BaseBehavior {
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
+                    // Show tool names as inline status in the new bubble
+                    if (chunk.toolNames?.length) {
+                        const toolStatus = `🔍 ${chunk.toolNames.join(', ')}...`;
+                        fullMessage = toolStatus;
+                        this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                    }
                     continue;
                 }
 
