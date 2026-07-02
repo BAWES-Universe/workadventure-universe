@@ -1567,10 +1567,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         continue;
                     }
 
-                    // Sanitize chunk to strip emotion/control blocks before streaming to frontend
-                    const sanitizedContent = parseEmotionsFromResponse(chunk.content).cleanedResponse;
                     // Stream incremental token to frontend in real-time
-                    this.bot?.sendStreamMessage(spaceName, responseId, sanitizedContent, false);
+                    this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                 }
 
                 // Extract token usage and latency from chunk metadata
@@ -1683,10 +1681,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                             continue;
                                         }
 
-                                        // Sanitize regenerated chunk before streaming
-                                        const sanitizedContent = parseEmotionsFromResponse(chunk.content).cleanedResponse;
                                         // Stream regenerated tokens to frontend (same responseId, after reset)
-                                        this.bot?.sendStreamMessage(spaceName, responseId, sanitizedContent, false);
+                                        this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                                     }
                                     if (chunk.done) break;
                                 }
