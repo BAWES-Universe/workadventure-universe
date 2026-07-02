@@ -622,12 +622,15 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         // Also reset buffer for the follow-up content from any prior rounds
                         followUpContentBuffer = '';
 
-                        // Extract tool names for the status bubble before yielding reset
+                        // Extract tool names for the status bubble — each name represents a
+                        // separate tool call invocation. The behavior creates one bubble
+                        // per name so multiple calls to the same tool each get their own
+                        // status message instead of a comma-separated summary.
                         const toolNames = Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean);
                         
                         // Yield reset to clear any streamed pre-tool content from frontend
-                        // before executing tools — the filler text should disappear
-                        // and be replaced by clean follow-up content.
+                        // before executing tools — the bubble will be finalized by the
+                        // behavior with the accumulated pre-tool text.
                         yield {content: '', done: false, reset: true, toolNames};
 
                         // Convert accumulated tool calls to array (arguments should now be complete)
@@ -887,12 +890,10 @@ CRITICAL RESPONSE RULES:
                         // call regardless of tool call timing — it's a fallback for
                         // when follow-up produces only tool calls with no text.
                         firstCallContent += chunk.content;
-                        // Buffer content for eventual yield — don't yield individual
-                        // chunks yet because tool calls may arrive in later chunks,
-                        // making this content filler/thinking text that should be discarded.
-                        if (pendingToolCalls.length === 0 && toolCallAccumulator.size === 0) {
-                            preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
-                        }
+                        // Buffer content for eventual yield — always accumulate even when
+                        // tool calls are arriving so the behavior has the complete pre-tool
+                        // text to finalize into its first bubble before the reset.
+                        preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
                     }
 
 // Track metadata from chunk
@@ -916,21 +917,15 @@ CRITICAL RESPONSE RULES:
                         }
                     }
 
-                    // Don't yield individual content chunks — buffer them in preToolBuffer.
-                    // If no tool calls arrive by the time done:true fires, the buffer
-                    // is flushed as the final response. If tool calls do arrive, the
-                    // buffer is discarded (it was the model's filler/thinking text).
-                    // This prevents concatenated filler text from reaching the user.
-                    if (pendingToolCalls.length === 0 && toolCallAccumulator.size === 0) {
-                        if (chunk.content && !chunk.done) {
-                            // Yield content chunk for real-time streaming (no tool calls in progress)
-                            yield {content: chunk.content, done: false};
-                        }
-                        if (chunk.done) {
-                            // No tool calls seen — finalize with metadata
-                            yield {content: '', done: true, metadata: chunk.metadata};
-                            preToolBuffer = '';
-                        }
+                    // Yield content chunks for real-time streaming to the behavior.
+                    // These are accumulated into fullMessage and sent to the frontend
+                    // so the user sees the pre-tool thinking text appear word-by-word.
+                    // When tool calls later trigger a reset, the behavior finalizes the
+                    // bubble with this content.
+                    if (chunk.done) {
+                        // No tool calls seen — finalize with metadata
+                        yield {content: '', done: true, metadata: chunk.metadata};
+                        preToolBuffer = '';
                     }
                 }
                 

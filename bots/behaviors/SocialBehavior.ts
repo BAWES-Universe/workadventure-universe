@@ -833,9 +833,12 @@ export class SocialBehavior extends BaseBehavior {
                     fullMessage = '';
                     emotionBlockStarted = false;
                     if (chunk.toolNames?.length) {
-                        const toolStatus = `🔍 ${chunk.toolNames.join(', ')}...`;
-                        fullMessage = toolStatus;
-                        this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                        }
                     }
                     continue;
                 }

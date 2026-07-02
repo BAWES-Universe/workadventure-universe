@@ -518,11 +518,14 @@ export class IdleBehavior extends BaseBehavior {
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
-                    // Show tool names as inline status in the new bubble
+                    // Show tool names as separate bubbles — one per tool call invocation
                     if (chunk.toolNames?.length) {
-                        const toolStatus = `🔍 ${chunk.toolNames.join(', ')}...`;
-                        fullMessage = toolStatus;
-                        this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                        }
                     }
                     continue;
                 }
