@@ -532,6 +532,7 @@ export class IdleBehavior extends BaseBehavior {
                         // Create a new responseId for follow-up content so it appears
                         // in its own bubble instead of merging into the last tool-name bubble.
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = ''; // Clear so follow-up content starts fresh
                     }
                     continue;
                 }

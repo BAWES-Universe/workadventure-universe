@@ -844,6 +844,7 @@ export class SocialBehavior extends BaseBehavior {
                         }
                         // New responseId for follow-up — separate from the tool-name bubble
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = ''; // Clear so follow-up content starts fresh
                     }
                     continue;
                 }

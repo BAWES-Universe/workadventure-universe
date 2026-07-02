@@ -1567,6 +1567,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                             }
                             // New responseId for follow-up — separate from the tool-name bubble
                             responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = ''; // Clear so follow-up content starts fresh
                         }
                         continue;
                     }
