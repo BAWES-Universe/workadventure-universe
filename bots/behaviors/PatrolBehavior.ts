@@ -1557,9 +1557,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     if (emotionBlockStarted) {
                         continue;
                     }
-                    if (chunk.content.includes('[EMOTION')) {
+                    if (chunk.content.includes('[EM')) {
                         emotionBlockStarted = true;
-                        const emotionIdx = chunk.content.indexOf('[EMOTION');
+                        const emotionIdx = chunk.content.indexOf('[EM');
                         const beforeEmotion = chunk.content.substring(0, emotionIdx);
                         if (beforeEmotion.trim()) {
                             this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
@@ -1678,7 +1678,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                         if (emotionBlockStarted) {
                                             continue;
                                         }
-                                        if (chunk.content.includes('[EMOTION')) {
+                                        if (chunk.content.includes('[EM')) {
                                             emotionBlockStarted = true;
                                             continue;
                                         }
