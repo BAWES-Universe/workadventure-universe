@@ -621,6 +621,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         preToolBuffer = '';
                         // Also reset buffer for the follow-up content from any prior rounds
                         followUpContentBuffer = '';
+                        // firstCallContent was already streamed per-chunk and finalized
+                        // by the reset — clear it so the follow-up fallback doesn't
+                        // send it again as a duplicate bubble.
+                        const firstCallContentForCapture = firstCallContent;
+                        firstCallContent = '';
 
                         // Yield reset to clear any streamed pre-tool content from frontend
                         // before executing tools — the filler text should disappear
