@@ -682,7 +682,7 @@ export class IdleBehavior extends BaseBehavior {
                     // For now, skip individual metrics - they're already captured in recordResponseQuality
                     // This prevents duplicate metrics (3 per response -> 1 per response)
 
-                    // Send processed message via stream final chunk
+                    // Send processed message via stream final chunk — always send even if empty (to close bubble)
                     if (processedMessage.trim()) {
                         // Send the final chunk with the complete cleaned message
                         this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
@@ -702,6 +702,9 @@ export class IdleBehavior extends BaseBehavior {
                                 });
                             }
                         }
+                    } else {
+                        // Response contained only emotion/control blocks — finalize with empty content to close bubble
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '');
                     }
                     break;
                 }
