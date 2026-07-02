@@ -452,7 +452,7 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             try {
-                this.bot.sendChatMessage(spaceName, greeting);
+                this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), greeting, true, greeting);
                 // Record bot's message in memory
                 this.conversationMemory?.addMessage(botId, playerId, greeting, 'bot', spaceName);
             } catch (error) {
@@ -745,8 +745,9 @@ export class SocialBehavior extends BaseBehavior {
             console.error(`[SocialBehavior] Error generating AI response:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
-            // Send fallback message
-            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            // Send fallback message via stream for consistent UX
+            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
+            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
         });
     }
 
@@ -798,8 +799,11 @@ export class SocialBehavior extends BaseBehavior {
         const startTime = Date.now(); // Track response time BEFORE streaming starts
         let tokensUsed = 0;
         let latency = 0;
+        // Batch chunks to ~100ms to avoid flooding the event pipeline
+        let lastBatchTime = 0;
+        const BATCH_MS = 100;
         // Unique ID for this streamed response — used by frontend to correlate chunks
-        const responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
         // Track whether the model has started generating the emotion block at the end
         // of the response. Once detected, stop streaming chunks to prevent raw partial
         // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
@@ -818,8 +822,10 @@ export class SocialBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.reset) {
-                    // Tool calls overrode streamed pre-tool content — clear frontend
-                    this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                    // Tool calls overrode streamed pre-tool content — finalize current bubble
+                    // and start a new one so follow-up response has its own audit entry.
+                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
                     continue;
@@ -954,6 +960,11 @@ export class SocialBehavior extends BaseBehavior {
                                         }
                                         if (chunk.content.includes('[EM')) {
                                             emotionBlockStarted = true;
+                                            const emotionIdx = chunk.content.indexOf('[EM');
+                                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                                            if (beforeEmotion.trim()) {
+                                                this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                                            }
                                             continue;
                                         }
 
@@ -1163,7 +1174,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     }
@@ -1273,7 +1284,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     }
@@ -1362,7 +1373,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     }
@@ -1463,7 +1474,7 @@ export class SocialBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                             // Record bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1583,7 +1594,7 @@ export class SocialBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                             // Record bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }

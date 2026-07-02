@@ -1064,7 +1064,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     }
@@ -1184,7 +1184,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
                     }
@@ -1288,7 +1288,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                             // Store bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1404,7 +1404,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                             // Store bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
@@ -1485,8 +1485,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             console.error(`[PatrolBehavior] Error generating AI response:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
-            // Send fallback message
-            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            // Send fallback message via stream for consistent UX
+            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
+            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
         });
     }
 
@@ -1521,8 +1522,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const startTime = Date.now(); // Track response time BEFORE streaming starts
         let tokensUsed = 0;
         let latency = 0;
+        // Batch chunks to ~100ms to avoid flooding the event pipeline
+        let lastBatchTime = 0;
+        const BATCH_MS = 100;
         // Unique ID for this streamed response — used by frontend to correlate chunks
-        const responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
         // Track whether the model has started generating the emotion block at the end
         // of the response. Once detected, stop streaming chunks to prevent raw partial
         // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
@@ -1541,8 +1545,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 this.adminApiService
             )) {
                 if (chunk.reset) {
-                    // Tool calls overrode streamed pre-tool content — clear frontend
-                    this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                    // Tool calls overrode streamed pre-tool content — finalize current bubble
+                    // and start a new one so follow-up response has its own audit entry.
+                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
                     continue;
@@ -1678,6 +1684,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                         }
                                         if (chunk.content.includes('[EM')) {
                                             emotionBlockStarted = true;
+                                            const emotionIdx = chunk.content.indexOf('[EM');
+                                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                                            if (beforeEmotion.trim()) {
+                                                this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                                            }
                                             continue;
                                         }
 
@@ -1866,7 +1877,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, crypto.randomUUID(), cleanedMessage.trim(), true, cleanedMessage.trim());
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
                     }
