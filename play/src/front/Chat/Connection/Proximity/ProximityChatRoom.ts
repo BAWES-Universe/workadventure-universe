@@ -601,10 +601,12 @@ export class ProximityChatRoom implements ChatRoom {
                         return;
                     }
                     if (stream.isFinal) {
-                        // Final chunk: replace with complete cleaned content
-                        // (finalContent may be empty string for tokens-only final — use accumulated content)
+                        // Final chunk: replace with complete cleaned content.
+                        // Use nullish coalescing so an intentionally empty finalContent
+                        // ('') clears accumulated partial/detected text rather than
+                        // falling through to currentBody.
                         (existing.content as Writable<ChatMessageContent>).set({
-                            body: stream.finalContent || currentBody || "",
+                            body: stream.finalContent ?? currentBody ?? "",
                             url: undefined,
                         });
                         // Remove from active streams
