@@ -1,7 +1,7 @@
 /**
  * StreamBatcher — throttles streaming token delivery to the frontend.
  *
- * Default batching interval is 100ms as specified in Issue #216.
+ * Default batching interval is 10ms as specified in Issue #216.
  * Chunks accumulate in a buffer and flush when the timer expires,
  * the stream resets (tool calls), or the stream completes.
  */
@@ -18,8 +18,8 @@ export function createBatchState(): BatchStreamState {
 }
 
 /** Append text to the batch buffer; schedules a flush after intervalMs of silence. */
-/** Default batching interval — 30ms for near-instant, word-by-word feel. */
-export const BATCH_INTERVAL_MS = 30;
+/** Default batching interval — 10ms for near-instant, word-by-word feel. */
+export const BATCH_INTERVAL_MS = 10;
 
 /** Append text to the batch buffer; flushes every intervalMs on a fixed cadence. */
 export function batchAppend(
