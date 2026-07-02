@@ -828,7 +828,7 @@ CRITICAL RESPONSE RULES:
                         // Stream the follow-up content word-by-word so the frontend
                         // shows tokens appearing incrementally instead of all at once.
                         // Split on word boundaries to create natural streaming chunks.
-                        const responseContent = followUpContentBuffer || 'Sorry, I had trouble completing that request. Could you try again?';
+                        const responseContent = followUpContentBuffer || '';
                         followUpContentBuffer = '';
                         const streamWords = responseContent.match(/\S+\s*/g) || [responseContent];
                         for (let wi = 0; wi < streamWords.length; wi++) {

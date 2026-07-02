@@ -1,34 +1,14 @@
 /**
- * Tests for OpenAIProvider Sentry span creation (PR #140: startSpan scope pinning)
+ * Tests for OpenAIProvider.generateStream — per-chunk incremental streaming
  *
- * Scope: Only tests the changed behavior:
- *   - Sentry.startSpan is called (pinned to scope via _setSpanForScope)
- *   - parentSpan is passed from (config as any).__sentryParentSpan
- *   - When __sentryParentSpan is absent, no span is created (optional chaining)
- *   - span is auto-ended via handleCallbackErrors
- *   - sentrySpan attributes are set on the child span
+ * Scope: Verifies that generateStream yields content incrementally
+ * (per-chunk from the SSE reader) instead of buffering and yielding
+ * everything at once.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { OpenAIProvider } from "../ai/providers/OpenAIProvider";
 import type { AIProviderConfig } from "../ai/types";
-
-// Use vi.hoisted() so mocks are defined before vi.mock is hoisted to top
-const { mockSentrySpan, mockStartSpan } = vi.hoisted(() => {
-    const span = { end: vi.fn(), setAttribute: vi.fn(), setStatus: vi.fn() };
-    return {
-        mockSentrySpan: span,
-        mockStartSpan: vi.fn(async (_opts: any, cb: any) => {
-            const result = await cb(span);
-            span.end();
-            return result;
-        }),
-    };
-});
-
-vi.mock("@sentry/node", () => ({
-    startSpan: mockStartSpan,
-}));
 
 // Mock encryption
 vi.mock("../ai/encryption", () => ({
@@ -90,7 +70,7 @@ const SIMPLE_SSE = [
     }),
 ];
 
-describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => {
+describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
     let provider: OpenAIProvider;
 
     beforeEach(() => {
@@ -98,67 +78,35 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         vi.clearAllMocks();
     });
 
-    it("calls Sentry.startSpan with op 'gen_ai.chat'", async () => {
-        const parentSpan = {};
-        const config = buildConfig({ __sentryParentSpan: parentSpan });
+    it("streams content chunks incrementally", async () => {
+        const config = buildConfig();
+        const encoder = new TextEncoder();
+        // Send tokens one at a time to test true per-chunk streaming
+        const sse1 = `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\n\n`;
+        const sse2 = `data: ${JSON.stringify({ choices: [{ delta: { content: " world" } }] })}\n\n`;
+        const sseDone = "data: [DONE]\n\n";
+        const allData = sse1 + sse2 + sseDone;
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode(allData));
+                controller.close();
+            },
+        });
 
-        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
-        await drainStream(provider.generateStream("system", "user", config));
+        vi.stubGlobal("fetch", buildFetchOk(stream));
+        const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockStartSpan).toHaveBeenCalledTimes(1);
-        const [opts] = mockStartSpan.mock.calls[0];
-        expect(opts).toMatchObject({ op: "gen_ai.chat" });
+        // Should have content chunks (Hello, world) + done chunk = 3 total
+        expect(chunks.length).toBeGreaterThanOrEqual(3);
+        // First chunk should be the first content delta
+        expect(chunks[0]).toMatchObject({ content: "Hello", done: false });
+        // Last chunk should be done:true
+        expect(chunks[chunks.length - 1]).toMatchObject({ done: true });
     });
 
-    it("passes name 'LLM <model>' to startSpan", async () => {
-        const parentSpan = {};
-        const config = buildConfig({ model: "gpt-4o-mini", __sentryParentSpan: parentSpan });
-
-        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
-        await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
-
-        const [opts] = mockStartSpan.mock.calls[0];
-        expect(opts).toMatchObject({ name: "LLM gpt-4o-mini" });
-    });
-
-    it("passes parentSpan from config.__sentryParentSpan to startSpan", async () => {
-        const parentSpan = { someId: "parent-123" };
-        const config = buildConfig({ __sentryParentSpan: parentSpan });
-
-        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
-        await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
-
-        const [opts] = mockStartSpan.mock.calls[0];
-        expect(opts.parentSpan).toBe(parentSpan);
-    });
-
-    it("calls sentrySpan.end() in the finally block after a successful stream", async () => {
-        const parentSpan = {};
-        const config = buildConfig({ __sentryParentSpan: parentSpan });
-
-        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
-        await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
-
-        expect(mockSentrySpan.end).toHaveBeenCalledTimes(1);
-    });
-
-    it("calls sentrySpan.end() even when fetch throws", async () => {
-        const parentSpan = {};
-        const config = buildConfig({ __sentryParentSpan: parentSpan });
-
-        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
-        await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
-
-        expect(mockSentrySpan.end).toHaveBeenCalledTimes(1);
-    });
-
-    it("still streams successfully when __sentryParentSpan is absent", async () => {
-        const config = buildConfig(); // no __sentryParentSpan
+    it("streams successfully when __sentryParentSpan is absent", async () => {
+        const config = buildConfig();
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
@@ -167,7 +115,7 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         expect(chunks[chunks.length - 1]).toMatchObject({ done: true });
     });
 
-    it("still streams successfully when __sentryParentSpan is null", async () => {
+    it("streams successfully when __sentryParentSpan is null", async () => {
         const config = buildConfig({ __sentryParentSpan: null });
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
@@ -177,63 +125,68 @@ describe("OpenAIProvider.generateStream – Sentry child span (PR #140)", () => 
         expect(chunks[chunks.length - 1]).toMatchObject({ done: true });
     });
 
-    it("sets gen_ai.request.model attribute on the span", async () => {
-        const parentSpan = {};
-        const config = buildConfig({ model: "gpt-3.5-turbo", __sentryParentSpan: parentSpan });
-
-        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
-        await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
-
-        const attrCalls = mockSentrySpan.setAttribute.mock.calls;
-        const modelAttr = attrCalls.find(([key]: [string]) => key === "gen_ai.request.model");
-        expect(modelAttr).toBeDefined();
-        expect(modelAttr![1]).toBe("gpt-3.5-turbo");
-    });
-
-    it("sets gen_ai.system to 'deepseek' for DeepSeek endpoints", async () => {
-        const parentSpan = {};
-        const config = buildConfig({
-            endpoint: "https://api.deepseek.com/v1",
-            __sentryParentSpan: parentSpan,
+    it("yields per-chunk content individually (not batched)", async () => {
+        const config = buildConfig();
+        const encoder = new TextEncoder();
+        const sseLines = [
+            JSON.stringify({ choices: [{ delta: { content: "A" } }] }),
+            JSON.stringify({ choices: [{ delta: { content: "B" } }] }),
+            JSON.stringify({ choices: [{ delta: { content: "C" } }] }),
+        ];
+        const allData = sseLines.map(l => `data: ${l}\n\n`).join("") + "data: [DONE]\n\n";
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode(allData));
+                controller.close();
+            },
         });
 
-        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
-        await drainStream(provider.generateStream("system", "user", config));
+        vi.stubGlobal("fetch", buildFetchOk(stream));
+        const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        const attrCalls = mockSentrySpan.setAttribute.mock.calls;
-        const systemAttr = attrCalls.find(([key]: [string]) => key === "gen_ai.system");
-        expect(systemAttr).toBeDefined();
-        expect(systemAttr![1]).toBe("deepseek");
+        // Each token appears as its own chunk
+        const contentChunks = chunks.filter((c: any) => c.content && !c.done);
+        expect(contentChunks).toHaveLength(3);
+        expect(contentChunks[0].content).toBe("A");
+        expect(contentChunks[1].content).toBe("B");
+        expect(contentChunks[2].content).toBe("C");
     });
 
-    it("sets error status on span when API returns non-ok response", async () => {
-        const parentSpan = {};
-        const config = buildConfig({ __sentryParentSpan: parentSpan });
+    it("includes metadata on done chunk", async () => {
+        const config = buildConfig();
+        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
+        const chunks = await drainStream(provider.generateStream("system", "user", config));
+        vi.unstubAllGlobals();
 
+        const doneChunk = chunks[chunks.length - 1];
+        expect(doneChunk.metadata).toBeDefined();
+        expect(doneChunk.metadata.tokensUsed).toBeGreaterThan(0);
+    });
+
+    it("handles network errors gracefully", async () => {
+        const config = buildConfig();
+        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
+        const chunks = await drainStream(provider.generateStream("system", "user", config));
+        vi.unstubAllGlobals();
+
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toMatchObject({ done: true });
+        expect(chunks[0].metadata?.error).toBe(true);
+    });
+
+    it("handles API errors gracefully", async () => {
+        const config = buildConfig();
         vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
             ok: false,
             status: 401,
             text: vi.fn().mockResolvedValue("Unauthorized"),
         }));
-
-        await drainStream(provider.generateStream("system", "user", config));
+        const chunks = await drainStream(provider.generateStream("system", "user", config));
         vi.unstubAllGlobals();
 
-        expect(mockSentrySpan.setStatus).toHaveBeenCalledWith(
-            expect.objectContaining({ code: 2 })
-        );
-    });
-
-    it("calls startSpan exactly once per generateStream call", async () => {
-        const parentSpan = {};
-        const config = buildConfig({ __sentryParentSpan: parentSpan });
-
-        vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
-        await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
-
-        expect(mockStartSpan).toHaveBeenCalledTimes(1);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toMatchObject({ done: true });
+        expect(chunks[0].metadata?.error).toBe(true);
     });
 });

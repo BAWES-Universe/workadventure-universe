@@ -1685,6 +1685,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                         batchFlush(batchState, sendBatch);
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                                         regeneratedMessage = '';
+                                        emotionBlockStarted = false;
                                         continue;
                                     }
 

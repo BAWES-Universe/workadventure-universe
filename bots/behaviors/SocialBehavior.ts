@@ -961,6 +961,7 @@ export class SocialBehavior extends BaseBehavior {
                                         batchFlush(batchState, sendBatch);
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                                         regeneratedMessage = '';
+                                        emotionBlockStarted = false;
                                         continue;
                                     }
 

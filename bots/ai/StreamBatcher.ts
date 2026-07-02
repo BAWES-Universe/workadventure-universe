@@ -18,21 +18,29 @@ export function createBatchState(): BatchStreamState {
 }
 
 /** Append text to the batch buffer; schedules a flush after intervalMs of silence. */
+/** Default batching interval — 30ms for near-instant, word-by-word feel. */
+export const BATCH_INTERVAL_MS = 30;
+
+/** Append text to the batch buffer; flushes every intervalMs on a fixed cadence. */
 export function batchAppend(
     state: BatchStreamState,
     text: string,
     send: (batchedText: string) => void,
-    intervalMs: number = DEFAULT_INTERVAL_MS
+    intervalMs: number = BATCH_INTERVAL_MS
 ): void {
     state.buffer += text;
-    if (state.timer) clearTimeout(state.timer);
-    state.timer = setTimeout(() => {
-        if (state.buffer) {
-            send(state.buffer);
-            state.buffer = '';
-        }
-        state.timer = null;
-    }, intervalMs);
+    // Set timer only once per batch window — don't reset on every chunk
+    // so the first visible content reaches the frontend quickly (~intervalMs)
+    // instead of being delayed by N chunks × gap + intervalMs.
+    if (!state.timer) {
+        state.timer = setTimeout(() => {
+            if (state.buffer) {
+                send(state.buffer);
+                state.buffer = '';
+            }
+            state.timer = null;
+        }, intervalMs);
+    }
 }
 
 /** Force-flush any pending batched text immediately. */
