@@ -828,7 +828,10 @@ export class SocialBehavior extends BaseBehavior {
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);
-                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                    // Only finalize the pre-tool bubble if there was actual text
+                    if (fullMessage) {
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                    }
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
@@ -839,6 +842,8 @@ export class SocialBehavior extends BaseBehavior {
                             fullMessage = toolStatus;
                             this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
                         }
+                        // New responseId for follow-up — separate from the tool-name bubble
+                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     }
                     continue;
                 }

@@ -513,8 +513,11 @@ export class IdleBehavior extends BaseBehavior {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);
                     // Tool calls overrode streamed pre-tool content — finalize current bubble
-                    // and start a new one so follow-up response has its own audit entry.
-                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                    // only if there was pre-tool text. If the model went straight to tool calls,
+                    // skip the empty bubble entirely.
+                    if (fullMessage) {
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                    }
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
@@ -526,6 +529,9 @@ export class IdleBehavior extends BaseBehavior {
                             fullMessage = toolStatus;
                             this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
                         }
+                        // Create a new responseId for follow-up content so it appears
+                        // in its own bubble instead of merging into the last tool-name bubble.
+                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     }
                     continue;
                 }

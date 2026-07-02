@@ -1551,7 +1551,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             )) {
                 if (chunk.reset) {
                         batchFlush(batchState, sendBatch);
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                        // Only finalize the pre-tool bubble if there was actual text
+                        if (fullMessage) {
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                        }
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         fullMessage = '';
                         emotionBlockStarted = false;
@@ -1562,6 +1565,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                 fullMessage = toolStatus;
                                 this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
                             }
+                            // New responseId for follow-up — separate from the tool-name bubble
+                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         }
                         continue;
                     }
