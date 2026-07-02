@@ -720,9 +720,11 @@ CRITICAL RESPONSE RULES:
                                 if (resultChunk.content) {
                                     accumulatedContent += resultChunk.content;
                                     followUpContent += resultChunk.content;
-                                    // Buffer follow-up content instead of yielding per-chunk
-                                    // Will be yielded as one chunk after all tool rounds complete
+                                    // Buffer follow-up content for eventual finalization
                                     followUpContentBuffer = appendStreamedChunk(followUpContentBuffer, resultChunk.content);
+                                    // Yield each follow-up content chunk immediately for true streaming.
+                                    // The behavior forwards these to the frontend as they arrive.
+                                    yield {content: resultChunk.content, done: false, metadata: undefined};
                                 }
                                 // Handle tool calls from follow-up response (multi-round tool calling)
                                 if (resultChunk.toolCalls && resultChunk.toolCalls.length > 0) {
@@ -847,20 +849,15 @@ CRITICAL RESPONSE RULES:
                         followUpContentBuffer = '';
                         if (!responseContent) {
                             // Follow-up produced only tool calls with no text —
-                            // use firstCallContent as fallback so the user sees
-                            // at least the pre-tool thinking text.
+                            // use firstCallContent as fallback since no per-chunk
+                            // content was yielded during the streaming phase.
                             const fallback = firstCallContent || "Let me check on that for you.";
-                            const streamWords = fallback.match(/\S+\s*/g) || [fallback];
-                            for (let wi = 0; wi < streamWords.length; wi++) {
-                                yield {content: streamWords[wi], done: false, metadata: undefined};
-                            }
+                            yield {content: fallback, done: false, metadata: lastFollowUpDoneChunk?.metadata};
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;
                         } else {
-                            const streamWords = responseContent.match(/\S+\s*/g) || [responseContent];
-                            for (let wi = 0; wi < streamWords.length; wi++) {
-                                yield {content: streamWords[wi], done: false, metadata: undefined};
-                            }
+                            // Content was already streamed per-chunk above via immediate yields.
+                            // Just yield done — the behavior finalizes with fullMessage.
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;
                         }
@@ -903,10 +900,14 @@ CRITICAL RESPONSE RULES:
                         // call regardless of tool call timing — it's a fallback for
                         // when follow-up produces only tool calls with no text.
                         firstCallContent += chunk.content;
-                        // Buffer content for eventual yield — always accumulate even when
+                        // Buffer content for eventual finalization — always accumulate even when
                         // tool calls are arriving so the behavior has the complete pre-tool
                         // text to finalize into its first bubble before the reset.
                         preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
+                        // Yield each content chunk immediately for true word-by-word streaming.
+                        // The behavior forwards these to the frontend as they arrive, giving
+                        // the same real-time token appearance as ChatGPT/Claude/Copilot.
+                        yield {content: chunk.content, done: false, metadata: undefined};
                     }
 
 // Track metadata from chunk
@@ -936,15 +937,8 @@ CRITICAL RESPONSE RULES:
                     // When tool calls later trigger a reset, the behavior finalizes the
                     // bubble with this content.
                     if (chunk.done) {
-                        // No tool calls seen — flush pre-tool buffer as final response.
-                        // Stream word-by-word so both streaming and non-streaming
-                        // behaviors (greeting vs chat) receive the content.
-                        if (preToolBuffer) {
-                            const words = preToolBuffer.match(/\S+\s*/g) || [preToolBuffer];
-                            for (const word of words) {
-                                yield {content: word, done: false, metadata: undefined};
-                            }
-                        }
+                        // No tool calls seen — content was already streamed word-by-word
+                        // via per-chunk yields above. Just yield the done signal.
                         yield {content: '', done: true, metadata: chunk.metadata};
                         preToolBuffer = '';
                     }
