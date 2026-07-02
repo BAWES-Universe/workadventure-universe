@@ -8,8 +8,45 @@ import {
     toNumber,
 } from "@workadventure/shared-utils/src/EnvironmentVariables/EnvironmentVariableUtils";
 
+const semanticVersionPattern =
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const SemanticVersionAsString = z
+    .string()
+    .refine((value) => semanticVersionPattern.test(value), "must be a semantic version like X.Y.Z");
+
 export const EnvironmentVariables = z.object({
     PLAY_URL: z.string().url().describe("Public URL of the play/frontend service"),
+    MOBILE_WEB_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Version string returned by /api/version for the live web application."),
+    MOBILE_MIN_NATIVE_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .pipe(SemanticVersionAsString.optional())
+        .describe("Minimum native mobile shell version allowed to open the live web app."),
+    MOBILE_LATEST_NATIVE_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .pipe(SemanticVersionAsString.optional())
+        .describe("Latest recommended native mobile shell version."),
+    MOBILE_ANDROID_UPDATE_URL: z
+        .string()
+        .url()
+        .or(z.literal(""))
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Android store URL used by the mobile update prompt."),
+    MOBILE_IOS_UPDATE_URL: z
+        .string()
+        .url()
+        .or(z.literal(""))
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("iOS App Store URL used by the mobile update prompt."),
     MINIMUM_DISTANCE: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 64))
         .describe("Minimum distance (in pixels) before users are considered to be in proximity. Defaults to 64"),
