@@ -1511,7 +1511,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             )) {
                 if (chunk.reset) {
                     if (fullMessage) {
-                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, fullMessage);
+                        // Strip any deferred '[' that was not streamed to the frontend
+                        const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, finalContent);
                     }
                     greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = "";
@@ -1758,7 +1760,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         batchFlush(batchState, sendBatch);
                         // Only finalize the pre-tool bubble if there was actual text
                         if (fullMessage) {
-                            this.bot?.sendStreamMessage(spaceName, responseId, '', true, fullMessage);
+                            // Strip any deferred '[' that was not streamed to the frontend
+                            const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalContent);
                         }
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         fullMessage = '';
