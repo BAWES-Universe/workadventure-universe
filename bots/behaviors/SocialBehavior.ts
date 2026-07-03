@@ -816,6 +816,8 @@ export class SocialBehavior extends BaseBehavior {
         // of the response. Once detected, stop streaming chunks to prevent raw partial
         // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
         let emotionBlockStarted = false;
+        // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+        let pendingBracket = '';
         const batchState = createBatchState();
         const sendBatch = (text: string) => {
             this.bot?.sendStreamMessage(spaceName, responseId, text, false);
@@ -842,6 +844,7 @@ export class SocialBehavior extends BaseBehavior {
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
+                    pendingBracket = '';
                     if (chunk.toolNames?.length) {
                         for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                             const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
@@ -875,6 +878,7 @@ export class SocialBehavior extends BaseBehavior {
                     const emInFull = fullMessage.includes('[EM');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
                             const emotionIdx = chunk.content.indexOf('[EM');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
@@ -888,8 +892,23 @@ export class SocialBehavior extends BaseBehavior {
                         continue;
                     }
 
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+                    
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+                    
                     // Stream each content chunk directly to the frontend as it arrives
-                    this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
+                    this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                 }
 
                 // Extract token usage and latency from chunk metadata

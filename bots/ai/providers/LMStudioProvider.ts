@@ -174,7 +174,7 @@ export class LMStudioProvider implements AIProvider {
                     promptTokens,
                     completionTokens,
                     latency,
-                    error: false,
+                    error: !streamEnded,
                 },
             };
 
