@@ -1484,10 +1484,11 @@ export class SocialBehavior extends BaseBehavior {
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
+        let goodbyeResponseId: string | undefined;
         try {
             const goodbyePrompt = `You've arrived at ${destinationText}. It was nice talking to them. Say goodbye and that you'll see them soon.`;
-            
-            const goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+
+            goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
@@ -1619,19 +1620,20 @@ export class SocialBehavior extends BaseBehavior {
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        
+        let greetingResponseId: string | undefined;
+
         try {
             // Special prompt for leading completion
             const leadingContext = followerUuid === 'group' 
                 ? 'You just guided a group of people to this person. They asked about them. Let them know you\'ve brought the people who wanted to talk with them.'
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
-            
+
             const playerMessage = leadingContext;
 
             // Start typing indicator
             this.bot?.startTyping(spaceName);
-            
-            const greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+
+            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
@@ -1772,13 +1774,14 @@ export class SocialBehavior extends BaseBehavior {
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
         let fullMessage = '';
-        
+        let greetingResponseId: string | undefined;
+
         try {
             // Natural prompt: person approached, respond naturally based on context
             // The AI has access to memory (if they've met before), map context, and can assess the situation
             // It should respond naturally, not ask meta questions
             const hasContext = context.length > 0;
-            
+
             // Debug log: confirm memory context was loaded before greeting generation
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[SocialBehavior] generateAIGreeting: context.length=${context.length}, hasContext=${hasContext}`);
@@ -1786,7 +1789,7 @@ export class SocialBehavior extends BaseBehavior {
                     console.log(`[SocialBehavior] Context preview: ${context.substring(0, 200)}...`);
                 }
             }
-            
+
             const playerMessage = hasContext
                 ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
@@ -1794,7 +1797,7 @@ export class SocialBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';

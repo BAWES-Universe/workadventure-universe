@@ -1321,19 +1321,20 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        
+        let greetingResponseId: string | undefined;
+
         try {
             // Special prompt for leading completion
             const leadingContext = followerUuid === 'group' 
                 ? 'You just guided a group of people to this person. They asked about them. Let them know you\'ve brought the people who wanted to talk with them.'
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
-            
+
             const playerMessage = leadingContext;
 
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            const greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -1453,7 +1454,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
-        
+        let greetingResponseId: string | undefined;
+
         try {
             // Natural prompt: person approached, respond naturally based on context
             // The AI has access to memory (if they've met before), map context, and can assess the situation
@@ -1474,7 +1476,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
@@ -2053,10 +2055,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
+        let goodbyeResponseId: string | undefined;
         try {
             const goodbyePrompt = `You've arrived at ${destinationText}. It was nice talking to them. Say goodbye and that you'll see them soon.`;
-            
-            const goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+
+            goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
