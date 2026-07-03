@@ -645,10 +645,16 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             break;
                         }
                         
+                        // Filter to only MCP tools for the display bubble — built-in tools
+                        // (get_people_on_map, get_bot_position, get_areas_on_map, navigate_to)
+                        // execute silently without a 🔍 status bubble. Only tools registered
+                        // in toolServerMap (external MCP servers like PostHog) get the bubble.
+                        const displayToolNames = toolNames.filter(name => toolServerMap.has(name));
+
                         // Yield reset to clear any streamed pre-tool content from frontend
                         // before executing tools — the bubble will be finalized by the
                         // behavior with the accumulated pre-tool text.
-                        yield {content: '', done: false, reset: true, toolNames};
+                        yield {content: '', done: false, reset: true, toolNames: displayToolNames};
 
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
@@ -839,11 +845,13 @@ CRITICAL RESPONSE RULES:
                                     console.log(`[AIService] Clearing followUpContentBuffer (${followUpContentBuffer.length} chars): toolCallAccumulator.size=${toolCallAccumulator.size}, pendingToolCalls=${pendingToolCalls.length}, preview="${followUpContentBuffer.substring(0, 60)}"`);
                                 }
                                 followUpContentBuffer = '';
+                                const followUpToolNames = pendingToolCalls.map(tc => tc.name).filter(Boolean);
+                                // Filter to only MCP tools for the display bubble
+                                const displayFollowUpToolNames = followUpToolNames.filter(name => toolServerMap.has(name));
                                 // Yield reset so the behavior creates a new bubble
                                 // for the next follow-up round's content, instead of
                                 // concatenating all rounds into the current bubble.
-                                const followUpToolNames = pendingToolCalls.map(tc => tc.name).filter(Boolean);
-                                yield {content: '', done: false, reset: true, toolNames: followUpToolNames};
+                                yield {content: '', done: false, reset: true, toolNames: displayFollowUpToolNames};
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
