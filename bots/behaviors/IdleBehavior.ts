@@ -901,6 +901,28 @@ export class IdleBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, finalContent);
+                    }
+                    goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingBracket = '';
+                    if (chunk.toolNames?.length) {
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
+                        }
+                        goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                    }
+                    continue;
+                }
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
 
@@ -1229,6 +1251,28 @@ export class IdleBehavior extends BaseBehavior {
                     this.bot,
                     this.adminApiService
                 )) {
+                    if (chunk.reset) {
+                        if (fullMessage) {
+                            const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
+                        }
+                        arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                        emotionBlockStarted = false;
+                        pendingBracket = '';
+                        if (chunk.toolNames?.length) {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                            }
+                            arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+                            fullMessage = '';
+                        }
+                        continue;
+                    }
                     if (chunk.content) {
                         fullMessage = appendStreamedChunk(fullMessage, chunk.content);
 
@@ -1412,6 +1456,28 @@ export class IdleBehavior extends BaseBehavior {
                     this.bot,
                     this.adminApiService
                 )) {
+                    if (chunk.reset) {
+                        if (fullMessage) {
+                            const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
+                        }
+                        arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                        emotionBlockStarted = false;
+                        pendingBracket = '';
+                        if (chunk.toolNames?.length) {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                            }
+                            arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+                            fullMessage = '';
+                        }
+                        continue;
+                    }
                     if (chunk.content) {
                         fullMessage = appendStreamedChunk(fullMessage, chunk.content);
 
