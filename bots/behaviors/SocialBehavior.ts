@@ -876,8 +876,8 @@ export class SocialBehavior extends BaseBehavior {
                     // Check for [EM both within current chunk AND across chunk boundaries.
                     // With true per-chunk streaming, the provider may split [EMOTION_UPDATE]
                     // across two tokens (e.g. "[" then "EMOTION_UPDATE]...").
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
@@ -1023,8 +1023,8 @@ export class SocialBehavior extends BaseBehavior {
                                             continue;
                                         }
                                         // Check for [EM both within current chunk AND across chunk boundaries
-                                        const emInChunk = chunk.content.includes('[EM');
-                                        const emInFull = regeneratedMessage.includes('[EM');
+                                        const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                                        const emInFull = regeneratedMessage.includes('[EMOTION_UPDATE');
                                         if (emInChunk || emInFull) {
                                             emotionBlockStarted = true;
                                             pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
@@ -1273,8 +1273,8 @@ export class SocialBehavior extends BaseBehavior {
                     if (emotionBlockStarted) {
                         continue;
                     }
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
@@ -1451,8 +1451,8 @@ export class SocialBehavior extends BaseBehavior {
                     if (emotionBlockStarted) {
                         continue;
                     }
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
@@ -1597,8 +1597,8 @@ export class SocialBehavior extends BaseBehavior {
                     if (emotionBlockStarted) {
                         continue;
                     }
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
@@ -1742,8 +1742,8 @@ export class SocialBehavior extends BaseBehavior {
                     if (emotionBlockStarted) {
                         continue;
                     }
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
@@ -1929,8 +1929,8 @@ export class SocialBehavior extends BaseBehavior {
                     if (emotionBlockStarted) {
                         continue;
                     }
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
