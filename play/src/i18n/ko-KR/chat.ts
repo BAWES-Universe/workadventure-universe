@@ -102,6 +102,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         outcoming: "{userName}님이 대화에서 나갔습니다",
         youLeft: "대화에서 나갔습니다",
         youleftMeetingRoom: "회의실에서 나갔습니다",
+        streamError: "오류가 발생했습니다",
         youJoinedMeetingRoom: "회의실에 참가했습니다",
     },
     form: {

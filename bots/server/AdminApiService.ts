@@ -339,8 +339,9 @@ export class AdminApiService {
                     },
                 }
             );
-        } catch (error) {
-            console.error('[AdminApiService] Error tracking conversation:', error);
+        } catch (error: any) {
+            const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+            console.error(`[AdminApiService] Error tracking conversation: ${msg}`);
             // Don't throw - tracking shouldn't break functionality
         }
     }
@@ -369,8 +370,9 @@ export class AdminApiService {
                     },
                 }
             );
-        } catch (error) {
-            console.error('[AdminApiService] Error tracking message:', error);
+        } catch (error: any) {
+            const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+            console.error(`[AdminApiService] Error tracking message: ${msg}`);
             // Don't throw
         }
     }

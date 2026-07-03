@@ -946,6 +946,7 @@ message SpaceEvent {
     SpaceIsTyping spaceIsTyping = 2;
     MuteAudioForEverybodyPublicMessage muteAudioForEverybody = 3;
     MuteVideoForEverybodyPublicMessage muteVideoForEverybody = 4;
+    SpaceStreamMessage spaceStreamMessage = 5;
   }
 }
 
@@ -1007,6 +1008,21 @@ message SpaceIsTyping {
   bool isTyping = 1;
   repeated CharacterTextureMessage characterTextures = 2;
   optional string name = 3;
+}
+
+/**
+ * Streaming message for bot responses — tokens are sent incrementally
+ * so the frontend can show text as it's generated instead of waiting
+ * for the complete response.
+ */
+message SpaceStreamMessage {
+  string responseId = 1;       // Unique ID to correlate chunks to a single response
+  string token = 2;            // Incremental token chunk (empty on final chunk)
+  bool isFinal = 3;            // True only on the very last chunk
+  optional string finalContent = 4; // Complete cleaned text when isFinal=true
+  bool isError = 5;            // True if the stream ended with an error
+  optional string errorMessage = 6; // Error description when isError=true
+  bool reset = 7;              // Clear any existing buffer for this responseId (used on regeneration)
 }
 
 message PrivateEvent {

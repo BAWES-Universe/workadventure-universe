@@ -96,6 +96,9 @@ export class ProximityChatRoom implements ChatRoom {
     private _spacePromise: Promise<SpaceInterface | undefined> = Promise.resolve(undefined);
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
+    private spaceStreamMessageSubscription: Subscription | undefined;
+    // Active stream messages by responseId — updated incrementally as tokens arrive
+    private streamMessages: Map<string, ProximityChatMessage> = new Map();
     private observeUserJoinedSubscription: Subscription | undefined;
     private observeUserLeftSubscription: Subscription | undefined;
     // Users by spaceUserId
@@ -537,6 +540,8 @@ export class ProximityChatRoom implements ChatRoom {
         };
 
         this.spaceMessageSubscription?.unsubscribe();
+        this.spaceStreamMessageSubscription?.unsubscribe();
+        this.streamMessages.clear();
         this.spaceMessageSubscription = this._space.observePublicEvent("spaceMessage").subscribe((event) => {
             if (isBlackListed(event.sender)) {
                 return;
@@ -565,6 +570,124 @@ export class ProximityChatRoom implements ChatRoom {
                 this.removeTypingUser(event.sender);
             }
         });
+
+        // Subscribe to streaming bot responses — tokens arrive incrementally
+        this.spaceStreamMessageSubscription = this._space
+            .observePublicEvent("spaceStreamMessage")
+            .subscribe((event) => {
+                if (isBlackListed(event.sender)) {
+                    return;
+                }
+
+                const stream = event.spaceStreamMessage;
+                const existing = this.streamMessages.get(stream.responseId);
+
+                if (stream.reset && existing) {
+                    // Regeneration: clear old content so new tokens don't concatenate
+                    (existing.content as Writable<ChatMessageContent>).set({ body: "", url: undefined });
+                    return;
+                }
+
+                if (existing) {
+                    // Update existing stream message
+                    const currentBody = get(existing.content).body;
+                    if (stream.isError) {
+                        // Error: display error message and finalize
+                        (existing.content as Writable<ChatMessageContent>).set({
+                            body: stream.errorMessage || get(LL).chat.timeLine.streamError(),
+                            url: undefined,
+                        });
+                        this.streamMessages.delete(stream.responseId);
+                        return;
+                    }
+                    if (stream.isFinal) {
+                        // Final chunk: replace with complete cleaned content.
+                        // Use nullish coalescing so an intentionally empty finalContent
+                        // ('') clears accumulated partial/detected text rather than
+                        // falling through to currentBody.
+                        (existing.content as Writable<ChatMessageContent>).set({
+                            body: stream.finalContent ?? currentBody ?? "",
+                            url: undefined,
+                        });
+                        // Remove from active streams
+                        this.streamMessages.delete(stream.responseId);
+                    } else {
+                        // Append incremental token
+                        (existing.content as Writable<ChatMessageContent>).set({
+                            body: currentBody + stream.token,
+                            url: undefined,
+                        });
+                    }
+                    return;
+                }
+
+                if (stream.reset) {
+                    // Reset on a non-existent stream — ignore
+                    return;
+                }
+
+                // First chunk is an error with no prior stream — create message with error text
+                if (stream.isError) {
+                    const spaceUser = this.users?.get(event.sender);
+                    let chatUser: AnyKindOfUser = this.unknownUser;
+                    if (spaceUser) {
+                        chatUser = mapExtendedSpaceUserToChatUser(spaceUser);
+                    }
+                    const errorMessage = new ProximityChatMessage(
+                        uuidv4(),
+                        chatUser,
+                        writable({ body: stream.errorMessage || get(LL).chat.timeLine.streamError(), url: undefined }),
+                        new Date(),
+                        false,
+                        "proximity"
+                    );
+                    this.messages.push(errorMessage);
+                    this.lastMessageTimestamp = errorMessage.date.getTime();
+                    this.notifyNewMessage(errorMessage);
+                    chatVisibilityStore.set(true);
+                    if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
+                    return;
+                }
+
+                // First chunk: create message entry (may also be final if response is very fast)
+                const initialBody = stream.isFinal ? stream.finalContent ?? stream.token : stream.token;
+                // Emotion-only responses send isFinal=true with empty content — don't show a bubble
+                if (stream.isFinal && !initialBody) return;
+                const spaceUser = this.users?.get(event.sender);
+                let chatUser: AnyKindOfUser = this.unknownUser;
+                if (spaceUser) {
+                    chatUser = mapExtendedSpaceUserToChatUser(spaceUser);
+                }
+
+                const newMessage = new ProximityChatMessage(
+                    uuidv4(),
+                    chatUser,
+                    writable({ body: initialBody, url: undefined }),
+                    new Date(),
+                    false,
+                    "proximity"
+                );
+
+                this.streamMessages.set(stream.responseId, newMessage);
+                this.messages.push(newMessage);
+
+                this.lastMessageTimestamp = newMessage.date.getTime();
+                this.notifyNewMessage(newMessage);
+
+                // Track unread messages when chat room is not active
+                if (get(selectedRoomStore) !== this) {
+                    this.hasUnreadMessages.set(true);
+                    this.unreadNotificationCount.set(get(this.unreadNotificationCount) + 1);
+                }
+
+                // If this was also the final chunk, finalize immediately
+                if (stream.isFinal) {
+                    this.streamMessages.delete(stream.responseId);
+                }
+
+                chatVisibilityStore.set(true);
+                if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
+            });
 
         this.saveChatState();
 
@@ -596,6 +719,8 @@ export class ProximityChatRoom implements ChatRoom {
                 this.usersUnsubscriber?.();
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
+                this.spaceStreamMessageSubscription?.unsubscribe();
+                this.streamMessages.clear();
                 if (this._space) {
                     this.spaceRegistry.leaveSpace(this._space).catch((error) => {
                         console.error("Error leaving space: ", error);
@@ -793,6 +918,8 @@ export class ProximityChatRoom implements ChatRoom {
 
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceStreamMessageSubscription?.unsubscribe();
+        this.streamMessages.clear();
 
         this.scriptingOutputAudioStreamManager?.close();
         this.scriptingInputAudioStreamManager?.close();
@@ -839,6 +966,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.stopListeningToStreamInBubbleStreamUnsubscriber.unsubscribe();
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceStreamMessageSubscription?.unsubscribe();
+        this.streamMessages.clear();
 
         this.scriptingOutputAudioStreamManager?.close();
         this.scriptingInputAudioStreamManager?.close();

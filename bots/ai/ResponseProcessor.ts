@@ -135,7 +135,6 @@ export class ResponseProcessor {
         cleaned = cleaned.replace(/ANTI-HALLUCINATION:.*?(?=\n|$)/gs, '');
         cleaned = cleaned.replace(/NAVIGATION:.*?(?=\n|$)/gs, '');
         cleaned = cleaned.replace(/CONTEXT:.*?(?=\n|$)/gs, '');
-        cleaned = cleaned.replace(/^- .*?(?=\n|$)/gm, ''); // Remove bullet points that might be part of instructions
         cleaned = cleaned.replace(/\s*\[END_TOOL_REQUEST\].*?\[END_TOOL_RESPONSE\]\s*/gs, ''); // Remove tool markers
         // Remove tool call mentions (e.g., "(tool call: get_people_on_map)" or "I'll check" followed by tool mentions)
         cleaned = cleaned.replace(/\(tool call[^)]*\)/gi, ''); // Remove (tool call: ...)

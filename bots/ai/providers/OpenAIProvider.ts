@@ -141,286 +141,223 @@ export class OpenAIProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[]
     ): AsyncGenerator<AIStreamChunk> {
-        // Collect all chunks first, then yield them after the span ends.
-        // This ensures the gen_ai.chat span is properly created as a child
-        // of the parent gen_ai.agent span and its end() is called before
-        // the parent ends. startSpanManual with identity callback was the
-        // root cause of 0 child spans — it never called end() or scope
-        // cleanup properly across async generator yield points.
-        const chunks: AIStreamChunk[] = [];
-        await Sentry.startSpan(
-            {
-                op: "gen_ai.chat",
-                name: `LLM ${config.model}`,
-                parentSpan: (config as any).__sentryParentSpan,
-                attributes: {
-                    "gen_ai.request.model": config.model,
-                    "gen_ai.system": config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai',
-                    "gen_ai.agent.name": config.name || '',
-                },
-            },
-            async (span) => {
-                const startTime = Date.now();
-                let tokensUsed = 0;
-                let promptTokens = 0;
-                let completionTokens = 0;
-                let responseModel = '';
-                let streamEnded = false;
-                const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
-                let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-                let timeoutId: ReturnType<typeof setTimeout> | undefined;
-                let streamTimeoutId: ReturnType<typeof setTimeout> | undefined;
-                let retryTimeoutId: ReturnType<typeof setTimeout> | undefined;
-                let latency = 0;
+        const startTime = Date.now();
+        let tokensUsed = 0;
+        let promptTokens = 0;
+        let completionTokens = 0;
+        let responseModel = '';
+        let streamEnded = false;
+        const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-                function clearTimeouts() {
-                    if (timeoutId !== undefined) { clearTimeout(timeoutId); timeoutId = undefined; }
-                    if (streamTimeoutId !== undefined) { clearTimeout(streamTimeoutId); streamTimeoutId = undefined; }
-                    if (retryTimeoutId !== undefined) { clearTimeout(retryTimeoutId); retryTimeoutId = undefined; }
+        try {
+            const endpoint = this.getEndpoint(config);
+            const apiKey = this.getApiKey(config);
+
+            const controller = new AbortController();
+            let streamController = controller; // tracks the controller for the active stream (may be updated on retry)
+            timeoutId = setTimeout(() => controller.abort(), timeout);
+
+            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify(requestBody),
+                signal: controller.signal,
+            });
+
+            clearTimeout(timeoutId);
+
+            let finalResponse = response;
+            if (!response.ok) {
+                const errorText = await response.text();
+                let errorData: any = null;
+                try {
+                    errorData = JSON.parse(errorText);
+                } catch (e) {
+                    // Not JSON, use as-is
                 }
 
-                try {
-                    const endpoint = this.getEndpoint(config);
-                    const apiKey = this.getApiKey(config);
+                // Retry without temperature if model rejects it
+                if (errorData?.error?.code === 'unsupported_value' && 
+                    errorData?.error?.param === 'temperature' &&
+                    errorData?.error?.message?.includes('Only the default')) {
+                    const retryBody = { ...requestBody };
+                    delete retryBody.temperature;
 
-                    let activeController = new AbortController();
-                    timeoutId = setTimeout(() => activeController.abort(), timeout);
-
-                    const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
-
-                    const response = await fetch(endpoint, {
+                    const retryController = new AbortController();
+                    streamController = retryController; // update for active stream
+                    timeoutId = setTimeout(() => retryController.abort(), timeout);
+                    const retryResponse = await fetch(endpoint, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'Authorization': `Bearer ${apiKey}`,
                         },
-                        body: JSON.stringify(requestBody),
-                        signal: activeController.signal,
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
                     });
 
-                    clearTimeouts();
+                    clearTimeout(timeoutId);
 
-                    let finalResponse = response;
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        let errorData: any = null;
-                        try {
-                            errorData = JSON.parse(errorText);
-                        } catch (e) {
-                            // Not JSON, use as-is
-                        }
-
-                        // If error is about temperature, retry without temperature (use default)
-                        if (errorData?.error?.code === 'unsupported_value' && 
-                            errorData?.error?.param === 'temperature' &&
-                            errorData?.error?.message?.includes('Only the default')) {
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[OpenAIProvider] Retrying without temperature parameter for model: ${config.model}`);
-                            }
-                            // Retry without temperature parameter
-                            const retryBody = { ...requestBody };
-                            delete retryBody.temperature;
-
-                            const retryController = new AbortController();
-                            retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
-                            const retryResponse = await fetch(endpoint, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${apiKey}`,
-                                },
-                                body: JSON.stringify(retryBody),
-                                signal: retryController.signal,
-                            });
-
-                            clearTimeout(retryTimeoutId);
-                            retryTimeoutId = undefined;
-
-                            if (!retryResponse.ok) {
-                                const retryErrorText = await retryResponse.text();
-                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                            }
-
-                            // Use retry response instead
-                            finalResponse = retryResponse;
-                            activeController = retryController;
-                        }
-                        // If error is about max_tokens, retry with max_completion_tokens
-                        else if (errorData?.error?.code === 'unsupported_parameter' && 
-                            errorData?.error?.param === 'max_tokens' &&
-                            errorData?.error?.message?.includes('max_completion_tokens')) {
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[OpenAIProvider] Retrying with max_completion_tokens for model: ${config.model}`);
-                            }
-                            // Retry with max_completion_tokens
-                            const retryBody = { ...requestBody };
-                            delete retryBody.max_tokens;
-                            retryBody.max_completion_tokens = config.maxTokens;
-
-                            const retryController = new AbortController();
-                            retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
-                            const retryResponse = await fetch(endpoint, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${apiKey}`,
-                                },
-                                body: JSON.stringify(retryBody),
-                                signal: retryController.signal,
-                            });
-
-                            clearTimeout(retryTimeoutId);
-                            retryTimeoutId = undefined;
-
-                            if (!retryResponse.ok) {
-                                const retryErrorText = await retryResponse.text();
-                                throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
-                            }
-
-                            // Use retry response instead
-                            finalResponse = retryResponse;
-                            activeController = retryController;
-                        } else {
-                            throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
-                        }
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
                     }
 
-                    if (!finalResponse.body) {
-                        throw new Error('No response body');
-                    }
+                    finalResponse = retryResponse;
+                }
+                // Retry with max_completion_tokens if model rejects max_tokens
+                else if (errorData?.error?.code === 'unsupported_parameter' && 
+                    errorData?.error?.param === 'max_tokens' &&
+                    errorData?.error?.message?.includes('max_completion_tokens')) {
+                    const retryBody = { ...requestBody };
+                    delete retryBody.max_tokens;
+                    retryBody.max_completion_tokens = config.maxTokens;
 
-                    // Per-chunk idle timeout — only after confirming a successful stream response
-                    clearTimeouts();
-                    streamTimeoutId = setTimeout(() => activeController.abort(), timeout);
-
-                    reader = finalResponse.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        // Reset idle timeout on each chunk
-                        clearTimeout(streamTimeoutId);
-                        streamTimeoutId = setTimeout(() => activeController.abort(), timeout);
-
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || '';
-
-                        for (const line of lines) {
-                            if (line.trim() === '') continue;
-
-                            if (line.startsWith('data: ')) {
-                                const data = line.slice(6).trim();
-
-                                if (data === '[DONE]') {
-                                    streamEnded = true;
-                                    break;
-                                }
-
-                                try {
-                                    const json = JSON.parse(data);
-                                    const delta = json.choices?.[0]?.delta;
-
-                                    // Extract token usage
-                                    if (json.usage) {
-                                        const usage = json.usage;
-                                        if (usage.prompt_tokens !== undefined) {
-                                            promptTokens = usage.prompt_tokens;
-                                        }
-                                        if (usage.completion_tokens !== undefined) {
-                                            completionTokens = usage.completion_tokens;
-                                        }
-                                        tokensUsed = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
-                                    }
-
-                                    // Track response model
-                                    if (json.model) {
-                                        responseModel = json.model;
-                                    }
-
-                                    // Track content
-                                    if (delta?.content) {
-                                        chunks.push({
-                                            content: delta.content,
-                                            done: false,
-                                        });
-                                    }
-
-                                    // Handle tool calls
-                                    if (delta?.tool_calls) {
-                                        const toolCalls = delta.tool_calls.map((tc: any) => ({
-                                            id: tc.id,
-                                            name: tc.function?.name || '',
-                                            arguments: tc.function?.arguments || '',
-                                        }));
-                                        chunks.push({
-                                            content: '',
-                                            done: false,
-                                            toolCalls,
-                                        });
-                                    }
-                                } catch (e) {
-                                    // Skip invalid JSON lines
-                                }
-                            }
-                        }
-
-                        if (streamEnded) break;
-                    }
-
-                    clearTimeouts();
-
-                    // Set span attributes
-                    latency = Date.now() - startTime;
-                    span.setAttribute("gen_ai.request.model", config.model);
-                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
-                    span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                    span.setAttribute("gen_ai.agent.name", config.name || '');
-
-                    // Push final done chunk with metadata
-                    chunks.push({
-                        content: '',
-                        done: true,
-                        metadata: {
-                            tokensUsed,
-                            promptTokens,
-                            completionTokens,
-                            latency,
-                            error: !streamEnded,
+                    const retryController = new AbortController();
+                    streamController = retryController; // update for active stream
+                    timeoutId = setTimeout(() => retryController.abort(), timeout);
+                    const retryResponse = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
                         },
+                        body: JSON.stringify(retryBody),
+                        signal: retryController.signal,
                     });
 
-                } catch (error: any) {
-                    latency = Date.now() - startTime;
+                    clearTimeout(timeoutId);
 
-                    span.setAttribute("gen_ai.request.model", config.model);
-                    span.setAttribute("gen_ai.system", config.endpoint?.includes('deepseek') ? 'deepseek' : 'openai');
-                    span.setAttribute("gen_ai.agent.name", config.name || '');
-                    span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                    if (!retryResponse.ok) {
+                        const retryErrorText = await retryResponse.text();
+                        throw new Error(`OpenAI API error: ${retryResponse.status} ${retryErrorText}`);
+                    }
 
-                    clearTimeouts();
-
-                    chunks.push({
-                        content: '',
-                        done: true,
-                        metadata: {
-                            tokensUsed: 0,
-                            latency,
-                            error: true,
-                        },
-                    });
-                } finally {
-                    clearTimeouts();
-                    reader?.cancel();
+                    finalResponse = retryResponse;
+                } else {
+                    throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
                 }
             }
-        );
-        yield* chunks;
+
+            if (!finalResponse.body) {
+                throw new Error('No response body');
+            }
+
+            // Per-chunk idle timeout
+            timeoutId = setTimeout(() => streamController.abort(), timeout);
+
+            reader = finalResponse.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                // Reset idle timeout on each chunk
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => streamController.abort(), timeout);
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.trim() === '') continue;
+
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6).trim();
+
+                        if (data === '[DONE]') {
+                            streamEnded = true;
+                            break;
+                        }
+
+                        try {
+                            const json = JSON.parse(data);
+                            const delta = json.choices?.[0]?.delta;
+
+                            // Extract token usage
+                            if (json.usage) {
+                                const usage = json.usage;
+                                if (usage.prompt_tokens !== undefined) {
+                                    promptTokens = usage.prompt_tokens;
+                                }
+                                if (usage.completion_tokens !== undefined) {
+                                    completionTokens = usage.completion_tokens;
+                                }
+                                tokensUsed = (usage.prompt_tokens || 0) + (usage.completion_tokens || 0);
+                            }
+
+                            // Track response model
+                            if (json.model) {
+                                responseModel = json.model;
+                            }
+
+                            // YIELD directly per-chunk with event-loop yield so the frontend
+                            // can render each token before the next arrives
+                            if (delta?.content) {
+                                yield {content: delta.content, done: false};
+                                await new Promise(resolve => setTimeout(resolve, 0));
+                            }
+
+                            // Handle tool calls
+                            if (delta?.tool_calls) {
+                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[OpenAIProvider] Raw tool_calls delta:`, JSON.stringify(delta.tool_calls));
+                                }
+                                const toolCalls = delta.tool_calls.map((tc: any) => ({
+                                    id: tc.id,
+                                    name: tc.function?.name || '',
+                                    arguments: tc.function?.arguments || '',
+                                }));
+                                yield {content: '', done: false, toolCalls};
+                            }
+                        } catch (e) {
+                            // Skip invalid JSON lines
+                        }
+                    }
+                }
+
+                if (streamEnded) break;
+            }
+
+            // Done chunk with metadata
+            const latency = Date.now() - startTime;
+            yield {
+                content: '',
+                done: true,
+                metadata: {
+                    tokensUsed,
+                    promptTokens,
+                    completionTokens,
+                    latency,
+                    error: !streamEnded,
+                },
+            };
+
+        } catch (error: any) {
+            const latency = Date.now() - startTime;
+            yield {
+                content: '',
+                done: true,
+                metadata: {
+                    tokensUsed: 0,
+                    latency,
+                    error: true,
+                },
+            };
+        } finally {
+            clearTimeout(timeoutId);
+            reader?.cancel().catch(() => {});
+        }
     }
 
     async generate(

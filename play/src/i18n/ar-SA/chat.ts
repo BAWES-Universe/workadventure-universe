@@ -93,6 +93,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         incoming: "{userName} انضم إلى المناقشة",
         outcoming: "{userName} غادر المناقشة",
         youLeft: "لقد غادرت المناقشة",
+        streamError: "حدث خطأ",
     },
     form: {
         placeholder: "أدخل رسالتك...",

@@ -80,6 +80,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         incoming: "{userName} がディスカッションに参加しました",
         outcoming: "{userName} がディスカッションから離脱しました",
         youLeft: "ディスカッションから離脱しました",
+        streamError: "エラーが発生しました",
     },
     form: {
         placeholder: "メッセージを入力...",

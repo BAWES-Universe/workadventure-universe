@@ -101,6 +101,7 @@ const chat: BaseTranslation = {
         youLeft: "You left the discussion",
         youleftMeetingRoom: "You have left the meeting room",
         youJoinedMeetingRoom: "You have joined the meeting room",
+        streamError: "An error occurred",
     },
     form: {
         placeholder: "Enter your message...",
