@@ -1044,12 +1044,14 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     emotionBlockStarted = false;
                     pendingPrefix = '';
                     if (chunk.toolNames?.length) {
-                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                            fullMessage = toolStatus;
-                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                            }
                         }
                         arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
                         fullMessage = '';
@@ -1233,12 +1235,14 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     emotionBlockStarted = false;
                     pendingPrefix = '';
                     if (chunk.toolNames?.length) {
-                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-                            fullMessage = toolStatus;
-                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
-                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                            }
                         }
                         arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
                         fullMessage = '';
@@ -1563,12 +1567,14 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     emotionBlockStarted = false;
                     pendingPrefix = '';
                     if (chunk.toolNames?.length) {
-                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                            fullMessage = toolStatus;
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
-                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, toolStatus);
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
+                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, toolStatus);
+                            }
                         }
                         greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         fullMessage = "";
@@ -1812,14 +1818,16 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         emotionBlockStarted = false;
                         pendingPrefix = '';
                         if (chunk.toolNames?.length) {
-                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
-                                // Finalize the tool-name bubble so it doesn't linger in
-                                // the frontend's streamMessages map.
-                                this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                    const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                    fullMessage = toolStatus;
+                                    this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                                    // Finalize the tool-name bubble so it doesn't linger in
+                                    // the frontend's streamMessages map.
+                                    this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
+                                }
                             }
                             // New responseId for follow-up — separate from the tool-name bubble
                             responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
@@ -2185,12 +2193,14 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     emotionBlockStarted = false;
                     pendingPrefix = '';
                     if (chunk.toolNames?.length) {
-                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
-                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                            goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                            fullMessage = toolStatus;
-                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
-                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
+                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
+                            }
                         }
                         goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         fullMessage = '';
