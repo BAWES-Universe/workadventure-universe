@@ -651,6 +651,8 @@ export class ProximityChatRoom implements ChatRoom {
 
                 // First chunk: create message entry (may also be final if response is very fast)
                 const initialBody = stream.isFinal ? stream.finalContent ?? stream.token : stream.token;
+                // Emotion-only responses send isFinal=true with empty content — don't show a bubble
+                if (stream.isFinal && !initialBody) return;
                 const spaceUser = this.users?.get(event.sender);
                 let chatUser: AnyKindOfUser = this.unknownUser;
                 if (spaceUser) {
