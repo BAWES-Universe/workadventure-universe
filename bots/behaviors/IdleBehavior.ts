@@ -850,6 +850,8 @@ export class IdleBehavior extends BaseBehavior {
             
             const goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -863,7 +865,7 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
-                    
+
                     // Stop forwarding when emotion block starts
                     if (emotionBlockStarted) {
                         continue;
@@ -872,6 +874,7 @@ export class IdleBehavior extends BaseBehavior {
                     const emInFull = fullMessage.includes('[EM');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
                             const emotionIdx = chunk.content.indexOf('[EM');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
@@ -881,16 +884,31 @@ export class IdleBehavior extends BaseBehavior {
                         }
                         continue;
                     }
-                    
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
                     // Forward chunk to frontend
-                    this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, chunk.content, false);
+                    this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
                 }
-                
+
                 if (chunk.done) {
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
-                    
+
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
@@ -987,6 +1005,8 @@ export class IdleBehavior extends BaseBehavior {
 
             const greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1000,7 +1020,7 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
-                    
+
                     // Stop forwarding when emotion block starts
                     if (emotionBlockStarted) {
                         continue;
@@ -1009,6 +1029,7 @@ export class IdleBehavior extends BaseBehavior {
                     const emInFull = fullMessage.includes('[EM');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
                             const emotionIdx = chunk.content.indexOf('[EM');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
@@ -1018,11 +1039,26 @@ export class IdleBehavior extends BaseBehavior {
                         }
                         continue;
                     }
-                    
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
                     // Forward chunk to frontend
-                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, chunk.content, false);
+                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                 }
-                
+
                 if (chunk.done) {
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
@@ -1138,43 +1174,62 @@ export class IdleBehavior extends BaseBehavior {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[IdleBehavior] sendAreaArrivalMessage: Generating AI response...`);
             }
-            
+
             arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
-                botId,
-                followerUserId,
-                arrivalPrompt,
-                botConfig.chatInstructions || 'You are a helpful bot.',
-                botConfig.aiProviderRef,
-                spaceName,
-                context,
-                this.bot,
-                this.adminApiService
-            )) {
-                if (chunk.content) {
-                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
-                    
-                    if (emotionBlockStarted) {
-                        continue;
-                    }
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
-                    if (emInChunk || emInFull) {
-                        emotionBlockStarted = true;
-                        if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
-                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
-                            if (beforeEmotion.trim()) {
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
-                            }
+                    botId,
+                    followerUserId,
+                    arrivalPrompt,
+                    botConfig.chatInstructions || 'You are a helpful bot.',
+                    botConfig.aiProviderRef,
+                    spaceName,
+                    context,
+                    this.bot,
+                    this.adminApiService
+                )) {
+                    if (chunk.content) {
+                        fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                        if (emotionBlockStarted) {
+                            continue;
                         }
-                        continue;
+                        const emInChunk = chunk.content.includes('[EM');
+                        const emInFull = fullMessage.includes('[EM');
+                        if (emInChunk || emInFull) {
+                            emotionBlockStarted = true;
+                            pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                            if (emInChunk) {
+                                const emotionIdx = chunk.content.indexOf('[EM');
+                                const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                                if (beforeEmotion.trim()) {
+                                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
+                                }
+                            }
+                            continue;
+                        }
+
+                        // If this chunk ends with '[', defer the bracket — it may be the
+                        // start of [EMOTION_UPDATE] across chunk boundaries.
+                        if (chunk.content.endsWith('[')) {
+                            pendingBracket = '[';
+                            const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                            if (contentToStream) {
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
+                            }
+                            continue;
+                        }
+
+                        // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                        const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                        pendingBracket = '';
+
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                     }
-                    
-                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, chunk.content, false);
-                }
-                
-                if (chunk.done) {
+
+                    if (chunk.done) {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendAreaArrivalMessage: Stream completed`);
                     }
@@ -1304,41 +1359,60 @@ export class IdleBehavior extends BaseBehavior {
             this.bot?.startTyping(spaceName);
 
             arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
-                botId,
-                followerUserId,
-                arrivalPrompt,
-                botConfig.chatInstructions || 'You are a helpful bot.',
-                botConfig.aiProviderRef,
-                spaceName,
-                context,
-                this.bot,
-                this.adminApiService
-            )) {
-                if (chunk.content) {
-                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
-                    
-                    if (emotionBlockStarted) {
-                        continue;
-                    }
-                    const emInChunk = chunk.content.includes('[EM');
-                    const emInFull = fullMessage.includes('[EM');
-                    if (emInChunk || emInFull) {
-                        emotionBlockStarted = true;
-                        if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
-                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
-                            if (beforeEmotion.trim()) {
-                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
-                            }
+                    botId,
+                    followerUserId,
+                    arrivalPrompt,
+                    botConfig.chatInstructions || 'You are a helpful bot.',
+                    botConfig.aiProviderRef,
+                    spaceName,
+                    context,
+                    this.bot,
+                    this.adminApiService
+                )) {
+                    if (chunk.content) {
+                        fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                        if (emotionBlockStarted) {
+                            continue;
                         }
-                        continue;
+                        const emInChunk = chunk.content.includes('[EM');
+                        const emInFull = fullMessage.includes('[EM');
+                        if (emInChunk || emInFull) {
+                            emotionBlockStarted = true;
+                            pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                            if (emInChunk) {
+                                const emotionIdx = chunk.content.indexOf('[EM');
+                                const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                                if (beforeEmotion.trim()) {
+                                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
+                                }
+                            }
+                            continue;
+                        }
+
+                        // If this chunk ends with '[', defer the bracket — it may be the
+                        // start of [EMOTION_UPDATE] across chunk boundaries.
+                        if (chunk.content.endsWith('[')) {
+                            pendingBracket = '[';
+                            const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                            if (contentToStream) {
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
+                            }
+                            continue;
+                        }
+
+                        // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                        const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                        pendingBracket = '';
+
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                     }
-                    
-                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, chunk.content, false);
-                }
-                
-                if (chunk.done) {
+
+                    if (chunk.done) {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[IdleBehavior] sendPersonArrivalMessage: Stream completed`);
                     }
@@ -1455,6 +1529,8 @@ export class IdleBehavior extends BaseBehavior {
 
             let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1474,6 +1550,7 @@ export class IdleBehavior extends BaseBehavior {
                     greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
+                    pendingBracket = '';
                     if (chunk.toolNames?.length) {
                         for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                             const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
@@ -1490,7 +1567,7 @@ export class IdleBehavior extends BaseBehavior {
                 }
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
-                    
+
                     // Stop forwarding when emotion block starts
                     if (emotionBlockStarted) {
                         continue;
@@ -1499,6 +1576,7 @@ export class IdleBehavior extends BaseBehavior {
                     const emInFull = fullMessage.includes('[EM');
                     if (emInChunk || emInFull) {
                         emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
                             const emotionIdx = chunk.content.indexOf('[EM');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
@@ -1508,11 +1586,26 @@ export class IdleBehavior extends BaseBehavior {
                         }
                         continue;
                     }
-                    
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
                     // Forward chunk to frontend
-                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, chunk.content, false);
+                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                 }
-                
+
                 if (chunk.done) {
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
