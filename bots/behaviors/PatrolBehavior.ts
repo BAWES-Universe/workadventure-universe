@@ -1069,7 +1069,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
@@ -1258,7 +1258,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
@@ -1406,7 +1406,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
@@ -1589,7 +1589,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
@@ -1847,7 +1847,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 batchFlush(batchState, sendBatch);
@@ -1993,7 +1993,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                             emotionBlockStarted = true;
                                             pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                                             if (emInChunk) {
-                                                const emotionIdx = chunk.content.indexOf('[EM');
+                                                const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                                                 const beforeEmotion = chunk.content.substring(0, emotionIdx);
                                                 if (beforeEmotion.trim()) {
                                                     this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
@@ -2211,7 +2211,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, beforeEmotion, false);
