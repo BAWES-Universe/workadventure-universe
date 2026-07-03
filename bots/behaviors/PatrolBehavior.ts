@@ -1763,6 +1763,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                         fullMessage = '';
                         emotionBlockStarted = false;
+                        pendingBracket = '';
                         if (chunk.toolNames?.length) {
                             for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                 const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;

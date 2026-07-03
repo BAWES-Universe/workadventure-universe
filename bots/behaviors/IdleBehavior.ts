@@ -523,6 +523,7 @@ export class IdleBehavior extends BaseBehavior {
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
                     fullMessage = '';
                     emotionBlockStarted = false;
+                    pendingBracket = '';
                     // Show tool names as separate bubbles — one per tool call invocation
                     if (chunk.toolNames?.length) {
                         for (let ti = 0; ti < chunk.toolNames.length; ti++) {
