@@ -1722,7 +1722,7 @@ export class SocialBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            const greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -1735,6 +1735,26 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, fullMessage);
+                    }
+                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    fullMessage = "";
+                    emotionBlockStarted = false;
+                    if (chunk.toolNames?.length) {
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, toolStatus);
+                        }
+                        greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = "";
+                    }
+                    continue;
+                }
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
                     
