@@ -191,7 +191,7 @@ export class LMStudioProvider implements AIProvider {
             };
         } finally {
             clearTimeout(timeoutId);
-            reader?.cancel();
+            reader?.cancel().catch(() => {});
         }
     }
 

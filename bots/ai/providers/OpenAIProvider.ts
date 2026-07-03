@@ -356,7 +356,7 @@ export class OpenAIProvider implements AIProvider {
             };
         } finally {
             clearTimeout(timeoutId);
-            reader?.cancel();
+            reader?.cancel().catch(() => {});
         }
     }
 

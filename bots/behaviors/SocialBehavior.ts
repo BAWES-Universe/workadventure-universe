@@ -1707,11 +1707,10 @@ export class SocialBehavior extends BaseBehavior {
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId: string | undefined;
-
+        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
         try {
             // Special prompt for leading completion
-            const leadingContext = followerUuid === 'group' 
+            const leadingContext = followerUuid === 'group'
                 ? 'You just guided a group of people to this person. They asked about them. Let them know you\'ve brought the people who wanted to talk with them.'
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
 
@@ -1720,7 +1719,6 @@ export class SocialBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
@@ -1861,7 +1859,7 @@ export class SocialBehavior extends BaseBehavior {
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
         let fullMessage = '';
-        let greetingResponseId: string | undefined;
+        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1869,7 +1867,6 @@ export class SocialBehavior extends BaseBehavior {
             // It should respond naturally, not ask meta questions
             const hasContext = context.length > 0;
 
-            // Debug log: confirm memory context was loaded before greeting generation
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[SocialBehavior] generateAIGreeting: context.length=${context.length}, hasContext=${hasContext}`);
                 if (hasContext) {
@@ -1884,7 +1881,6 @@ export class SocialBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
