@@ -310,6 +310,9 @@ export class OpenAIProvider implements AIProvider {
 
                             // Handle tool calls
                             if (delta?.tool_calls) {
+                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[OpenAIProvider] Raw tool_calls delta:`, JSON.stringify(delta.tool_calls));
+                                }
                                 const toolCalls = delta.tool_calls.map((tc: any) => ({
                                     id: tc.id,
                                     name: tc.function?.name || '',

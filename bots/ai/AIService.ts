@@ -628,6 +628,23 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         // status message instead of a comma-separated summary.
                         const toolNames = Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean);
                         
+                        // Skip tool execution if all tool call names are empty — the model
+                        // streamed partial tool data without valid function names (known
+                        // DeepSeek streaming format issue). No tools can execute, so don't
+                        // enter the follow-up loop.
+                        // Note: this guard MUST stay — without it, empty-name tool calls
+                        // cause an infinite follow-up loop that generates a full greeting
+                        // on every iteration, concatenating them into one message.
+                        if (toolNames.length === 0) {
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[AIService] Skipping tool execution: all ${toolCallAccumulator.size} tool call(s) have empty names`);
+                            }
+                            toolCallAccumulator.clear();
+                            // Yield the accumulated pre-tool content (already streamed) as final
+                            yield {content: '', done: true, metadata: chunk.metadata};
+                            break;
+                        }
+                        
                         // Yield reset to clear any streamed pre-tool content from frontend
                         // before executing tools — the bubble will be finalized by the
                         // behavior with the accumulated pre-tool text.
@@ -770,8 +787,13 @@ CRITICAL RESPONSE RULES:
                             }
 
                             // Convert any accumulated tool calls from the follow-up response for the next round
-                            if (toolCallAccumulator.size > 0) {
-                                pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
+                            // Filter to only tool calls with valid names — empty-name calls (known DeepSeek
+                            // streaming format issue) would be filtered out by executeToolCalls and just
+                            // waste a follow-up round, generating duplicate content each iteration.
+                            const validFollowUpToolCalls = Array.from(toolCallAccumulator.values())
+                                .filter(tc => tc.name && tc.name.trim() !== '');
+                            if (validFollowUpToolCalls.length > 0) {
+                                pendingToolCalls = validFollowUpToolCalls.map(tc => ({
                                     id: tc.id,
                                     name: tc.name,
                                     arguments: tc.arguments || '{}',
@@ -890,6 +912,14 @@ CRITICAL RESPONSE RULES:
                             followUpGenCaptured = true;
                         }
                         continue;
+                    } else {
+                        // All follow-up tool calls have empty names — known DeepSeek streaming
+                        // format issue. Clear accumulator to exit the while loop instead of
+                        // spinning on empty-name tool calls that never execute.
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.warn(`[AIService] Skipping follow-up: all ${toolCallAccumulator.size} follow-up tool call(s) have empty names`);
+                        }
+                        toolCallAccumulator.clear();
                     }
 
                     // Accumulate content — always save firstCallContent for fallback
