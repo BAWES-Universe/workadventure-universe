@@ -974,10 +974,6 @@ export class SocialBehavior extends BaseBehavior {
                             let regeneratedMessage = '';
                             try {
                                 let emotionBlockStarted = false;
-                                const batchState = createBatchState();
-                                const sendBatch = (text: string) => {
-                                    this.bot?.sendStreamMessage(spaceName, responseId, text, false);
-                                };
                                 for await (const chunk of this.aiService.generateBotResponseStream(
                                     botId,
                                     playerId,
@@ -990,7 +986,6 @@ export class SocialBehavior extends BaseBehavior {
                                     this.adminApiService
                                 )) {
                                     if (chunk.reset) {
-                                        batchFlush(batchState, sendBatch);
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                                         regeneratedMessage = '';
                                         emotionBlockStarted = false;
@@ -1012,17 +1007,15 @@ export class SocialBehavior extends BaseBehavior {
                                                 const emotionIdx = chunk.content.indexOf('[EM');
                                                 const beforeEmotion = chunk.content.substring(0, emotionIdx);
                                                 if (beforeEmotion.trim()) {
-                                                    batchFlush(batchState, sendBatch);
                                                     this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
                                                 }
                                             }
                                             continue;
                                             }
 
-                                            batchAppend(batchState, chunk.content, sendBatch);
+                                            this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
                                     }
                                     if (chunk.done) {
-                                        batchFlush(batchState, sendBatch);
                                         break;
                                     }
                                     }
