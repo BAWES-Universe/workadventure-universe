@@ -1099,6 +1099,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] Error generating area arrival message:`, error);
+            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1244,6 +1245,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] Error generating person arrival message:`, error);
+            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1378,7 +1380,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] AI leading completion greeting error:`, error);
-            // Don't send fallback - just fail silently
+            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1515,7 +1517,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] AI greeting error:`, error);
-            // Don't send fallback - just fail silently
+            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -2063,6 +2065,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
         } catch (error) {
             console.error(`[PatrolBehavior] Error generating goodbye message:`, error);
+            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, '');
         }
         
         // Return to start position after sending message

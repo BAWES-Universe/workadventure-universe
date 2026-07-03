@@ -1267,6 +1267,7 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating area arrival message:`, error);
+            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1402,6 +1403,7 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating person arrival message:`, error);
+            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1516,6 +1518,7 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating goodbye message:`, error);
+            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, '');
         }
         
         // Return to start position after sending message
@@ -1647,7 +1650,7 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI leading completion greeting error:`, error);
-            // Don't send fallback - just fail silently
+            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1788,7 +1791,7 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI greeting error:`, error);
-            // Don't send fallback - just fail silently
+            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
