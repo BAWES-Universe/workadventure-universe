@@ -847,10 +847,11 @@ CRITICAL RESPONSE RULES:
                         }
                         followUpContentBuffer = '';
                         if (!responseContent) {
-                            // Follow-up produced only tool calls with no text —
-                            // use firstCallContent as fallback since no per-chunk
-                            // content was yielded during the streaming phase.
-                            const fallback = firstCallContent || "Let me check on that for you.";
+                            // Follow-up produced only tool calls with no text — the
+                            // initial content was already streamed and finalized in
+                            // the pre-tool bubble. Don't replay it; use a generic
+                            // fallback so the user sees something happened.
+                            const fallback = "Let me check on that for you.";
                             yield {content: fallback, done: false, metadata: lastFollowUpDoneChunk?.metadata};
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;

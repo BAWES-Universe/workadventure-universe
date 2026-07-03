@@ -156,6 +156,7 @@ export class OpenAIProvider implements AIProvider {
             const apiKey = this.getApiKey(config);
 
             const controller = new AbortController();
+            let streamController = controller; // tracks the controller for the active stream (may be updated on retry)
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
             const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
@@ -190,6 +191,7 @@ export class OpenAIProvider implements AIProvider {
                     delete retryBody.temperature;
 
                     const retryController = new AbortController();
+                    streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
                     const retryResponse = await fetch(endpoint, {
                         method: 'POST',
@@ -219,6 +221,7 @@ export class OpenAIProvider implements AIProvider {
                     retryBody.max_completion_tokens = config.maxTokens;
 
                     const retryController = new AbortController();
+                    streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
                     const retryResponse = await fetch(endpoint, {
                         method: 'POST',
@@ -248,7 +251,7 @@ export class OpenAIProvider implements AIProvider {
             }
 
             // Per-chunk idle timeout
-            timeoutId = setTimeout(() => controller.abort(), timeout);
+            timeoutId = setTimeout(() => streamController.abort(), timeout);
 
             reader = finalResponse.body.getReader();
             const decoder = new TextDecoder();
@@ -260,7 +263,7 @@ export class OpenAIProvider implements AIProvider {
 
                 // Reset idle timeout on each chunk
                 clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => controller.abort(), timeout);
+                timeoutId = setTimeout(() => streamController.abort(), timeout);
 
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
