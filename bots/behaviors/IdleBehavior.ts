@@ -594,10 +594,7 @@ export class IdleBehavior extends BaseBehavior {
                     this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                 }
 
-                // Extract token usage and latency from chunk metadata
-                if ((chunk as any).tokensUsed) {
-                    tokensUsed = chunk.tokensUsed;
-                }
+                // Extract token usage from chunk metadata
                 if (chunk.metadata?.tokensUsed) {
                     tokensUsed = chunk.metadata.tokensUsed;
                 }
@@ -1051,7 +1048,7 @@ export class IdleBehavior extends BaseBehavior {
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId: string | undefined;
+        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
 
         try {
             // Special prompt for leading completion
@@ -1064,7 +1061,6 @@ export class IdleBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
@@ -1610,7 +1606,7 @@ export class IdleBehavior extends BaseBehavior {
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
-        let greetingResponseId: string | undefined;
+        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1633,7 +1629,6 @@ export class IdleBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';

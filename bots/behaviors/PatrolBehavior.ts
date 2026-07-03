@@ -1365,7 +1365,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId: string | undefined;
+        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
 
         try {
             // Special prompt for leading completion
@@ -1378,7 +1378,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
@@ -1516,7 +1515,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
-        let greetingResponseId: string | undefined;
+        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1538,7 +1537,6 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingBracket = '';
