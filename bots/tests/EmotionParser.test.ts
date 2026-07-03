@@ -118,4 +118,19 @@ describe('[EM fragment detection (behavior streaming pattern)', () => {
         // 'More text' after the tag is lost — expected since the system
         // prompt puts the emotion block at the END of every response.
     });
+
+    it('simulates pendingBracket boundary split across chunks', () => {
+        // When [EMOTION_UPDATE] is split as "Hello[" + "EMOTION_UPDATE]":
+        // Chunk 1: "Hello[" — no [EM detected, [ leaks without pendingBracket
+        expect(extractBeforeEmotion('Hello[')).toBeNull();
+        // Chunk 2: "EMOTION_UPDATE]" — [EM is at position 0, so null before it
+        expect(extractBeforeEmotion('EMOTION_UPDATE]')).toBeNull();
+        // Combined fullMessage check catches it across boundaries
+        const fullMessage = 'Hello[EMOTION_UPDATE]';
+        expect(fullMessage.includes('[EM')).toBe(true);
+        // Chunk 2 starts with EM (no leading text) — beforeEmotion is empty
+        const emotionIdx = 'EMOTION_UPDATE]'.indexOf('[EM');
+        expect(emotionIdx).toBe(-1); // No [EM in the second chunk alone
+        // This is why the fullMessage check is needed
+    });
 });

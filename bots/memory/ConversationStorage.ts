@@ -234,6 +234,23 @@ export class ConversationStorage {
                 // P2002 = unique constraint violation — conversation already exists
                 if (error?.response?.data?.code === 'P2002') {
                     console.log(`[ConversationStorage] Conversation already exists for botId=${conversation.botId}, userUuid=${conversation.userUuid} (P2002)`);
+                    // Fetch the existing conversation's ID so subsequent saves
+                    // can call updateConversation instead of retrying createConversation
+                    try {
+                        const lookup = await axios.get(
+                            `${adminApiUrl}/api/bots/${conversation.botId}/conversations`,
+                            {
+                                headers: { Authorization: `Bearer ${botServiceToken}` },
+                                params: { userId: conversation.userUuid, limit: 1 },
+                            }
+                        );
+                        const existing = lookup.data?.[0];
+                        if (existing?.id) {
+                            this.conversationIds.set(key, existing.id);
+                        }
+                    } catch {
+                        // Lookup failure is non-fatal — next message will retry creation
+                    }
                 } else {
                     const msg = error?.response?.data?.message || error?.message || 'Unknown error';
                     console.error(`[ConversationStorage] Error creating conversation: ${msg}`);

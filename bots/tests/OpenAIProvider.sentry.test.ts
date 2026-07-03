@@ -6,7 +6,7 @@
  * everything at once.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenAIProvider } from "../ai/providers/OpenAIProvider";
 import type { AIProviderConfig } from "../ai/types";
 
@@ -78,6 +78,10 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
         vi.clearAllMocks();
     });
 
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
     it("streams content chunks incrementally", async () => {
         const config = buildConfig();
         const encoder = new TextEncoder();
@@ -95,7 +99,6 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
 
         vi.stubGlobal("fetch", buildFetchOk(stream));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         // Should have content chunks (Hello, world) + done chunk = 3 total
         expect(chunks.length).toBeGreaterThanOrEqual(3);
@@ -109,7 +112,6 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBeGreaterThan(0);
         expect(chunks[chunks.length - 1]).toMatchObject({ done: true });
@@ -119,7 +121,6 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig({ __sentryParentSpan: null });
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBeGreaterThan(0);
         expect(chunks[chunks.length - 1]).toMatchObject({ done: true });
@@ -143,7 +144,6 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
 
         vi.stubGlobal("fetch", buildFetchOk(stream));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         // Each token appears as its own chunk
         const contentChunks = chunks.filter((c: any) => c.content && !c.done);
@@ -157,7 +157,6 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         const doneChunk = chunks[chunks.length - 1];
         expect(doneChunk.metadata).toBeDefined();
@@ -168,7 +167,6 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBe(1);
         expect(chunks[0]).toMatchObject({ done: true });
@@ -183,7 +181,6 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
             text: vi.fn().mockResolvedValue("Unauthorized"),
         }));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBe(1);
         expect(chunks[0]).toMatchObject({ done: true });

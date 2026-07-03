@@ -912,17 +912,9 @@ CRITICAL RESPONSE RULES:
                             followUpGenCaptured = true;
                         }
                         continue;
-                    } else {
-                        // All follow-up tool calls have empty names — known DeepSeek streaming
-                        // format issue. Clear accumulator to exit the while loop instead of
-                        // spinning on empty-name tool calls that never execute.
-                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.warn(`[AIService] Skipping follow-up: all ${toolCallAccumulator.size} follow-up tool call(s) have empty names`);
-                        }
-                        toolCallAccumulator.clear();
                     }
 
-                    // Accumulate content — always save firstCallContent for fallback
+                // Accumulate content — always save firstCallContent for fallback
                     // even when tool calls arrive in the same chunk, because the
                     // follow-up may produce zero text and we need this as fallback.
                     if (chunk.content) {

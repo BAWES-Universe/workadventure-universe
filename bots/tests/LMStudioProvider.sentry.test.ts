@@ -6,7 +6,7 @@
  * everything at once.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { LMStudioProvider } from "../ai/providers/LMStudioProvider";
 
 // ---- Helper: build config ----
@@ -71,11 +71,14 @@ describe("LMStudioProvider.generateStream – per-chunk streaming", () => {
         vi.clearAllMocks();
     });
 
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
     it("streams content chunks incrementally", async () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         // Should have content chunks + done chunk
         expect(chunks.length).toBeGreaterThanOrEqual(3);
@@ -101,7 +104,6 @@ describe("LMStudioProvider.generateStream – per-chunk streaming", () => {
 
         vi.stubGlobal("fetch", buildFetchOk(stream));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         const contentChunks = chunks.filter((c: any) => c.content && !c.done);
         expect(contentChunks).toHaveLength(3);
@@ -114,7 +116,6 @@ describe("LMStudioProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBeGreaterThan(0);
         expect(chunks[chunks.length - 1]).toMatchObject({ done: true });
@@ -124,7 +125,6 @@ describe("LMStudioProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig({ __sentryParentSpan: null });
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBeGreaterThan(0);
         expect(chunks[chunks.length - 1]).toMatchObject({ done: true });
@@ -134,7 +134,6 @@ describe("LMStudioProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", buildFetchOk(buildSSEStream(SIMPLE_SSE)));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         const doneChunk = chunks[chunks.length - 1];
         expect(doneChunk.metadata).toBeDefined();
@@ -145,7 +144,6 @@ describe("LMStudioProvider.generateStream – per-chunk streaming", () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBe(1);
         expect(chunks[0]).toMatchObject({ done: true });
@@ -160,7 +158,6 @@ describe("LMStudioProvider.generateStream – per-chunk streaming", () => {
             text: vi.fn().mockResolvedValue("Internal Server Error"),
         }));
         const chunks = await drainStream(provider.generateStream("system", "user", config));
-        vi.unstubAllGlobals();
 
         expect(chunks.length).toBe(1);
         expect(chunks[0]).toMatchObject({ done: true });

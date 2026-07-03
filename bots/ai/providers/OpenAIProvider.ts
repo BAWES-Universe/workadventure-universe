@@ -302,11 +302,11 @@ export class OpenAIProvider implements AIProvider {
                             }
 
                             // YIELD directly per-chunk with event-loop yield so the frontend
-                                                        // can render each token before the next arrives
-                                                        if (delta?.content) {
-                                                            yield {content: delta.content, done: false};
-                                                            await new Promise(resolve => setTimeout(resolve, 0));
-                                                        }
+                            // can render each token before the next arrives
+                            if (delta?.content) {
+                                yield {content: delta.content, done: false};
+                                await new Promise(resolve => setTimeout(resolve, 0));
+                            }
 
                             // Handle tool calls
                             if (delta?.tool_calls) {

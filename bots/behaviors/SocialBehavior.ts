@@ -993,6 +993,8 @@ export class SocialBehavior extends BaseBehavior {
                             let regeneratedMessage = '';
                             try {
                                 let emotionBlockStarted = false;
+                                // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+                                let pendingBracket = '';
                                 for await (const chunk of this.aiService.generateBotResponseStream(
                                     botId,
                                     playerId,
@@ -1008,6 +1010,7 @@ export class SocialBehavior extends BaseBehavior {
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                                         regeneratedMessage = '';
                                         emotionBlockStarted = false;
+                                        pendingBracket = '';
                                         continue;
                                     }
 
@@ -1022,6 +1025,7 @@ export class SocialBehavior extends BaseBehavior {
                                         const emInFull = regeneratedMessage.includes('[EM');
                                         if (emInChunk || emInFull) {
                                             emotionBlockStarted = true;
+                                            pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                                             if (emInChunk) {
                                                 const emotionIdx = chunk.content.indexOf('[EM');
                                                 const beforeEmotion = chunk.content.substring(0, emotionIdx);
@@ -1032,7 +1036,22 @@ export class SocialBehavior extends BaseBehavior {
                                             continue;
                                             }
 
-                                            this.bot?.sendStreamMessage(spaceName, responseId, chunk.content, false);
+                                            // If this chunk ends with '[', defer the bracket — it may be the
+                                            // start of [EMOTION_UPDATE] across chunk boundaries.
+                                            if (chunk.content.endsWith('[')) {
+                                                pendingBracket = '[';
+                                                const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                                                if (contentToStream) {
+                                                    this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
+                                                }
+                                                continue;
+                                            }
+
+                                            // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                                            const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                                            pendingBracket = '';
+
+                                            this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                                     }
                                     if (chunk.done) {
                                         break;
