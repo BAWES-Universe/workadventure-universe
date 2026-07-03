@@ -1218,6 +1218,8 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.warn(`[IdleBehavior] sendAreaArrivalMessage: Generated message is empty`);
                         }
+                        // Finalize with empty content to prevent stream leak on frontend
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
                     }
                     break;
                 }
@@ -1378,6 +1380,8 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.warn(`[IdleBehavior] sendPersonArrivalMessage: Generated message is empty`);
                         }
+                        // Finalize with empty content to prevent stream leak on frontend
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
                     }
                     break;
                 }
