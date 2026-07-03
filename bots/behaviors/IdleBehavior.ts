@@ -563,7 +563,7 @@ export class IdleBehavior extends BaseBehavior {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 batchFlush(batchState, sendBatch);
@@ -710,7 +710,7 @@ export class IdleBehavior extends BaseBehavior {
                                             emotionBlockStarted = true;
                                             pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                                             if (emInChunk) {
-                                                const emotionIdx = chunk.content.indexOf('[EM');
+                                                const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                                                 const beforeEmotion = chunk.content.substring(0, emotionIdx);
                                                 if (beforeEmotion.trim()) {
                                                     this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
@@ -936,7 +936,7 @@ export class IdleBehavior extends BaseBehavior {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, beforeEmotion, false);
@@ -1092,7 +1092,7 @@ export class IdleBehavior extends BaseBehavior {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
@@ -1285,7 +1285,7 @@ export class IdleBehavior extends BaseBehavior {
                             emotionBlockStarted = true;
                             pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                             if (emInChunk) {
-                                const emotionIdx = chunk.content.indexOf('[EM');
+                                const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                                 const beforeEmotion = chunk.content.substring(0, emotionIdx);
                                 if (beforeEmotion.trim()) {
                                     this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
@@ -1490,7 +1490,7 @@ export class IdleBehavior extends BaseBehavior {
                             emotionBlockStarted = true;
                             pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                             if (emInChunk) {
-                                const emotionIdx = chunk.content.indexOf('[EM');
+                                const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                                 const beforeEmotion = chunk.content.substring(0, emotionIdx);
                                 if (beforeEmotion.trim()) {
                                     this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
@@ -1686,7 +1686,7 @@ export class IdleBehavior extends BaseBehavior {
                         emotionBlockStarted = true;
                         pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
                         if (emInChunk) {
-                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
                             const beforeEmotion = chunk.content.substring(0, emotionIdx);
                             if (beforeEmotion.trim()) {
                                 this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
