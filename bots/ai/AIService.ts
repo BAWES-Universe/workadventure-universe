@@ -666,7 +666,9 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         
                         // Execute tool calls and continue conversation in a loop for multi-round tool calling
                         let followUpIterations = 0;
-                        const MAX_FOLLOW_UP_ITERATIONS = 5;
+                        const MAX_FOLLOW_UP_ITERATIONS = 30;
+                        // Accumulate all tool results across rounds for synthesis on max iterations
+                        let allToolResults = '';
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -690,6 +692,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
+                            allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
                             const followUpMessage = `User asked: "${message}"
 
 You called tools and received these results:
@@ -877,14 +880,58 @@ CRITICAL RESPONSE RULES:
                         }
                         followUpContentBuffer = '';
                         if (!responseContent) {
-                            // Follow-up produced only tool calls with no text — the
-                            // initial content was already streamed and finalized in
-                            // the pre-tool bubble. Don't replay it; use a generic
-                            // fallback so the user sees something happened.
-                            const fallback = "Let me check on that for you.";
-                            yield {content: fallback, done: false, metadata: lastFollowUpDoneChunk?.metadata};
-                            yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
-                            lastFollowUpDoneChunk = null;
+                            if (followUpIterations >= MAX_FOLLOW_UP_ITERATIONS) {
+                                // Hit max iterations — the LLM was mid-research with real data collected.
+                                // Make one final LLM call WITH all accumulated tool results but NO tools,
+                                // forcing it to synthesize and answer directly instead of chaining more calls.
+                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
+                                }
+                                try {
+                                    const synthesisMsg = `The user asked: "${message}"
+
+You conducted extensive research through multiple steps and gathered this information:
+
+${allToolResults}
+
+Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
+                                    for await (const synthChunk of this.providerRegistry.generateStream(
+                                        providerId,
+                                        systemPrompt,
+                                        synthesisMsg,
+                                        configWithParent,
+                                        [] // No tools — force direct answer
+                                    )) {
+                                        if (synthChunk.content) {
+                                            yield {content: synthChunk.content, done: false, metadata: undefined};
+                                        }
+                                        if (synthChunk.metadata?.tokensUsed) {
+                                            tokensUsed += synthChunk.metadata.tokensUsed;
+                                        }
+                                        if (synthChunk.metadata?.promptTokens) {
+                                            promptTokens += synthChunk.metadata.promptTokens;
+                                        }
+                                        if (synthChunk.metadata?.completionTokens) {
+                                            completionTokens += synthChunk.metadata.completionTokens;
+                                        }
+                                    }
+                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    lastFollowUpDoneChunk = null;
+                                } catch (synthesisError) {
+                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error(`[AIService] ❌ Synthesis call failed:`, synthesisError);
+                                    }
+                                    yield {content: "I've gathered information. One moment while I put it together.", done: false};
+                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    lastFollowUpDoneChunk = null;
+                                }
+                            } else {
+                                // Normal no-content case: follow-up produced only tool calls with no
+                                // text — the initial content was already streamed and finalized.
+                                // Just yield done; content was already delivered per-round.
+                                yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                lastFollowUpDoneChunk = null;
+                            }
                         } else {
                             // Content was streamed per-chunk during each round via immediate yields.
                             // Each round's content was properly separated by chunk.reset signals.
