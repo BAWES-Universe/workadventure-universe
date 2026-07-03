@@ -102,3 +102,28 @@ export function hasEmotionBlock(response: string): boolean {
 export function appendStreamedChunk(fullMessage: string, chunkContent: string): string {
     return fullMessage + chunkContent;
 }
+
+/** Prefix used to detect emotion tags in streaming content */
+const EMOTION_TAG_PREFIX = '[EMOTION_UPDATE';
+
+/**
+ * Checks if a string ends with a prefix of [EMOTION_UPDATE.
+ * Used to detect partial emotion tags at chunk boundaries.
+ * 
+ * Handles all split points (e.g. "[" / "EMOTION_UPDATE...",
+ * "[EMOTIO" / "N_UPDATE...") by matching any contiguous suffix
+ * that exactly matches the start of [EMOTION_UPDATE.
+ * 
+ * Uses endsWith, NOT includes — avoids false positives on text
+ * like [EMAIL], [EMIT], [EMERGENCY], [EMOJI].
+ * 
+ * Returns the length of the matching prefix (1-14), or 0 if no match.
+ */
+export function detectEmotionPrefixAtEnd(content: string): number {
+    for (let i = EMOTION_TAG_PREFIX.length; i >= 1; i--) {
+        if (content.endsWith(EMOTION_TAG_PREFIX.substring(0, i))) {
+            return i;
+        }
+    }
+    return 0;
+}
