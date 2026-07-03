@@ -1124,6 +1124,10 @@ export class IdleBehavior extends BaseBehavior {
         
         this.isSendingGoodbye = true;
         
+        let arrivalResponseId = '';
+        let fullMessage = '';
+        let emotionBlockStarted = false;
+        
         try {
             const context = this.conversationMemory.getConversationContext(botId, followerUserId);
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -1135,9 +1139,7 @@ export class IdleBehavior extends BaseBehavior {
                 console.log(`[IdleBehavior] sendAreaArrivalMessage: Generating AI response...`);
             }
             
-            const arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
-            let fullMessage = '';
-            let emotionBlockStarted = false;
+            arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerUserId,
@@ -1286,6 +1288,10 @@ export class IdleBehavior extends BaseBehavior {
         
         this.isSendingGoodbye = true;
         
+        let arrivalResponseId = '';
+        let fullMessage = '';
+        let emotionBlockStarted = false;
+        
         try {
             const context = this.conversationMemory.getConversationContext(botId, followerUserId);
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
@@ -1297,9 +1303,7 @@ export class IdleBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
-            const arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
-            let fullMessage = '';
-            let emotionBlockStarted = false;
+            arrivalResponseId = `bot-${botId}-player-${followerUserId}-${crypto.randomUUID()}`;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerUserId,

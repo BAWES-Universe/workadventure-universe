@@ -1083,17 +1083,10 @@ CRITICAL RESPONSE RULES:
                 error: true,
             }).catch(() => {});
 
-            // Yield error chunk with any partial content accumulated before the failure
-            // Strip any incomplete [EMOTION_UPDATE] block — the error may have
-            // cut mid-tag, and parseEmotionsFromResponse would leave raw tag text.
-            let safeContent = preToolBuffer || '';
-            const emotionOpenIdx = safeContent.lastIndexOf('[EMOTION_UPDATE]');
-            const emotionCloseIdx = safeContent.lastIndexOf('[/EMOTION_UPDATE]');
-            if (emotionOpenIdx > emotionCloseIdx) {
-                safeContent = safeContent.substring(0, emotionOpenIdx).trimEnd();
-            }
+            // Yield error chunk — content was already streamed word-by-word
+            // so don't replay preToolBuffer (would duplicate on frontend).
             yield {
-                content: safeContent,
+                content: '',
                 done: true,
                 metadata: {
                     tokensUsed: 0,

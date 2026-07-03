@@ -1005,6 +1005,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Set flag to prevent returnToAssignedSpace from being called while sending message
         this.isSendingGoodbye = true;
         
+        let arrivalResponseId = '';
+        let fullMessage = '';
+        let emotionBlockStarted = false;
+        
         try {
             // Get conversation context (use first follower for context, but message goes to all)
             const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
@@ -1015,9 +1019,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Start typing indicator
             this.bot?.startTyping(spaceName);
             
-            const arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-            let fullMessage = '';
-            let emotionBlockStarted = false;
+            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
@@ -1151,6 +1153,10 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Set flag to prevent returnToAssignedSpace from being called while sending message
         this.isSendingGoodbye = true;
         
+        let arrivalResponseId = '';
+        let fullMessage = '';
+        let emotionBlockStarted = false;
+        
         try {
             // Get conversation context (use first follower for context, but message goes to all)
             const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
@@ -1161,9 +1167,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             // Start typing indicator
             this.bot?.startTyping(spaceName);
             
-            const arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
-            let fullMessage = '';
-            let emotionBlockStarted = false;
+            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
