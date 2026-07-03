@@ -94,6 +94,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         incoming: "{userName} entrou na discussão",
         outcoming: "{userName} saiu da discussão",
         youLeft: "Você saiu da discussão",
+        streamError: "Ocorreu um erro",
     },
     form: {
         placeholder: "Digite sua mensagem...",

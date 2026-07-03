@@ -2,6 +2,7 @@
     import type { Readable, Unsubscriber } from "svelte/store";
     import { Marked } from "marked";
     import { onDestroy, onMount, createEventDispatcher } from "svelte";
+    import remend from "remend";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
     import { sanitizeHTML } from "./WA-HTML-Sanitizer";
     export let content: Readable<ChatMessageContent>;
@@ -54,7 +55,8 @@
     let unsubscriber: Unsubscriber | undefined;
     onMount(() => {
         unsubscriber = content.subscribe((value) => {
-            let promiseHtml = getMarked(value.body).then((marked) => marked.parse(value.body));
+            const healed = remend(value.body);
+            let promiseHtml = getMarked(healed).then((marked) => marked.parse(healed));
             promiseHtml
                 .then((result) => {
                     html = result;

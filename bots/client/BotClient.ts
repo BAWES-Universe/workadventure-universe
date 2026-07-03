@@ -1238,6 +1238,54 @@ export class BotClient {
     }
 
     /**
+     * Send a streaming response chunk to the space.
+     * Used by bot behaviors to stream AI-generated text token-by-token
+     * to the frontend instead of waiting for the complete response.
+     */
+    sendStreamMessage(
+        spaceName: string,
+        responseId: string,
+        token: string,
+        isFinal: boolean,
+        finalContent?: string,
+        isError?: boolean,
+        errorMessage?: string,
+        reset?: boolean
+    ): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            return;
+        }
+
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Sending stream chunk to space ${spaceName}: token="${token.substring(0, 30)}", isFinal=${isFinal}`);
+        }
+
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceStreamMessage',
+                            spaceStreamMessage: {
+                                responseId,
+                                token,
+                                isFinal,
+                                finalContent,
+                                isError: isError ?? false,
+                                errorMessage,
+                                reset: reset ?? false,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
      * Start typing indicator in space (shows bot is typing)
      */
     startTyping(spaceName: string): void {

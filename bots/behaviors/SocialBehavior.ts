@@ -10,6 +10,7 @@ import { ConversationMemory, type BotPlayerMemory } from '../memory/Conversation
 import { movementLogger } from '../utils/MovementLogger';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk } from '../ai/EmotionParser';
+import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
 
 export interface SocialBehaviorConfig extends BehaviorConfig {
     type: 'social';
@@ -452,7 +453,14 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             try {
-                this.bot.sendChatMessage(spaceName, greeting);
+                // Stream greeting word-by-word so it appears incrementally,
+                // matching the follow-up streaming UX.
+                const responseId = crypto.randomUUID();
+                const greetingWords = greeting.match(/\S+\s*/g) || [greeting];
+                for (const word of greetingWords) {
+                    this.bot?.sendStreamMessage(spaceName, responseId, word, false);
+                }
+                this.bot?.sendStreamMessage(spaceName, responseId, '', true, greeting);
                 // Record bot's message in memory
                 this.conversationMemory?.addMessage(botId, playerId, greeting, 'bot', spaceName);
             } catch (error) {
@@ -745,8 +753,9 @@ export class SocialBehavior extends BaseBehavior {
             console.error(`[SocialBehavior] Error generating AI response:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
-            // Send fallback message
-            this.bot?.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            // Send fallback message via stream for consistent UX
+            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
+            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
         });
     }
 
@@ -798,7 +807,22 @@ export class SocialBehavior extends BaseBehavior {
         const startTime = Date.now(); // Track response time BEFORE streaming starts
         let tokensUsed = 0;
         let latency = 0;
-        
+        // Batch chunks to ~100ms to avoid flooding the event pipeline
+        let lastBatchTime = 0;
+        const BATCH_MS = 100;
+        // Unique ID for this streamed response — used by frontend to correlate chunks
+        let responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        // Track whether the model has started generating the emotion block at the end
+        // of the response. Once detected, stop streaming chunks to prevent raw partial
+        // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
+        let emotionBlockStarted = false;
+        // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+        let pendingBracket = '';
+        const batchState = createBatchState();
+        const sendBatch = (text: string) => {
+            this.bot?.sendStreamMessage(spaceName, responseId, text, false);
+        };
+
         try {
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
@@ -811,13 +835,87 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    batchFlush(batchState, sendBatch);
+                    // Only finalize the pre-tool bubble if there was actual text
+                    if (fullMessage) {
+                        // Strip any deferred '[' that was not streamed to the frontend
+                        const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalContent);
+                    }
+                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingBracket = '';
+                    if (chunk.toolNames?.length) {
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                            // Finalize the tool-name bubble so it doesn't linger in
+                            // the frontend's streamMessages map.
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
+                        }
+                        // New responseId for follow-up — separate from the tool-name bubble
+                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = ''; // Clear so follow-up content starts fresh
+                    }
+                    continue;
+                }
+
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Once the model starts generating the [EMOTION_UPDATE] block
+                    // (always at the end of every response), stop streaming chunks
+                    // to the frontend — partial tags show as raw text.
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    // Check for [EM both within current chunk AND across chunk boundaries.
+                    // With true per-chunk streaming, the provider may split [EMOTION_UPDATE]
+                    // across two tokens (e.g. "[" then "EMOTION_UPDATE]...").
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                batchFlush(batchState, sendBatch);
+                                this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                            }
+                        }
+                        // else: [EM spans chunk boundary — the "[" was already sent in a
+                        // prior chunk. Don't send anything extra, just stop forwarding.
+                        continue;
+                    }
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+                    
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+                    
+                    // Stream each content chunk directly to the frontend as it arrives
+                    this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                 }
-                
+
                 // Extract token usage and latency from chunk metadata
-                if (chunk.tokensUsed) {
-                    tokensUsed = chunk.tokensUsed;
+                if ((chunk as any).tokensUsed) {
+                    tokensUsed = (chunk as any).tokensUsed;
                 }
                 if (chunk.metadata?.tokensUsed) {
                     tokensUsed = chunk.metadata.tokensUsed;
@@ -827,8 +925,9 @@ export class SocialBehavior extends BaseBehavior {
                 }
                 
                 if (chunk.done) {
+                    batchFlush(batchState, sendBatch);
                     // Stop typing indicator
-                    this.bot.stopTyping(spaceName);
+                    this.bot?.stopTyping(spaceName);
                     
                     // Calculate response time (use latency from metadata if available, otherwise calculate)
                     const responseTime = latency || (Date.now() - startTime);
@@ -851,7 +950,7 @@ export class SocialBehavior extends BaseBehavior {
                             context: 'neutral',
                         });
                     }
-
+                    
                     if (this.responseProcessor && processedMessage.trim()) {
                         // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
                         const tokenUsage = tokensUsed > 0 ? {
@@ -885,7 +984,9 @@ export class SocialBehavior extends BaseBehavior {
                                 console.warn(`[SocialBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
                             }
                             
-                            // BLOCK the duplicate - don't send it
+                            // BLOCK the duplicate - clear frontend buffer and start fresh
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                            
                             // Instead, generate a new response with explicit anti-repetition instruction
                             const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
                             const antiRepetitionPrompt = `${chatInstructions}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
@@ -893,10 +994,13 @@ export class SocialBehavior extends BaseBehavior {
                             // Regenerate with anti-repetition prompt
                             let regeneratedMessage = '';
                             try {
+                                let emotionBlockStarted = false;
+                                // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+                                let pendingBracket = '';
                                 for await (const chunk of this.aiService.generateBotResponseStream(
                                     botId,
                                     playerId,
-                                    playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response - attempt ${regenerationAttempts}]`,
+                                    playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response- attempt ${regenerationAttempts}]`,
                                     antiRepetitionPrompt,
                                     botConfig.aiProviderRef,
                                     spaceName,
@@ -904,13 +1008,59 @@ export class SocialBehavior extends BaseBehavior {
                                     this.bot,
                                     this.adminApiService
                                 )) {
+                                    if (chunk.reset) {
+                                        this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
+                                        regeneratedMessage = '';
+                                        emotionBlockStarted = false;
+                                        pendingBracket = '';
+                                        continue;
+                                    }
+
                                     if (chunk.content) {
                                         regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
+
+                                        if (emotionBlockStarted) {
+                                            continue;
+                                        }
+                                        // Check for [EM both within current chunk AND across chunk boundaries
+                                        const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                                        const emInFull = regeneratedMessage.includes('[EMOTION_UPDATE');
+                                        if (emInChunk || emInFull) {
+                                            emotionBlockStarted = true;
+                                            pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                                            if (emInChunk) {
+                                                const emotionIdx = chunk.content.indexOf('[EM');
+                                                const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                                                if (beforeEmotion.trim()) {
+                                                    this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
+                                                }
+                                            }
+                                            continue;
+                                            }
+
+                                            // If this chunk ends with '[', defer the bracket — it may be the
+                                            // start of [EMOTION_UPDATE] across chunk boundaries.
+                                            if (chunk.content.endsWith('[')) {
+                                                pendingBracket = '[';
+                                                const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                                                if (contentToStream) {
+                                                    this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
+                                                }
+                                                continue;
+                                            }
+
+                                            // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                                            const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                                            pendingBracket = '';
+
+                                            this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                                     }
-                                    if (chunk.done) break;
-                                }
-                                
-                                // Parse emotions from regenerated response
+                                    if (chunk.done) {
+                                        break;
+                                    }
+                                    }
+                            
+                                    // Parse emotions from regenerated response
                                 const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
                                 
                                 // Update emotions from regenerated response
@@ -945,6 +1095,12 @@ export class SocialBehavior extends BaseBehavior {
                                 }
                             } catch (error) {
                                 console.error(`[SocialBehavior] Error regenerating response after duplicate:`, error);
+                                // Clear pending batch timer to prevent stale partial content from leaking
+                                if (batchState.timer) {
+                                    clearTimeout(batchState.timer);
+                                    batchState.timer = null;
+                                }
+                                batchState.buffer = '';
                                 // Don't break, try again if attempts remaining
                                 continue;
                             }
@@ -982,10 +1138,11 @@ export class SocialBehavior extends BaseBehavior {
                     // Metrics are now recorded in ResponseProcessor (combined into one record)
                     // No need to record separately here - prevents duplicate metrics
                     
-                    // Send processed message
+                    // Send processed message via stream final chunk
                     if (processedMessage.trim()) {
-                        this.bot.sendChatMessage(spaceName, processedMessage);
-                        
+                        // Send the final chunk with the complete cleaned message
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, processedMessage);
+
                         // Store in memory
                         if (this.conversationMemory) {
                             this.conversationMemory.addMessage(botId, playerId, processedMessage, 'bot', spaceName);
@@ -1001,6 +1158,9 @@ export class SocialBehavior extends BaseBehavior {
                                 });
                             }
                         }
+                    } else {
+                        // Response contained only emotion/control blocks — finalize with empty content to close bubble
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, '');
                     }
                     break;
                 }
@@ -1008,8 +1168,9 @@ export class SocialBehavior extends BaseBehavior {
         } catch (error) {
             console.error(`[SocialBehavior] AI error:`, error);
             // Stop typing indicator on error
-            this.bot.stopTyping(spaceName);
-            this.bot.sendChatMessage(spaceName, "I'm having trouble processing that. Could you rephrase?");
+            this.bot?.stopTyping(spaceName);
+            // Finalize the stream as error instead of sending a separate chat message
+            this.bot?.sendStreamMessage(spaceName, responseId, '', false, '', true, "I'm having trouble processing that. Could you rephrase?");
         }
     }
 
@@ -1055,17 +1216,23 @@ export class SocialBehavior extends BaseBehavior {
         // Set flag to prevent returnToAssignedSpace from being called while sending message
         this.isSendingGoodbye = true;
         
+        let arrivalResponseId = '';
+        let fullMessage = '';
+        let emotionBlockStarted = false;
+        // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+        let pendingBracket = '';
+
         try {
             // Get conversation context (use first follower for context, but message goes to all)
             const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
-            
+
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
-            
+
             // Start typing indicator
             this.bot?.startTyping(spaceName);
-            
-            let fullMessage = '';
+
+            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
@@ -1077,10 +1244,69 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
+                    }
+                    arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingBracket = '';
+                    if (chunk.toolNames?.length) {
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                        }
+                        arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                    }
+                    continue;
+                }
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                 }
-                
+
                 if (chunk.done) {
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
@@ -1105,15 +1331,18 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
                     }
                     break;
                 }
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating area arrival message:`, error);
+            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1165,17 +1394,23 @@ export class SocialBehavior extends BaseBehavior {
         // Set flag to prevent returnToAssignedSpace from being called while sending message
         this.isSendingGoodbye = true;
         
+        let arrivalResponseId = '';
+        let fullMessage = '';
+        let emotionBlockStarted = false;
+        // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+        let pendingBracket = '';
+
         try {
             // Get conversation context (use first follower for context, but message goes to all)
             const context = this.conversationMemory?.getConversationContext(botId, followerPlayer.userId) || '';
-            
+
             // Generate arrival and goodbye message using AI
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
-            
+
             // Start typing indicator
             this.bot?.startTyping(spaceName);
-            
-            let fullMessage = '';
+
+            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 followerPlayer.userId,
@@ -1187,20 +1422,79 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
+                    }
+                    arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingBracket = '';
+                    if (chunk.toolNames?.length) {
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                        }
+                        arrivalResponseId = `bot-${botId}-player-${followerPlayer.userId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                    }
+                    continue;
+                }
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                 }
-                
+
                 if (chunk.done) {
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
-                    
+
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, followerPlayer.userId, parsedResponse.emotions);
                     }
-                    
+
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
                         const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
@@ -1215,15 +1509,18 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         // Send message to space - all followers in the space will receive it
-                        this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
                         // Store in memory for the first follower (representative of the group)
                         this.conversationMemory?.addMessage(botId, followerPlayer.userId, cleanedMessage.trim(), 'bot', spaceName);
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
                     }
                     break;
                 }
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating person arrival message:`, error);
+            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1252,9 +1549,14 @@ export class SocialBehavior extends BaseBehavior {
         const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
         
         let fullMessage = '';
+        let goodbyeResponseId: string | undefined;
         try {
             const goodbyePrompt = `You've arrived at ${destinationText}. It was nice talking to them. Say goodbye and that you'll see them soon.`;
-            
+
+            goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1266,10 +1568,69 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, finalContent);
+                    }
+                    goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingBracket = '';
+                    if (chunk.toolNames?.length) {
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
+                        }
+                        goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                    }
+                    continue;
+                }
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
                 }
-                
+
                 if (chunk.done) {
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
@@ -1304,15 +1665,18 @@ export class SocialBehavior extends BaseBehavior {
                     
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim());
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, '');
                     }
                     break;
                 }
             }
         } catch (error) {
             console.error(`[SocialBehavior] Error generating goodbye message:`, error);
+            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, '');
         }
         
         // Return to start position after sending message
@@ -1343,18 +1707,23 @@ export class SocialBehavior extends BaseBehavior {
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        
+        let greetingResponseId: string | undefined;
+
         try {
             // Special prompt for leading completion
             const leadingContext = followerUuid === 'group' 
                 ? 'You just guided a group of people to this person. They asked about them. Let them know you\'ve brought the people who wanted to talk with them.'
                 : 'You just guided someone to this person. They asked about them. Let them know you\'ve brought the person who wanted to talk with them.';
-            
+
             const playerMessage = leadingContext;
 
             // Start typing indicator
             this.bot?.startTyping(spaceName);
-            
+
+            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1368,13 +1737,50 @@ export class SocialBehavior extends BaseBehavior {
             )) {
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                 }
-                
+
                 if (chunk.done) {
                     // Parse emotions and clean the message
                     const parsedResponse = parseEmotionsFromResponse(fullMessage);
                     let cleanedMessage = parsedResponse.cleanedResponse;
-                    
+
                     // Update emotions from AI analysis
                     if (parsedResponse.emotions && this.conversationMemory) {
                         this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
@@ -1389,7 +1795,7 @@ export class SocialBehavior extends BaseBehavior {
                             context: 'neutral',
                         });
                     }
-                    
+
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
                         const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.';
@@ -1401,14 +1807,16 @@ export class SocialBehavior extends BaseBehavior {
                         );
                         cleanedMessage = processed.cleaned;
                     }
-                    
+
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
                             // Record bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
                     }
                     // After greeting, send goodbye message and return
                     this.sendGoodbyeAndReturn(spaceName, playerId, botId, 'person').catch(error => {
@@ -1419,7 +1827,7 @@ export class SocialBehavior extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI leading completion greeting error:`, error);
-            // Don't send fallback - just fail silently
+            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);
@@ -1453,13 +1861,14 @@ export class SocialBehavior extends BaseBehavior {
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
         let fullMessage = '';
-        
+        let greetingResponseId: string | undefined;
+
         try {
             // Natural prompt: person approached, respond naturally based on context
             // The AI has access to memory (if they've met before), map context, and can assess the situation
             // It should respond naturally, not ask meta questions
             const hasContext = context.length > 0;
-            
+
             // Debug log: confirm memory context was loaded before greeting generation
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[SocialBehavior] generateAIGreeting: context.length=${context.length}, hasContext=${hasContext}`);
@@ -1467,7 +1876,7 @@ export class SocialBehavior extends BaseBehavior {
                     console.log(`[SocialBehavior] Context preview: ${context.substring(0, 200)}...`);
                 }
             }
-            
+
             const playerMessage = hasContext
                 ? 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
                 : 'Greet this person who just approached you.';
@@ -1475,6 +1884,10 @@ export class SocialBehavior extends BaseBehavior {
             // Start typing indicator
             this.bot?.startTyping(spaceName);
 
+            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingBracket = '';
             for await (const chunk of this.aiService.generateBotResponseStream(
                 botId,
                 playerId,
@@ -1486,8 +1899,68 @@ export class SocialBehavior extends BaseBehavior {
                 this.bot,
                 this.adminApiService
             )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        // Strip any deferred '[' that was not streamed to the frontend
+                        const finalContent = pendingBracket ? fullMessage.slice(0, -1) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, finalContent);
+                    }
+                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    fullMessage = "";
+                    emotionBlockStarted = false;
+                    pendingBracket = '';
+                    if (chunk.toolNames?.length) {
+                        for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                            const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                            greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            fullMessage = toolStatus;
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, toolStatus);
+                        }
+                        greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = "";
+                    }
+                    continue;
+                }
                 if (chunk.content) {
                     fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingBracket = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EM');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    if (chunk.content.endsWith('[')) {
+                        pendingBracket = '[';
+                        const contentToStream = chunk.content.substring(0, chunk.content.length - 1);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred '[' — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingBracket ? pendingBracket + chunk.content : chunk.content;
+                    pendingBracket = '';
+
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                 }
                 
                 if (chunk.done) {
@@ -1525,17 +1998,19 @@ export class SocialBehavior extends BaseBehavior {
                     // Send response
                     if (cleanedMessage.trim()) {
                         if (this.bot && this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                            this.bot.sendChatMessage(spaceName, cleanedMessage.trim());
+                            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
                             // Record bot's message in memory
                             this.conversationMemory?.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
                         }
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
                     }
                     break;
                 }
             }
         } catch (error) {
             console.error(`[SocialBehavior] AI greeting error:`, error);
-            // Don't send fallback - just fail silently
+            this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
         } finally {
             // Stop typing indicator regardless of how the stream ended
             this.bot?.stopTyping(spaceName);

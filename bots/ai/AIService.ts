@@ -622,6 +622,40 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         // Also reset buffer for the follow-up content from any prior rounds
                         followUpContentBuffer = '';
 
+                        // Extract tool names for the status bubble — each name represents a
+                        // separate tool call invocation. The behavior creates one bubble
+                        // per name so multiple calls to the same tool each get their own
+                        // status message instead of a comma-separated summary.
+                        const toolNames = Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean);
+                        
+                        // Skip tool execution if all tool call names are empty — the model
+                        // streamed partial tool data without valid function names (known
+                        // DeepSeek streaming format issue). No tools can execute, so don't
+                        // enter the follow-up loop.
+                        // Note: this guard MUST stay — without it, empty-name tool calls
+                        // cause an infinite follow-up loop that generates a full greeting
+                        // on every iteration, concatenating them into one message.
+                        if (toolNames.length === 0) {
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.warn(`[AIService] Skipping tool execution: all ${toolCallAccumulator.size} tool call(s) have empty names`);
+                            }
+                            toolCallAccumulator.clear();
+                            // Yield the accumulated pre-tool content (already streamed) as final
+                            yield {content: '', done: true, metadata: chunk.metadata};
+                            break;
+                        }
+                        
+                        // Filter to only MCP tools for the display bubble — built-in tools
+                        // (get_people_on_map, get_bot_position, get_areas_on_map, navigate_to)
+                        // execute silently without a 🔍 status bubble. Only tools registered
+                        // in toolServerMap (external MCP servers like PostHog) get the bubble.
+                        const displayToolNames = toolNames.filter(name => toolServerMap.has(name));
+
+                        // Yield reset to clear any streamed pre-tool content from frontend
+                        // before executing tools — the bubble will be finalized by the
+                        // behavior with the accumulated pre-tool text.
+                        yield {content: '', done: false, reset: true, toolNames: displayToolNames};
+
                         // Convert accumulated tool calls to array (arguments should now be complete)
                         pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
                             id: tc.id,
@@ -709,9 +743,11 @@ CRITICAL RESPONSE RULES:
                                 if (resultChunk.content) {
                                     accumulatedContent += resultChunk.content;
                                     followUpContent += resultChunk.content;
-                                    // Buffer follow-up content instead of yielding per-chunk
-                                    // Will be yielded as one chunk after all tool rounds complete
+                                    // Buffer follow-up content for eventual finalization
                                     followUpContentBuffer = appendStreamedChunk(followUpContentBuffer, resultChunk.content);
+                                    // Yield each follow-up content chunk immediately for true streaming.
+                                    // The behavior forwards these to the frontend as they arrive.
+                                    yield {content: resultChunk.content, done: false, metadata: undefined};
                                 }
                                 // Handle tool calls from follow-up response (multi-round tool calling)
                                 if (resultChunk.toolCalls && resultChunk.toolCalls.length > 0) {
@@ -754,17 +790,16 @@ CRITICAL RESPONSE RULES:
                                     // subsequent tool-calling rounds in the while loop.
                                     lastFollowUpDoneChunk = resultChunk;
                                 }
-                                // Content chunks from follow-up streams are accumulated into
-                                // followUpContentBuffer and yielded as one chunk after all
-                                // tool-calling rounds complete (see below).
-                                // Individual yields are intentionally skipped to prevent
-                                // interleaved content from multiple tool-calling rounds
-                                // from appearing as concatenated filler text.
                             }
 
                             // Convert any accumulated tool calls from the follow-up response for the next round
-                            if (toolCallAccumulator.size > 0) {
-                                pendingToolCalls = Array.from(toolCallAccumulator.values()).map(tc => ({
+                            // Filter to only tool calls with valid names — empty-name calls (known DeepSeek
+                            // streaming format issue) would be filtered out by executeToolCalls and just
+                            // waste a follow-up round, generating duplicate content each iteration.
+                            const validFollowUpToolCalls = Array.from(toolCallAccumulator.values())
+                                .filter(tc => tc.name && tc.name.trim() !== '');
+                            if (validFollowUpToolCalls.length > 0) {
+                                pendingToolCalls = validFollowUpToolCalls.map(tc => ({
                                     id: tc.id,
                                     name: tc.name,
                                     arguments: tc.arguments || '{}',
@@ -806,7 +841,17 @@ CRITICAL RESPONSE RULES:
                                 followUpError = false;
                                 // Discard this round's content — tool calls were detected,
                                 // so the text was filler/thinking that shouldn't accumulate.
+                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] Clearing followUpContentBuffer (${followUpContentBuffer.length} chars): toolCallAccumulator.size=${toolCallAccumulator.size}, pendingToolCalls=${pendingToolCalls.length}, preview="${followUpContentBuffer.substring(0, 60)}"`);
+                                }
                                 followUpContentBuffer = '';
+                                const followUpToolNames = pendingToolCalls.map(tc => tc.name).filter(Boolean);
+                                // Filter to only MCP tools for the display bubble
+                                const displayFollowUpToolNames = followUpToolNames.filter(name => toolServerMap.has(name));
+                                // Yield reset so the behavior creates a new bubble
+                                // for the next follow-up round's content, instead of
+                                // concatenating all rounds into the current bubble.
+                                yield {content: '', done: false, reset: true, toolNames: displayFollowUpToolNames};
                                 continue; // Back to while loop to execute new tool calls
                             }
                         }
@@ -820,15 +865,33 @@ CRITICAL RESPONSE RULES:
                             pendingToolCalls = [];
                         }
 
-                        // Yield the buffered follow-up content as a single chunk —
-                        // all tool-calling rounds have completed. This replaces the
-                        // per-round yields that previously caused concatenated text.
-                        // If the buffer is empty (e.g. max iterations with tool calls
-                        // only, no text produced), use a fallback to avoid empty response.
-                        const responseContent = followUpContentBuffer || 'Sorry, I had trouble completing that request. Could you try again?';
+                        // Stream the follow-up content word-by-word so the frontend
+                        // shows tokens appearing incrementally instead of all at once.
+                        // Split on word boundaries to create natural streaming chunks.
+                        // Use only the actual follow-up text — the pre-tool thinking
+                        // text was already streamed and finalized in its own bubble
+                        // before the reset.
+                        const responseContent = followUpContentBuffer || '';
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Follow-up response: contentLength=${responseContent.length}, preview="${responseContent.substring(0, 80)}"`);
+                        }
                         followUpContentBuffer = '';
-                        yield {content: responseContent, done: true, metadata: lastFollowUpDoneChunk?.metadata};
-                        lastFollowUpDoneChunk = null;
+                        if (!responseContent) {
+                            // Follow-up produced only tool calls with no text — the
+                            // initial content was already streamed and finalized in
+                            // the pre-tool bubble. Don't replay it; use a generic
+                            // fallback so the user sees something happened.
+                            const fallback = "Let me check on that for you.";
+                            yield {content: fallback, done: false, metadata: lastFollowUpDoneChunk?.metadata};
+                            yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                            lastFollowUpDoneChunk = null;
+                        } else {
+                            // Content was streamed per-chunk during each round via immediate yields.
+                            // Each round's content was properly separated by chunk.reset signals.
+                            // Just yield done — the behavior finalizes the last bubble.
+                            yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                            lastFollowUpDoneChunk = null;
+                        }
 
                         // Capture $ai_generation for the final tool follow-up LLM call
                         if (followUpContent || followUpError) {
@@ -859,14 +922,23 @@ CRITICAL RESPONSE RULES:
                         continue;
                     }
 
-                    // Accumulate content (only if no tool calls pending)
-                    if (chunk.content && pendingToolCalls.length === 0) {
+                // Accumulate content — always save firstCallContent for fallback
+                    // even when tool calls arrive in the same chunk, because the
+                    // follow-up may produce zero text and we need this as fallback.
+                    if (chunk.content) {
                         accumulatedContent += chunk.content;
+                        // firstCallContent accumulates ALL content from the first LLM
+                        // call regardless of tool call timing — it's a fallback for
+                        // when follow-up produces only tool calls with no text.
                         firstCallContent += chunk.content;
-                        // Buffer content for eventual yield — don't yield individual
-                        // chunks yet because tool calls may arrive in later chunks,
-                        // making this content filler/thinking text that should be discarded.
+                        // Buffer content for eventual finalization — always accumulate even when
+                        // tool calls are arriving so the behavior has the complete pre-tool
+                        // text to finalize into its first bubble before the reset.
                         preToolBuffer = appendStreamedChunk(preToolBuffer, chunk.content);
+                        // Yield each content chunk immediately for true word-by-word streaming.
+                        // The behavior forwards these to the frontend as they arrive, giving
+                        // the same real-time token appearance as ChatGPT/Claude/Copilot.
+                        yield {content: chunk.content, done: false, metadata: undefined};
                     }
 
 // Track metadata from chunk
@@ -890,18 +962,16 @@ CRITICAL RESPONSE RULES:
                         }
                     }
 
-                    // Don't yield individual content chunks — buffer them in preToolBuffer.
-                    // If no tool calls arrive by the time done:true fires, the buffer
-                    // is flushed as the final response. If tool calls do arrive, the
-                    // buffer is discarded (it was the model's filler/thinking text).
-                    // This prevents concatenated filler text from reaching the user.
-                    if (pendingToolCalls.length === 0 && toolCallAccumulator.size === 0) {
-                        if (chunk.done) {
-                            // No tool calls seen — flush buffer as final response
-                            yield {content: preToolBuffer, done: true, metadata: chunk.metadata};
-                            preToolBuffer = '';
-                        }
-                        // Non-done chunks are intentionally not yielded — they're in preToolBuffer
+                    // Yield content chunks for real-time streaming to the behavior.
+                    // These are accumulated into fullMessage and sent to the frontend
+                    // so the user sees the pre-tool thinking text appear word-by-word.
+                    // When tool calls later trigger a reset, the behavior finalizes the
+                    // bubble with this content.
+                    if (chunk.done) {
+                        // No tool calls seen — content was already streamed word-by-word
+                        // via per-chunk yields above. Just yield the done signal.
+                        yield {content: '', done: true, metadata: chunk.metadata};
+                        preToolBuffer = '';
                     }
                 }
                 
@@ -1043,17 +1113,10 @@ CRITICAL RESPONSE RULES:
                 error: true,
             }).catch(() => {});
 
-            // Yield error chunk with any partial content accumulated before the failure
-            // Strip any incomplete [EMOTION_UPDATE] block — the error may have
-            // cut mid-tag, and parseEmotionsFromResponse would leave raw tag text.
-            let safeContent = preToolBuffer || '';
-            const emotionOpenIdx = safeContent.lastIndexOf('[EMOTION_UPDATE]');
-            const emotionCloseIdx = safeContent.lastIndexOf('[/EMOTION_UPDATE]');
-            if (emotionOpenIdx > emotionCloseIdx) {
-                safeContent = safeContent.substring(0, emotionOpenIdx).trimEnd();
-            }
+            // Yield error chunk — content was already streamed word-by-word
+            // so don't replay preToolBuffer (would duplicate on frontend).
             yield {
-                content: safeContent,
+                content: '',
                 done: true,
                 metadata: {
                     tokensUsed: 0,

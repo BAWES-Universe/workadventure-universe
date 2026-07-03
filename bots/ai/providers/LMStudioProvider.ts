@@ -30,228 +30,169 @@ export class LMStudioProvider implements AIProvider {
         config: AIProviderConfig,
         tools?: any[]
     ): AsyncGenerator<AIStreamChunk> {
-        // Collect all chunks first, then yield them after the span ends.
-        // This ensures the gen_ai.chat span is properly created as a child
-        // of the parent gen_ai.agent span and its end() is called before
-        // the parent ends. startSpanManual with identity callback was the
-        // root cause of 0 child spans — it never called end() or scope
-        // cleanup properly across async generator yield points.
-        const chunks: AIStreamChunk[] = [];
-        await Sentry.startSpan(
-            {
-                op: "gen_ai.chat",
-                name: `LLM ${config.model}`,
-                parentSpan: (config as any).__sentryParentSpan,
-                attributes: {
-                    "gen_ai.request.model": config.model,
-                    "gen_ai.system": "lmstudio",
-                    "gen_ai.agent.name": config.name || '',
+        const startTime = Date.now();
+        let tokensUsed = 0;
+        let promptTokens = 0;
+        let completionTokens = 0;
+        let responseModel = '';
+        let streamEnded = false;
+        const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        try {
+            const endpoint = `${config.endpoint}/v1/chat/completions`;
+
+            const controller = new AbortController();
+            timeoutId = setTimeout(() => controller.abort(), timeout);
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
                 },
-            },
-            async (span) => {
-                const startTime = Date.now();
-                let tokensUsed = 0;
-                let promptTokens = 0;
-                let completionTokens = 0;
-                let responseModel = '';
-                let streamEnded = false;
-                const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
-                let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-                let timeoutId: ReturnType<typeof setTimeout> | undefined;
+                body: JSON.stringify({
+                    model: config.model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userMessage },
+                    ],
+                    stream: true,
+                    stream_options: {
+                        include_usage: true,
+                    },
+                    temperature: config.temperature,
+                    max_tokens: config.maxTokens,
+                    ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
+                }),
+                signal: controller.signal,
+            });
 
-                try {
-                    const endpoint = `${config.endpoint}/v1/chat/completions`;
+            clearTimeout(timeoutId); // Connection established — clear connection timeout
 
-                    const controller = new AbortController();
-                    timeoutId = setTimeout(() => controller.abort(), timeout);
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
+            }
 
-                    const response = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            model: config.model,
-                            messages: [
-                                { role: 'system', content: systemPrompt },
-                                { role: 'user', content: userMessage },
-                            ],
-                            stream: true,
-                            stream_options: {
-                                include_usage: true,
-                            },
-                            temperature: config.temperature,
-                            max_tokens: config.maxTokens,
-                            ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
-                        }),
-                        signal: controller.signal,
-                    });
+            // Per-chunk idle timeout
+            timeoutId = setTimeout(() => controller.abort(), timeout);
 
-                    clearTimeout(timeoutId); // Connection established — clear connection timeout
+            reader = response.body?.getReader();
+            if (!reader) {
+                throw new Error('No response body reader available');
+            }
 
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
-                    }
+            const decoder = new TextDecoder();
+            let buffer = '';
 
-                    // Per-chunk idle timeout
-                    timeoutId = setTimeout(() => controller.abort(), timeout);
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
 
-                    reader = response.body?.getReader();
-                    if (!reader) {
-                        throw new Error('No response body reader available');
-                    }
+                // Reset idle timeout on each chunk
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => controller.abort(), timeout);
 
-                    const decoder = new TextDecoder();
-                    let buffer = '';
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
 
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
+                for (const line of lines) {
+                    if (line.trim() === '') continue;
 
-                        // Reset idle timeout on each chunk
-                        clearTimeout(timeoutId);
-                        timeoutId = setTimeout(() => controller.abort(), timeout);
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6).trim();
 
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || '';
+                        if (data === '[DONE]') {
+                            streamEnded = true;
+                            break;
+                        }
 
-                        for (const line of lines) {
-                            if (line.trim() === '') continue;
+                        try {
+                            const json = JSON.parse(data);
+                            const delta = json.choices?.[0]?.delta;
 
-                            if (line.startsWith('data: ')) {
-                                const data = line.slice(6).trim();
-
-                                if (data === '[DONE]') {
-                                    streamEnded = true;
-                                    const latency = Date.now() - startTime;
-
-                                    span.setAttribute("gen_ai.request.model", config.model);
-                                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
-                                    span.setAttribute("gen_ai.system", "lmstudio");
-                                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                                    span.setAttribute("gen_ai.agent.name", config.name || '');
-
-                                    chunks.push({
-                                        content: '',
-                                        done: true,
-                                        metadata: {
-                                            tokensUsed,
-                                            promptTokens,
-                                            completionTokens,
-                                            latency,
-                                            error: false,
-                                        },
-                                    });
-                                    return;
-                                }
-
-                                try {
-                                    const json = JSON.parse(data);
-                                    const delta = json.choices?.[0]?.delta;
-
-                                    // Extract token usage
-                                    if (json.usage) {
-                                        if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
-                                            if (json.usage.prompt_tokens !== undefined) {
-                                                promptTokens = json.usage.prompt_tokens;
-                                            }
-                                            if (json.usage.completion_tokens !== undefined) {
-                                                completionTokens = json.usage.completion_tokens;
-                                            }
-                                            const newTokens = promptTokens + completionTokens;
-                                            if (newTokens > 0) {
-                                                tokensUsed = newTokens;
-                                            }
-                                        } else if (json.usage.total_tokens) {
-                                            tokensUsed = json.usage.total_tokens;
-                                        }
+                            // Extract token usage
+                            if (json.usage) {
+                                if (json.usage.prompt_tokens !== undefined || json.usage.completion_tokens !== undefined) {
+                                    if (json.usage.prompt_tokens !== undefined) {
+                                        promptTokens = json.usage.prompt_tokens;
                                     }
-
-                                    // Track response model
-                                    if (json.model) {
-                                        responseModel = json.model;
+                                    if (json.usage.completion_tokens !== undefined) {
+                                        completionTokens = json.usage.completion_tokens;
                                     }
-
-                                    // Handle tool calls
-                                    if (delta?.tool_calls) {
-                                        const toolCalls = delta.tool_calls.map((tc: any) => {
-                                            const toolCall = {
-                                                id: tc.id,
-                                                name: tc.function?.name || '',
-                                                arguments: tc.function?.arguments || '',
-                                            };
-                                            return toolCall;
-                                        });
-                                        chunks.push({
-                                            content: '',
-                                            done: false,
-                                            toolCalls,
-                                        });
+                                    const newTokens = promptTokens + completionTokens;
+                                    if (newTokens > 0) {
+                                        tokensUsed = newTokens;
                                     }
-
-                                    // Track content chunks
-                                    if (delta?.content) {
-                                        chunks.push({
-                                            content: delta.content,
-                                            done: false,
-                                        });
-                                    }
-                                } catch (e) {
-                                    // Skip invalid JSON lines
+                                } else if (json.usage.total_tokens) {
+                                    tokensUsed = json.usage.total_tokens;
                                 }
                             }
+
+                            // Track response model
+                            if (json.model) {
+                                responseModel = json.model;
+                            }
+
+                            // YIELD directly per-chunk with event-loop yield so the frontend
+                            // can render each token before the next arrives
+                            if (delta?.content) {
+                                yield {content: delta.content, done: false};
+                                await new Promise(resolve => setTimeout(resolve, 0));
+                            }
+
+                            // Handle tool calls
+                            if (delta?.tool_calls) {
+                                const toolCalls = delta.tool_calls.map((tc: any) => {
+                                    const toolCall = {
+                                        id: tc.id,
+                                        name: tc.function?.name || '',
+                                        arguments: tc.function?.arguments || '',
+                                    };
+                                    return toolCall;
+                                });
+                                yield {content: '', done: false, toolCalls};
+                            }
+                        } catch (e) {
+                            // Skip invalid JSON lines
                         }
                     }
-
-                    // Final chunk — without [DONE] means the stream aborted
-                    const latency = Date.now() - startTime;
-
-                    span.setAttribute("gen_ai.request.model", config.model);
-                    span.setAttribute("gen_ai.response.model", responseModel || config.model);
-                    span.setAttribute("gen_ai.system", "lmstudio");
-                    span.setAttribute("gen_ai.usage.input_tokens", promptTokens || 0);
-                    span.setAttribute("gen_ai.usage.output_tokens", completionTokens || 0);
-                    span.setAttribute("gen_ai.agent.name", config.name || '');
-
-                    chunks.push({
-                        content: '',
-                        done: true,
-                        metadata: {
-                            tokensUsed,
-                            promptTokens,
-                            completionTokens,
-                            latency,
-                            error: !streamEnded,
-                        },
-                    });
-
-                } catch (error: any) {
-                    const latency = Date.now() - startTime;
-
-                    span.setAttribute("gen_ai.request.model", config.model);
-                    span.setAttribute("gen_ai.system", "lmstudio");
-                    span.setAttribute("gen_ai.agent.name", config.name || '');
-                    span.setStatus({ code: 2, message: error.message || 'Unknown error' });
-
-                    chunks.push({
-                        content: '',
-                        done: true,
-                        metadata: {
-                            tokensUsed: 0,
-                            latency,
-                            error: true,
-                        },
-                    });
-                } finally {
-                    clearTimeout(timeoutId);
-                    reader?.cancel();
                 }
+
+                if (streamEnded) break;
             }
-        );
-        yield* chunks;
+
+            // Done chunk with metadata
+            const latency = Date.now() - startTime;
+            yield {
+                content: '',
+                done: true,
+                metadata: {
+                    tokensUsed,
+                    promptTokens,
+                    completionTokens,
+                    latency,
+                    error: !streamEnded,
+                },
+            };
+
+        } catch (error: any) {
+            const latency = Date.now() - startTime;
+            yield {
+                content: '',
+                done: true,
+                metadata: {
+                    tokensUsed: 0,
+                    latency,
+                    error: true,
+                },
+            };
+        } finally {
+            clearTimeout(timeoutId);
+            reader?.cancel();
+        }
     }
 
     async generate(

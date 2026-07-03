@@ -230,8 +230,33 @@ export class ConversationStorage {
                 console.log(`[ConversationStorage] Created conversation: botId=${conversation.botId}, userUuid=${conversation.userUuid}, conversationId=${response.data.conversationId}, status=${response.data.status}`);
             }
         } catch (error: any) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[ConversationStorage] Error creating conversation:', error);
+            // P2002 = unique constraint violation — conversation already exists (race condition).
+            // Recovery must run unconditionally (not gated by NODE_ENV) otherwise production
+            // conversations get stuck in a P2002 loop and all subsequent messages are dropped.
+            if (error?.response?.data?.code === 'P2002') {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[ConversationStorage] Conversation already exists for botId=${conversation.botId}, userUuid=${conversation.userUuid} (P2002)`);
+                }
+                // Fetch the existing conversation's ID so subsequent saves
+                // can call updateConversation instead of retrying createConversation
+                try {
+                    const lookup = await axios.get(
+                        `${adminApiUrl}/api/bots/${conversation.botId}/conversations`,
+                        {
+                            headers: { Authorization: `Bearer ${botServiceToken}` },
+                            params: { userId: conversation.userUuid, limit: 1 },
+                        }
+                    );
+                    const existing = lookup.data?.[0];
+                    if (existing?.id) {
+                        this.conversationIds.set(key, existing.id);
+                    }
+                } catch {
+                    // Lookup failure is non-fatal — next message will retry creation
+                }
+            } else if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+                console.error(`[ConversationStorage] Error creating conversation: ${msg}`);
             }
         }
     }
@@ -268,7 +293,8 @@ export class ConversationStorage {
             }
         } catch (error: any) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error(`[ConversationStorage] Error updating conversation ${conversationId}:`, error);
+                const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+                console.error(`[ConversationStorage] Error updating conversation ${conversationId}: ${msg}`);
             }
         }
     }

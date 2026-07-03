@@ -95,27 +95,10 @@ export function hasEmotionBlock(response: string): boolean {
 }
 
 /**
- * Append a streamed content chunk to an accumulated message with smart spacing.
- *
- * Inserts a single space between concatenated chunks unless:
- * - chunkContent is the first piece of content (no previous text)
- * - either side already has whitespace at the join
- * - chunkContent starts with a non-word character (punctuation like "!", "?",
- *   ".", ",", etc.), preventing artifacts like "Hello !" when streaming
- *   splits tokens across chunk boundaries.
+ * Appends content from a stream chunk to the accumulated full message.
+ * LLM tokenizers (OpenAI, DeepSeek, etc.) already include leading spaces
+ * on subsequent tokens (e.g. ["Hello", " world", "!"]). Simply concatenate.
  */
 export function appendStreamedChunk(fullMessage: string, chunkContent: string): string {
-    if (!fullMessage) {
-        return chunkContent;
-    }
-    // Already has whitespace on one side — no extra needed
-    if (fullMessage.endsWith(' ') || fullMessage.endsWith('\n') || chunkContent.startsWith(' ')) {
-        return fullMessage + chunkContent;
-    }
-    // Chunk starts with a non-word character (punctuation or symbol) — no space
-    const firstChar = chunkContent.charAt(0);
-    if (!/\w/u.test(firstChar)) {
-        return fullMessage + chunkContent;
-    }
-    return fullMessage + ' ' + chunkContent;
+    return fullMessage + chunkContent;
 }
