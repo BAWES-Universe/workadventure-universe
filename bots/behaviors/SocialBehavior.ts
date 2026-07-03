@@ -895,10 +895,11 @@ export class SocialBehavior extends BaseBehavior {
                     }
 
                     // Check if this chunk ends with a prefix of [EMOTION_UPDATE — defer it
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                         }
@@ -1039,10 +1040,11 @@ export class SocialBehavior extends BaseBehavior {
                                             }
 
                                             // Check if this chunk ends with a prefix of [EMOTION_UPDATE — defer it
-                                            const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                                            const combinedContent = pendingPrefix + chunk.content;
+                                            const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                                             if (deferredLen > 0) {
-                                                pendingPrefix = chunk.content.slice(-deferredLen);
-                                                const contentToStream = chunk.content.slice(0, -deferredLen);
+                                                pendingPrefix = combinedContent.slice(-deferredLen);
+                                                const contentToStream = combinedContent.slice(0, -deferredLen);
                                                 if (contentToStream) {
                                                     this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                                                 }
@@ -1290,10 +1292,11 @@ export class SocialBehavior extends BaseBehavior {
 
                     // If this chunk ends with '[', defer the bracket — it may be the
                     // start of [EMOTION_UPDATE] across chunk boundaries.
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                         }
@@ -1469,10 +1472,11 @@ export class SocialBehavior extends BaseBehavior {
 
                     // If this chunk ends with '[', defer the bracket — it may be the
                     // start of [EMOTION_UPDATE] across chunk boundaries.
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                         }
@@ -1616,10 +1620,11 @@ export class SocialBehavior extends BaseBehavior {
 
                     // If this chunk ends with '[', defer the bracket — it may be the
                     // start of [EMOTION_UPDATE] across chunk boundaries.
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
                         }
@@ -1759,10 +1764,11 @@ export class SocialBehavior extends BaseBehavior {
                     }
 
                     // Check if this chunk ends with a prefix of [EMOTION_UPDATE — defer it
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                         }
@@ -1944,10 +1950,11 @@ export class SocialBehavior extends BaseBehavior {
                     }
 
                     // Check if this chunk ends with a prefix of [EMOTION_UPDATE — defer it
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                         }

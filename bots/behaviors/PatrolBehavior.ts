@@ -1078,10 +1078,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         continue;
                     }
 
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                         }
@@ -1266,10 +1267,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         continue;
                     }
 
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                         }
@@ -1413,10 +1415,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     }
 
                     // greeting with leading context loop
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                         }
@@ -1594,10 +1597,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         continue;
                     }
 
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                         }
@@ -1852,10 +1856,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         continue;
                     }
 
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                         }
@@ -1996,10 +2001,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                             continue;
                                             }
 
-                                            const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                                            const combinedContent = pendingPrefix + chunk.content;
+                                            const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                                             if (deferredLen > 0) {
-                                                pendingPrefix = chunk.content.slice(-deferredLen);
-                                                const contentToStream = chunk.content.slice(0, -deferredLen);
+                                                pendingPrefix = combinedContent.slice(-deferredLen);
+                                                const contentToStream = combinedContent.slice(0, -deferredLen);
                                                 if (contentToStream) {
                                                     this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                                                 }
@@ -2213,10 +2219,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         continue;
                     }
 
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
                         }

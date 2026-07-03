@@ -581,10 +581,11 @@ export class IdleBehavior extends BaseBehavior {
                      * character boundary (e.g. "[EMOTIO" / "N_UPDATE..."). Defer the
                      * matching suffix until we can confirm or reject the full tag.
                      */
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                         }
@@ -727,10 +728,11 @@ export class IdleBehavior extends BaseBehavior {
                                              * character boundary (e.g. "[EMOTIO" / "N_UPDATE..."). Defer the
                                              * matching suffix until we can confirm or reject the full tag.
                                              */
-                                            const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                                            const combinedContent = pendingPrefix + chunk.content;
+                                            const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                                             if (deferredLen > 0) {
-                                                pendingPrefix = chunk.content.slice(-deferredLen);
-                                                const contentToStream = chunk.content.slice(0, -deferredLen);
+                                                pendingPrefix = combinedContent.slice(-deferredLen);
+                                                const contentToStream = combinedContent.slice(0, -deferredLen);
                                                 if (contentToStream) {
                                                     this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
                                                 }
@@ -958,10 +960,11 @@ export class IdleBehavior extends BaseBehavior {
                      * character boundary (e.g. "[EMOTIO" / "N_UPDATE..."). Defer the
                      * matching suffix until we can confirm or reject the full tag.
                      */
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
                         }
@@ -1118,10 +1121,11 @@ export class IdleBehavior extends BaseBehavior {
                      * character boundary (e.g. "[EMOTIO" / "N_UPDATE..."). Defer the
                      * matching suffix until we can confirm or reject the full tag.
                      */
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                         }
@@ -1316,10 +1320,11 @@ export class IdleBehavior extends BaseBehavior {
                          * character boundary (e.g. "[EMOTIO" / "N_UPDATE..."). Defer the
                          * matching suffix until we can confirm or reject the full tag.
                          */
-                        const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                        const combinedContent = pendingPrefix + chunk.content;
+                        const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                         if (deferredLen > 0) {
-                            pendingPrefix = chunk.content.slice(-deferredLen);
-                            const contentToStream = chunk.content.slice(0, -deferredLen);
+                            pendingPrefix = combinedContent.slice(-deferredLen);
+                            const contentToStream = combinedContent.slice(0, -deferredLen);
                             if (contentToStream) {
                                 this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                             }
@@ -1526,10 +1531,11 @@ export class IdleBehavior extends BaseBehavior {
                          * character boundary (e.g. "[EMOTIO" / "N_UPDATE..."). Defer the
                          * matching suffix until we can confirm or reject the full tag.
                          */
-                        const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                        const combinedContent = pendingPrefix + chunk.content;
+                        const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                         if (deferredLen > 0) {
-                            pendingPrefix = chunk.content.slice(-deferredLen);
-                            const contentToStream = chunk.content.slice(0, -deferredLen);
+                            pendingPrefix = combinedContent.slice(-deferredLen);
+                            const contentToStream = combinedContent.slice(0, -deferredLen);
                             if (contentToStream) {
                                 this.bot?.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
                             }
@@ -1726,10 +1732,11 @@ export class IdleBehavior extends BaseBehavior {
                      * character boundary (e.g. "[EMOTIO" / "N_UPDATE..."). Defer the
                      * matching suffix until we can confirm or reject the full tag.
                      */
-                    const deferredLen = detectEmotionPrefixAtEnd(chunk.content);
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
                     if (deferredLen > 0) {
-                        pendingPrefix = chunk.content.slice(-deferredLen);
-                        const contentToStream = chunk.content.slice(0, -deferredLen);
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
                         if (contentToStream) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, contentToStream, false);
                         }
