@@ -693,12 +693,15 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
                             allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
-                            const followUpMessage = `User asked: "${message}"
+                            const followUpMessage = `Continue from your previous response. The user's original request was: "${message}"
 
-You called tools and received these results:
+You just received these new tool results:
+
 ${toolResultsMessage}
 
 CRITICAL RESPONSE RULES:
+- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said
+- This is the same conversation turn — just keep answering
 - Use ONLY information from tool results above - never invent or make up details
 - **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**
 - Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly
@@ -888,7 +891,7 @@ CRITICAL RESPONSE RULES:
                                     console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
                                 }
                                 // Declare outside try so catch can reference it for telemetry
-                                const synthesisMsg = `The user asked: "${message}"
+                                const synthesisMsg = `Continue from where you left off. The user's original request was: "${message}"
 
 You conducted extensive research through multiple steps and gathered this information:
 
