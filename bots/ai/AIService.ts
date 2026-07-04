@@ -902,6 +902,8 @@ CRITICAL RESPONSE RULES:
 
 ${allToolResults}
 
+The user's original question was: "${message}"
+
 Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
                                 try {
                                     let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
