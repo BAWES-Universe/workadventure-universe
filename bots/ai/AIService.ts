@@ -666,7 +666,9 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         
                         // Execute tool calls and continue conversation in a loop for multi-round tool calling
                         let followUpIterations = 0;
-                        const MAX_FOLLOW_UP_ITERATIONS = 5;
+                        const MAX_FOLLOW_UP_ITERATIONS = 30;
+                        // Accumulate all tool results across rounds for synthesis on max iterations
+                        let allToolResults = '';
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -690,12 +692,16 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
-                            const followUpMessage = `User asked: "${message}"
+                            allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
+                            const followUpMessage = `Continue from your previous response. The user's original request was: "${message}"
 
-You called tools and received these results:
+You just received these new tool results:
+
 ${toolResultsMessage}
 
 CRITICAL RESPONSE RULES:
+- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said
+- This is the same conversation turn — just keep answering
 - Use ONLY information from tool results above - never invent or make up details
 - **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**
 - Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly
@@ -877,14 +883,88 @@ CRITICAL RESPONSE RULES:
                         }
                         followUpContentBuffer = '';
                         if (!responseContent) {
-                            // Follow-up produced only tool calls with no text — the
-                            // initial content was already streamed and finalized in
-                            // the pre-tool bubble. Don't replay it; use a generic
-                            // fallback so the user sees something happened.
-                            const fallback = "Let me check on that for you.";
-                            yield {content: fallback, done: false, metadata: lastFollowUpDoneChunk?.metadata};
-                            yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
-                            lastFollowUpDoneChunk = null;
+                            if (followUpIterations >= MAX_FOLLOW_UP_ITERATIONS) {
+                                // Hit max iterations — the LLM was mid-research with real data collected.
+                                // Make one final LLM call WITH all accumulated tool results but NO tools,
+                                // forcing it to synthesize and answer directly instead of chaining more calls.
+                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
+                                }
+                                // Declare outside try so catch can reference it for telemetry
+                                const synthesisMsg = `Continue from where you left off. The user's original request was: "${message}"
+
+You conducted extensive research through multiple steps and gathered this information:
+
+${allToolResults}
+
+Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
+                                try {
+                                    let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
+                                    // Track synthesis-specific data for telemetry
+                                    let synthContent = '';
+                                    let synthTokens = 0;
+                                    let synthPrompt = 0;
+                                    let synthCompletion = 0;
+                                    const synthStartTime = Date.now();
+                                    for await (const synthChunk of this.providerRegistry.generateStream(
+                                        providerId,
+                                        systemPrompt,
+                                        synthesisMsg,
+                                        configWithParent,
+                                        [] // No tools — force direct answer
+                                    )) {
+                                        if (synthChunk.content) {
+                                            accumulatedContent += synthChunk.content;
+                                            synthContent += synthChunk.content;
+                                            yield {content: synthChunk.content, done: false, metadata: undefined};
+                                        }
+                                        if (synthChunk.metadata?.tokensUsed) {
+                                            tokensUsed += synthChunk.metadata.tokensUsed;
+                                            synthTokens += synthChunk.metadata.tokensUsed;
+                                        }
+                                        if (synthChunk.metadata?.promptTokens) {
+                                            promptTokens += synthChunk.metadata.promptTokens;
+                                            synthPrompt += synthChunk.metadata.promptTokens;
+                                        }
+                                        if (synthChunk.metadata?.completionTokens) {
+                                            completionTokens += synthChunk.metadata.completionTokens;
+                                            synthCompletion += synthChunk.metadata.completionTokens;
+                                        }
+                                        if (synthChunk.metadata) {
+                                            lastSynthMeta = synthChunk.metadata;
+                                        }
+                                    }
+                                    yield {content: '', done: true, metadata: lastSynthMeta};
+                                    lastFollowUpDoneChunk = null;
+                                    // Propagate synthesis data to follow-up telemetry vars so
+                                    // the capture block below fires with correct data
+                                    followUpContent = synthContent;
+                                    followUpInput = synthesisMsg;
+                                    followUpTokens = synthTokens;
+                                    followUpPromptTokens = synthPrompt;
+                                    followUpCompletionTokens = synthCompletion;
+                                    followUpStartTime = synthStartTime;
+                                } catch (synthesisError) {
+                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error(`[AIService] ❌ Synthesis call failed:`, synthesisError);
+                                    }
+                                    yield {content: "I've gathered information. One moment while I put it together.", done: false};
+                                    accumulatedContent += "I've gathered information. One moment while I put it together.";
+                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    lastFollowUpDoneChunk = null;
+                                    // Flag the error so the telemetry capture block fires
+                                    followUpError = true;
+                                    followUpInput = synthesisMsg;
+                                }
+                            } else {
+                                // Normal no-content case: follow-up produced only tool calls with no
+                                // text — the initial content was already streamed and finalized.
+                                // Send a fallback so the user sees something happened instead of
+                                // an empty bubble that gets silently dropped by the frontend.
+                                yield {content: "Let me check on that for you.", done: false, metadata: lastFollowUpDoneChunk?.metadata};
+                                yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                lastFollowUpDoneChunk = null;
+                            }
                         } else {
                             // Content was streamed per-chunk during each round via immediate yields.
                             // Each round's content was properly separated by chunk.reset signals.
