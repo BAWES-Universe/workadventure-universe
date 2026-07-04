@@ -1018,7 +1018,9 @@ export class IdleBehavior extends BaseBehavior {
                     if (cleanedMessage.trim()) {
                         if (this.bot) {
                             this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim());
-                            this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
+                            if (this.conversationMemory) {
+                                this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
+                            }
                             // Store bot's message in conversation storage
                             if (this.conversationStorage) {
                                 const userUuid = this.userIdToUuid.get(playerId);
@@ -1181,7 +1183,9 @@ export class IdleBehavior extends BaseBehavior {
                         if (this.bot) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
+                            if (this.conversationMemory) {
+                                this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
+                            }
                         }
                     } else {
                         this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
@@ -1385,7 +1389,9 @@ export class IdleBehavior extends BaseBehavior {
                             console.log(`[IdleBehavior] sendAreaArrivalMessage: Sending message to space: "${cleanedMessage.trim()}"`);
                         }
                         this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
-                        this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
+                        }
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.warn(`[IdleBehavior] sendAreaArrivalMessage: Generated message is empty`);
@@ -1598,7 +1604,9 @@ export class IdleBehavior extends BaseBehavior {
                             console.log(`[IdleBehavior] sendPersonArrivalMessage: Sending message: "${cleanedMessage.trim()}"`);
                         }
                         this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, cleanedMessage.trim());
-                        this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
+                        if (this.conversationMemory) {
+                            this.conversationMemory.addMessage(botId, followerUserId, cleanedMessage.trim(), 'bot', spaceName);
+                        }
                     } else {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.warn(`[IdleBehavior] sendPersonArrivalMessage: Generated message is empty`);
@@ -1798,7 +1806,9 @@ export class IdleBehavior extends BaseBehavior {
                         if (this.bot) {
                             this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, cleanedMessage.trim());
                             // Store bot's message in memory
-                            this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
+                            if (this.conversationMemory) {
+                                this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
+                            }
                         }
                     } else {
                         this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, '');
