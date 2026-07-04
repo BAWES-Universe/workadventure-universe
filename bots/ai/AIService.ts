@@ -895,6 +895,7 @@ You conducted extensive research through multiple steps and gathered this inform
 ${allToolResults}
 
 Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
+                                    let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
                                     for await (const synthChunk of this.providerRegistry.generateStream(
                                         providerId,
                                         systemPrompt,
@@ -914,8 +915,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         if (synthChunk.metadata?.completionTokens) {
                                             completionTokens += synthChunk.metadata.completionTokens;
                                         }
+                                        if (synthChunk.metadata) {
+                                            lastSynthMeta = synthChunk.metadata;
+                                        }
                                     }
-                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    yield {content: '', done: true, metadata: lastSynthMeta};
                                     lastFollowUpDoneChunk = null;
                                 } catch (synthesisError) {
                                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -928,8 +932,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             } else {
                                 // Normal no-content case: follow-up produced only tool calls with no
                                 // text — the initial content was already streamed and finalized.
-                                // Just yield done; content was already delivered per-round.
-                                yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                // If rounds ran, content was delivered per-round — just yield done.
+                                // If no rounds ran (edge case), yield a minimal honest message.
+                                if (followUpIterations > 0) {
+                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                } else {
+                                    yield {content: 'One moment...', done: false, metadata: lastFollowUpDoneChunk?.metadata};
+                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                }
                                 lastFollowUpDoneChunk = null;
                             }
                         } else {
