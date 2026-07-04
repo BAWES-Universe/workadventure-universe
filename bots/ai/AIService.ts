@@ -956,7 +956,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             } else {
                                 // Normal no-content case: follow-up produced only tool calls with no
                                 // text — the initial content was already streamed and finalized.
-                                // Content was delivered per-round — just yield done.
+                                // Send a fallback so the user sees something happened instead of
+                                // an empty bubble that gets silently dropped by the frontend.
+                                yield {content: "Let me check on that for you.", done: false, metadata: lastFollowUpDoneChunk?.metadata};
                                 yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                                 lastFollowUpDoneChunk = null;
                             }

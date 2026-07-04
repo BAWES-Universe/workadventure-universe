@@ -1254,7 +1254,7 @@ export class IdleBehavior extends BaseBehavior {
         let emotionBlockStarted = false;
         
         try {
-            const context = this.conversationMemory.getConversationContext(botId, followerUserId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerUserId) || '';
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to the ${areaName} area. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
             // Start typing indicator
@@ -1469,7 +1469,7 @@ export class IdleBehavior extends BaseBehavior {
         let emotionBlockStarted = false;
         
         try {
-            const context = this.conversationMemory.getConversationContext(botId, followerUserId);
+            const context = this.conversationMemory?.getConversationContext(botId, followerUserId) || '';
             const arrivalPrompt = `You just guided ${followers.length > 1 ? 'a group of people' : 'someone'} to ${personName}. Let them know you've arrived at the destination, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
