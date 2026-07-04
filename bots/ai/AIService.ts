@@ -901,7 +901,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             console.log(`[AIService] Follow-up response: contentLength=${responseContent.length}, preview="${responseContent.substring(0, 80)}"`);
                         }
                         followUpContentBuffer = '';
-                        if (!responseContent && !hadDroppedFollowUpToolCalls) {
+                        if (!responseContent && !(hadDroppedFollowUpToolCalls && previousRoundContent)) {
                             if (followUpIterations >= MAX_FOLLOW_UP_ITERATIONS) {
                                 // Hit max iterations — the LLM was mid-research with real data collected.
                                 // Make one final LLM call WITH all accumulated tool results but NO tools,
