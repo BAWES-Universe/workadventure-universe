@@ -678,6 +678,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         let previousRoundPromptTokens = 0;
                         let previousRoundCompletionTokens = 0;
                         let previousRoundStartTime = 0;
+                        let previousRoundInput = '';
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -849,12 +850,13 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                 // needed for telemetry restoration after a max-iteration drop.
                                 // Only update saved values when content was produced this round
                                 // — otherwise a tool-call-only round would zero them out.
-                                previousRoundContent = followUpContent || firstCallContent || previousRoundContent;
+                                previousRoundContent = followUpContent || previousRoundContent;
                                 if (followUpContent) {
                                     previousRoundTokens = followUpTokens;
                                     previousRoundPromptTokens = followUpPromptTokens;
                                     previousRoundCompletionTokens = followUpCompletionTokens;
                                     previousRoundStartTime = followUpStartTime;
+                                    previousRoundInput = followUpInput;
                                 }
                                 followUpContent = '';
                                 followUpTokens = 0;
@@ -890,6 +892,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             followUpPromptTokens = previousRoundPromptTokens;
                             followUpCompletionTokens = previousRoundCompletionTokens;
                             followUpStartTime = previousRoundStartTime;
+                            followUpInput = previousRoundInput;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
