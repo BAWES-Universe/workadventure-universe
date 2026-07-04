@@ -904,6 +904,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         [] // No tools — force direct answer
                                     )) {
                                         if (synthChunk.content) {
+                                            accumulatedContent += synthChunk.content;
                                             yield {content: synthChunk.content, done: false, metadata: undefined};
                                         }
                                         if (synthChunk.metadata?.tokensUsed) {
@@ -926,6 +927,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         console.error(`[AIService] ❌ Synthesis call failed:`, synthesisError);
                                     }
                                     yield {content: "I've gathered information. One moment while I put it together.", done: false};
+                                    accumulatedContent += "I've gathered information. One moment while I put it together.";
                                     yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                                     lastFollowUpDoneChunk = null;
                                 }
