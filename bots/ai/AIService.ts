@@ -896,6 +896,12 @@ ${allToolResults}
 
 Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
                                     let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
+                                    // Track synthesis-specific data for telemetry
+                                    let synthContent = '';
+                                    let synthTokens = 0;
+                                    let synthPrompt = 0;
+                                    let synthCompletion = 0;
+                                    const synthStartTime = Date.now();
                                     for await (const synthChunk of this.providerRegistry.generateStream(
                                         providerId,
                                         systemPrompt,
@@ -905,16 +911,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     )) {
                                         if (synthChunk.content) {
                                             accumulatedContent += synthChunk.content;
+                                            synthContent += synthChunk.content;
                                             yield {content: synthChunk.content, done: false, metadata: undefined};
                                         }
                                         if (synthChunk.metadata?.tokensUsed) {
                                             tokensUsed += synthChunk.metadata.tokensUsed;
+                                            synthTokens += synthChunk.metadata.tokensUsed;
                                         }
                                         if (synthChunk.metadata?.promptTokens) {
                                             promptTokens += synthChunk.metadata.promptTokens;
+                                            synthPrompt += synthChunk.metadata.promptTokens;
                                         }
                                         if (synthChunk.metadata?.completionTokens) {
                                             completionTokens += synthChunk.metadata.completionTokens;
+                                            synthCompletion += synthChunk.metadata.completionTokens;
                                         }
                                         if (synthChunk.metadata) {
                                             lastSynthMeta = synthChunk.metadata;
@@ -922,6 +932,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     }
                                     yield {content: '', done: true, metadata: lastSynthMeta};
                                     lastFollowUpDoneChunk = null;
+                                    // Propagate synthesis data to follow-up telemetry vars so
+                                    // the capture block below fires with correct data
+                                    followUpContent = synthContent;
+                                    followUpInput = synthesisMsg;
+                                    followUpTokens = synthTokens;
+                                    followUpPromptTokens = synthPrompt;
+                                    followUpCompletionTokens = synthCompletion;
+                                    followUpStartTime = synthStartTime;
                                 } catch (synthesisError) {
                                     if (process.env.ENABLE_BOT_DEBUG === 'true') {
                                         console.error(`[AIService] ❌ Synthesis call failed:`, synthesisError);
@@ -930,6 +948,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     accumulatedContent += "I've gathered information. One moment while I put it together.";
                                     yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                                     lastFollowUpDoneChunk = null;
+                                    // Flag the error so the telemetry capture block fires
+                                    followUpError = true;
+                                    followUpInput = synthesisMsg;
                                 }
                             } else {
                                 // Normal no-content case: follow-up produced only tool calls with no
