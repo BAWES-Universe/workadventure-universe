@@ -669,6 +669,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         const MAX_FOLLOW_UP_ITERATIONS = 30;
                         // Accumulate all tool results across rounds for synthesis on max iterations
                         let allToolResults = '';
+                        // Track what the model said in the previous round so it doesn't re-state intent
+                        let previousRoundContent = firstCallContent || '';
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -693,23 +695,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
                             allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
-                            const followUpMessage = `Continue from your previous response. The user's original request was: "${message}"
-
-You just received these new tool results:
-
-${toolResultsMessage}
-
-CRITICAL RESPONSE RULES:
-- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said
-- This is the same conversation turn — just keep answering
-- Use ONLY information from tool results above - never invent or make up details
-- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**
-- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly
-- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again
-- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location
-- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location
-- Use actual names from results - never placeholders or made-up text
-- Be conversational and natural - avoid repetitive responses`;
+                            const previousResponseSection = previousRoundContent
+                                ? `You previously responded with:\n"${previousRoundContent}"`
+                                : `You are continuing this conversation after gathering more data.`;
+                            const followUpMessage = `${previousResponseSection}\n\nContinue from there. Do NOT restate your intent — you already said the above.\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location\n- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             const followUpMessageWithNoThink = isQwenModel 
@@ -840,6 +829,9 @@ CRITICAL RESPONSE RULES:
                                 }
                                 // Reset per-round tracking unconditionally for next follow-up iteration
                                 // (must run even when round produces tool calls with zero text content)
+                                // Save what the model already said so the next follow-up prompt can
+                                // reference it and prevent re-stating intent from scratch
+                                previousRoundContent = followUpContent || firstCallContent || previousRoundContent;
                                 followUpContent = '';
                                 followUpTokens = 0;
                                 followUpPromptTokens = 0;
@@ -891,11 +883,11 @@ CRITICAL RESPONSE RULES:
                                     console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
                                 }
                                 // Declare outside try so catch can reference it for telemetry
-                                const synthesisMsg = `Continue from where you left off. The user's original request was: "${message}"
-
-You conducted extensive research through multiple steps and gathered this information:
+                                const synthesisMsg = `You have gathered the following data across multiple research steps:
 
 ${allToolResults}
+
+The user's original question was: "${message}"
 
 Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
                                 try {
