@@ -896,14 +896,14 @@ ${allToolResults}
 The user's original question was: "${message}"
 
 Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
+                                let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
+                                // Track synthesis-specific data for telemetry
+                                let synthContent = '';
+                                let synthTokens = 0;
+                                let synthPrompt = 0;
+                                let synthCompletion = 0;
+                                const synthStartTime = Date.now();
                                 try {
-                                    let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
-                                    // Track synthesis-specific data for telemetry
-                                    let synthContent = '';
-                                    let synthTokens = 0;
-                                    let synthPrompt = 0;
-                                    let synthCompletion = 0;
-                                    const synthStartTime = Date.now();
                                     for await (const synthChunk of this.providerRegistry.generateStream(
                                         providerId,
                                         systemPrompt,
