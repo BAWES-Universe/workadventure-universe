@@ -669,6 +669,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         const MAX_FOLLOW_UP_ITERATIONS = 30;
                         // Accumulate all tool results across rounds for synthesis on max iterations
                         let allToolResults = '';
+                        // Cap accumulated tool results to prevent context overflow in synthesis
+                        const MAX_SYNTHESIS_CHARS = 80000;
                         // Track what the model said in the previous round so it doesn't re-state intent
                         let previousRoundContent = firstCallContent || '';
 
@@ -694,10 +696,18 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
-                            allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
+                            if (allToolResults.length <= MAX_SYNTHESIS_CHARS) {
+                                allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
+                                // Guard: after appending, trim at EXACTLY the cap boundary.
+                                // We stay below the cap so the NEXT iteration's check also
+                                // succeeds — no silent data loss from repeated truncation.
+                                if (allToolResults.length > MAX_SYNTHESIS_CHARS) {
+                                    allToolResults = allToolResults.substring(0, MAX_SYNTHESIS_CHARS);
+                                }
+                            }
                             const previousResponseSection = previousRoundContent
                                 ? `You previously responded with:\n"${previousRoundContent}"`
-                                : `You are continuing this conversation after gathering more data.`;
+                                : `You are continuing after gathering more data. The user's original question was: "${message}"`;
                             const followUpMessage = `${previousResponseSection}\n\nContinue from there. Do NOT restate your intent — you already said the above.\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location\n- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
@@ -890,14 +900,14 @@ ${allToolResults}
 The user's original question was: "${message}"
 
 Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
+                                let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
+                                // Track synthesis-specific data for telemetry
+                                let synthContent = '';
+                                let synthTokens = 0;
+                                let synthPrompt = 0;
+                                let synthCompletion = 0;
+                                const synthStartTime = Date.now();
                                 try {
-                                    let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
-                                    // Track synthesis-specific data for telemetry
-                                    let synthContent = '';
-                                    let synthTokens = 0;
-                                    let synthPrompt = 0;
-                                    let synthCompletion = 0;
-                                    const synthStartTime = Date.now();
                                     for await (const synthChunk of this.providerRegistry.generateStream(
                                         providerId,
                                         systemPrompt,
@@ -926,27 +936,33 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                             lastSynthMeta = synthChunk.metadata;
                                         }
                                     }
-                                    yield {content: '', done: true, metadata: lastSynthMeta};
-                                    lastFollowUpDoneChunk = null;
-                                    // Propagate synthesis data to follow-up telemetry vars so
-                                    // the capture block below fires with correct data
+                                    // Propagate synthesis data to follow-up telemetry vars FIRST
+                                    // (must be set before the done:true yield so consumers that
+                                    // stop on done still see the updated state in the finally block)
                                     followUpContent = synthContent;
                                     followUpInput = synthesisMsg;
                                     followUpTokens = synthTokens;
                                     followUpPromptTokens = synthPrompt;
                                     followUpCompletionTokens = synthCompletion;
                                     followUpStartTime = synthStartTime;
+                                    yield {content: '', done: true, metadata: lastSynthMeta};
+                                    lastFollowUpDoneChunk = null;
                                 } catch (synthesisError) {
-                                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                         console.error(`[AIService] ❌ Synthesis call failed:`, synthesisError);
                                     }
+                                    // Flag the error before yielding done so telemetry captures it
+                                    followUpError = true;
+                                    followUpContent = '';
+                                    followUpTokens = 0;
+                                    followUpPromptTokens = 0;
+                                    followUpCompletionTokens = 0;
+                                    followUpInput = synthesisMsg;
+                                    followUpStartTime = synthStartTime;
                                     yield {content: "I've gathered information. One moment while I put it together.", done: false};
                                     accumulatedContent += "I've gathered information. One moment while I put it together.";
                                     yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                                     lastFollowUpDoneChunk = null;
-                                    // Flag the error so the telemetry capture block fires
-                                    followUpError = true;
-                                    followUpInput = synthesisMsg;
                                 }
                             } else {
                                 // Normal no-content case: follow-up produced only tool calls with no
