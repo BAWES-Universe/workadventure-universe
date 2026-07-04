@@ -865,7 +865,13 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         }
 
                         // If we hit max iterations with still-pending tool calls, log and clear
+                        let hadDroppedFollowUpToolCalls = false;
                         if (toolCallAccumulator.size > 0) {
+                            hadDroppedFollowUpToolCalls = true;
+                            // Restore the follow-up content from the last iteration so
+                            // telemetry captures it (the content was already streamed
+                            // to the frontend and is not a synthesis artifact)
+                            followUpContent = previousRoundContent;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
@@ -884,7 +890,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             console.log(`[AIService] Follow-up response: contentLength=${responseContent.length}, preview="${responseContent.substring(0, 80)}"`);
                         }
                         followUpContentBuffer = '';
-                        if (!responseContent) {
+                        if (!responseContent && !hadDroppedFollowUpToolCalls) {
                             if (followUpIterations >= MAX_FOLLOW_UP_ITERATIONS) {
                                 // Hit max iterations — the LLM was mid-research with real data collected.
                                 // Make one final LLM call WITH all accumulated tool results but NO tools,
