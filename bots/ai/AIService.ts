@@ -695,25 +695,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
                             allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
-                            const followUpMessage = `You previously responded with:
-"${previousRoundContent}"
-
-Continue from there. Do NOT restate your intent — you already said the above.
-You just received these new tool results:
-
-${toolResultsMessage}
-
-CRITICAL RESPONSE RULES:
-- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said
-- This is the same conversation turn — just keep answering
-- Use ONLY information from tool results above - never invent or make up details
-- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**
-- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly
-- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again
-- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location
-- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location
-- Use actual names from results - never placeholders or made-up text
-- Be conversational and natural - avoid repetitive responses`;
+                            const previousResponseSection = previousRoundContent
+                                ? `You previously responded with:\n"${previousRoundContent}"`
+                                : `You are continuing this conversation after gathering more data.`;
+                            const followUpMessage = `${previousResponseSection}\n\nContinue from there. Do NOT restate your intent — you already said the above.\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location\n- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             const followUpMessageWithNoThink = isQwenModel 
