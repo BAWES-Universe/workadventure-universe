@@ -887,14 +887,15 @@ CRITICAL RESPONSE RULES:
                                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
                                 }
-                                try {
-                                    const synthesisMsg = `The user asked: "${message}"
+                                // Declare outside try so catch can reference it for telemetry
+                                const synthesisMsg = `The user asked: "${message}"
 
 You conducted extensive research through multiple steps and gathered this information:
 
 ${allToolResults}
 
 Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
+                                try {
                                     let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
                                     // Track synthesis-specific data for telemetry
                                     let synthContent = '';
