@@ -673,10 +673,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         const MAX_SYNTHESIS_CHARS = 80000;
                         // Track what the model said in the previous round so it doesn't re-state intent
                         let previousRoundContent = firstCallContent || '';
-                        // Track token counts from the previous round for telemetry restoration
+                        // Track token counts and start time from the previous round for telemetry restoration
                         let previousRoundTokens = 0;
                         let previousRoundPromptTokens = 0;
                         let previousRoundCompletionTokens = 0;
+                        let previousRoundStartTime = 0;
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -844,12 +845,17 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                 // Reset per-round tracking unconditionally for next follow-up iteration
                                 // (must run even when round produces tool calls with zero text content)
                                 // Save per-round tracking for the next follow-up prompt,
-                                // and save token counts too in case they're needed for
-                                // telemetry restoration after a max-iteration drop.
+                                // and save token counts and start time too in case they're
+                                // needed for telemetry restoration after a max-iteration drop.
+                                // Only update saved values when content was produced this round
+                                // — otherwise a tool-call-only round would zero them out.
                                 previousRoundContent = followUpContent || firstCallContent || previousRoundContent;
-                                previousRoundTokens = followUpTokens;
-                                previousRoundPromptTokens = followUpPromptTokens;
-                                previousRoundCompletionTokens = followUpCompletionTokens;
+                                if (followUpContent) {
+                                    previousRoundTokens = followUpTokens;
+                                    previousRoundPromptTokens = followUpPromptTokens;
+                                    previousRoundCompletionTokens = followUpCompletionTokens;
+                                    previousRoundStartTime = followUpStartTime;
+                                }
                                 followUpContent = '';
                                 followUpTokens = 0;
                                 followUpPromptTokens = 0;
@@ -883,6 +889,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             followUpTokens = previousRoundTokens;
                             followUpPromptTokens = previousRoundPromptTokens;
                             followUpCompletionTokens = previousRoundCompletionTokens;
+                            followUpStartTime = previousRoundStartTime;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
