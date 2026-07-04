@@ -696,10 +696,14 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
-                            allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
-                            // Stop tracking new results once we hit the synthesis char budget
-                            if (allToolResults.length > MAX_SYNTHESIS_CHARS) {
-                                allToolResults = allToolResults.substring(0, MAX_SYNTHESIS_CHARS);
+                            if (allToolResults.length <= MAX_SYNTHESIS_CHARS) {
+                                allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
+                                // Guard: after appending, trim at EXACTLY the cap boundary.
+                                // We stay below the cap so the NEXT iteration's check also
+                                // succeeds — no silent data loss from repeated truncation.
+                                if (allToolResults.length > MAX_SYNTHESIS_CHARS) {
+                                    allToolResults = allToolResults.substring(0, MAX_SYNTHESIS_CHARS);
+                                }
                             }
                             const previousResponseSection = previousRoundContent
                                 ? `You previously responded with:\n"${previousRoundContent}"`
