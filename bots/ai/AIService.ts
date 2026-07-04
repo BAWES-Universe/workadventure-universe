@@ -669,6 +669,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         const MAX_FOLLOW_UP_ITERATIONS = 30;
                         // Accumulate all tool results across rounds for synthesis on max iterations
                         let allToolResults = '';
+                        // Track what the model said in the previous round so it doesn't re-state intent
+                        let previousRoundContent = firstCallContent || '';
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -693,8 +695,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
                             allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
-                            const followUpMessage = `Continue from your previous response. The user's original request was: "${message}"
+                            const followUpMessage = `You previously responded with:
+"${previousRoundContent}"
 
+Continue from there. Do NOT restate your intent — you already said the above.
 You just received these new tool results:
 
 ${toolResultsMessage}
@@ -840,6 +844,9 @@ CRITICAL RESPONSE RULES:
                                 }
                                 // Reset per-round tracking unconditionally for next follow-up iteration
                                 // (must run even when round produces tool calls with zero text content)
+                                // Save what the model already said so the next follow-up prompt can
+                                // reference it and prevent re-stating intent from scratch
+                                previousRoundContent = followUpContent || firstCallContent || previousRoundContent;
                                 followUpContent = '';
                                 followUpTokens = 0;
                                 followUpPromptTokens = 0;
@@ -891,9 +898,10 @@ CRITICAL RESPONSE RULES:
                                     console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
                                 }
                                 // Declare outside try so catch can reference it for telemetry
-                                const synthesisMsg = `Continue from where you left off. The user's original request was: "${message}"
+                                const synthesisMsg = `You've already shared this with the user so far:
+"${accumulatedContent}"
 
-You conducted extensive research through multiple steps and gathered this information:
+Now synthesize a final answer with all the data you've gathered.
 
 ${allToolResults}
 
