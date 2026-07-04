@@ -949,6 +949,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     }
                                     // Flag the error before yielding done so telemetry captures it
                                     followUpError = true;
+                                    followUpContent = '';
                                     followUpInput = synthesisMsg;
                                     followUpStartTime = synthStartTime;
                                     yield {content: "I've gathered information. One moment while I put it together.", done: false};
