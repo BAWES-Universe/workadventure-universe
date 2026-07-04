@@ -898,10 +898,7 @@ CRITICAL RESPONSE RULES:
                                     console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
                                 }
                                 // Declare outside try so catch can reference it for telemetry
-                                const synthesisMsg = `You've already shared this with the user so far:
-"${accumulatedContent}"
-
-Now synthesize a final answer with all the data you've gathered.
+                                const synthesisMsg = `You have gathered the following data across multiple research steps:
 
 ${allToolResults}
 
