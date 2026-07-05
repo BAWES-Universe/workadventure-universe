@@ -145,11 +145,28 @@
                 authType: modalAuthType,
             };
             if (modalAuthType === "oauth") {
-                // When editing, only update authConfig if the user actually changed fields.
-                // The stored config is encrypted — we can't pre-populate the form, so
-                // save nothing if all fields are empty to preserve existing tokens/creds.
-                const hasOAuthInput = modalOauthAuthorizeUrl.trim() || modalOauthTokenUrl.trim() || modalOauthClientId.trim() || modalOauthClientSecret.trim() || modalOauthScopes.trim();
-                if (hasOAuthInput) {
+                if (editingServer) {
+                    // When editing, only update authConfig if the user actually changed fields.
+                    // The stored config is encrypted — we can't pre-populate the form, so
+                    // save nothing if all fields are empty to preserve existing tokens/creds.
+                    const hasOAuthInput = modalOauthAuthorizeUrl.trim() || modalOauthTokenUrl.trim() || modalOauthClientId.trim() || modalOauthClientSecret.trim() || modalOauthScopes.trim();
+                    if (hasOAuthInput) {
+                        data.authConfig = JSON.stringify({
+                            authorizeUrl: modalOauthAuthorizeUrl.trim(),
+                            tokenUrl: modalOauthTokenUrl.trim(),
+                            clientId: modalOauthClientId.trim(),
+                            clientSecret: modalOauthClientSecret.trim(),
+                            scopes: modalOauthScopes.trim(),
+                        });
+                    }
+                    // If no input, authConfig is omitted → server preserves existing value
+                } else {
+                    // When creating, require OAuth fields
+                    if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim() || !modalOauthClientId.trim()) {
+                        modalError = "Authorize URL, Token URL, and Client ID are required for OAuth authentication";
+                        modalLoading = false;
+                        return;
+                    }
                     data.authConfig = JSON.stringify({
                         authorizeUrl: modalOauthAuthorizeUrl.trim(),
                         tokenUrl: modalOauthTokenUrl.trim(),
@@ -158,7 +175,6 @@
                         scopes: modalOauthScopes.trim(),
                     });
                 }
-                // If no input and editing, authConfig is omitted → server preserves existing value
             } else if (modalAuthType !== "none" && modalAuthConfig.trim()) {
                 data.authConfig = modalAuthConfig.trim();
             }
