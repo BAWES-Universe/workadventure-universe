@@ -666,7 +666,19 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         
                         // Execute tool calls and continue conversation in a loop for multi-round tool calling
                         let followUpIterations = 0;
-                        const MAX_FOLLOW_UP_ITERATIONS = 5;
+                        const MAX_FOLLOW_UP_ITERATIONS = 30;
+                        // Accumulate all tool results across rounds for synthesis on max iterations
+                        let allToolResults = '';
+                        // Cap accumulated tool results to prevent context overflow in synthesis
+                        const MAX_SYNTHESIS_CHARS = 80000;
+                        // Track what the model said in the previous round so it doesn't re-state intent
+                        let previousRoundContent = firstCallContent || '';
+                        // Track token counts and start time from the previous round for telemetry restoration
+                        let previousRoundTokens = 0;
+                        let previousRoundPromptTokens = 0;
+                        let previousRoundCompletionTokens = 0;
+                        let previousRoundStartTime = 0;
+                        let previousRoundInput = '';
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -690,20 +702,19 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                             // Continue conversation with tool results
                             const toolResultsMessage = this.formatToolResults(toolResults);
-                            const followUpMessage = `User asked: "${message}"
-
-You called tools and received these results:
-${toolResultsMessage}
-
-CRITICAL RESPONSE RULES:
-- Use ONLY information from tool results above - never invent or make up details
-- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**
-- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly
-- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again
-- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location
-- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location
-- Use actual names from results - never placeholders or made-up text
-- Be conversational and natural - avoid repetitive responses`;
+                            if (allToolResults.length <= MAX_SYNTHESIS_CHARS) {
+                                allToolResults += `\n\n=== Research Step ${followUpIterations} ===\n${toolResultsMessage}`;
+                                // Guard: after appending, trim at EXACTLY the cap boundary.
+                                // We stay below the cap so the NEXT iteration's check also
+                                // succeeds — no silent data loss from repeated truncation.
+                                if (allToolResults.length > MAX_SYNTHESIS_CHARS) {
+                                    allToolResults = allToolResults.substring(0, MAX_SYNTHESIS_CHARS);
+                                }
+                            }
+                            const previousResponseSection = previousRoundContent
+                                ? `You previously responded with:\n"${previousRoundContent}"`
+                                : `You are continuing after gathering more data. The user's original question was: "${message}"`;
+                            const followUpMessage = `${previousResponseSection}\n\nContinue from there. Do NOT restate your intent — you already said the above.\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location\n- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             const followUpMessageWithNoThink = isQwenModel 
@@ -834,6 +845,19 @@ CRITICAL RESPONSE RULES:
                                 }
                                 // Reset per-round tracking unconditionally for next follow-up iteration
                                 // (must run even when round produces tool calls with zero text content)
+                                // Save per-round tracking for the next follow-up prompt,
+                                // and save token counts and start time too in case they're
+                                // needed for telemetry restoration after a max-iteration drop.
+                                // Only update saved values when content was produced this round
+                                // — otherwise a tool-call-only round would zero them out.
+                                previousRoundContent = followUpContent || previousRoundContent;
+                                if (followUpContent) {
+                                    previousRoundTokens = followUpTokens;
+                                    previousRoundPromptTokens = followUpPromptTokens;
+                                    previousRoundCompletionTokens = followUpCompletionTokens;
+                                    previousRoundStartTime = followUpStartTime;
+                                    previousRoundInput = followUpInput;
+                                }
                                 followUpContent = '';
                                 followUpTokens = 0;
                                 followUpPromptTokens = 0;
@@ -857,7 +881,18 @@ CRITICAL RESPONSE RULES:
                         }
 
                         // If we hit max iterations with still-pending tool calls, log and clear
+                        let hadDroppedFollowUpToolCalls = false;
                         if (toolCallAccumulator.size > 0) {
+                            hadDroppedFollowUpToolCalls = true;
+                            // Restore the follow-up content from the last iteration so
+                            // telemetry captures it (the content was already streamed
+                            // to the frontend and is not a synthesis artifact)
+                            followUpContent = previousRoundContent;
+                            followUpTokens = previousRoundTokens;
+                            followUpPromptTokens = previousRoundPromptTokens;
+                            followUpCompletionTokens = previousRoundCompletionTokens;
+                            followUpStartTime = previousRoundStartTime;
+                            followUpInput = previousRoundInput;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
@@ -876,15 +911,95 @@ CRITICAL RESPONSE RULES:
                             console.log(`[AIService] Follow-up response: contentLength=${responseContent.length}, preview="${responseContent.substring(0, 80)}"`);
                         }
                         followUpContentBuffer = '';
-                        if (!responseContent) {
-                            // Follow-up produced only tool calls with no text — the
-                            // initial content was already streamed and finalized in
-                            // the pre-tool bubble. Don't replay it; use a generic
-                            // fallback so the user sees something happened.
-                            const fallback = "Let me check on that for you.";
-                            yield {content: fallback, done: false, metadata: lastFollowUpDoneChunk?.metadata};
-                            yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
-                            lastFollowUpDoneChunk = null;
+                        if (!responseContent && !(hadDroppedFollowUpToolCalls && previousRoundContent)) {
+                            if (followUpIterations >= MAX_FOLLOW_UP_ITERATIONS) {
+                                // Hit max iterations — the LLM was mid-research with real data collected.
+                                // Make one final LLM call WITH all accumulated tool results but NO tools,
+                                // forcing it to synthesize and answer directly instead of chaining more calls.
+                                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.log(`[AIService] ⚠️ Max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Making synthesis call with ${allToolResults.length} chars of accumulated data.`);
+                                }
+                                // Declare outside try so catch can reference it for telemetry
+                                const synthesisMsg = `You have gathered the following data across multiple research steps:
+
+${allToolResults}
+
+The user's original question was: "${message}"
+
+Based on ALL of the above, provide a complete, coherent answer to the user's question. Synthesize everything into a natural response. Do NOT call any more tools.`;
+                                let lastSynthMeta: { tokensUsed?: number; promptTokens?: number; completionTokens?: number } | undefined;
+                                // Track synthesis-specific data for telemetry
+                                let synthContent = '';
+                                let synthTokens = 0;
+                                let synthPrompt = 0;
+                                let synthCompletion = 0;
+                                const synthStartTime = Date.now();
+                                try {
+                                    for await (const synthChunk of this.providerRegistry.generateStream(
+                                        providerId,
+                                        systemPrompt,
+                                        synthesisMsg,
+                                        configWithParent,
+                                        [] // No tools — force direct answer
+                                    )) {
+                                        if (synthChunk.content) {
+                                            accumulatedContent += synthChunk.content;
+                                            synthContent += synthChunk.content;
+                                            yield {content: synthChunk.content, done: false, metadata: undefined};
+                                        }
+                                        if (synthChunk.metadata?.tokensUsed) {
+                                            tokensUsed += synthChunk.metadata.tokensUsed;
+                                            synthTokens += synthChunk.metadata.tokensUsed;
+                                        }
+                                        if (synthChunk.metadata?.promptTokens) {
+                                            promptTokens += synthChunk.metadata.promptTokens;
+                                            synthPrompt += synthChunk.metadata.promptTokens;
+                                        }
+                                        if (synthChunk.metadata?.completionTokens) {
+                                            completionTokens += synthChunk.metadata.completionTokens;
+                                            synthCompletion += synthChunk.metadata.completionTokens;
+                                        }
+                                        if (synthChunk.metadata) {
+                                            lastSynthMeta = synthChunk.metadata;
+                                        }
+                                    }
+                                    // Propagate synthesis data to follow-up telemetry vars FIRST
+                                    // (must be set before the done:true yield so consumers that
+                                    // stop on done still see the updated state in the finally block)
+                                    followUpContent = synthContent;
+                                    followUpInput = synthesisMsg;
+                                    followUpTokens = synthTokens;
+                                    followUpPromptTokens = synthPrompt;
+                                    followUpCompletionTokens = synthCompletion;
+                                    followUpStartTime = synthStartTime;
+                                    yield {content: '', done: true, metadata: lastSynthMeta};
+                                    lastFollowUpDoneChunk = null;
+                                } catch (synthesisError) {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error(`[AIService] ❌ Synthesis call failed:`, synthesisError);
+                                    }
+                                    // Flag the error before yielding done so telemetry captures it
+                                    followUpError = true;
+                                    followUpContent = '';
+                                    followUpTokens = 0;
+                                    followUpPromptTokens = 0;
+                                    followUpCompletionTokens = 0;
+                                    followUpInput = synthesisMsg;
+                                    followUpStartTime = synthStartTime;
+                                    yield {content: "I've gathered information. One moment while I put it together.", done: false};
+                                    accumulatedContent += "I've gathered information. One moment while I put it together.";
+                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    lastFollowUpDoneChunk = null;
+                                }
+                            } else {
+                                // Normal no-content case: follow-up produced only tool calls with no
+                                // text — the initial content was already streamed and finalized.
+                                // Send a fallback so the user sees something happened instead of
+                                // an empty bubble that gets silently dropped by the frontend.
+                                yield {content: "Let me check on that for you.", done: false, metadata: lastFollowUpDoneChunk?.metadata};
+                                yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                lastFollowUpDoneChunk = null;
+                            }
                         } else {
                             // Content was streamed per-chunk during each round via immediate yields.
                             // Each round's content was properly separated by chunk.reset signals.
@@ -894,7 +1009,9 @@ CRITICAL RESPONSE RULES:
                         }
 
                         // Capture $ai_generation for the final tool follow-up LLM call
-                        if (followUpContent || followUpError) {
+                        // Skip when data was restored from a previous round that already
+                        // had its in-loop telemetry captured — avoids double-counting.
+                        if ((followUpContent || followUpError) && !(hadDroppedFollowUpToolCalls && previousRoundContent)) {
                             captureAiGeneration({
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -917,6 +1034,11 @@ CRITICAL RESPONSE RULES:
                                 playerId: String(playerId),
                                 space: spaceName,
                             });
+                            followUpGenCaptured = true;
+                        } else if (followUpContent || followUpError) {
+                            // Data was restored from a previously-captured round — skip
+                            // post-loop duplicate but still set the flag so the finally
+                            // block doesn't fire a second duplicate.
                             followUpGenCaptured = true;
                         }
                         continue;
