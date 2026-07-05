@@ -1035,6 +1035,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 space: spaceName,
                             });
                             followUpGenCaptured = true;
+                        } else if (followUpContent || followUpError) {
+                            // Data was restored from a previously-captured round — skip
+                            // post-loop duplicate but still set the flag so the finally
+                            // block doesn't fire a second duplicate.
+                            followUpGenCaptured = true;
                         }
                         continue;
                     }
