@@ -72,23 +72,33 @@ export class PersistentMemory extends ConversationMemory {
         }
         
         if (loadedMemory) {
-            // Restore memory to current playerId
+            // Check if existing active memory belongs to a different user (recycled playerId)
             const existing = this.getMemory(botId, playerId);
-            if (existing) {
+            if (existing && existing.userUuid && existing.userUuid !== userUuid) {
+                // PlayerId was recycled — clear stale memory before restoring
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing stale memory for UUID ${existing.userUuid}, restoring for ${userUuid}`);
+                }
+                this.clearMemory(botId, playerId);
+            }
+
+            // Restore memory to current playerId
+            const existingOrNew = this.getMemory(botId, playerId);
+            if (existingOrNew) {
                 // Merge: keep current memory but restore loaded data (preserve any new messages)
                 // Only restore if existing memory is empty or very new
-                const existingIsNew = existing.conversationHistory.length === 0 || 
-                                     (Date.now() - existing.createdAt) < 5000; // Less than 5 seconds old
+                const existingIsNew = existingOrNew.conversationHistory.length === 0 || 
+                                     (Date.now() - existingOrNew.createdAt) < 5000; // Less than 5 seconds old
                 
                 if (existingIsNew) {
                     // Replace with loaded memory (user just joined, no conversation yet)
-                    Object.assign(existing, loadedMemory);
-                    existing.playerId = playerId; // Update to current playerId
+                    Object.assign(existingOrNew, loadedMemory);
+                    existingOrNew.playerId = playerId; // Update to current playerId
                 } else {
                     // Merge: keep conversation history, restore emotions and personal info
-                    existing.emotions = loadedMemory.emotions;
-                    existing.personalInfo = loadedMemory.personalInfo;
-                    existing.relationship = loadedMemory.relationship;
+                    existingOrNew.emotions = loadedMemory.emotions;
+                    existingOrNew.personalInfo = loadedMemory.personalInfo;
+                    existingOrNew.relationship = loadedMemory.relationship;
                     // Keep existing conversationHistory (current session)
                 }
             } else {
@@ -106,11 +116,26 @@ export class PersistentMemory extends ConversationMemory {
                 }
             }
             
-            // Remove from loaded memories (already restored)
-            this.loadedMemoriesByUuid.delete(loadedMemoryKey);
+            // Update cache to point to the active memory so subsequent reconnects
+            // within the same bot session get the latest data, not the startup snapshot
+            const restoredMemory = this.getMemory(botId, playerId);
+            if (restoredMemory) {
+                this.loadedMemoriesByUuid.set(loadedMemoryKey, restoredMemory);
+            }
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[PersistentMemory] ✅ Restored memory for userUuid ${userUuid} to playerId ${playerId}`);
+            }
+        } else {
+            // No pre-loaded memory for this userUuid
+            // Check if there's an existing active memory with a DIFFERENT UUID on this playerId
+            // (recycled playerId scenario without pre-loaded memory)
+            const existing = this.getMemory(botId, playerId);
+            if (existing && existing.userUuid && existing.userUuid !== userUuid) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing memory for UUID ${existing.userUuid}, new user ${userUuid} has no pre-loaded memory`);
+                }
+                this.clearMemory(botId, playerId);
             }
         }
         
