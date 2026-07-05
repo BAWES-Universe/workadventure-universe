@@ -652,8 +652,28 @@ export class BotApiService {
 
     // ─── MCP Server management ──────────────────────────────────────────────────────
 
+    async startOAuth(botId: string, serverId: string, redirectUrl: string): Promise<string> {
+        if (!this.isInitialized()) throw new Error("BotApiService not initialized");
+        const response = await this.authenticatedFetch(
+            `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`
+        );
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || `OAuth start failed: ${response.status}`);
+        }
+        const data = await response.json();
+        return data.authorizeUrl;
+    }
+
+    async completeOAuth(botId: string, serverId: string): Promise<void> {
+        if (!this.isInitialized()) throw new Error("BotApiService not initialized");
+        // The OAuth callback endpoint is called by the provider, not by the frontend.
+        // This method is for frontend state refresh after the popup closes.
+        // Nothing needs to be done here — the provider redirects to the callback endpoint.
+    }
+
     /**
-     * List MCP servers for a bot
+     * Get MCP servers for a bot
      */
     async getBotMcpServers(botId: string): Promise<McpServer[]> {
         try {
@@ -718,7 +738,7 @@ export interface McpServer {
     id: string;
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
     headers?: Record<string, string>;
     enabled: boolean;
@@ -735,7 +755,7 @@ export interface McpServer {
 export interface CreateMcpServerDto {
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
     headers?: Record<string, string>;
 }
