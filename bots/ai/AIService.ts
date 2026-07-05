@@ -673,6 +673,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         const MAX_SYNTHESIS_CHARS = 80000;
                         // Track what the model said in the previous round so it doesn't re-state intent
                         let previousRoundContent = firstCallContent || '';
+                        // Track token counts and start time from the previous round for telemetry restoration
+                        let previousRoundTokens = 0;
+                        let previousRoundPromptTokens = 0;
+                        let previousRoundCompletionTokens = 0;
+                        let previousRoundStartTime = 0;
+                        let previousRoundInput = '';
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -839,9 +845,19 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                 }
                                 // Reset per-round tracking unconditionally for next follow-up iteration
                                 // (must run even when round produces tool calls with zero text content)
-                                // Save what the model already said so the next follow-up prompt can
-                                // reference it and prevent re-stating intent from scratch
-                                previousRoundContent = followUpContent || firstCallContent || previousRoundContent;
+                                // Save per-round tracking for the next follow-up prompt,
+                                // and save token counts and start time too in case they're
+                                // needed for telemetry restoration after a max-iteration drop.
+                                // Only update saved values when content was produced this round
+                                // — otherwise a tool-call-only round would zero them out.
+                                previousRoundContent = followUpContent || previousRoundContent;
+                                if (followUpContent) {
+                                    previousRoundTokens = followUpTokens;
+                                    previousRoundPromptTokens = followUpPromptTokens;
+                                    previousRoundCompletionTokens = followUpCompletionTokens;
+                                    previousRoundStartTime = followUpStartTime;
+                                    previousRoundInput = followUpInput;
+                                }
                                 followUpContent = '';
                                 followUpTokens = 0;
                                 followUpPromptTokens = 0;
@@ -865,7 +881,18 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         }
 
                         // If we hit max iterations with still-pending tool calls, log and clear
+                        let hadDroppedFollowUpToolCalls = false;
                         if (toolCallAccumulator.size > 0) {
+                            hadDroppedFollowUpToolCalls = true;
+                            // Restore the follow-up content from the last iteration so
+                            // telemetry captures it (the content was already streamed
+                            // to the frontend and is not a synthesis artifact)
+                            followUpContent = previousRoundContent;
+                            followUpTokens = previousRoundTokens;
+                            followUpPromptTokens = previousRoundPromptTokens;
+                            followUpCompletionTokens = previousRoundCompletionTokens;
+                            followUpStartTime = previousRoundStartTime;
+                            followUpInput = previousRoundInput;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[AIService] ⚠️ Reached max follow-up iterations (${MAX_FOLLOW_UP_ITERATIONS}). Dropping ${toolCallAccumulator.size} pending tool calls.`);
                             }
@@ -884,7 +911,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             console.log(`[AIService] Follow-up response: contentLength=${responseContent.length}, preview="${responseContent.substring(0, 80)}"`);
                         }
                         followUpContentBuffer = '';
-                        if (!responseContent) {
+                        if (!responseContent && !(hadDroppedFollowUpToolCalls && previousRoundContent)) {
                             if (followUpIterations >= MAX_FOLLOW_UP_ITERATIONS) {
                                 // Hit max iterations — the LLM was mid-research with real data collected.
                                 // Make one final LLM call WITH all accumulated tool results but NO tools,
@@ -982,7 +1009,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         }
 
                         // Capture $ai_generation for the final tool follow-up LLM call
-                        if (followUpContent || followUpError) {
+                        // Skip when data was restored from a previous round that already
+                        // had its in-loop telemetry captured — avoids double-counting.
+                        if ((followUpContent || followUpError) && !(hadDroppedFollowUpToolCalls && previousRoundContent)) {
                             captureAiGeneration({
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
@@ -1005,6 +1034,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 playerId: String(playerId),
                                 space: spaceName,
                             });
+                            followUpGenCaptured = true;
+                        } else if (followUpContent || followUpError) {
+                            // Data was restored from a previously-captured round — skip
+                            // post-loop duplicate but still set the flag so the finally
+                            // block doesn't fire a second duplicate.
                             followUpGenCaptured = true;
                         }
                         continue;
