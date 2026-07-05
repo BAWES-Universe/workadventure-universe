@@ -710,7 +710,7 @@
                         </div>
                     {/if}
 
-                    {#if oauthDiscoveryState === "not_found" || modalOauthAuthorizeUrl || modalOauthTokenUrl}
+                    {#if oauthDiscoveryState !== "discovered" && (oauthDiscoveryState === "not_found" || modalOauthAuthorizeUrl || modalOauthTokenUrl)}
                         <div>
                             <label for="mcp-oauth-token-url" class="block text-sm text-white/80 mb-1.5 font-medium">
                                 Token URL
