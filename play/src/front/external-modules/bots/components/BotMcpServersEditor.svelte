@@ -264,25 +264,42 @@
     let discoveredAuthorizeUrl = '';
     let discoveredTokenUrl = '';
     let discoveredScopes: string[] | null = null;
+    let discoveryAbortController: AbortController | null = null;
 
     $: if (modalAuthType === 'oauth' && modalServerUrl.trim()) {
         discoverOAuthEndpoints();
     } else if (modalAuthType !== 'oauth') {
         oauthDiscoveryState = 'idle';
+        discoveredAuthorizeUrl = '';
+        discoveredTokenUrl = '';
+        discoveredScopes = null;
     }
 
     async function discoverOAuthEndpoints() {
+        // Cancel any in-flight discovery request
+        if (discoveryAbortController) {
+            discoveryAbortController.abort();
+        }
+        discoveryAbortController = new AbortController();
+        const signal = discoveryAbortController.signal;
+
         oauthDiscoveryState = 'discovering';
+        discoveredAuthorizeUrl = '';
+        discoveredTokenUrl = '';
+        discoveredScopes = null;
         try {
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             const res = await fetch(
-                `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(modalServerUrl)}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+                `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(modalServerUrl)}&callbackUrl=${encodeURIComponent(callbackUrl)}`,
+                { signal }
             );
+            if (signal.aborted) return;
             if (!res.ok) {
                 oauthDiscoveryState = 'not_found';
                 return;
             }
             const data = await res.json();
+            if (signal.aborted) return;
             if (data.discovered) {
                 discoveredAuthorizeUrl = data.authorizeUrl || '';
                 discoveredTokenUrl = data.tokenUrl || '';
@@ -294,10 +311,10 @@
                 if (!modalOauthClientId && data.clientId) modalOauthClientId = data.clientId;
                 if (!modalOauthClientSecret && data.clientSecret) modalOauthClientSecret = data.clientSecret;
             } else {
-                oauthDiscoveryState = 'not_found';
+                if (!signal.aborted) oauthDiscoveryState = 'not_found';
             }
-        } catch {
-            oauthDiscoveryState = 'not_found';
+        } catch (e) {
+            if (!signal.aborted) oauthDiscoveryState = 'not_found';
         }
     }
 
