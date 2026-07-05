@@ -274,7 +274,7 @@
         }
         oauthConnecting = true;
         try {
-            const redirectUrl = window.location.href.split("?")[0];
+            const redirectUrl = window.location.href.split("?")[0].split("#")[0];
             const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl);
 
             const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
