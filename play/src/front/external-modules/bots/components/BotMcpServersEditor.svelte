@@ -53,6 +53,11 @@
         // onMount is not needed — the reactive statement above already
         // triggers loadServers when botId is first assigned during init.
         // Keeping both would fire a redundant duplicate API call.
+
+        // If this page was loaded as an OAuth popup (redirect from callback), close it
+        if (window.location.search.includes('oauth=success') || window.location.search.includes('oauth=error')) {
+            window.close();
+        }
     });
 
     // ─── API calls ──────────────────────────────────────────────────────────────────
