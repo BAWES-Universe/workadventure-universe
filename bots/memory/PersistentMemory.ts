@@ -60,7 +60,16 @@ export class PersistentMemory extends ConversationMemory {
         
         // Check if we have a loaded memory for this userUuid (lazy restoration)
         const loadedMemoryKey = `${botId}_${userUuid}`;
-        const loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
+        let loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
+        
+        // If there's an active memory for this userUuid on a different playerId
+        // (e.g., another tab already chatting), use that instead — it's more current
+        if (loadedMemory) {
+            const activeByUuid = this.getMemoryByUserUuid(botId, userUuid);
+            if (activeByUuid && activeByUuid !== this.getMemory(botId, playerId)) {
+                loadedMemory = this.cloneMemory(activeByUuid);
+            }
+        }
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[PersistentMemory] setUserUuid called: botId=${botId}, playerId=${playerId}, userUuid=${userUuid}, isLogged=${isLogged}`);
@@ -72,23 +81,33 @@ export class PersistentMemory extends ConversationMemory {
         }
         
         if (loadedMemory) {
-            // Restore memory to current playerId
+            // Check if existing active memory belongs to a different user (recycled playerId)
             const existing = this.getMemory(botId, playerId);
-            if (existing) {
+            if (existing && existing.userUuid && existing.userUuid !== userUuid) {
+                // PlayerId was recycled — clear stale memory before restoring
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing stale memory for UUID ${existing.userUuid}, restoring for ${userUuid}`);
+                }
+                this.clearMemory(botId, playerId);
+            }
+
+            // Restore memory to current playerId
+            const existingOrNew = this.getMemory(botId, playerId);
+            if (existingOrNew) {
                 // Merge: keep current memory but restore loaded data (preserve any new messages)
                 // Only restore if existing memory is empty or very new
-                const existingIsNew = existing.conversationHistory.length === 0 || 
-                                     (Date.now() - existing.createdAt) < 5000; // Less than 5 seconds old
+                const existingIsNew = existingOrNew.conversationHistory.length === 0 || 
+                                     (Date.now() - existingOrNew.createdAt) < 5000; // Less than 5 seconds old
                 
                 if (existingIsNew) {
                     // Replace with loaded memory (user just joined, no conversation yet)
-                    Object.assign(existing, loadedMemory);
-                    existing.playerId = playerId; // Update to current playerId
+                    Object.assign(existingOrNew, loadedMemory);
+                    existingOrNew.playerId = playerId; // Update to current playerId
                 } else {
                     // Merge: keep conversation history, restore emotions and personal info
-                    existing.emotions = loadedMemory.emotions;
-                    existing.personalInfo = loadedMemory.personalInfo;
-                    existing.relationship = loadedMemory.relationship;
+                    existingOrNew.emotions = loadedMemory.emotions;
+                    existingOrNew.personalInfo = loadedMemory.personalInfo;
+                    existingOrNew.relationship = loadedMemory.relationship;
                     // Keep existing conversationHistory (current session)
                 }
             } else {
@@ -106,11 +125,36 @@ export class PersistentMemory extends ConversationMemory {
                 }
             }
             
-            // Remove from loaded memories (already restored)
-            this.loadedMemoriesByUuid.delete(loadedMemoryKey);
+            // Store a snapshot in cache (not the live reference) so subsequent reconnects
+            // within the same bot session get the latest data, without sharing mutable state
+            const restoredMemory = this.getMemory(botId, playerId);
+            if (restoredMemory) {
+                this.loadedMemoriesByUuid.set(loadedMemoryKey, this.cloneMemory(restoredMemory));
+            }
+            
+            // Keep cache bounded — prevent unbounded growth from orphaned entries
+            // that were evicted from active memories by LRU cleanupOldMemories()
+            if (this.loadedMemoriesByUuid.size > 2000) {
+                const toRemove = Math.ceil(this.loadedMemoriesByUuid.size * 0.1);
+                const keys = Array.from(this.loadedMemoriesByUuid.keys());
+                for (let i = 0; i < toRemove; i++) {
+                    this.loadedMemoriesByUuid.delete(keys[i]);
+                }
+            }
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[PersistentMemory] ✅ Restored memory for userUuid ${userUuid} to playerId ${playerId}`);
+            }
+        } else {
+            // No pre-loaded memory for this userUuid
+            // Check if there's an existing active memory with a DIFFERENT UUID on this playerId
+            // (recycled playerId scenario without pre-loaded memory)
+            const existing = this.getMemory(botId, playerId);
+            if (existing && existing.userUuid && existing.userUuid !== userUuid) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing memory for UUID ${existing.userUuid}, new user ${userUuid} has no pre-loaded memory`);
+                }
+                this.clearMemory(botId, playerId);
             }
         }
         
@@ -463,7 +507,11 @@ export class PersistentMemory extends ConversationMemory {
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 if (storedCount > 0) {
-                    console.log(`[PersistentMemory] Loaded ${storedCount} memories for bot ${botId} (will restore when users join)`);
+                    const keys = Array.from(this.loadedMemoriesByUuid.keys())
+                        .filter(k => k.startsWith(`${botId}_`))
+                        .map(k => k.replace(`${botId}_`, ''));
+                    console.log(`[PersistentMemory] Loaded ${storedCount} memories for bot ${botId}: uuids=[${keys.join(', ')}]`);
+                    console.log(`[PersistentMemory] Will restore when setUserUuid is called with matching UUID`);
                 } else {
                     console.log(`[PersistentMemory] No persisted memories found for bot ${botId} (will create fresh when users interact)`);
                 }
@@ -503,5 +551,32 @@ export class PersistentMemory extends ConversationMemory {
      */
     getMemoryStorage(): MemoryStorage {
         return this.memoryStorage;
+    }
+
+    /**
+     * Deep-clone a BotPlayerMemory for safe cache storage.
+     * Prevents shared mutable state between different playerId sessions.
+     * Handles Map serialization (personalInfo.facts).
+     */
+    private cloneMemory(memory: BotPlayerMemory): BotPlayerMemory {
+        return {
+            ...memory,
+            conversationHistory: memory.conversationHistory.map(msg => ({ ...msg })),
+            emotions: {
+                ...memory.emotions,
+                botEmotion: { ...memory.emotions.botEmotion },
+                personEmotion: { ...memory.emotions.personEmotion },
+                wounds: memory.emotions.wounds.map(w => ({ ...w })),
+            },
+            personalInfo: {
+                ...memory.personalInfo,
+                facts: new Map(memory.personalInfo.facts),
+                preferences: memory.personalInfo.preferences ? [...memory.personalInfo.preferences] : undefined,
+            },
+            relationship: {
+                ...memory.relationship,
+                importantEvents: memory.relationship.importantEvents.map(e => ({ ...e })),
+            },
+        };
     }
 }

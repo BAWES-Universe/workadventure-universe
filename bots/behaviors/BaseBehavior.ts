@@ -968,6 +968,9 @@ export abstract class BaseBehavior {
         // Also track UUID in PersistentMemory for memory/emotion persistence
         if (user.uuid) {
             const botId = this.bot?.getBotId();
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] onSpaceUserJoined: user.id=${user.id}, uuid=${user.uuid}, isLogged=${user.isLogged}, spaceName=${spaceName}, botId=${botId || 'unknown'}`);
+            }
             if (botId && this.setUserUuidInMemory) {
                 this.setUserUuidInMemory(botId, user.id, user.uuid, user.isLogged || false);
             }

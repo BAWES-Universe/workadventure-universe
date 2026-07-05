@@ -175,28 +175,42 @@ export class MemoryStorage {
                 },
             });
 
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[MemoryStorage] Admin API response for bot ${botId}: status=${response.status}, hasMemories=${!!response.data?.memories}, count=${response.data?.memories?.length || 0}`);
+            }
+
             if (response.data && response.data.memories) {
                 const deserialized = response.data.memories.map((mem: any) => this.deserializeMemory(mem));
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[MemoryStorage] Loaded ${deserialized.length} memories for bot ${botId}`);
+                    const uuids = deserialized.map(m => m.userUuid).filter(Boolean);
+                    console.log(`[MemoryStorage] Loaded ${deserialized.length} memories for bot ${botId}: uuids=[${uuids.join(', ')}]`);
                 }
                 return deserialized;
+            }
+
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[MemoryStorage] Admin API returned no memories data for bot ${botId}:`, response.data ? JSON.stringify(response.data).substring(0, 200) : 'empty body');
             }
 
             return [];
         } catch (error: any) {
             if (error.response?.status === 404) {
-                // 404 = No memories yet (though Admin API should return 200 with empty array)
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[MemoryStorage] Admin API returned 404 for bot ${botId} (no memories yet)`);
+                }
                 return [];
             }
             if (error.response?.status === 405) {
-                // 405 = Method not allowed (shouldn't happen now, but keep for backwards compatibility)
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.warn('[MemoryStorage] Admin API returned 405 - endpoint may not be available');
                 }
                 return [];
             }
-            console.error('[MemoryStorage] Error loading memories:', error.message);
+            if (error.response) {
+                console.error(`[MemoryStorage] Admin API error loading memories for bot ${botId}: status=${error.response.status}, body=${JSON.stringify(error.response.data || '')}`);
+            } else {
+                console.error('[MemoryStorage] Error loading memories:', error.message);
+            }
             throw error;
         }
     }
