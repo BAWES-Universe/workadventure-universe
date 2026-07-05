@@ -60,7 +60,16 @@ export class PersistentMemory extends ConversationMemory {
         
         // Check if we have a loaded memory for this userUuid (lazy restoration)
         const loadedMemoryKey = `${botId}_${userUuid}`;
-        const loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
+        let loadedMemory = this.loadedMemoriesByUuid.get(loadedMemoryKey);
+        
+        // If there's an active memory for this userUuid on a different playerId
+        // (e.g., another tab already chatting), use that instead — it's more current
+        if (loadedMemory) {
+            const activeByUuid = this.getMemoryByUserUuid(botId, userUuid);
+            if (activeByUuid && activeByUuid !== this.getMemory(botId, playerId)) {
+                loadedMemory = this.cloneMemory(activeByUuid);
+            }
+        }
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[PersistentMemory] setUserUuid called: botId=${botId}, playerId=${playerId}, userUuid=${userUuid}, isLogged=${isLogged}`);
