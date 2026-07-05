@@ -259,6 +259,48 @@
     let oauthConnecting = false;
     let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
 
+    // OAuth discovery state
+    let oauthDiscoveryState: 'idle' | 'discovering' | 'discovered' | 'not_found' = 'idle';
+    let discoveredAuthorizeUrl = '';
+    let discoveredTokenUrl = '';
+    let discoveredScopes: string[] | null = null;
+
+    $: if (modalAuthType === 'oauth' && modalServerUrl.trim()) {
+        discoverOAuthEndpoints();
+    } else if (modalAuthType !== 'oauth') {
+        oauthDiscoveryState = 'idle';
+    }
+
+    async function discoverOAuthEndpoints() {
+        oauthDiscoveryState = 'discovering';
+        try {
+            const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
+            const res = await fetch(
+                `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(modalServerUrl)}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+            );
+            if (!res.ok) {
+                oauthDiscoveryState = 'not_found';
+                return;
+            }
+            const data = await res.json();
+            if (data.discovered) {
+                discoveredAuthorizeUrl = data.authorizeUrl || '';
+                discoveredTokenUrl = data.tokenUrl || '';
+                discoveredScopes = data.scopesSupported || null;
+                oauthDiscoveryState = 'discovered';
+                // Auto-fill form fields if empty
+                if (!modalOauthAuthorizeUrl && data.authorizeUrl) modalOauthAuthorizeUrl = data.authorizeUrl;
+                if (!modalOauthTokenUrl && data.tokenUrl) modalOauthTokenUrl = data.tokenUrl;
+                if (!modalOauthClientId && data.clientId) modalOauthClientId = data.clientId;
+                if (!modalOauthClientSecret && data.clientSecret) modalOauthClientSecret = data.clientSecret;
+            } else {
+                oauthDiscoveryState = 'not_found';
+            }
+        } catch {
+            oauthDiscoveryState = 'not_found';
+        }
+    }
+
     onDestroy(() => {
         if (oauthPollInterval !== null) {
             clearInterval(oauthPollInterval);
@@ -592,63 +634,122 @@
 
                 <!-- OAuth provider config -->
                 {#if modalAuthType === "oauth"}
-                    <div>
-                        <label for="mcp-oauth-authorize-url" class="block text-sm text-white/80 mb-1.5 font-medium">
-                            Authorize URL
-                        </label>
-                        <input
-                            id="mcp-oauth-authorize-url"
-                            type="text"
-                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="https://app.provider.com/oauth/authorize"
-                            bind:value={modalOauthAuthorizeUrl}
-                        />
-                    </div>
-                    <div>
-                        <label for="mcp-oauth-token-url" class="block text-sm text-white/80 mb-1.5 font-medium">
-                            Token URL
-                        </label>
-                        <input
-                            id="mcp-oauth-token-url"
-                            type="text"
-                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="https://app.provider.com/oauth/token"
-                            bind:value={modalOauthTokenUrl}
-                        />
-                    </div>
-                    <div>
-                        <label for="mcp-oauth-client-id" class="block text-sm text-white/80 mb-1.5 font-medium">
-                            Client ID
-                        </label>
-                        <input
-                            id="mcp-oauth-client-id"
-                            type="text"
-                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="OAuth client ID from the provider"
-                            bind:value={modalOauthClientId}
-                        />
-                    </div>
-                    <div>
-                        <label for="mcp-oauth-client-secret" class="block text-sm text-white/80 mb-1.5 font-medium">
-                            Client Secret
-                        </label>
-                        <input
-                            id="mcp-oauth-client-secret"
-                            type="password"
-                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="OAuth client secret"
-                            bind:value={modalOauthClientSecret}
-                        />
-                    </div>
+                    {#if oauthDiscoveryState === "discovering"}
+                        <div class="flex items-center gap-2 text-sm text-white/60 py-2">
+                            <span class="inline-block w-4 h-4 border-2 border-white/40 border-t-transparent rounded-full animate-spin" />
+                            Discovering OAuth endpoints...
+                        </div>
+                    {/if}
+
+                    {#if oauthDiscoveryState === "discovered"}
+                        <div class="flex items-center gap-2 text-sm text-green-400 py-1">
+                            <span class="inline-block h-2 w-2 rounded-full bg-green-400" />
+                            OAuth endpoints auto-discovered
+                        </div>
+
+                        {#if !discoveredAuthorizeUrl}
+                            <div>
+                                <label for="mcp-oauth-authorize-url" class="block text-sm text-white/80 mb-1.5 font-medium">
+                                    Authorize URL
+                                </label>
+                                <input
+                                    id="mcp-oauth-authorize-url"
+                                    type="text"
+                                    class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="https://app.provider.com/oauth/authorize"
+                                    bind:value={modalOauthAuthorizeUrl}
+                                />
+                            </div>
+                        {/if}
+
+                        {#if !discoveredTokenUrl}
+                            <div>
+                                <label for="mcp-oauth-token-url" class="block text-sm text-white/80 mb-1.5 font-medium">
+                                    Token URL
+                                </label>
+                                <input
+                                    id="mcp-oauth-token-url"
+                                    type="text"
+                                    class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="https://app.provider.com/oauth/token"
+                                    bind:value={modalOauthTokenUrl}
+                                />
+                            </div>
+                        {/if}
+                    {/if}
+
+                    {#if oauthDiscoveryState === "not_found"}
+                        <div>
+                            <label for="mcp-oauth-authorize-url" class="block text-sm text-white/80 mb-1.5 font-medium">
+                                Authorize URL
+                            </label>
+                            <input
+                                id="mcp-oauth-authorize-url"
+                                type="text"
+                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="https://app.provider.com/oauth/authorize"
+                                bind:value={modalOauthAuthorizeUrl}
+                            />
+                        </div>
+                    {/if}
+
+                    {#if oauthDiscoveryState === "not_found" || modalOauthAuthorizeUrl || modalOauthTokenUrl}
+                        <div>
+                            <label for="mcp-oauth-token-url" class="block text-sm text-white/80 mb-1.5 font-medium">
+                                Token URL
+                            </label>
+                            <input
+                                id="mcp-oauth-token-url"
+                                type="text"
+                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="https://app.provider.com/oauth/token"
+                                bind:value={modalOauthTokenUrl}
+                            />
+                        </div>
+                    {/if}
+
+                    {#if oauthDiscoveryState !== "discovered" || !modalOauthClientId}
+                        <div>
+                            <label for="mcp-oauth-client-id" class="block text-sm text-white/80 mb-1.5 font-medium">
+                                Client ID
+                            </label>
+                            <input
+                                id="mcp-oauth-client-id"
+                                type="text"
+                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="OAuth client ID from the provider"
+                                bind:value={modalOauthClientId}
+                            />
+                        </div>
+                    {/if}
+
+                    {#if oauthDiscoveryState !== "discovered" || !modalOauthClientSecret}
+                        <div>
+                            <label for="mcp-oauth-client-secret" class="block text-sm text-white/80 mb-1.5 font-medium">
+                                Client Secret
+                            </label>
+                            <input
+                                id="mcp-oauth-client-secret"
+                                type="password"
+                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="OAuth client secret"
+                                bind:value={modalOauthClientSecret}
+                            />
+                        </div>
+                    {/if}
+
                     <div>
                         <label for="mcp-oauth-scopes" class="block text-sm text-white/80 mb-1.5 font-medium">
                             Scopes
+                            {#if discoveredScopes}
+                                <span class="text-xs text-white/40 ml-2">(supported: {discoveredScopes.join(', ')})</span>
+                            {/if}
                         </label>
                         <input
                             id="mcp-oauth-scopes"
                             type="text"
                             class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="read,write"
+                            placeholder={discoveredScopes ? discoveredScopes.join(', ') : 'read,write'}
                             bind:value={modalOauthScopes}
                         />
                     </div>
