@@ -116,6 +116,13 @@ export class PersistentMemory extends ConversationMemory {
                 }
             }
             
+            // Update cache to point to the active memory so subsequent reconnects
+            // within the same bot session get the latest data, not the startup snapshot
+            const restoredMemory = this.getMemory(botId, playerId);
+            if (restoredMemory) {
+                this.loadedMemoriesByUuid.set(loadedMemoryKey, restoredMemory);
+            }
+            
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[PersistentMemory] ✅ Restored memory for userUuid ${userUuid} to playerId ${playerId}`);
             }
