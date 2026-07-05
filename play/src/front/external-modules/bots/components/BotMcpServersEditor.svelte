@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
     import {
         botApiService,
         type McpServer,
@@ -236,6 +236,14 @@
 
     // OAuth flow state
     let oauthConnecting = false;
+    let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
+
+    onDestroy(() => {
+        if (oauthPollInterval !== null) {
+            clearInterval(oauthPollInterval);
+            oauthPollInterval = null;
+        }
+    });
 
     async function handleOAuthConnect(serverId: string) {
         oauthConnecting = true;
@@ -261,6 +269,7 @@
                     // Cross-origin during redirect
                 }
             }, 500);
+            oauthPollInterval = pollInterval;
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
             oauthConnecting = false;
