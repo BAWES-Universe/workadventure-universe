@@ -463,7 +463,11 @@ export class PersistentMemory extends ConversationMemory {
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 if (storedCount > 0) {
-                    console.log(`[PersistentMemory] Loaded ${storedCount} memories for bot ${botId} (will restore when users join)`);
+                    const keys = Array.from(this.loadedMemoriesByUuid.keys())
+                        .filter(k => k.startsWith(`${botId}_`))
+                        .map(k => k.replace(`${botId}_`, ''));
+                    console.log(`[PersistentMemory] Loaded ${storedCount} memories for bot ${botId}: uuids=[${keys.join(', ')}]`);
+                    console.log(`[PersistentMemory] Will restore when setUserUuid is called with matching UUID`);
                 } else {
                     console.log(`[PersistentMemory] No persisted memories found for bot ${botId} (will create fresh when users interact)`);
                 }
