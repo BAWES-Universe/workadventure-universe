@@ -710,6 +710,17 @@ export class BotApiService {
         });
         return response.json();
     }
+
+    /**
+     * Start OAuth flow for an MCP server. Returns the authorize URL to open.
+     */
+    async startOAuth(botId: string, serverId: string, redirectUrl: string): Promise<string> {
+        const response = await this.fetch(
+            `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`,
+        );
+        const data = await response.json();
+        return data.authorizeUrl;
+    }
 }
 
 // ─── MCP Server Types ─────────────────────────────────────────────────────────────
@@ -718,7 +729,7 @@ export interface McpServer {
     id: string;
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
     headers?: Record<string, string>;
     enabled: boolean;
@@ -735,7 +746,7 @@ export interface McpServer {
 export interface CreateMcpServerDto {
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
     headers?: Record<string, string>;
 }

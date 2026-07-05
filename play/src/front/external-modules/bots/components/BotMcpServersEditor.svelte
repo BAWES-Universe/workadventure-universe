@@ -20,8 +20,13 @@
     let editingServer: McpServer | null = null; // null = add mode, non-null = edit mode
     let modalName = "";
     let modalServerUrl = "";
-    let modalAuthType: "none" | "bearer" | "api-key" = "none";
+    let modalAuthType: "none" | "bearer" | "api-key" | "oauth" = "none";
     let modalAuthConfig = "";
+    let modalOauthAuthorizeUrl = "";
+    let modalOauthTokenUrl = "";
+    let modalOauthClientId = "";
+    let modalOauthClientSecret = "";
+    let modalOauthScopes = "";
     let modalHeaders: { key: string; value: string }[] = [];
     let modalLoading = false;
     let modalError: string | null = null;
@@ -121,7 +126,22 @@
                 serverUrl: modalServerUrl.trim(),
                 authType: modalAuthType,
             };
-            if (modalAuthType !== "none" && modalAuthConfig.trim()) {
+            if (modalAuthType === "oauth") {
+                // When editing, only update authConfig if the user actually changed fields.
+                // The stored config is encrypted — we can't pre-populate the form, so
+                // save nothing if all fields are empty to preserve existing tokens/creds.
+                const hasOAuthInput = modalOauthAuthorizeUrl.trim() || modalOauthTokenUrl.trim() || modalOauthClientId.trim() || modalOauthClientSecret.trim() || modalOauthScopes.trim();
+                if (hasOAuthInput) {
+                    data.authConfig = JSON.stringify({
+                        authorizeUrl: modalOauthAuthorizeUrl.trim(),
+                        tokenUrl: modalOauthTokenUrl.trim(),
+                        clientId: modalOauthClientId.trim(),
+                        clientSecret: modalOauthClientSecret.trim(),
+                        scopes: modalOauthScopes.trim(),
+                    });
+                }
+                // If no input and editing, authConfig is omitted → server preserves existing value
+            } else if (modalAuthType !== "none" && modalAuthConfig.trim()) {
                 data.authConfig = modalAuthConfig.trim();
             }
             if (modalHeaders.length > 0) {
@@ -188,6 +208,39 @@
             testError = { ...testError, [serverId]: "Connection test failed" };
         } finally {
             testingServerId = null;
+        }
+    }
+
+    // OAuth flow state
+    let oauthConnecting = false;
+
+    async function handleOAuthConnect(serverId: string) {
+        oauthConnecting = true;
+        try {
+            const redirectUrl = window.location.href.split("?")[0];
+            const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl);
+
+            const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
+            if (!popup) {
+                console.error("[BotMcpServersEditor] Popup blocked");
+                oauthConnecting = false;
+                return;
+            }
+
+            const pollInterval = setInterval(() => {
+                try {
+                    if (popup.closed) {
+                        clearInterval(pollInterval);
+                        oauthConnecting = false;
+                        void loadServers();
+                    }
+                } catch {
+                    // Cross-origin during redirect
+                }
+            }, 500);
+        } catch (error) {
+            console.error("[BotMcpServersEditor] OAuth error:", error);
+            oauthConnecting = false;
         }
     }
 
@@ -311,6 +364,21 @@
                                     Test
                                 {/if}
                             </button>
+
+                            <!-- OAuth Connect button -->
+                            {#if server.authType === "oauth"}
+                                <button
+                                    class="px-2 py-1 text-xs text-green-400 hover:text-green-300 bg-white/5 hover:bg-green-500/10 rounded transition-colors"
+                                    on:click={() => handleOAuthConnect(server.id)}
+                                    disabled={oauthConnecting}
+                                >
+                                    {#if oauthConnecting}
+                                        Connecting...
+                                    {:else}
+                                        Connect with OAuth
+                                    {/if}
+                                </button>
+                            {/if}
 
                             <!-- Edit button -->
                             <button
@@ -437,11 +505,14 @@
                         <option value="api-key" style="background-color: rgba(0, 0, 0, 0.8); color: white;"
                             >API Key</option
                         >
+                        <option value="oauth" style="background-color: rgba(0, 0, 0, 0.8); color: white;"
+                            >OAuth (Connect)</option
+                        >
                     </select>
                 </div>
 
-                <!-- Auth Value (shown when authType !== 'none') -->
-                {#if modalAuthType !== "none"}
+                <!-- Auth Value (shown when authType !== 'none' and !== 'oauth') -->
+                {#if modalAuthType !== "none" && modalAuthType !== "oauth"}
                     <div>
                         <label for="mcp-auth-config" class="block text-sm text-white/80 mb-1.5 font-medium">
                             {modalAuthType === "bearer" ? "Bearer Token" : "API Key Value"}
@@ -450,14 +521,73 @@
                             id="mcp-auth-config"
                             type="password"
                             class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder={modalAuthType === "bearer" ? "Enter bearer token" : "Enter API key"}
                             bind:value={modalAuthConfig}
-                            placeholder={editingServer ? "Leave empty to keep existing" : modalAuthType === "bearer" ? "Enter bearer token..." : "Enter API key..."}
                         />
-                        {#if editingServer}
-                            <p class="text-xs text-white/40 mt-1">
-                                Token hidden for security. Leave blank to keep the current value.
-                            </p>
-                        {/if}
+                    </div>
+                {/if}
+
+                <!-- OAuth provider config -->
+                {#if modalAuthType === "oauth"}
+                    <div>
+                        <label for="mcp-oauth-authorize-url" class="block text-sm text-white/80 mb-1.5 font-medium">
+                            Authorize URL
+                        </label>
+                        <input
+                            id="mcp-oauth-authorize-url"
+                            type="text"
+                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="https://app.provider.com/oauth/authorize"
+                            bind:value={modalOauthAuthorizeUrl}
+                        />
+                    </div>
+                    <div>
+                        <label for="mcp-oauth-token-url" class="block text-sm text-white/80 mb-1.5 font-medium">
+                            Token URL
+                        </label>
+                        <input
+                            id="mcp-oauth-token-url"
+                            type="text"
+                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="https://app.provider.com/oauth/token"
+                            bind:value={modalOauthTokenUrl}
+                        />
+                    </div>
+                    <div>
+                        <label for="mcp-oauth-client-id" class="block text-sm text-white/80 mb-1.5 font-medium">
+                            Client ID
+                        </label>
+                        <input
+                            id="mcp-oauth-client-id"
+                            type="text"
+                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="OAuth client ID from the provider"
+                            bind:value={modalOauthClientId}
+                        />
+                    </div>
+                    <div>
+                        <label for="mcp-oauth-client-secret" class="block text-sm text-white/80 mb-1.5 font-medium">
+                            Client Secret
+                        </label>
+                        <input
+                            id="mcp-oauth-client-secret"
+                            type="password"
+                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="OAuth client secret"
+                            bind:value={modalOauthClientSecret}
+                        />
+                    </div>
+                    <div>
+                        <label for="mcp-oauth-scopes" class="block text-sm text-white/80 mb-1.5 font-medium">
+                            Scopes
+                        </label>
+                        <input
+                            id="mcp-oauth-scopes"
+                            type="text"
+                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="read,write"
+                            bind:value={modalOauthScopes}
+                        />
                     </div>
                 {/if}
 
