@@ -46,7 +46,8 @@ Create a `.env` file or set the following environment variables:
 - `ADMIN_SOCKETS_TOKEN`: JWT secret for WorkAdventure Admin WebSocket authentication
 - `ADMIN_API_TOKEN`: Token for WorkAdventure Admin API `/rooms` endpoint
 - `DISCORD_BOT_TOKEN`: Discord bot token from Developer Portal
-- `DISCORD_EVENT_CHANNEL_ID`: Discord channel ID for real-time events
+- `DISCORD_EVENT_CHANNEL_ID`: Discord channel ID for human real-time join/leave events
+- `DISCORD_BOT_EVENT_CHANNEL_ID`: Discord channel ID for bot join/leave events
 - `DISCORD_STATS_CHANNEL_ID`: Discord channel ID for periodic stats
 
 **Optional:**
@@ -107,16 +108,24 @@ npm run dev
 
 ## Discord Channel Setup
 
-### Event Channel
+### Event Channels
 
-This channel receives real-time notifications:
-- ✅ User Connected (green embed)
-- ❌ User Disconnected (red embed)
+The service uses **two** event channels to keep bot activity separate from human activity:
+
+**Human Event Channel** (`DISCORD_EVENT_CHANNEL_ID`)
+Receives real-time notifications for human users:
+- 🟢 User spawned (green)
+- 🔴 User left (red)
+
+**Bot Event Channel** (`DISCORD_BOT_EVENT_CHANNEL_ID`)
+Receives real-time notifications for bot users (UUID starts with `bot-`):
+- 🟢 Bot spawned
+- 🔴 Bot left
 
 Each message includes:
-- User name
+- User/bot name
 - Room (formatted as universe/world/room)
-- User UUID
+- User UUID (shows "member" if UUID is an email address)
 
 ### Stats Channel
 

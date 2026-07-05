@@ -4,22 +4,32 @@ import type { DiscordMessagePayload } from "../types";
 export class DiscordBot {
     private botToken: string;
     private eventChannelId: string;
+    private botEventChannelId: string;
     private statsChannelId: string;
     private baseUrl = "https://discord.com/api/v10";
 
-    constructor(botToken: string, eventChannelId: string, statsChannelId: string) {
+    constructor(botToken: string, eventChannelId: string, botEventChannelId: string, statsChannelId: string) {
         this.botToken = botToken;
         this.eventChannelId = eventChannelId;
+        this.botEventChannelId = botEventChannelId;
         this.statsChannelId = statsChannelId;
     }
 
     /**
-     * Send a message to the event channel (real-time join/leave events)
+     * Send a message to the event channel (real-time join/leave events).
+     * Uses eventChannelId by default, or botEventChannelId if isBotEvent is true.
      */
-    async sendEventMessage(payload: DiscordMessagePayload): Promise<boolean> {
+    async sendEventMessage(payload: DiscordMessagePayload, isBotEvent: boolean = false): Promise<boolean> {
+        const channelId = isBotEvent ? this.botEventChannelId : this.eventChannelId;
+        
+        // Gracefully skip bot events if no bot channel is configured
+        if (!channelId) {
+            return false;
+        }
+        
         try {
             await axios.post(
-                `${this.baseUrl}/channels/${this.eventChannelId}/messages`,
+                `${this.baseUrl}/channels/${channelId}/messages`,
                 payload,
                 {
                     headers: {
