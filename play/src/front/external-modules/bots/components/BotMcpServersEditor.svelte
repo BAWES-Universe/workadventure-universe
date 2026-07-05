@@ -246,6 +246,11 @@
     });
 
     async function handleOAuthConnect(serverId: string) {
+        // Clear any existing poll interval before starting a new one
+        if (oauthPollInterval !== null) {
+            clearInterval(oauthPollInterval);
+            oauthPollInterval = null;
+        }
         oauthConnecting = true;
         try {
             const redirectUrl = window.location.href.split("?")[0];
