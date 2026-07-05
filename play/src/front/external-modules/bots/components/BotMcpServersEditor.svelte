@@ -167,8 +167,8 @@
                     // If no input, authConfig is omitted → server preserves existing value
                 } else {
                     // When creating, require OAuth fields
-                    if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim() || !modalOauthClientId.trim()) {
-                        modalError = "Authorize URL, Token URL, and Client ID are required for OAuth authentication";
+                    if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim() || !modalOauthClientId.trim() || !modalOauthClientSecret.trim()) {
+                        modalError = "Authorize URL, Token URL, Client ID, and Client Secret are required for OAuth authentication";
                         modalLoading = false;
                         return;
                     }
