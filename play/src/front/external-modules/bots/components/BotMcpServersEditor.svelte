@@ -83,6 +83,11 @@
         modalServerUrl = "";
         modalAuthType = "none";
         modalAuthConfig = "";
+        modalOauthAuthorizeUrl = "";
+        modalOauthTokenUrl = "";
+        modalOauthClientId = "";
+        modalOauthClientSecret = "";
+        modalOauthScopes = "";
         modalHeaders = [];
         modalError = null;
         showModal = true;
@@ -94,6 +99,13 @@
         modalServerUrl = server.serverUrl;
         modalAuthType = server.authType;
         modalAuthConfig = server.authConfig || "";
+        // OAuth config is encrypted — can't pre-populate individual fields.
+        // Reset to empty so handleSaveServer's hasOAuthInput check works correctly.
+        modalOauthAuthorizeUrl = "";
+        modalOauthTokenUrl = "";
+        modalOauthClientId = "";
+        modalOauthClientSecret = "";
+        modalOauthScopes = "";
         modalHeaders = server.headers ? Object.entries(server.headers).map(([key, value]) => ({ key, value })) : [];
         modalError = null;
         showModal = true;
@@ -104,6 +116,12 @@
         editingServer = null;
         modalLoading = false;
         modalError = null;
+        // Reset OAuth state to prevent stale values bleeding into next modal open
+        modalOauthAuthorizeUrl = "";
+        modalOauthTokenUrl = "";
+        modalOauthClientId = "";
+        modalOauthClientSecret = "";
+        modalOauthScopes = "";
     }
 
     async function handleSaveServer() {

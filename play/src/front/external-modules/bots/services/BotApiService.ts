@@ -654,7 +654,7 @@ export class BotApiService {
 
     async startOAuth(botId: string, serverId: string, redirectUrl: string): Promise<string> {
         if (!this.isInitialized()) throw new Error("BotApiService not initialized");
-        const response = await this.authenticatedFetch(
+        const response = await this.fetch(
             `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`
         );
         if (!response.ok) {
