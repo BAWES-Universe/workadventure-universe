@@ -112,6 +112,8 @@ export class PersistentMemory extends ConversationMemory {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[PersistentMemory] ✅ Restored memory for userUuid ${userUuid} to playerId ${playerId}`);
             }
+        } else {
+            console.warn(`[PersistentMemory] ❌ No matching memory for uuid=${userUuid} (playerId=${playerId}, isLogged=${isLogged}). Available UUIDs: [${Array.from(this.loadedMemoriesByUuid.entries()).filter(([k]) => k.startsWith(botId+'_')).map(([k]) => k.replace(botId+'_', '')).join(', ') || 'none'}]`);
         }
         
         // Also update the memory object if it exists (existing behavior)
