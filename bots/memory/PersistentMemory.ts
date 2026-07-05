@@ -116,11 +116,21 @@ export class PersistentMemory extends ConversationMemory {
                 }
             }
             
-            // Update cache to point to the active memory so subsequent reconnects
-            // within the same bot session get the latest data, not the startup snapshot
+            // Store a snapshot in cache (not the live reference) so subsequent reconnects
+            // within the same bot session get the latest data, without sharing mutable state
             const restoredMemory = this.getMemory(botId, playerId);
             if (restoredMemory) {
-                this.loadedMemoriesByUuid.set(loadedMemoryKey, restoredMemory);
+                this.loadedMemoriesByUuid.set(loadedMemoryKey, this.cloneMemory(restoredMemory));
+            }
+            
+            // Keep cache bounded — prevent unbounded growth from orphaned entries
+            // that were evicted from active memories by LRU cleanupOldMemories()
+            if (this.loadedMemoriesByUuid.size > 2000) {
+                const toRemove = Math.ceil(this.loadedMemoriesByUuid.size * 0.1);
+                const keys = Array.from(this.loadedMemoriesByUuid.keys());
+                for (let i = 0; i < toRemove; i++) {
+                    this.loadedMemoriesByUuid.delete(keys[i]);
+                }
             }
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -532,5 +542,32 @@ export class PersistentMemory extends ConversationMemory {
      */
     getMemoryStorage(): MemoryStorage {
         return this.memoryStorage;
+    }
+
+    /**
+     * Deep-clone a BotPlayerMemory for safe cache storage.
+     * Prevents shared mutable state between different playerId sessions.
+     * Handles Map serialization (personalInfo.facts).
+     */
+    private cloneMemory(memory: BotPlayerMemory): BotPlayerMemory {
+        return {
+            ...memory,
+            conversationHistory: memory.conversationHistory.map(msg => ({ ...msg })),
+            emotions: {
+                ...memory.emotions,
+                botEmotion: { ...memory.emotions.botEmotion },
+                personEmotion: { ...memory.emotions.personEmotion },
+                wounds: memory.emotions.wounds.map(w => ({ ...w })),
+            },
+            personalInfo: {
+                ...memory.personalInfo,
+                facts: new Map(memory.personalInfo.facts),
+                preferences: memory.personalInfo.preferences ? [...memory.personalInfo.preferences] : undefined,
+            },
+            relationship: {
+                ...memory.relationship,
+                importantEvents: memory.relationship.importantEvents.map(e => ({ ...e })),
+            },
+        };
     }
 }
