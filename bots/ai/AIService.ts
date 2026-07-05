@@ -1009,7 +1009,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         }
 
                         // Capture $ai_generation for the final tool follow-up LLM call
-                        if (followUpContent || followUpError) {
+                        // Skip when data was restored from a previous round that already
+                        // had its in-loop telemetry captured — avoids double-counting.
+                        if ((followUpContent || followUpError) && !(hadDroppedFollowUpToolCalls && previousRoundContent)) {
                             captureAiGeneration({
                                 distinctId: `bot-${botId}`,
                                 traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
