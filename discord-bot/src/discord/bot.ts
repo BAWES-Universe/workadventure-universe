@@ -21,6 +21,12 @@ export class DiscordBot {
      */
     async sendEventMessage(payload: DiscordMessagePayload, isBotEvent: boolean = false): Promise<boolean> {
         const channelId = isBotEvent ? this.botEventChannelId : this.eventChannelId;
+        
+        // Gracefully skip bot events if no bot channel is configured
+        if (!channelId) {
+            return false;
+        }
+        
         try {
             await axios.post(
                 `${this.baseUrl}/channels/${channelId}/messages`,
