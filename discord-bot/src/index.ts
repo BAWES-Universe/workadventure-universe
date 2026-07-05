@@ -20,6 +20,7 @@ class DiscordBotService {
         const adminApiToken = process.env.ADMIN_API_TOKEN || "";
         const discordBotToken = process.env.DISCORD_BOT_TOKEN || "";
         const eventChannelId = process.env.DISCORD_EVENT_CHANNEL_ID || "";
+        const botEventChannelId = process.env.DISCORD_BOT_EVENT_CHANNEL_ID || "";
         const statsChannelId = process.env.DISCORD_STATS_CHANNEL_ID || "";
         const roomDiscoveryInterval = parseInt(process.env.ROOM_DISCOVERY_INTERVAL || "30000", 10);
         this.statsUpdateInterval = parseInt(process.env.STATS_UPDATE_INTERVAL || "600000", 10); // 10 minutes
@@ -62,7 +63,7 @@ class DiscordBotService {
 
         // Initialize components
         const adminApiUrl = process.env.ADMIN_API_URL;
-        this.discordBot = new DiscordBot(discordBotToken, eventChannelId, statsChannelId);
+        this.discordBot = new DiscordBot(discordBotToken, eventChannelId, botEventChannelId, statsChannelId);
         this.roomDiscovery = new RoomDiscovery(pusherUrl, adminApiToken, roomDiscoveryInterval, adminApiUrl);
 
         // Initialize WebSocket with event handlers
@@ -72,14 +73,16 @@ class DiscordBotService {
                 const roomPath = parseRoomUrl(data.roomId);
                 const roomMetadata = await this.roomDiscovery.getRoomMetadata(roomPath);
                 const message = createJoinMessage(data.name, data.roomId, data.uuid, this.pusherUrl, roomMetadata);
-                this.discordBot.sendEventMessage(message);
+                const isBotEvent = data.uuid.startsWith('bot-');
+                this.discordBot.sendEventMessage(message, isBotEvent);
             },
             onUserLeave: async (data) => {
                 console.log(`User left: ${data.name} (${data.uuid}) from room ${data.roomId}`);
                 const roomPath = parseRoomUrl(data.roomId);
                 const roomMetadata = await this.roomDiscovery.getRoomMetadata(roomPath);
                 const message = createLeaveMessage(data.name, data.roomId, data.uuid, roomMetadata);
-                this.discordBot.sendEventMessage(message);
+                const isBotEvent = data.uuid.startsWith('bot-');
+                this.discordBot.sendEventMessage(message, isBotEvent);
             },
             onError: (error) => {
                 console.error("WebSocket error:", error);
