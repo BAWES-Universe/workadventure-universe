@@ -1,11 +1,10 @@
 <script lang="ts">
-    import { onMount, onDestroy } from "svelte";
+    import { onMount, onDestroy, afterUpdate } from "svelte";
     import {
         botApiService,
         type McpServer,
         type CreateMcpServerDto,
         type McpServerTestResult,
-        type McpServerTestResponse,
     } from "../services/BotApiService";
 
     export let botId: string;
@@ -264,45 +263,41 @@
 
     // OAuth discovery state
     let oauthDiscoveryState: 'idle' | 'discovering' | 'discovered' | 'not_found' = 'idle';
-    let discoveredAuthorizeUrl = '';
-    let discoveredTokenUrl = '';
-    let discoveredScopes: string[] | null = null;
     let discoveryRegistrationStatus: 'auto' | 'manual' | null = null;
-    let discoveryAuthMethod: string | null = null;
     let discoveryAbortController: AbortController | null = null;
     let discoveryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    $: if (modalAuthType === 'oauth' && modalServerUrl.trim()) {
-        // Debounce: clear any pending timer before setting a new one
-        if (discoveryDebounceTimer) clearTimeout(discoveryDebounceTimer);
-        // Only trigger discovery if URL looks valid (starts with http:// or https://)
-        if (!/^https?:\/\/.+/i.test(modalServerUrl.trim())) {
-            // Clear stale state but don't show error — user is still typing
-            oauthDiscoveryState = 'idle';
-            discoveredAuthorizeUrl = '';
-            discoveredTokenUrl = '';
-            discoveredScopes = null;
-            discoveryRegistrationStatus = null;
-            discoveryAuthMethod = null;
-        } else {
-            discoveryDebounceTimer = setTimeout(() => {
-                discoverOAuthEndpoints();
-            }, 500);
+    // Track previous values to detect changes in afterUpdate
+    let _prevOauthAuthType: string | null = null;
+    let _prevOauthServerUrl: string | null = null;
+
+    afterUpdate(() => {
+        if (_prevOauthAuthType === modalAuthType && _prevOauthServerUrl === modalServerUrl) {
+            return;
         }
-    } else {
-        // Abort any in-flight discovery request (method call only — no assignment to avoid linter false positive)
-        discoveryAbortController?.abort();
-        oauthDiscoveryState = 'idle';
-        discoveredAuthorizeUrl = '';
-        discoveredTokenUrl = '';
-        discoveredScopes = null;
-        discoveryRegistrationStatus = null;
-        discoveryAuthMethod = null;
+        _prevOauthAuthType = modalAuthType;
+        _prevOauthServerUrl = modalServerUrl;
+
         if (discoveryDebounceTimer) {
             clearTimeout(discoveryDebounceTimer);
             discoveryDebounceTimer = null;
         }
-    }
+
+        if (modalAuthType === 'oauth' && modalServerUrl.trim()) {
+            if (!/^https?:\/\/.+/i.test(modalServerUrl.trim())) {
+                oauthDiscoveryState = 'idle';
+                discoveryRegistrationStatus = null;
+            } else {
+                discoveryDebounceTimer = setTimeout(() => {
+                    void discoverOAuthEndpoints();
+                }, 500);
+            }
+        } else {
+            discoveryAbortController?.abort();
+            oauthDiscoveryState = 'idle';
+            discoveryRegistrationStatus = null;
+        }
+    });
 
     onDestroy(() => {
         if (discoveryDebounceTimer) clearTimeout(discoveryDebounceTimer);
@@ -321,9 +316,6 @@
         const signal = discoveryAbortController.signal;
 
         oauthDiscoveryState = 'discovering';
-        discoveredAuthorizeUrl = '';
-        discoveredTokenUrl = '';
-        discoveredScopes = null;
         try {
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             const res = await fetch(
@@ -338,11 +330,7 @@
             const data = await res.json();
             if (signal.aborted) return;
             if (data.discovered) {
-                discoveredAuthorizeUrl = data.authorizeUrl || '';
-                discoveredTokenUrl = data.tokenUrl || '';
-                discoveredScopes = data.scopesSupported || null;
                 discoveryRegistrationStatus = data.registrationStatus || null;
-                discoveryAuthMethod = data.registeredAuthMethod || null;
                 oauthDiscoveryState = 'discovered';
                 // Auto-fill form fields if empty
                 if (!modalOauthAuthorizeUrl && data.authorizeUrl) modalOauthAuthorizeUrl = data.authorizeUrl;
@@ -352,17 +340,12 @@
             } else {
                 if (!signal.aborted) oauthDiscoveryState = 'not_found';
             }
-        } catch (e) {
+        } catch {
             if (!signal.aborted) oauthDiscoveryState = 'not_found';
         }
     }
 
     async function handleOAuthConnect(serverId: string) {
-        // Clear any existing poll interval before starting a new one
-        if (oauthPollInterval !== null) {
-            clearInterval(oauthPollInterval);
-            oauthPollInterval = null;
-        }
         oauthConnecting = true;
         try {
             const redirectUrl = window.location.href.split("?")[0].split("#")[0];
@@ -375,10 +358,14 @@
                 return;
             }
 
-            const pollInterval = setInterval(() => {
+            // Clear any existing interval before setting a new one
+            if (oauthPollInterval !== null) {
+                clearInterval(oauthPollInterval);
+            }
+            oauthPollInterval = setInterval(() => {
                 try {
                     if (popup.closed) {
-                        clearInterval(pollInterval);
+                        if (oauthPollInterval) clearInterval(oauthPollInterval);
                         oauthConnecting = false;
                         void loadServers();
                     }
@@ -386,7 +373,6 @@
                     // Cross-origin during redirect
                 }
             }, 500);
-            oauthPollInterval = pollInterval;
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
             oauthConnecting = false;
