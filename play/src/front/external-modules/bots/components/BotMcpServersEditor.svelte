@@ -186,12 +186,15 @@
             };
             if (modalAuthType === "oauth") {
                 if (editingServer) {
-                    // When editing a connected OAuth server, skip authConfig to
-                    // preserve existing encrypted credentials/tokens. The user
-                    // can edit name/URL/headers but not the OAuth config itself.
-                    const preserveExisting = editingExistingOauth;
-
-                    if (!preserveExisting) {
+                    // When editing a connected OAuth server, preserve existing
+                    // encrypted credentials/tokens but allow scopes updates.
+                    if (editingExistingOauth) {
+                        if (modalOauthScopes.trim()) {
+                            data.authConfig = JSON.stringify({
+                                scopes: modalOauthScopes.trim(),
+                            });
+                        }
+                    } else {
                         // Only check Client ID/Secret for manual discovery — auto fills them
                         // from the API response (may be null for PKCE public clients)
                         const hasOAuthInput =
@@ -437,7 +440,10 @@
             oauthPollInterval = setInterval(() => {
                 try {
                     if (popup.closed) {
-                        if (oauthPollInterval) clearInterval(oauthPollInterval);
+                        if (oauthPollInterval) {
+                            clearInterval(oauthPollInterval);
+                            oauthPollInterval = null;
+                        }
                         oauthConnectingServerId = null;
                         void loadServers().then(() => {
                             // Auto-run test connection after OAuth completes
@@ -763,6 +769,21 @@
                         <div class="flex items-center gap-2 text-sm text-green-400 py-1">
                             <span class="inline-block h-2 w-2 rounded-full bg-green-400" />
                             OAuth configured
+                        </div>
+                        <div>
+                            <label
+                                for="mcp-oauth-scopes-connected"
+                                class="block text-sm text-white/80 mb-1.5 font-medium"
+                            >
+                                Scopes (space-separated)
+                            </label>
+                            <input
+                                id="mcp-oauth-scopes-connected"
+                                type="text"
+                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="read,write"
+                                bind:value={modalOauthScopes}
+                            />
                         </div>
                     {:else if oauthDiscoveryState === "discovering"}
                         <div class="flex items-center gap-2 text-sm text-white/60 py-2">
