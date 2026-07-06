@@ -31,6 +31,8 @@
     let modalLoading = false;
     let modalError: string | null = null;
 
+    let editingExistingOauth = false;
+
     // Test connection state
     let testingServerId: string | null = null;
     let testError: Record<string, string> = {};
@@ -120,10 +122,16 @@
         // if the provider is temporarily unreachable (Attio, etc.), showing
         // a misleading "not found" error.
         if (server.authType === "oauth") {
-            _prevOauthAuthType = server.authType;
-            _prevOauthServerUrl = server.serverUrl;
-            oauthDiscoveryState = "discovered";
-            discoveryRegistrationStatus = server.oauthConnected ? "auto" : "manual";
+            if (server.oauthConnected) {
+                // Connected server — show badge, no editable OAuth fields
+                editingExistingOauth = true;
+                _prevOauthAuthType = server.authType;
+                _prevOauthServerUrl = server.serverUrl;
+                oauthDiscoveryState = "discovered";
+                discoveryRegistrationStatus = null;
+            }
+            // Not connected — let afterUpdate trigger discovery normally,
+            // form fields will show for manual setup
         }
     }
 
@@ -151,6 +159,7 @@
         }
         oauthDiscoveryState = "idle";
         discoveryRegistrationStatus = null;
+        editingExistingOauth = false;
         _prevOauthAuthType = null;
         _prevOauthServerUrl = null;
     }
@@ -177,12 +186,10 @@
             };
             if (modalAuthType === "oauth") {
                 if (editingServer) {
-                    // When editing an existing OAuth server with auto-discovery,
-                    // skip authConfig to preserve existing encrypted credentials/tokens.
-                    // The discovery would only overwrite the endpoint URLs with values
-                    // the server already has, while dropping the access/refresh tokens.
-                    const preserveExisting =
-                        editingServer.authType === "oauth" && discoveryRegistrationStatus === "auto";
+                    // When editing a connected OAuth server, skip authConfig to
+                    // preserve existing encrypted credentials/tokens. The user
+                    // can edit name/URL/headers but not the OAuth config itself.
+                    const preserveExisting = editingExistingOauth;
 
                     if (!preserveExisting) {
                         // Only check Client ID/Secret for manual discovery — auto fills them
@@ -752,7 +759,12 @@
 
                 <!-- OAuth provider config -->
                 {#if modalAuthType === "oauth"}
-                    {#if oauthDiscoveryState === "discovering"}
+                    {#if editingExistingOauth}
+                        <div class="flex items-center gap-2 text-sm text-green-400 py-1">
+                            <span class="inline-block h-2 w-2 rounded-full bg-green-400" />
+                            OAuth configured
+                        </div>
+                    {:else if oauthDiscoveryState === "discovering"}
                         <div class="flex items-center gap-2 text-sm text-white/60 py-2">
                             <span
                                 class="inline-block w-4 h-4 border-2 border-white/40 border-t-transparent rounded-full animate-spin"
