@@ -413,7 +413,10 @@
                     if (popup.closed) {
                         if (oauthPollInterval) clearInterval(oauthPollInterval);
                         oauthConnectingServerId = null;
-                        void loadServers();
+                        void loadServers().then(() => {
+                            // Auto-run test connection after OAuth completes
+                            void handleTestConnection(serverId);
+                        });
                     }
                 } catch {
                     // Cross-origin during redirect
@@ -551,8 +554,8 @@
                                 </button>
                             {/if}
 
-                            <!-- OAuth Connect button -->
-                            {#if server.authType === "oauth"}
+                            <!-- OAuth Connect button — hidden after connected -->
+                            {#if server.authType === "oauth" && !server.oauthConnected}
                                 <button
                                     class="px-2 py-1 text-xs text-green-400 hover:text-green-300 bg-white/5 hover:bg-green-500/10 rounded transition-colors"
                                     on:click={() => handleOAuthConnect(server.id)}
@@ -561,9 +564,17 @@
                                     {#if oauthConnectingServerId === server.id}
                                         Connecting...
                                     {:else}
-                                        Connect with OAuth
+                                        Connect OAuth
                                     {/if}
                                 </button>
+                            {/if}
+                            <!-- OAuth connected badge -->
+                            {#if server.authType === "oauth" && server.oauthConnected}
+                                <span
+                                    class="px-2 py-1 text-xs text-green-400 bg-green-500/10 rounded font-semibold"
+                                >
+                                    Connected ✓
+                                </span>
                             {/if}
 
                             <!-- Edit button -->
