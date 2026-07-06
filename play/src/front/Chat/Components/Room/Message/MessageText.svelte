@@ -101,6 +101,12 @@
             text-decoration: underline;
             opacity: 0.75;
         }
+        .message-bubble table {
+            display: block;
+            overflow-x: auto;
+            white-space: nowrap;
+            max-width: 100%;
+        }
         pre {
             margin: 0;
         }
