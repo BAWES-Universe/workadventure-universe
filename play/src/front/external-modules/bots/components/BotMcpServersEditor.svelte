@@ -54,7 +54,7 @@
         // Keeping both would fire a redundant duplicate API call.
 
         // If this page was loaded as an OAuth popup (redirect from callback), close it
-        if (window.location.search.includes('oauth=success') || window.location.search.includes('oauth=error')) {
+        if (window.location.search.includes("oauth=success") || window.location.search.includes("oauth=error")) {
             window.close();
         }
     });
@@ -126,6 +126,19 @@
         modalOauthClientId = "";
         modalOauthClientSecret = "";
         modalOauthScopes = "";
+        // Reset OAuth discovery state so afterUpdate fires discovery on next open
+        if (discoveryAbortController) {
+            discoveryAbortController.abort();
+            discoveryAbortController = null;
+        }
+        if (discoveryDebounceTimer) {
+            clearTimeout(discoveryDebounceTimer);
+            discoveryDebounceTimer = null;
+        }
+        oauthDiscoveryState = "idle";
+        discoveryRegistrationStatus = null;
+        _prevOauthAuthType = null;
+        _prevOauthServerUrl = null;
     }
 
     async function handleSaveServer() {
@@ -153,7 +166,12 @@
                     // When editing, only update authConfig if the user actually changed fields.
                     // The stored config is encrypted — we can't pre-populate the form, so
                     // save nothing if all fields are empty to preserve existing tokens/creds.
-                    const hasOAuthInput = modalOauthAuthorizeUrl.trim() || modalOauthTokenUrl.trim() || modalOauthClientId.trim() || modalOauthClientSecret.trim() || modalOauthScopes.trim();
+                    const hasOAuthInput =
+                        modalOauthAuthorizeUrl.trim() ||
+                        modalOauthTokenUrl.trim() ||
+                        modalOauthClientId.trim() ||
+                        modalOauthClientSecret.trim() ||
+                        modalOauthScopes.trim();
                     if (hasOAuthInput) {
                         data.authConfig = JSON.stringify({
                             authorizeUrl: modalOauthAuthorizeUrl.trim(),
@@ -167,9 +185,15 @@
                 } else {
                     // When creating, require OAuth fields
                     // For auto-discovered public clients (PKCE), clientId/clientSecret are managed server-side
-                    if (discoveryRegistrationStatus !== 'auto') {
-                        if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim() || !modalOauthClientId.trim() || !modalOauthClientSecret.trim()) {
-                            modalError = "Authorize URL, Token URL, Client ID, and Client Secret are required for OAuth authentication";
+                    if (discoveryRegistrationStatus !== "auto") {
+                        if (
+                            !modalOauthAuthorizeUrl.trim() ||
+                            !modalOauthTokenUrl.trim() ||
+                            !modalOauthClientId.trim() ||
+                            !modalOauthClientSecret.trim()
+                        ) {
+                            modalError =
+                                "Authorize URL, Token URL, Client ID, and Client Secret are required for OAuth authentication";
                             modalLoading = false;
                             return;
                         }
@@ -177,8 +201,14 @@
                     data.authConfig = JSON.stringify({
                         authorizeUrl: modalOauthAuthorizeUrl.trim(),
                         tokenUrl: modalOauthTokenUrl.trim(),
-                        clientId: (discoveryRegistrationStatus === 'auto' && !modalOauthClientId.trim()) ? null : modalOauthClientId.trim(),
-                        clientSecret: (discoveryRegistrationStatus === 'auto' && !modalOauthClientSecret.trim()) ? null : modalOauthClientSecret.trim(),
+                        clientId:
+                            discoveryRegistrationStatus === "auto" && !modalOauthClientId.trim()
+                                ? null
+                                : modalOauthClientId.trim(),
+                        clientSecret:
+                            discoveryRegistrationStatus === "auto" && !modalOauthClientSecret.trim()
+                                ? null
+                                : modalOauthClientSecret.trim(),
                         scopes: modalOauthScopes.trim(),
                     });
                 }
@@ -217,9 +247,7 @@
             await botApiService.deleteBotMcpServer(botId, serverId);
             servers = servers.filter((s) => s.id !== serverId);
             // Clean up error state (reassign to trigger Svelte reactivity)
-            testError = Object.fromEntries(
-                Object.entries(testError).filter(([id]) => id !== serverId)
-            );
+            testError = Object.fromEntries(Object.entries(testError).filter(([id]) => id !== serverId));
             removingServerId = null;
         } catch (error) {
             console.error("[BotMcpServersEditor] Error removing MCP server:", error);
@@ -257,13 +285,13 @@
         }
     }
 
-    // OAuth flow state
-    let oauthConnecting = false;
+    // OAuth flow state (per-server, like testingServerId)
+    let oauthConnectingServerId: string | null = null;
     let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
 
     // OAuth discovery state
-    let oauthDiscoveryState: 'idle' | 'discovering' | 'discovered' | 'not_found' = 'idle';
-    let discoveryRegistrationStatus: 'auto' | 'manual' | null = null;
+    let oauthDiscoveryState: "idle" | "discovering" | "discovered" | "not_found" = "idle";
+    let discoveryRegistrationStatus: "auto" | "manual" | null = null;
     let discoveryAbortController: AbortController | null = null;
     let discoveryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -283,9 +311,9 @@
             discoveryDebounceTimer = null;
         }
 
-        if (modalAuthType === 'oauth' && modalServerUrl.trim()) {
+        if (modalAuthType === "oauth" && modalServerUrl.trim()) {
             if (!/^https?:\/\/.+/i.test(modalServerUrl.trim())) {
-                oauthDiscoveryState = 'idle';
+                oauthDiscoveryState = "idle";
                 discoveryRegistrationStatus = null;
             } else {
                 discoveryDebounceTimer = setTimeout(() => {
@@ -294,7 +322,7 @@
             }
         } else {
             discoveryAbortController?.abort();
-            oauthDiscoveryState = 'idle';
+            oauthDiscoveryState = "idle";
             discoveryRegistrationStatus = null;
         }
     });
@@ -315,43 +343,46 @@
         discoveryAbortController = new AbortController();
         const signal = discoveryAbortController.signal;
 
-        oauthDiscoveryState = 'discovering';
+        oauthDiscoveryState = "discovering";
         try {
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             // Authenticate via _token query param (same mechanism as BotApiService uses)
-            const sessionToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_session_token") : null;
-            let discoverUrl = `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(modalServerUrl)}&callbackUrl=${encodeURIComponent(callbackUrl)}`;
+            const sessionToken =
+                typeof localStorage !== "undefined" ? localStorage.getItem("admin_session_token") : null;
+            let discoverUrl = `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(
+                modalServerUrl
+            )}&callbackUrl=${encodeURIComponent(callbackUrl)}`;
             if (sessionToken) {
                 discoverUrl += `&_token=${encodeURIComponent(sessionToken)}`;
             }
             const res = await fetch(discoverUrl, { signal });
             if (signal.aborted) return;
             if (!res.ok) {
-                oauthDiscoveryState = 'not_found';
+                oauthDiscoveryState = "not_found";
                 return;
             }
             const data = await res.json();
             if (signal.aborted) return;
             if (data.discovered) {
                 discoveryRegistrationStatus = data.registrationStatus || null;
-                oauthDiscoveryState = 'discovered';
+                oauthDiscoveryState = "discovered";
                 // Auto-fill form fields if empty
                 if (!modalOauthAuthorizeUrl && data.authorizeUrl) modalOauthAuthorizeUrl = data.authorizeUrl;
                 if (!modalOauthTokenUrl && data.tokenUrl) modalOauthTokenUrl = data.tokenUrl;
                 if (!modalOauthClientId && data.clientId) modalOauthClientId = data.clientId;
                 if (!modalOauthClientSecret && data.clientSecret) modalOauthClientSecret = data.clientSecret;
                 // Auto-fill scopes from discovery results (required by many providers)
-                if (!modalOauthScopes && data.scopesSupported) modalOauthScopes = data.scopesSupported.join(' ');
+                if (!modalOauthScopes && data.scopesSupported) modalOauthScopes = data.scopesSupported.join(" ");
             } else {
-                if (!signal.aborted) oauthDiscoveryState = 'not_found';
+                if (!signal.aborted) oauthDiscoveryState = "not_found";
             }
         } catch {
-            if (!signal.aborted) oauthDiscoveryState = 'not_found';
+            if (!signal.aborted) oauthDiscoveryState = "not_found";
         }
     }
 
     async function handleOAuthConnect(serverId: string) {
-        oauthConnecting = true;
+        oauthConnectingServerId = serverId;
         try {
             const redirectUrl = window.location.href.split("?")[0].split("#")[0];
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
@@ -360,7 +391,7 @@
             const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
             if (!popup) {
                 console.error("[BotMcpServersEditor] Popup blocked");
-                oauthConnecting = false;
+                oauthConnectingServerId = null;
                 return;
             }
 
@@ -372,7 +403,7 @@
                 try {
                     if (popup.closed) {
                         if (oauthPollInterval) clearInterval(oauthPollInterval);
-                        oauthConnecting = false;
+                        oauthConnectingServerId = null;
                         void loadServers();
                     }
                 } catch {
@@ -381,7 +412,7 @@
             }, 500);
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
-            oauthConnecting = false;
+            oauthConnectingServerId = null;
         }
     }
 
@@ -477,7 +508,10 @@
                                     {#if server.lastTestResult?.success}
                                         <span class="text-xs text-green-400">{getToolCount(server)}</span>
                                     {:else if server.lastTestResult && !server.lastTestResult.success}
-                                        <span class="text-xs text-red-400" title={testError[server.id] || server.lastTestResult.error}>
+                                        <span
+                                            class="text-xs text-red-400"
+                                            title={testError[server.id] || server.lastTestResult.error}
+                                        >
                                             {getToolCount(server)}
                                         </span>
                                     {/if}
@@ -513,9 +547,9 @@
                                 <button
                                     class="px-2 py-1 text-xs text-green-400 hover:text-green-300 bg-white/5 hover:bg-green-500/10 rounded transition-colors"
                                     on:click={() => handleOAuthConnect(server.id)}
-                                    disabled={oauthConnecting}
+                                    disabled={oauthConnectingServerId !== null}
                                 >
-                                    {#if oauthConnecting}
+                                    {#if oauthConnectingServerId === server.id}
                                         Connecting...
                                     {:else}
                                         Connect with OAuth
@@ -563,12 +597,12 @@
                     <!-- Test result details -->
                     {#if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
                         <div class="mt-3 pt-2 border-t border-white/10">
-                            <p class="text-xs text-white/50 mb-1">Available tools ({server.lastTestResult.toolCount}):</p>
+                            <p class="text-xs text-white/50 mb-1">
+                                Available tools ({server.lastTestResult.toolCount}):
+                            </p>
                             <div class="flex flex-wrap gap-1.5">
                                 {#each server.lastTestResult.toolNames as toolName (toolName)}
-                                    <span
-                                        class="text-[11px] text-green-300/80 bg-green-500/10 px-2 py-0.5 rounded"
-                                    >
+                                    <span class="text-[11px] text-green-300/80 bg-green-500/10 px-2 py-0.5 rounded">
                                         {toolName}
                                     </span>
                                 {/each}
@@ -665,7 +699,11 @@
                             type="password"
                             class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             bind:value={modalAuthConfig}
-                            placeholder={editingServer ? "Leave empty to keep existing" : modalAuthType === "bearer" ? "Enter bearer token..." : "Enter API key..."}
+                            placeholder={editingServer
+                                ? "Leave empty to keep existing"
+                                : modalAuthType === "bearer"
+                                ? "Enter bearer token..."
+                                : "Enter API key..."}
                         />
                         {#if editingServer}
                             <p class="text-xs text-white/40 mt-1">
@@ -679,7 +717,9 @@
                 {#if modalAuthType === "oauth"}
                     {#if oauthDiscoveryState === "discovering"}
                         <div class="flex items-center gap-2 text-sm text-white/60 py-2">
-                            <span class="inline-block w-4 h-4 border-2 border-white/40 border-t-transparent rounded-full animate-spin" />
+                            <span
+                                class="inline-block w-4 h-4 border-2 border-white/40 border-t-transparent rounded-full animate-spin"
+                            />
                             Discovering OAuth endpoints...
                         </div>
                     {/if}
