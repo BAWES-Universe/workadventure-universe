@@ -492,8 +492,8 @@
                             </div>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0">
-                            <!-- Test Connection button — hidden for OAuth servers (need to connect first) -->
-                            {#if server.authType !== "oauth"}
+                            <!-- Test Connection button — hidden for OAuth servers until connected -->
+                            {#if server.authType !== "oauth" || server.oauthConnected}
                                 <button
                                     class="px-2 py-1 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded transition-colors"
                                     on:click={() => handleTestConnection(server.id)}

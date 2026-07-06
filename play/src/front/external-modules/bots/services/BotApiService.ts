@@ -739,6 +739,7 @@ export interface McpServer {
     serverUrl: string;
     authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
+    oauthConnected?: boolean;
     headers?: Record<string, string>;
     enabled: boolean;
     lastTestedAt?: string | null;
