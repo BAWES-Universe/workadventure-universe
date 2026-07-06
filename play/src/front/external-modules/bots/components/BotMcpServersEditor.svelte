@@ -269,7 +269,7 @@
 
     $: if (modalAuthType === 'oauth' && modalServerUrl.trim()) {
         discoverOAuthEndpoints();
-    } else if (modalAuthType !== 'oauth') {
+    } else {
         oauthDiscoveryState = 'idle';
         discoveredAuthorizeUrl = '';
         discoveredTokenUrl = '';

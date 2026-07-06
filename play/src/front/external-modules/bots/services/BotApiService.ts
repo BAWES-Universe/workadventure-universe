@@ -657,10 +657,6 @@ export class BotApiService {
         const response = await this.fetch(
             `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`
         );
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || `OAuth start failed: ${response.status}`);
-        }
         const data = await response.json();
         return data.authorizeUrl;
     }
