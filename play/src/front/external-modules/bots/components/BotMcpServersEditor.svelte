@@ -167,16 +167,19 @@
                     // If no input, authConfig is omitted → server preserves existing value
                 } else {
                     // When creating, require OAuth fields
-                    if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim() || !modalOauthClientId.trim() || !modalOauthClientSecret.trim()) {
-                        modalError = "Authorize URL, Token URL, Client ID, and Client Secret are required for OAuth authentication";
-                        modalLoading = false;
-                        return;
+                    // For auto-discovered public clients (PKCE), clientId/clientSecret are managed server-side
+                    if (discoveryRegistrationStatus !== 'auto') {
+                        if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim() || !modalOauthClientId.trim() || !modalOauthClientSecret.trim()) {
+                            modalError = "Authorize URL, Token URL, Client ID, and Client Secret are required for OAuth authentication";
+                            modalLoading = false;
+                            return;
+                        }
                     }
                     data.authConfig = JSON.stringify({
                         authorizeUrl: modalOauthAuthorizeUrl.trim(),
                         tokenUrl: modalOauthTokenUrl.trim(),
-                        clientId: modalOauthClientId.trim(),
-                        clientSecret: modalOauthClientSecret.trim(),
+                        clientId: (discoveryRegistrationStatus === 'auto' && !modalOauthClientId.trim()) ? null : modalOauthClientId.trim(),
+                        clientSecret: (discoveryRegistrationStatus === 'auto' && !modalOauthClientSecret.trim()) ? null : modalOauthClientSecret.trim(),
                         scopes: modalOauthScopes.trim(),
                     });
                 }
@@ -287,6 +290,8 @@
             }, 500);
         }
     } else {
+        // Abort any in-flight discovery request (method call only — no assignment to avoid linter false positive)
+        discoveryAbortController?.abort();
         oauthDiscoveryState = 'idle';
         discoveredAuthorizeUrl = '';
         discoveredTokenUrl = '';
