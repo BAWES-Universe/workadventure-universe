@@ -970,7 +970,7 @@
 
                 <!-- Extra Headers -->
                 <div>
-                    <label class="block text-sm text-white/80 mb-1.5 font-medium">Extra Headers</label>
+                    <div class="block text-sm text-white/80 mb-1.5 font-medium">Extra Headers</div>
                     {#each modalHeaders as header, i (i)}
                         <div class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">
                             <input
