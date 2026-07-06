@@ -32,7 +32,12 @@
             // fallback to start room (initial entry), then window.location
             let roomUrl: string;
             if (gameManager) {
-                const scene = gameManager.getCurrentGameScene();
+                let scene;
+                try {
+                    scene = gameManager.getCurrentGameScene();
+                } catch {
+                    // Game scene not available yet — fall through to fallback URLs
+                }
                 if (scene?.room?.href) {
                     roomUrl = scene.room.href;
                 } else if (gameManager.currentStartedRoom?.href) {
