@@ -658,6 +658,9 @@ export class BotApiService {
             `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`
         );
         const data = await response.json();
+        if (!data.authorizeUrl) {
+            throw new Error("OAuth start failed: server did not return an authorization URL");
+        }
         return data.authorizeUrl;
     }
 
