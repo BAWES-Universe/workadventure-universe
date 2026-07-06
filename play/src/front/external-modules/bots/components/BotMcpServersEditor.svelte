@@ -340,6 +340,8 @@
                 if (!modalOauthTokenUrl && data.tokenUrl) modalOauthTokenUrl = data.tokenUrl;
                 if (!modalOauthClientId && data.clientId) modalOauthClientId = data.clientId;
                 if (!modalOauthClientSecret && data.clientSecret) modalOauthClientSecret = data.clientSecret;
+                // Auto-fill scopes from discovery results (required by many providers)
+                if (!modalOauthScopes && data.scopesSupported) modalOauthScopes = data.scopesSupported.join(' ');
             } else {
                 if (!signal.aborted) oauthDiscoveryState = 'not_found';
             }
@@ -490,18 +492,20 @@
                             </div>
                         </div>
                         <div class="flex items-center gap-2 flex-shrink-0">
-                            <!-- Test Connection button -->
-                            <button
-                                class="px-2 py-1 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded transition-colors"
-                                on:click={() => handleTestConnection(server.id)}
-                                disabled={testingServerId === server.id}
-                            >
-                                {#if testingServerId === server.id}
-                                    Testing...
-                                {:else}
-                                    Test
-                                {/if}
-                            </button>
+                            <!-- Test Connection button — hidden for OAuth servers (need to connect first) -->
+                            {#if server.authType !== "oauth"}
+                                <button
+                                    class="px-2 py-1 text-xs text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded transition-colors"
+                                    on:click={() => handleTestConnection(server.id)}
+                                    disabled={testingServerId === server.id}
+                                >
+                                    {#if testingServerId === server.id}
+                                        Testing...
+                                    {:else}
+                                        Test
+                                    {/if}
+                                </button>
+                            {/if}
 
                             <!-- OAuth Connect button -->
                             {#if server.authType === "oauth"}
@@ -687,7 +691,7 @@
                         </div>
                         <div>
                             <label for="mcp-oauth-scopes" class="block text-sm text-white/80 mb-1.5 font-medium">
-                                Scopes (optional)
+                                Scopes (space-separated)
                             </label>
                             <input
                                 id="mcp-oauth-scopes"
@@ -731,7 +735,7 @@
                         </div>
                         <div>
                             <label for="mcp-oauth-scopes" class="block text-sm text-white/80 mb-1.5 font-medium">
-                                Scopes (optional)
+                                Scopes (space-separated)
                             </label>
                             <input
                                 id="mcp-oauth-scopes"
@@ -797,7 +801,7 @@
                         </div>
                         <div>
                             <label for="mcp-oauth-scopes" class="block text-sm text-white/80 mb-1.5 font-medium">
-                                Scopes (optional)
+                                Scopes (space-separated)
                             </label>
                             <input
                                 id="mcp-oauth-scopes"
