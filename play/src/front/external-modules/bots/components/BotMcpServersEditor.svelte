@@ -265,17 +265,47 @@
     let discoveredTokenUrl = '';
     let discoveredScopes: string[] | null = null;
     let discoveryRegistrationStatus: 'auto' | 'manual' | null = null;
+    let discoveryAuthMethod: string | null = null;
     let discoveryAbortController: AbortController | null = null;
+    let discoveryDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     $: if (modalAuthType === 'oauth' && modalServerUrl.trim()) {
-        discoverOAuthEndpoints();
+        // Debounce: clear any pending timer before setting a new one
+        if (discoveryDebounceTimer) clearTimeout(discoveryDebounceTimer);
+        // Only trigger discovery if URL looks valid (starts with http:// or https://)
+        if (!/^https?:\/\/.+/i.test(modalServerUrl.trim())) {
+            // Clear stale state but don't show error — user is still typing
+            oauthDiscoveryState = 'idle';
+            discoveredAuthorizeUrl = '';
+            discoveredTokenUrl = '';
+            discoveredScopes = null;
+            discoveryRegistrationStatus = null;
+            discoveryAuthMethod = null;
+        } else {
+            discoveryDebounceTimer = setTimeout(() => {
+                discoverOAuthEndpoints();
+            }, 500);
+        }
     } else {
         oauthDiscoveryState = 'idle';
         discoveredAuthorizeUrl = '';
         discoveredTokenUrl = '';
         discoveredScopes = null;
         discoveryRegistrationStatus = null;
+        discoveryAuthMethod = null;
+        if (discoveryDebounceTimer) {
+            clearTimeout(discoveryDebounceTimer);
+            discoveryDebounceTimer = null;
+        }
     }
+
+    onDestroy(() => {
+        if (discoveryDebounceTimer) clearTimeout(discoveryDebounceTimer);
+        if (oauthPollInterval !== null) {
+            clearInterval(oauthPollInterval);
+            oauthPollInterval = null;
+        }
+    });
 
     async function discoverOAuthEndpoints() {
         // Cancel any in-flight discovery request
@@ -307,6 +337,7 @@
                 discoveredTokenUrl = data.tokenUrl || '';
                 discoveredScopes = data.scopesSupported || null;
                 discoveryRegistrationStatus = data.registrationStatus || null;
+                discoveryAuthMethod = data.registeredAuthMethod || null;
                 oauthDiscoveryState = 'discovered';
                 // Auto-fill form fields if empty
                 if (!modalOauthAuthorizeUrl && data.authorizeUrl) modalOauthAuthorizeUrl = data.authorizeUrl;
@@ -320,13 +351,6 @@
             if (!signal.aborted) oauthDiscoveryState = 'not_found';
         }
     }
-
-    onDestroy(() => {
-        if (oauthPollInterval !== null) {
-            clearInterval(oauthPollInterval);
-            oauthPollInterval = null;
-        }
-    });
 
     async function handleOAuthConnect(serverId: string) {
         // Clear any existing poll interval before starting a new one
