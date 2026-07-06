@@ -185,7 +185,7 @@
                 authType: modalAuthType,
             };
             if (modalAuthType === "oauth") {
-                if (editingServer) {
+                if (editingServer && (editingServer.authType as string) === "oauth") {
                     // When editing a connected OAuth server, preserve existing
                     // encrypted credentials/tokens but allow scopes updates.
                     if (editingExistingOauth) {
@@ -384,25 +384,10 @@
         oauthDiscoveryState = "discovering";
         try {
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
-            // Authenticate via _token query param (same mechanism as BotApiService uses)
-            const sessionToken =
-                typeof localStorage !== "undefined" ? localStorage.getItem("admin_session_token") : null;
-            let discoverUrl = `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(
-                modalServerUrl
-            )}&callbackUrl=${encodeURIComponent(callbackUrl)}`;
-            if (sessionToken) {
-                discoverUrl += `&_token=${encodeURIComponent(sessionToken)}`;
-            }
-            const res = await fetch(discoverUrl, { signal });
-            if (signal.aborted) return;
-            if (!res.ok) {
-                oauthDiscoveryState = "not_found";
-                return;
-            }
-            const data = await res.json();
+            const data = await botApiService.discoverMcpOAuthEndpoints(modalServerUrl.trim(), callbackUrl, signal);
             if (signal.aborted) return;
             if (data.discovered) {
-                discoveryRegistrationStatus = data.registrationStatus || null;
+                discoveryRegistrationStatus = (data.registrationStatus as "auto" | "manual") || null;
                 oauthDiscoveryState = "discovered";
                 // Auto-fill form fields if empty
                 if (!modalOauthAuthorizeUrl && data.authorizeUrl) modalOauthAuthorizeUrl = data.authorizeUrl;
@@ -426,12 +411,14 @@
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl, callbackUrl);
 
-            const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
+            const popup = window.open("about:blank", "oauth-popup", "width=600,height=700");
             if (!popup) {
                 console.error("[BotMcpServersEditor] Popup blocked");
                 oauthConnectingServerId = null;
                 return;
             }
+            popup.opener = null;
+            popup.location.href = authorizeUrl;
 
             // Clear any existing interval before setting a new one
             if (oauthPollInterval !== null) {
@@ -781,7 +768,7 @@
                                 id="mcp-oauth-scopes-connected"
                                 type="text"
                                 class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="read,write"
+                                placeholder="read write"
                                 bind:value={modalOauthScopes}
                             />
                         </div>
@@ -808,7 +795,7 @@
                                 id="mcp-oauth-scopes"
                                 type="text"
                                 class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="read,write"
+                                placeholder="read write"
                                 bind:value={modalOauthScopes}
                             />
                         </div>
@@ -852,7 +839,7 @@
                                 id="mcp-oauth-scopes"
                                 type="text"
                                 class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="read,write"
+                                placeholder="read write"
                                 bind:value={modalOauthScopes}
                             />
                         </div>
@@ -918,7 +905,7 @@
                                 id="mcp-oauth-scopes"
                                 type="text"
                                 class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="read,write"
+                                placeholder="read write"
                                 bind:value={modalOauthScopes}
                             />
                         </div>
