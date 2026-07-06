@@ -652,8 +652,29 @@ export class BotApiService {
 
     // ─── MCP Server management ──────────────────────────────────────────────────────
 
+    async startOAuth(botId: string, serverId: string, redirectUrl: string, callbackUrl?: string): Promise<string> {
+        if (!this.isInitialized()) throw new Error("BotApiService not initialized");
+        let endpoint = `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`;
+        if (callbackUrl) {
+            endpoint += `&callbackUrl=${encodeURIComponent(callbackUrl)}`;
+        }
+        const response = await this.fetch(endpoint);
+        const data = await response.json();
+        if (!data.authorizeUrl) {
+            throw new Error("OAuth start failed: server did not return an authorization URL");
+        }
+        return data.authorizeUrl;
+    }
+
+    completeOAuth(botId: string, serverId: string): void {
+        if (!this.isInitialized()) throw new Error("BotApiService not initialized");
+        // The OAuth callback endpoint is called by the provider, not by the frontend.
+        // This method is for frontend state refresh after the popup closes.
+        // Nothing needs to be done here — the provider redirects to the callback endpoint.
+    }
+
     /**
-     * List MCP servers for a bot
+     * Get MCP servers for a bot
      */
     async getBotMcpServers(botId: string): Promise<McpServer[]> {
         try {
@@ -718,8 +739,9 @@ export interface McpServer {
     id: string;
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
+    oauthConnected?: boolean;
     headers?: Record<string, string>;
     enabled: boolean;
     lastTestedAt?: string | null;
@@ -735,7 +757,7 @@ export interface McpServer {
 export interface CreateMcpServerDto {
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
     headers?: Record<string, string>;
 }
