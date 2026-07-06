@@ -695,13 +695,6 @@ export class BotApiService {
         return data.authorizeUrl;
     }
 
-    completeOAuth(botId: string, serverId: string): void {
-        if (!this.isInitialized()) throw new Error("BotApiService not initialized");
-        // The OAuth callback endpoint is called by the provider, not by the frontend.
-        // This method is for frontend state refresh after the popup closes.
-        // Nothing needs to be done here — the provider redirects to the callback endpoint.
-    }
-
     /**
      * Get MCP servers for a bot
      */
