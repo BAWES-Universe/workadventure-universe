@@ -652,11 +652,13 @@ export class BotApiService {
 
     // ─── MCP Server management ──────────────────────────────────────────────────────
 
-    async startOAuth(botId: string, serverId: string, redirectUrl: string): Promise<string> {
+    async startOAuth(botId: string, serverId: string, redirectUrl: string, callbackUrl?: string): Promise<string> {
         if (!this.isInitialized()) throw new Error("BotApiService not initialized");
-        const response = await this.fetch(
-            `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`
-        );
+        let endpoint = `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(redirectUrl)}`;
+        if (callbackUrl) {
+            endpoint += `&callbackUrl=${encodeURIComponent(callbackUrl)}`;
+        }
+        const response = await this.fetch(endpoint);
         const data = await response.json();
         if (!data.authorizeUrl) {
             throw new Error("OAuth start failed: server did not return an authorization URL");
@@ -664,7 +666,7 @@ export class BotApiService {
         return data.authorizeUrl;
     }
 
-    async completeOAuth(botId: string, serverId: string): Promise<void> {
+    completeOAuth(botId: string, serverId: string): void {
         if (!this.isInitialized()) throw new Error("BotApiService not initialized");
         // The OAuth callback endpoint is called by the provider, not by the frontend.
         // This method is for frontend state refresh after the popup closes.

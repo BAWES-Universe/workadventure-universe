@@ -354,7 +354,8 @@
         oauthConnecting = true;
         try {
             const redirectUrl = window.location.href.split("?")[0].split("#")[0];
-            const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl);
+            const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
+            const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl, callbackUrl);
 
             const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
             if (!popup) {
