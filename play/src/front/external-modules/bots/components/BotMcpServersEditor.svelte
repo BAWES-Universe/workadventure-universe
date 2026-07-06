@@ -113,6 +113,18 @@
         modalHeaders = server.headers ? Object.entries(server.headers).map(([key, value]) => ({ key, value })) : [];
         modalError = null;
         showModal = true;
+
+        // When editing an existing OAuth server, seed afterUpdate prev values
+        // so it doesn't trigger a stale OAuth discovery. The server is already
+        // configured and working — re-discovering is unnecessary and can fail
+        // if the provider is temporarily unreachable (Attio, etc.), showing
+        // a misleading "not found" error.
+        if (server.authType === "oauth") {
+            _prevOauthAuthType = server.authType;
+            _prevOauthServerUrl = server.serverUrl;
+            oauthDiscoveryState = "discovered";
+            discoveryRegistrationStatus = server.oauthConnected ? "auto" : "manual";
+        }
     }
 
     function closeModal() {
@@ -165,34 +177,39 @@
             };
             if (modalAuthType === "oauth") {
                 if (editingServer) {
-                    // When editing, only update authConfig if the user actually changed fields.
-                    // The stored config is encrypted — we can't pre-populate the form, so
-                    // save nothing if all fields are empty to preserve existing tokens/creds.
-                    //
-                    // For auto-discovered servers (discoveryRegistrationStatus === 'auto'),
-                    // discovery fills the OAuth form fields reactively. We must NOT send
-                    // authConfig in this case because the stored config contains the
-                    // access/refresh tokens — sending only the discovered endpoints would
-                    // overwrite and lose them, de-authorizing the connection.
-                    // For 'manual' or null discovery, the existing behavior applies.
-                    if (discoveryRegistrationStatus !== "auto") {
+                    // When editing an existing OAuth server with auto-discovery,
+                    // skip authConfig to preserve existing encrypted credentials/tokens.
+                    // The discovery would only overwrite the endpoint URLs with values
+                    // the server already has, while dropping the access/refresh tokens.
+                    const preserveExisting =
+                        editingServer.authType === "oauth" && discoveryRegistrationStatus === "auto";
+
+                    if (!preserveExisting) {
+                        // Only check Client ID/Secret for manual discovery — auto fills them
+                        // from the API response (may be null for PKCE public clients)
                         const hasOAuthInput =
                             modalOauthAuthorizeUrl.trim() ||
                             modalOauthTokenUrl.trim() ||
-                            modalOauthClientId.trim() ||
-                            modalOauthClientSecret.trim() ||
+                            (discoveryRegistrationStatus !== "auto" &&
+                                (modalOauthClientId.trim() || modalOauthClientSecret.trim())) ||
                             modalOauthScopes.trim();
                         if (hasOAuthInput) {
                             data.authConfig = JSON.stringify({
                                 authorizeUrl: modalOauthAuthorizeUrl.trim(),
                                 tokenUrl: modalOauthTokenUrl.trim(),
-                                clientId: modalOauthClientId.trim(),
-                                clientSecret: modalOauthClientSecret.trim(),
+                                clientId:
+                                    discoveryRegistrationStatus === "auto" && !modalOauthClientId.trim()
+                                        ? null
+                                        : modalOauthClientId.trim(),
+                                clientSecret:
+                                    discoveryRegistrationStatus === "auto" && !modalOauthClientSecret.trim()
+                                        ? null
+                                        : modalOauthClientSecret.trim(),
                                 scopes: modalOauthScopes.trim(),
                             });
                         }
                     }
-                    // If 'auto' or no input, authConfig is omitted → server preserves existing value
+                    // If preserveExisting or no input, authConfig is omitted → server preserves existing value
                 } else {
                     // When creating, require OAuth fields
                     // For auto-discovered public clients (PKCE), clientId/clientSecret are managed server-side
