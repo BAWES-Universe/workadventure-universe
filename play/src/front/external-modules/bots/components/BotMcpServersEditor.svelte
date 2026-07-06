@@ -121,12 +121,14 @@
         modalLoading = false;
         modalError = null;
         // Reset OAuth state to prevent stale values bleeding into next modal open
+        modalAuthType = "none";
+        modalServerUrl = "";
         modalOauthAuthorizeUrl = "";
         modalOauthTokenUrl = "";
         modalOauthClientId = "";
         modalOauthClientSecret = "";
         modalOauthScopes = "";
-        // Reset OAuth discovery state so afterUpdate fires discovery on next open
+        // Cancel any in-flight or pending discovery before resetting state
         if (discoveryAbortController) {
             discoveryAbortController.abort();
             discoveryAbortController = null;
@@ -173,7 +175,7 @@
                     // access/refresh tokens — sending only the discovered endpoints would
                     // overwrite and lose them, de-authorizing the connection.
                     // For 'manual' or null discovery, the existing behavior applies.
-                    if (discoveryRegistrationStatus !== 'auto') {
+                    if (discoveryRegistrationStatus !== "auto") {
                         const hasOAuthInput =
                             modalOauthAuthorizeUrl.trim() ||
                             modalOauthTokenUrl.trim() ||
@@ -570,9 +572,7 @@
                             {/if}
                             <!-- OAuth connected badge -->
                             {#if server.authType === "oauth" && server.oauthConnected}
-                                <span
-                                    class="px-2 py-1 text-xs text-green-400 bg-green-500/10 rounded font-semibold"
-                                >
+                                <span class="px-2 py-1 text-xs text-green-400 bg-green-500/10 rounded font-semibold">
                                     Connected ✓
                                 </span>
                             {/if}
