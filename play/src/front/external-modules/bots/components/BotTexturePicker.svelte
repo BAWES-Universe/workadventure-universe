@@ -4,7 +4,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
-    import type { WokaData, WokaTexture, WokaCollection } from "../../../Components/Woka/WokaTypes";
+    import type { WokaData, WokaTexture } from "../../../Components/Woka/WokaTypes";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
 
     export let selectedTextureId: string = "";
@@ -16,7 +16,6 @@
     let error: string | null = null;
     let assetsDirection: number = 0;
     let currentSelectedId: string = selectedTextureId;
-    let loadRequestId = 0;
     let roomChangeUnsubscribe: () => void;
 
     // Sync with prop changes
@@ -25,7 +24,6 @@
     }
 
     async function loadWokaData() {
-        const requestId = ++loadRequestId;
         try {
             isLoading = true;
             error = null;
@@ -34,12 +32,7 @@
             // fallback to start room (initial entry), then window.location
             let roomUrl: string;
             if (gameManager) {
-                let scene;
-                try {
-                    scene = gameManager.getCurrentGameScene();
-                } catch {
-                    // Game scene not available yet — fall through to fallback URLs
-                }
+                const scene = gameManager.getCurrentGameScene();
                 if (scene?.room?.href) {
                     roomUrl = scene.room.href;
                 } else if (gameManager.currentStartedRoom?.href) {
@@ -67,42 +60,19 @@
                 throw new Error("Failed to load Woka data");
             }
 
-            const data: WokaData = await response.json();
+            wokaData = await response.json();
 
-            // Discard stale response from a previous (rapid) room change
-            if (requestId !== loadRequestId) return;
-
-            wokaData = data;
-
-            // Validate currentSelectedId against the new catalog.
-            // If the previously selected texture no longer exists (room changed),
-            // fall back to the first available texture.
-            if (currentSelectedId) {
-                const exists = data["woka"]?.collections?.some((col: WokaCollection) =>
-                    col.textures?.some((t: WokaTexture) => t.id === currentSelectedId)
-                );
-                if (!exists) {
-                    const firstTexture = data["woka"]?.collections?.[0]?.textures?.[0];
-                    if (firstTexture) {
-                        currentSelectedId = firstTexture.id;
-                    } else {
-                        currentSelectedId = "";
-                    }
-                }
-            } else if (data["woka"]?.collections?.[0]?.textures?.[0]) {
-                // Select first texture by default if none selected
-                const firstTexture = data["woka"].collections[0].textures[0];
+            // Select first texture by default if none selected
+            if (!currentSelectedId && wokaData?.["woka"]?.collections?.[0]?.textures?.[0]) {
+                const firstTexture = wokaData["woka"].collections[0].textures[0];
                 currentSelectedId = firstTexture.id;
                 onSelect(firstTexture.id);
             }
         } catch (err) {
-            if (requestId !== loadRequestId) return;
             console.error("Error loading Woka data:", err);
             error = err instanceof Error ? err.message : "Failed to load Woka customization data";
         } finally {
-            if (requestId === loadRequestId) {
-                isLoading = false;
-            }
+            isLoading = false;
         }
     }
 

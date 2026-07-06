@@ -318,10 +318,13 @@
         oauthDiscoveryState = 'discovering';
         try {
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
-            const res = await fetch(
-                `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(modalServerUrl)}&callbackUrl=${encodeURIComponent(callbackUrl)}`,
-                { signal }
-            );
+            // Authenticate via _token query param (same mechanism as BotApiService uses)
+            const sessionToken = typeof localStorage !== "undefined" ? localStorage.getItem("admin_session_token") : null;
+            let discoverUrl = `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(modalServerUrl)}&callbackUrl=${encodeURIComponent(callbackUrl)}`;
+            if (sessionToken) {
+                discoverUrl += `&_token=${encodeURIComponent(sessionToken)}`;
+            }
+            const res = await fetch(discoverUrl, { signal });
             if (signal.aborted) return;
             if (!res.ok) {
                 oauthDiscoveryState = 'not_found';
