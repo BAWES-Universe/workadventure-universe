@@ -236,6 +236,11 @@
                             modalLoading = false;
                             return;
                         }
+                    } else if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim()) {
+                        // Even for auto-discovered servers, authorize and token URLs are always required
+                        modalError = "Authorize URL and Token URL are required for OAuth authentication";
+                        modalLoading = false;
+                        return;
                     }
                     data.authConfig = JSON.stringify({
                         authorizeUrl: modalOauthAuthorizeUrl.trim(),
@@ -434,8 +439,11 @@
                         }
                         oauthConnectingServerId = null;
                         void loadServers().then(() => {
-                            // Auto-run test connection after OAuth completes
-                            void handleTestConnection(serverId);
+                            const server = servers.find((s) => s.id === serverId);
+                            // Only test if OAuth actually completed (oauthConnected flag set)
+                            if (server?.oauthConnected) {
+                                void handleTestConnection(serverId);
+                            }
                         });
                     }
                 } catch {
