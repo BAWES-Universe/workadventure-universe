@@ -186,14 +186,15 @@
             };
             if (modalAuthType === "oauth") {
                 if (editingServer && (editingServer.authType as string) === "oauth") {
-                    // When editing a connected OAuth server, preserve existing
-                    // encrypted credentials/tokens but allow scopes updates.
+                    // When editing an existing OAuth server, preserve existing
+                    // encrypted credentials/tokens. For connected servers, there are
+                    // no editable OAuth fields (scopes/credentials are set at authorization
+                    // time). For disconnected, authConfig comes from the else branch.
                     if (editingExistingOauth) {
-                        if (modalOauthScopes.trim()) {
-                            data.authConfig = JSON.stringify({
-                                scopes: modalOauthScopes.trim(),
-                            });
-                        }
+                        // Connected OAuth server — no editable fields besides name/headers.
+                        // Scopes and credentials are set at authorization time and cannot be
+                        // changed without re-authorizing (per OAuth spec / industry pattern).
+                        // authConfig is omitted → backend preserves existing value.
                     } else {
                         // Only check Client ID/Secret for manual discovery — auto fills them
                         // from the API response (may be null for PKCE public clients)
@@ -756,21 +757,6 @@
                         <div class="flex items-center gap-2 text-sm text-green-400 py-1">
                             <span class="inline-block h-2 w-2 rounded-full bg-green-400" />
                             OAuth configured
-                        </div>
-                        <div>
-                            <label
-                                for="mcp-oauth-scopes-connected"
-                                class="block text-sm text-white/80 mb-1.5 font-medium"
-                            >
-                                Scopes (space-separated)
-                            </label>
-                            <input
-                                id="mcp-oauth-scopes-connected"
-                                type="text"
-                                class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="read write"
-                                bind:value={modalOauthScopes}
-                            />
                         </div>
                     {:else if oauthDiscoveryState === "discovering"}
                         <div class="flex items-center gap-2 text-sm text-white/60 py-2">
