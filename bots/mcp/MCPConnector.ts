@@ -23,7 +23,7 @@ export interface McpServerConfig {
     botId: string;
     name: string;
     serverUrl: string;
-    authType: 'none' | 'bearer' | 'api-key';
+    authType: 'none' | 'bearer' | 'api-key' | 'oauth';
     authConfig?: string; // Decrypted auth value (plaintext at this point)
     headers?: Record<string, string>; // Extra headers
     enabled: boolean;
@@ -88,6 +88,16 @@ function buildAuthHeaders(
             headers['Authorization'] = `Bearer ${authConfig}`;
         } else if (authType === 'api-key') {
             headers['X-API-Key'] = authConfig;
+        } else if (authType === 'oauth') {
+            // OAuth authConfig is a JSON string with { accessToken, ... }
+            try {
+                const oauthConfig = JSON.parse(authConfig);
+                if (oauthConfig.accessToken) {
+                    headers['Authorization'] = `Bearer ${oauthConfig.accessToken}`;
+                }
+            } catch {
+                console.warn('[MCPConnector] Failed to parse OAuth authConfig JSON');
+            }
         }
     }
 
