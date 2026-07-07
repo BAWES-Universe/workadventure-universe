@@ -1872,8 +1872,9 @@ export class SocialBehavior extends BaseBehavior {
         // This context includes previous conversations, emotional state, and relationship history
         // The AI will use this to remember bad interactions and respond appropriately
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
+        const playerInfo = this.bot?.getPlayerInfo(playerId);
         const playerName = this.conversationMemory?.getPersonalInfo(botId, playerId)?.name
-            || this.bot?.getPlayerInfo(playerId)?.name
+            || (playerInfo && playerInfo.name !== 'Unknown' ? playerInfo.name : null)
             || 'Someone';
 
         // Generate natural response using AI - not a greeting, just respond naturally
