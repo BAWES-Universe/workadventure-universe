@@ -1537,8 +1537,12 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             }
 
             const playerMessage = hasContext
-                ? `${playerName} just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
-                : `${playerName} just approached you. Greet them naturally.`;
+                ? playerName
+                    ? `${playerName} just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
+                    : `They just approached you again. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
+                : playerName
+                    ? `${playerName} just approached you. Greet them naturally.`
+                    : `Someone just approached you. Greet them naturally.`;
 
             // Start typing indicator
             this.bot?.startTyping(spaceName);
