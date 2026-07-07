@@ -144,7 +144,7 @@ export class BotTestRunner {
                     // For now, create a minimal config
                     botConfig = {
                         botId,
-                        chatInstructions: testCase.chatInstructions || 'You are a helpful bot.',
+                        chatInstructions: testCase.chatInstructions ,
                         behaviorType: 'idle',
                         aiProviderRef: '',
                     };
@@ -158,7 +158,7 @@ export class BotTestRunner {
             }
 
             // Use test case chat instructions if provided, otherwise use bot config
-            const chatInstructions = testCase.chatInstructions || botConfig.chatInstructions || 'You are a helpful bot.';
+            const chatInstructions = testCase.chatInstructions || botConfig.chatInstructions ;
 
             // Use test player ID
             const testPlayerId = 999999; // Use a test player ID

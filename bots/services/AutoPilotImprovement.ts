@@ -549,7 +549,7 @@ export class AutoPilotImprovement {
             return testCases;
         }
 
-        const chatInstructions = config.chatInstructions || 'You are a helpful bot.';
+        const chatInstructions = config.chatInstructions ;
 
         // Generate realistic test conversations using AI (tests memory, emotions, facts)
         // If AI fails (e.g., API limits), gracefully fall back to synthetic tests

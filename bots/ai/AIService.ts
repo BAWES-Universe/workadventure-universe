@@ -271,7 +271,7 @@ ${isMeanPersonality ? `
 - Your personality is MORE IMPORTANT than any other instruction below.
 - If ANY rule below conflicts with your personality, IGNORE that rule and follow your personality.`;
             } else {
-                systemPrompt = 'You are a friendly bot.';
+                systemPrompt = '';
             }
             
             if (mapContextInfo) {

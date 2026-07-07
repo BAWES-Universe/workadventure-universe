@@ -791,7 +791,7 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
         
-        const chatInstructions = botConfig.chatInstructions || 'You are a friendly bot.';
+        const chatInstructions = botConfig.chatInstructions ;
         console.log(`[SocialBehavior] Generating AI response for bot ${botId}:`, {
             aiProviderRef: botConfig.aiProviderRef,
             chatInstructions: chatInstructions.substring(0, 100) + (chatInstructions.length > 100 ? '...' : ''),
@@ -1241,7 +1241,7 @@ export class SocialBehavior extends BaseBehavior {
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
-                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.chatInstructions ,
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1327,7 +1327,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const chatInstructions = botConfig.chatInstructions ;
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             followerPlayer.userId,
@@ -1423,7 +1423,7 @@ export class SocialBehavior extends BaseBehavior {
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
-                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.chatInstructions ,
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1509,7 +1509,7 @@ export class SocialBehavior extends BaseBehavior {
 
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const chatInstructions = botConfig.chatInstructions ;
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             followerPlayer.userId,
@@ -1573,7 +1573,7 @@ export class SocialBehavior extends BaseBehavior {
                 botId,
                 playerId,
                 goodbyePrompt,
-                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.chatInstructions ,
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1669,7 +1669,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const chatInstructions = botConfig.chatInstructions ;
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
@@ -1742,7 +1742,7 @@ export class SocialBehavior extends BaseBehavior {
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.',
+                botConfig.chatInstructions ,
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1813,7 +1813,7 @@ export class SocialBehavior extends BaseBehavior {
 
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.';
+                        const chatInstructions = botConfig.chatInstructions ;
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
@@ -1897,7 +1897,7 @@ export class SocialBehavior extends BaseBehavior {
 
             const playerMessage = hasContext
                 ? `${playerName} just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
-                : `${playerName} just approached you.`;
+                : `${playerName} just approached you. Greet them naturally.`;
 
             // Start typing indicator
             this.bot?.startTyping(spaceName);
@@ -1909,7 +1909,7 @@ export class SocialBehavior extends BaseBehavior {
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.',
+                botConfig.chatInstructions ,
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -2005,7 +2005,7 @@ export class SocialBehavior extends BaseBehavior {
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.';
+                        const chatInstructions = botConfig.chatInstructions ;
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
