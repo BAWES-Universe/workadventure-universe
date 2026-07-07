@@ -223,8 +223,11 @@
                             !modalOauthTokenUrl.trim()
                         ) {
                             modalError =
-                                "OAuth discovery is still in progress for the new server URL. " +
-                                "Wait for auto-discovery or fill in the OAuth fields manually.";
+                                oauthDiscoveryState === "not_found"
+                                    ? "Could not auto-discover OAuth endpoints for this URL. " +
+                                      "Fill in the OAuth fields manually to continue."
+                                    : "OAuth discovery is still in progress for the new server URL. " +
+                                      "Wait for auto-discovery or fill in the OAuth fields manually.";
                             modalLoading = false;
                             return;
                         }
