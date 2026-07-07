@@ -419,11 +419,17 @@
                 oauthDiscoveryState = "idle";
                 discoveryRegistrationStatus = null;
             } else {
-                // Reset state until new discovery completes — stale data from
-                // the old URL would bypass the save guard and let mismatched
-                // credentials through.
+                // Reset state and clear form fields until new discovery
+                // completes — stale auto-filled values from the old URL
+                // would bypass the save guard and let mismatched credentials
+                // through.
                 oauthDiscoveryState = "idle";
                 discoveryRegistrationStatus = null;
+                modalOauthAuthorizeUrl = "";
+                modalOauthTokenUrl = "";
+                modalOauthClientId = "";
+                modalOauthClientSecret = "";
+                modalOauthScopes = "";
                 discoveryDebounceTimer = setTimeout(() => {
                     void discoverOAuthEndpoints();
                 }, 500);
