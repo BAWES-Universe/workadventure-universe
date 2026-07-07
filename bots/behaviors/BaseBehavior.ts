@@ -115,12 +115,10 @@ export abstract class BaseBehavior {
      * 2. Player info from BotClient (room nickname, excluding 'Unknown' sentinel)
      * 3. 'Someone' (safe fallback)
      */
-    protected resolvePlayerName(botId: string, playerId: number, conversationMemory: ConversationMemory | null): string {
+    protected resolvePlayerName(botId: string, playerId: number, conversationMemory: ConversationMemory | null): string | null {
         const playerInfo = this.bot?.getPlayerInfo(playerId);
-        const playerName = conversationMemory?.getPersonalInfo(botId, playerId)?.name
-            || (playerInfo && playerInfo.name !== 'Unknown' ? playerInfo.name : null)
-            || 'Someone';
-        return playerName;
+        return conversationMemory?.getPersonalInfo(botId, playerId)?.name
+            || (playerInfo && playerInfo.name !== 'Unknown' ? playerInfo.name : null);
     }
 
     /**
