@@ -653,7 +653,50 @@ export class BotApiService {
     // ─── MCP Server management ──────────────────────────────────────────────────────
 
     /**
-     * List MCP servers for a bot
+     * Discover OAuth endpoints for an MCP server URL.
+     * Uses the BotApiService's fetch for consistent auth (session token, JWT fallback, session refresh).
+     */
+    async discoverMcpOAuthEndpoints(
+        serverUrl: string,
+        callbackUrl: string,
+        signal?: AbortSignal
+    ): Promise<{
+        discovered: boolean;
+        authorizeUrl?: string;
+        tokenUrl?: string;
+        clientId?: string;
+        clientSecret?: string;
+        scopesSupported?: string[];
+        registrationStatus?: string;
+    }> {
+        if (!this.isInitialized()) throw new Error("BotApiService not initialized");
+        const response = await this.fetch(
+            `/api/mcp/oauth-discover?serverUrl=${encodeURIComponent(serverUrl)}&callbackUrl=${encodeURIComponent(
+                callbackUrl
+            )}`,
+            { signal }
+        );
+        return response.json();
+    }
+
+    async startOAuth(botId: string, serverId: string, redirectUrl: string, callbackUrl?: string): Promise<string> {
+        if (!this.isInitialized()) throw new Error("BotApiService not initialized");
+        let endpoint = `/api/bots/${botId}/mcp-servers/${serverId}/oauth/start?redirectUrl=${encodeURIComponent(
+            redirectUrl
+        )}`;
+        if (callbackUrl) {
+            endpoint += `&callbackUrl=${encodeURIComponent(callbackUrl)}`;
+        }
+        const response = await this.fetch(endpoint);
+        const data = await response.json();
+        if (!data.authorizeUrl) {
+            throw new Error("OAuth start failed: server did not return an authorization URL");
+        }
+        return data.authorizeUrl;
+    }
+
+    /**
+     * Get MCP servers for a bot
      */
     async getBotMcpServers(botId: string): Promise<McpServer[]> {
         try {
@@ -718,8 +761,9 @@ export interface McpServer {
     id: string;
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
+    oauthConnected?: boolean;
     headers?: Record<string, string>;
     enabled: boolean;
     lastTestedAt?: string | null;
@@ -735,7 +779,7 @@ export interface McpServer {
 export interface CreateMcpServerDto {
     name: string;
     serverUrl: string;
-    authType: "none" | "bearer" | "api-key";
+    authType: "none" | "bearer" | "api-key" | "oauth";
     authConfig?: string;
     headers?: Record<string, string>;
 }
