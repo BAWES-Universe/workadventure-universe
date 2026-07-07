@@ -1872,7 +1872,7 @@ export class SocialBehavior extends BaseBehavior {
         // This context includes previous conversations, emotional state, and relationship history
         // The AI will use this to remember bad interactions and respond appropriately
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
-        const playerName = this.conversationMemory?.getPersonalInfo(botId, playerId)?.name || '';
+        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory);
 
         // Generate natural response using AI - not a greeting, just respond naturally
         // The context will inform the AI about previous interactions, emotions, and relationship state
@@ -1895,8 +1895,10 @@ export class SocialBehavior extends BaseBehavior {
             const playerMessage = hasContext
                 ? playerName
                     ? `${playerName} just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
-                    : 'A person you know just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.'
-                : 'Greet this person who just approached you.';
+                    : `They just approached you again. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
+                : playerName
+                    ? `${playerName} just approached you. Greet them naturally.`
+                    : `Someone just approached you. Greet them naturally.`;
 
             // Start typing indicator
             this.bot?.startTyping(spaceName);
