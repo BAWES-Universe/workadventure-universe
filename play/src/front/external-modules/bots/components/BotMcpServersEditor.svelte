@@ -195,7 +195,42 @@
                         // Scopes and credentials are set at authorization time and cannot be
                         // changed without re-authorizing (per OAuth spec / industry pattern).
                         // authConfig is omitted → backend preserves existing value.
+                        //
+                        // If the URL changed, the old authConfig (tokens/credentials) would be
+                        // preserved against the new URL — a mismatch that breaks connectivity.
+                        // Require the user to revert the URL or re-authorize.
+                        if (modalServerUrl.trim() !== editingServer.serverUrl) {
+                            modalError =
+                                "Cannot change the URL of a connected OAuth server. " +
+                                "Revert the URL or disconnect and re-authorize with the new provider.";
+                            modalLoading = false;
+                            return;
+                        }
                     } else {
+                        // Editing a disconnected OAuth server — the user originally
+                        // configured this server's OAuth credentials. The edit modal
+                        // resets all OAuth fields to empty (they're encrypted and
+                        // can't be pre-populated). Discovery auto-fills them after
+                        // a 500ms debounce, but the user might save before it runs.
+                        //
+                        // If the URL changed and discovery hasn't completed yet,
+                        // block the save — otherwise the backend preserves the old
+                        // authConfig against the new URL (mismatched credentials).
+                        if (
+                            modalServerUrl.trim() !== editingServer.serverUrl &&
+                            oauthDiscoveryState !== "discovered" &&
+                            !modalOauthAuthorizeUrl.trim() &&
+                            !modalOauthTokenUrl.trim()
+                        ) {
+                            modalError =
+                                oauthDiscoveryState === "not_found"
+                                    ? "Could not auto-discover OAuth endpoints for this URL. " +
+                                      "Fill in the OAuth fields manually to continue."
+                                    : "OAuth discovery is still in progress for the new server URL. " +
+                                      "Wait for auto-discovery or fill in the OAuth fields manually.";
+                            modalLoading = false;
+                            return;
+                        }
                         // Only check Client ID/Secret for manual discovery — auto fills them
                         // from the API response (may be null for PKCE public clients)
                         const hasOAuthInput =
@@ -205,6 +240,25 @@
                                 (modalOauthClientId.trim() || modalOauthClientSecret.trim())) ||
                             modalOauthScopes.trim();
                         if (hasOAuthInput) {
+                            // Validate required fields before serializing — a partial
+                            // object would overwrite the existing complete authConfig.
+                            if (discoveryRegistrationStatus !== "auto") {
+                                if (
+                                    !modalOauthAuthorizeUrl.trim() ||
+                                    !modalOauthTokenUrl.trim() ||
+                                    !modalOauthClientId.trim() ||
+                                    !modalOauthClientSecret.trim()
+                                ) {
+                                    modalError =
+                                        "Authorize URL, Token URL, Client ID, and Client Secret are required for OAuth authentication";
+                                    modalLoading = false;
+                                    return;
+                                }
+                            } else if (!modalOauthAuthorizeUrl.trim() || !modalOauthTokenUrl.trim()) {
+                                modalError = "Authorize URL and Token URL are required for OAuth authentication";
+                                modalLoading = false;
+                                return;
+                            }
                             data.authConfig = JSON.stringify({
                                 authorizeUrl: modalOauthAuthorizeUrl.trim(),
                                 tokenUrl: modalOauthTokenUrl.trim(),
@@ -355,17 +409,35 @@
             discoveryDebounceTimer = null;
         }
 
+        // Abort any in-flight discovery request — the URL or auth type has
+        // changed, so stale results from a prior request would populate the
+        // form with wrong data.
+        if (discoveryAbortController) {
+            discoveryAbortController.abort();
+            discoveryAbortController = null;
+        }
+
         if (modalAuthType === "oauth" && modalServerUrl.trim()) {
             if (!/^https?:\/\/.+/i.test(modalServerUrl.trim())) {
                 oauthDiscoveryState = "idle";
                 discoveryRegistrationStatus = null;
             } else {
+                // Reset state and clear form fields until new discovery
+                // completes — stale auto-filled values from the old URL
+                // would bypass the save guard and let mismatched credentials
+                // through.
+                oauthDiscoveryState = "idle";
+                discoveryRegistrationStatus = null;
+                modalOauthAuthorizeUrl = "";
+                modalOauthTokenUrl = "";
+                modalOauthClientId = "";
+                modalOauthClientSecret = "";
+                modalOauthScopes = "";
                 discoveryDebounceTimer = setTimeout(() => {
                     void discoverOAuthEndpoints();
                 }, 500);
             }
         } else {
-            discoveryAbortController?.abort();
             oauthDiscoveryState = "idle";
             discoveryRegistrationStatus = null;
         }
@@ -373,6 +445,10 @@
 
     onDestroy(() => {
         if (discoveryDebounceTimer) clearTimeout(discoveryDebounceTimer);
+        if (discoveryAbortController) {
+            discoveryAbortController.abort();
+            discoveryAbortController = null;
+        }
         if (oauthPollInterval !== null) {
             clearInterval(oauthPollInterval);
             oauthPollInterval = null;
@@ -908,7 +984,7 @@
 
                 <!-- Extra Headers -->
                 <div>
-                    <label class="block text-sm text-white/80 mb-1.5 font-medium">Extra Headers</label>
+                    <div class="block text-sm text-white/80 mb-1.5 font-medium">Extra Headers</div>
                     {#each modalHeaders as header, i (i)}
                         <div class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">
                             <input
