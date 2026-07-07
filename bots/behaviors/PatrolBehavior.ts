@@ -1027,7 +1027,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
-                botConfig.chatInstructions ,
+                botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1121,7 +1121,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions ;
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             followerPlayer.userId,
@@ -1218,7 +1218,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 botId,
                 followerPlayer.userId,
                 arrivalPrompt,
-                botConfig.chatInstructions ,
+                botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1312,7 +1312,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions ;
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             followerPlayer.userId,
@@ -1389,7 +1389,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions ,
+                botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1460,7 +1460,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions ;
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot. Respond naturally when someone approaches you.';
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
@@ -1541,7 +1541,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
             const playerMessage = hasContext
                 ? `${playerName} just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history — past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
-                : `${playerName} just approached you. Greet them naturally.`;
+                : `${playerName} just approached you.`;
 
             // Start typing indicator
             this.bot?.startTyping(spaceName);
@@ -1553,7 +1553,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions ,
+                botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1648,7 +1648,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions ;
+                        const chatInstructions = botConfig.chatInstructions || 'You are a friendly bot. Respond naturally when someone approaches you.';
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
@@ -1802,7 +1802,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 botId,
                 playerId,
                 playerMessage,
-                botConfig.chatInstructions ,
+                botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -1926,7 +1926,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     }
 
                     if (this.responseProcessor && processedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions ;
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
                         // Pass responseTime and tokenUsage to ResponseProcessor so it can include them in ONE metric record
                         const tokenUsage = tokensUsed > 0 ? {
                             prompt: chunk.metadata?.promptTokens || Math.floor(tokensUsed * 0.7),
@@ -2180,7 +2180,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 botId,
                 playerId,
                 goodbyePrompt,
-                botConfig.chatInstructions ,
+                botConfig.chatInstructions || 'You are a helpful bot.',
                 botConfig.aiProviderRef,
                 spaceName,
                 context,
@@ -2274,7 +2274,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                     
                     // Clean with ResponseProcessor if available
                     if (this.responseProcessor && cleanedMessage.trim()) {
-                        const chatInstructions = botConfig.chatInstructions ;
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
                         const processed = this.responseProcessor.processResponse(
                             botId,
                             playerId,
