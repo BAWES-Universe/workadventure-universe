@@ -1655,10 +1655,7 @@ export class IdleBehavior extends BaseBehavior {
 
         // Get conversation context (includes memory, emotions, relationship history)
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
-        const playerInfo = this.bot?.getPlayerInfo(playerId);
-        const playerName = this.conversationMemory?.getPersonalInfo(botId, playerId)?.name
-            || (playerInfo && playerInfo.name !== 'Unknown' ? playerInfo.name : null)
-            || 'Someone';
+        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory);
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';

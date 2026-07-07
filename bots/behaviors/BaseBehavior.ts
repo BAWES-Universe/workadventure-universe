@@ -9,6 +9,7 @@ import { PositionMessage_Direction } from '@workadventure/messages';
 import type { AIService } from '../ai/AIService';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
+import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { ResponseProcessor } from '../ai/ResponseProcessor';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 
@@ -107,7 +108,21 @@ export abstract class BaseBehavior {
         this.responseProcessor = responseProcessor || null;
         this.metricsCollector = metricsCollector || null;
     }
-    
+
+    /**
+     * Resolve a player's display name for greetings, using a priority chain:
+     * 1. Conversation memory (personalized name from past interactions)
+     * 2. Player info from BotClient (room nickname, excluding 'Unknown' sentinel)
+     * 3. 'Someone' (safe fallback)
+     */
+    protected resolvePlayerName(botId: string, playerId: number, conversationMemory: ConversationMemory | null): string {
+        const playerInfo = this.bot?.getPlayerInfo(playerId);
+        const playerName = conversationMemory?.getPersonalInfo(botId, playerId)?.name
+            || (playerInfo && playerInfo.name !== 'Unknown' ? playerInfo.name : null)
+            || 'Someone';
+        return playerName;
+    }
+
     /**
      * Set conversation memory (optional - behaviors can override to use shared memory)
      */
