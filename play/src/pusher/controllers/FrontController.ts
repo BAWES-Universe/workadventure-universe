@@ -232,6 +232,85 @@ export class FrontController extends BaseHttpController {
             debug(`FrontController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
             res.status(303).redirect(`${VITE_URL}${decodeURI(req.path)}`);
         });
+
+        // Serve the OAuth popup callback page at the same origin as the opener.
+        // This page sends a postMessage to the opener and closes the popup.
+        // The order of this route relative to others doesn't matter since it has
+        // a unique static path that won't conflict with any dynamic routes.
+        this.app.get("/oauth-popup-callback.html", (req: Request, res: Response) => {
+            const isSuccess = (req.query.oauth as string) === "success";
+            const errorMessage = (req.query.message as string) || "";
+            const iconClass = isSuccess ? "success" : "error";
+            const iconHtml = isSuccess ? "&#10003;" : "&#10005;";
+            const title = isSuccess ? "OAuth Connected" : "OAuth Failed";
+
+            // Escape </script> sequences inside the message to prevent premature
+            // HTML parser script-tag closure when the string appears inside a <script>
+            // block (a well-known XSS vector). JSON.stringify handles quotes, newlines,
+            // and backslashes, but NOT the HTML-special sequence </script>.
+            const safeErrorMessage = JSON.stringify(errorMessage).replace(/<\//g, "<\\/");
+
+            res.type("html").send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${title}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0e0e10; color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; text-align: center; padding: 2rem;
+    }
+    .container { max-width: 480px; }
+    .icon {
+      width: 80px; height: 80px; margin: 0 auto 1.5rem;
+      border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; font-size: 2.5rem; color: #fff;
+    }
+    .icon.success { background: #10b981; }
+    .icon.error { background: #ef4444; }
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; color: #f0f0f0; }
+    p { font-size: 1rem; color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon ${iconClass}">${iconHtml}</div>
+    <h1 id="oauth-title">${title}</h1>
+    <p id="oauth-message"></p>
+    <p id="oauth-countdown" style="margin-top: 1.5rem; font-size: 2rem; font-weight: 700; color: ${
+        isSuccess ? "#10b981" : "#ef4444"
+    };"></p>
+    <p style="margin-top: 0.25rem; font-size: 0.875rem; color: #6b7280;">This window will close automatically</p>
+  </div>
+  <script>
+    var isSuccess = ${isSuccess};
+    document.getElementById("oauth-title").textContent = isSuccess ? "OAuth Connected" : "OAuth Failed";
+    document.getElementById("oauth-message").textContent = isSuccess ? "Successfully authenticated." : ${safeErrorMessage};
+    // Send postMessage immediately so the main window updates right away
+    try { if (window.opener) { window.opener.postMessage({ type: isSuccess ? "oauth-success" : "oauth-failure" }, window.location.origin); } }
+    catch (e) { /* cross-origin — opener may be null */ }
+    // Show 5-second countdown before closing. This prevents race conditions
+    // where browser popup.closed reports false-positives during multi-hop
+    // OAuth navigation (e.g. Sentry), which would cause the main window to
+    // prematurely revert the "Connecting..." state back to "Connect OAuth".
+    var countdown = 5;
+    document.getElementById("oauth-countdown").textContent = countdown;
+    var countdownInterval = setInterval(function() {
+      countdown--;
+      if (countdown > 0) {
+        document.getElementById("oauth-countdown").textContent = countdown;
+      } else {
+        clearInterval(countdownInterval);
+        window.close();
+      }
+    }, 1000);
+  </script>
+</body></html>`);
+        });
     }
 
     private async displayFront(req: Request, res: Response, url: string) {
