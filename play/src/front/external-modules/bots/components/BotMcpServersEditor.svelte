@@ -508,16 +508,22 @@
             // Listen for postMessage from the OAuth popup callback page.
             // The callback page is now served from the same origin as this page
             // (the opener), so postMessage and window.close() work reliably.
+            // We validate event.origin to prevent cross-origin message spoofing.
             const messageHandler = (event: MessageEvent) => {
-                if (event.data?.type !== "oauth-success") return;
-                window.removeEventListener("message", messageHandler);
-                oauthConnectingServerId = null;
-                void loadServers().then(() => {
-                    const server = servers.find((s) => s.id === serverId);
-                    if (server?.oauthConnected) {
-                        void handleTestConnection(serverId);
-                    }
-                });
+                if (event.origin !== window.location.origin) return;
+                if (event.data?.type === "oauth-success") {
+                    window.removeEventListener("message", messageHandler);
+                    oauthConnectingServerId = null;
+                    void loadServers().then(() => {
+                        const server = servers.find((s) => s.id === serverId);
+                        if (server?.oauthConnected) {
+                            void handleTestConnection(serverId);
+                        }
+                    });
+                } else if (event.data?.type === "oauth-failure") {
+                    window.removeEventListener("message", messageHandler);
+                    oauthConnectingServerId = null;
+                }
             };
 
             window.addEventListener("message", messageHandler);

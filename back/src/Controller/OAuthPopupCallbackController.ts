@@ -54,9 +54,13 @@ export class OAuthPopupCallbackController {
     <p>${isSuccess ? "Successfully authenticated." : escapeHtml(errorMessage)}</p>
   </div>
   <script>
+    var success = ${isSuccess};
     try {
       if (window.opener) {
-        window.opener.postMessage({ type: 'oauth-success' }, '*');
+        window.opener.postMessage(
+          { type: success ? 'oauth-success' : 'oauth-failure' },
+          '*'
+        );
       }
     } catch {
       // Cross-origin — opener may be null
