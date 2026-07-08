@@ -51,14 +51,10 @@
     }
 
     onMount(() => {
-        // onMount is not needed — the reactive statement above already
-        // triggers loadServers when botId is first assigned during init.
-        // Keeping both would fire a redundant duplicate API call.
-
-        // If this page was loaded as an OAuth popup (redirect from callback), close it
-        if (window.location.search.includes("oauth=success") || window.location.search.includes("oauth=error")) {
-            window.close();
-        }
+        // The reactive statement (botId change trigger) handles initial load.
+        // OAuth popup closing is handled via postMessage + visibilitychange,
+        // not by checking query params on this page — the callback redirects
+        // to the admin API success page, not back to the play frontend.
     });
 
     // ─── API calls ──────────────────────────────────────────────────────────────────
@@ -385,7 +381,8 @@
 
     // OAuth flow state (per-server, like testingServerId)
     let oauthConnectingServerId: string | null = null;
-    let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
+    let oauthPopupRef: Window | null = null;
+    let oauthCleanup: (() => void) | null = null;
 
     // OAuth discovery state
     let oauthDiscoveryState: "idle" | "discovering" | "discovered" | "not_found" = "idle";
@@ -449,9 +446,13 @@
             discoveryAbortController.abort();
             discoveryAbortController = null;
         }
-        if (oauthPollInterval !== null) {
-            clearInterval(oauthPollInterval);
-            oauthPollInterval = null;
+        if (oauthCleanup) {
+            oauthCleanup();
+            oauthCleanup = null;
+        }
+        if (oauthPopupRef) {
+            oauthPopupRef.close();
+            oauthPopupRef = null;
         }
     });
 
@@ -493,39 +494,57 @@
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl, callbackUrl);
 
-            const popup = window.open("about:blank", "oauth-popup", "width=600,height=700");
+            const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
             if (!popup) {
                 console.error("[BotMcpServersEditor] Popup blocked");
                 oauthConnectingServerId = null;
                 return;
             }
-            popup.opener = null;
-            popup.location.href = authorizeUrl;
+            oauthPopupRef = popup;
 
-            // Clear any existing interval before setting a new one
-            if (oauthPollInterval !== null) {
-                clearInterval(oauthPollInterval);
+            // Clean up any previous listeners before setting new ones
+            if (oauthCleanup) {
+                oauthCleanup();
+                oauthCleanup = null;
             }
-            oauthPollInterval = setInterval(() => {
-                try {
-                    if (popup.closed) {
-                        if (oauthPollInterval) {
-                            clearInterval(oauthPollInterval);
-                            oauthPollInterval = null;
-                        }
-                        oauthConnectingServerId = null;
-                        void loadServers().then(() => {
-                            const server = servers.find((s) => s.id === serverId);
-                            // Only test if OAuth actually completed (oauthConnected flag set)
-                            if (server?.oauthConnected) {
-                                void handleTestConnection(serverId);
-                            }
-                        });
-                    }
-                } catch {
-                    // Cross-origin during redirect
+
+            const handleOAuthComplete = () => {
+                if (oauthCleanup) {
+                    oauthCleanup();
+                    oauthCleanup = null;
                 }
-            }, 500);
+                oauthPopupRef = null;
+                oauthConnectingServerId = null;
+                void loadServers().then(() => {
+                    const server = servers.find((s) => s.id === serverId);
+                    if (server?.oauthConnected) {
+                        void handleTestConnection(serverId);
+                    }
+                });
+            };
+
+            // Listen for postMessage from the OAuth success page
+            // Works when popup is same-origin with parent (admin flow).
+            const messageHandler = (event: MessageEvent) => {
+                if (event.data?.type === "oauth-success") {
+                    handleOAuthComplete();
+                }
+            };
+
+            // Listen for visibility change — fires when user returns to this tab
+            // after closing the popup. Works regardless of cross-origin restrictions.
+            const visibilityHandler = () => {
+                if (document.visibilityState === "visible" && popup.closed) {
+                    handleOAuthComplete();
+                }
+            };
+
+            window.addEventListener("message", messageHandler);
+            document.addEventListener("visibilitychange", visibilityHandler);
+            oauthCleanup = () => {
+                window.removeEventListener("message", messageHandler);
+                document.removeEventListener("visibilitychange", visibilityHandler);
+            };
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
             oauthConnectingServerId = null;
