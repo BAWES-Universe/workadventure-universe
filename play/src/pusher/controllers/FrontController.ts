@@ -281,14 +281,33 @@ export class FrontController extends BaseHttpController {
     <div class="icon ${iconClass}">${iconHtml}</div>
     <h1 id="oauth-title">${title}</h1>
     <p id="oauth-message"></p>
+    <p id="oauth-countdown" style="margin-top: 1.5rem; font-size: 2rem; font-weight: 700; color: ${
+        isSuccess ? "#10b981" : "#ef4444"
+    };"></p>
+    <p style="margin-top: 0.25rem; font-size: 0.875rem; color: #6b7280;">This window will close automatically</p>
   </div>
   <script>
     var isSuccess = ${isSuccess};
     document.getElementById("oauth-title").textContent = isSuccess ? "OAuth Connected" : "OAuth Failed";
     document.getElementById("oauth-message").textContent = isSuccess ? "Successfully authenticated." : ${safeErrorMessage};
+    // Send postMessage immediately so the main window updates right away
     try { if (window.opener) { window.opener.postMessage({ type: isSuccess ? "oauth-success" : "oauth-failure" }, window.location.origin); } }
     catch (e) { /* cross-origin — opener may be null */ }
-    window.close();
+    // Show 5-second countdown before closing. This prevents race conditions
+    // where browser popup.closed reports false-positives during multi-hop
+    // OAuth navigation (e.g. Sentry), which would cause the main window to
+    // prematurely revert the "Connecting..." state back to "Connect OAuth".
+    var countdown = 5;
+    document.getElementById("oauth-countdown").textContent = countdown;
+    var countdownInterval = setInterval(function() {
+      countdown--;
+      if (countdown > 0) {
+        document.getElementById("oauth-countdown").textContent = countdown;
+      } else {
+        clearInterval(countdownInterval);
+        window.close();
+      }
+    }, 1000);
   </script>
 </body></html>`);
         });
