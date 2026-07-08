@@ -50,6 +50,31 @@
         void loadServers();
     }
 
+    // Track the previous connecting server ID to detect when a flow completes
+    // (regardless of how — postMessage, manual close, error, timeout).
+    let _prevConnectingServerId: string | null = null;
+
+    // When oauthConnectingServerId transitions from a value to null, reload
+    // servers to pick up the updated oauthConnected / test result state.
+    // This single reactive statement covers ALL exit paths, eliminating the
+    // need to duplicate loadServers() calls in every handler.
+    function refreshServersOnFlowComplete(prevServerId: string) {
+        void loadServers().then(() => {
+            const server = servers.find((s) => s.id === prevServerId);
+            if (server?.oauthConnected) {
+                void handleTestConnection(server.id);
+            }
+        });
+    }
+
+    $: {
+        const prev = _prevConnectingServerId;
+        _prevConnectingServerId = oauthConnectingServerId;
+        if (prev !== null && oauthConnectingServerId === null) {
+            refreshServersOnFlowComplete(prev);
+        }
+    }
+
     onMount(() => {
         // onMount is not needed — the reactive statement above already
         // triggers loadServers when botId is first assigned during init.
@@ -385,7 +410,7 @@
 
     // OAuth flow state (per-server, like testingServerId)
     let oauthConnectingServerId: string | null = null;
-    let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
+    let oauthCleanup: (() => void) | null = null;
 
     // OAuth discovery state
     let oauthDiscoveryState: "idle" | "discovering" | "discovered" | "not_found" = "idle";
@@ -449,9 +474,9 @@
             discoveryAbortController.abort();
             discoveryAbortController = null;
         }
-        if (oauthPollInterval !== null) {
-            clearInterval(oauthPollInterval);
-            oauthPollInterval = null;
+        if (oauthCleanup) {
+            oauthCleanup();
+            oauthCleanup = null;
         }
     });
 
@@ -488,47 +513,87 @@
 
     async function handleOAuthConnect(serverId: string) {
         oauthConnectingServerId = serverId;
+
+        // Clean up any previous listener or focus handler before starting a new flow
+        if (oauthCleanup) {
+            oauthCleanup();
+            oauthCleanup = null;
+        }
+
+        // Open a blank popup immediately before the async call, so the browser
+        // still recognizes this as user-initiated and doesn't block the popup.
+        // After startOAuth resolves, we navigate the placeholder to the authorize URL.
+        const popup = window.open("", "oauth-popup", "width=600,height=700");
+        if (!popup) {
+            console.error("[BotMcpServersEditor] Popup blocked");
+            oauthConnectingServerId = null;
+            return;
+        }
+
         try {
             const redirectUrl = window.location.href.split("?")[0].split("#")[0];
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl, callbackUrl);
 
-            const popup = window.open("about:blank", "oauth-popup", "width=600,height=700");
-            if (!popup) {
-                console.error("[BotMcpServersEditor] Popup blocked");
-                oauthConnectingServerId = null;
-                return;
-            }
-            popup.opener = null;
+            // Navigate the placeholder popup to the actual authorize URL.
+            // eslint-disable-next-line require-atomic-updates
             popup.location.href = authorizeUrl;
 
-            // Clear any existing interval before setting a new one
-            if (oauthPollInterval !== null) {
-                clearInterval(oauthPollInterval);
-            }
-            oauthPollInterval = setInterval(() => {
+            // Listen for postMessage from the OAuth popup callback page.
+            // The callback page sends postMessage immediately (before its
+            // 5-second countdown), so the main window updates right away.
+            const messageHandler = (event: MessageEvent) => {
+                if (event.origin !== window.location.origin) return;
+                if (event.data?.type === "oauth-success") {
+                    if (oauthCleanup) {
+                        oauthCleanup();
+                        oauthCleanup = null;
+                    }
+                    oauthConnectingServerId = null;
+                    // Note: loadServers() is handled by the reactive $: block that
+                    // watches oauthConnectingServerId transitions — don't call it here.
+                } else if (event.data?.type === "oauth-failure") {
+                    if (oauthCleanup) {
+                        oauthCleanup();
+                        oauthCleanup = null;
+                    }
+                    oauthConnectingServerId = null;
+                }
+            };
+
+            window.addEventListener("message", messageHandler);
+
+            // Focus event fallback: when the user returns focus to this window
+            // and the popup is gone (closed manually before completing OAuth),
+            // clean up the connecting state. This replaces the old 500ms
+            // popup.closed polling which caused false-positives during
+            // cross-origin navigation in multi-hop OAuth flows (e.g. Sentry).
+            const onFocus = () => {
                 try {
                     if (popup.closed) {
-                        if (oauthPollInterval) {
-                            clearInterval(oauthPollInterval);
-                            oauthPollInterval = null;
-                        }
+                        window.removeEventListener("focus", onFocus);
+                        window.removeEventListener("message", messageHandler);
                         oauthConnectingServerId = null;
-                        void loadServers().then(() => {
-                            const server = servers.find((s) => s.id === serverId);
-                            // Only test if OAuth actually completed (oauthConnected flag set)
-                            if (server?.oauthConnected) {
-                                void handleTestConnection(serverId);
-                            }
-                        });
                     }
                 } catch {
-                    // Cross-origin during redirect
+                    // Cross-origin — popup may be inaccessible during navigation
                 }
-            }, 500);
+            };
+            window.addEventListener("focus", onFocus);
+
+            oauthCleanup = () => {
+                window.removeEventListener("message", messageHandler);
+                window.removeEventListener("focus", onFocus);
+            };
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
             oauthConnectingServerId = null;
+            // Close the placeholder popup when startOAuth fails
+            try {
+                popup.close();
+            } catch {
+                // popup may already be closed
+            }
         }
     }
 

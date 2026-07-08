@@ -64,10 +64,14 @@ export class PersistentMemory extends ConversationMemory {
         
         // If there's an active memory for this userUuid on a different playerId
         // (e.g., another tab already chatting), use that instead — it's more current
+        // BUT only if that active memory is more recently updated than the cached snapshot
+        // to avoid replacing fresh in-session data with stale cross-tab data.
         if (loadedMemory) {
             const activeByUuid = this.getMemoryByUserUuid(botId, userUuid);
             if (activeByUuid && activeByUuid !== this.getMemory(botId, playerId)) {
-                loadedMemory = this.cloneMemory(activeByUuid);
+                if (activeByUuid.lastUpdated > (loadedMemory.lastUpdated || 0)) {
+                    loadedMemory = this.cloneMemory(activeByUuid);
+                }
             }
         }
         
@@ -84,30 +88,71 @@ export class PersistentMemory extends ConversationMemory {
             // Check if existing active memory belongs to a different user (recycled playerId)
             const existing = this.getMemory(botId, playerId);
             if (existing && existing.userUuid && existing.userUuid !== userUuid) {
-                // PlayerId was recycled — clear stale memory before restoring
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing stale memory for UUID ${existing.userUuid}, restoring for ${userUuid}`);
+                // Distinguish between first-time UUID assignment (temp UUID from getOrCreateMemory
+                // being replaced with actual UUID) vs a truly recycled playerId (a different user).
+                // Temp UUIDs are set by ConversationMemory.getOrCreateMemory as `temp-{playerId}`.
+                // For recycled playerIds we MUST clear the memory to prevent data leakage.
+                const isFirstTimeAssignment = existing.userUuid.startsWith('temp-');
+                if (!isFirstTimeAssignment) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing stale memory for UUID ${existing.userUuid}, restoring for ${userUuid}`);
+                    }
+                    this.clearMemory(botId, playerId);
                 }
-                this.clearMemory(botId, playerId);
             }
 
             // Restore memory to current playerId
             const existingOrNew = this.getMemory(botId, playerId);
             if (existingOrNew) {
                 // Merge: keep current memory but restore loaded data (preserve any new messages)
-                // Only restore if existing memory is empty or very new
-                const existingIsNew = existingOrNew.conversationHistory.length === 0 || 
-                                     (Date.now() - existingOrNew.createdAt) < 5000; // Less than 5 seconds old
+                // Only restore if existing memory is empty (just joined, no conversation yet)
+                const existingIsNew = existingOrNew.conversationHistory.length === 0;
                 
                 if (existingIsNew) {
                     // Replace with loaded memory (user just joined, no conversation yet)
                     Object.assign(existingOrNew, loadedMemory);
                     existingOrNew.playerId = playerId; // Update to current playerId
                 } else {
-                    // Merge: keep conversation history, restore emotions and personal info
-                    existingOrNew.emotions = loadedMemory.emotions;
-                    existingOrNew.personalInfo = loadedMemory.personalInfo;
-                    existingOrNew.relationship = loadedMemory.relationship;
+                    // Merge: keep conversation history, merge emotions and personal info
+                    // selectively so current session data is never erased by stale snapshot
+                    existingOrNew.emotions = {
+                        botEmotion: {
+                            ...loadedMemory.emotions.botEmotion,
+                            ...existingOrNew.emotions.botEmotion,
+                        },
+                        personEmotion: {
+                            ...loadedMemory.emotions.personEmotion,
+                            ...existingOrNew.emotions.personEmotion,
+                        },
+                        wounds: existingOrNew.emotions.wounds.length > 0
+                            ? existingOrNew.emotions.wounds
+                            : loadedMemory.emotions.wounds,
+                        recentSentiment: existingOrNew.emotions.recentSentiment || loadedMemory.emotions.recentSentiment,
+                        lastEmotionUpdate: existingOrNew.emotions.lastEmotionUpdate,
+                    };
+                    // Personal info: only fill blanks, never overwrite current session data
+                    existingOrNew.personalInfo = {
+                        name: existingOrNew.personalInfo.name || loadedMemory.personalInfo.name,
+                        birthday: existingOrNew.personalInfo.birthday || loadedMemory.personalInfo.birthday,
+                        preferences: existingOrNew.personalInfo.preferences && existingOrNew.personalInfo.preferences.length > 0
+                            ? existingOrNew.personalInfo.preferences
+                            : loadedMemory.personalInfo.preferences,
+                        facts: existingOrNew.personalInfo.facts.size > 0
+                            ? existingOrNew.personalInfo.facts
+                            : new Map(loadedMemory.personalInfo.facts),
+                        lastInfoUpdate: existingOrNew.personalInfo.lastInfoUpdate,
+                    };
+                    // Relationship: take the best of both (max conversations, earliest firstMet, latest lastMet)
+                    existingOrNew.relationship = {
+                        ...loadedMemory.relationship,
+                        totalConversations: Math.max(existingOrNew.relationship.totalConversations, loadedMemory.relationship.totalConversations),
+                        totalMessages: Math.max(existingOrNew.relationship.totalMessages, loadedMemory.relationship.totalMessages),
+                        firstMet: Math.min(existingOrNew.relationship.firstMet, loadedMemory.relationship.firstMet),
+                        lastMet: Math.max(existingOrNew.relationship.lastMet, loadedMemory.relationship.lastMet),
+                        importantEvents: existingOrNew.relationship.importantEvents.length > 0
+                            ? existingOrNew.relationship.importantEvents
+                            : loadedMemory.relationship.importantEvents,
+                    };
                     // Keep existing conversationHistory (current session)
                 }
             } else {
@@ -151,10 +196,15 @@ export class PersistentMemory extends ConversationMemory {
             // (recycled playerId scenario without pre-loaded memory)
             const existing = this.getMemory(botId, playerId);
             if (existing && existing.userUuid && existing.userUuid !== userUuid) {
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing memory for UUID ${existing.userUuid}, new user ${userUuid} has no pre-loaded memory`);
+                // Temp UUIDs are first-time assignments from getOrCreateMemory.
+                // Only clear for truly recycled playerIds (real UUID from a different user).
+                const isFirstTimeAssignment = existing.userUuid.startsWith('temp-');
+                if (!isFirstTimeAssignment) {
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing memory for UUID ${existing.userUuid}, new user ${userUuid} has no pre-loaded memory`);
+                    }
+                    this.clearMemory(botId, playerId);
                 }
-                this.clearMemory(botId, playerId);
             }
         }
         
