@@ -88,8 +88,12 @@ export class PersistentMemory extends ConversationMemory {
             // Check if existing active memory belongs to a different user (recycled playerId)
             const existing = this.getMemory(botId, playerId);
             if (existing && existing.userUuid && existing.userUuid !== userUuid) {
-                // Only clear if no active conversation — don't nuke in-progress chat history
-                if (existing.conversationHistory.length === 0) {
+                // Distinguish between first-time UUID assignment (temp UUID from getOrCreateMemory
+                // being replaced with actual UUID) vs a truly recycled playerId (a different user).
+                // Temp UUIDs are set by ConversationMemory.getOrCreateMemory as `temp-{playerId}`.
+                // For recycled playerIds we MUST clear the memory to prevent data leakage.
+                const isFirstTimeAssignment = existing.userUuid.startsWith('temp-');
+                if (!isFirstTimeAssignment) {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing stale memory for UUID ${existing.userUuid}, restoring for ${userUuid}`);
                     }
@@ -192,8 +196,10 @@ export class PersistentMemory extends ConversationMemory {
             // (recycled playerId scenario without pre-loaded memory)
             const existing = this.getMemory(botId, playerId);
             if (existing && existing.userUuid && existing.userUuid !== userUuid) {
-                // Only clear if no active conversation — don't nuke in-progress chat history
-                if (existing.conversationHistory.length === 0) {
+                // Temp UUIDs are first-time assignments from getOrCreateMemory.
+                // Only clear for truly recycled playerIds (real UUID from a different user).
+                const isFirstTimeAssignment = existing.userUuid.startsWith('temp-');
+                if (!isFirstTimeAssignment) {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[PersistentMemory] Recycled playerId ${playerId}: clearing memory for UUID ${existing.userUuid}, new user ${userUuid} has no pre-loaded memory`);
                     }
