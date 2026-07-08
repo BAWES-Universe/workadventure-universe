@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OAuth Callback</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0e0e10;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      text-align: center;
+      padding: 2rem;
+    }
+    .container { max-width: 480px; }
+    .icon {
+      width: 80px; height: 80px;
+      margin: 0 auto 1.5rem;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2.5rem;
+      color: #fff;
+      line-height: 1;
+    }
+    .icon.success { background: #10b981; }
+    .icon.error { background: #ef4444; }
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; color: #f0f0f0; }
+    p { font-size: 1rem; color: #9ca3af; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon" id="icon">&#10003;</div>
+    <h1 id="title">OAuth Connected</h1>
+    <p id="message">Successfully authenticated.</p>
+  </div>
+  <script>
+    (function() {
+      var params = new URLSearchParams(window.location.search);
+      var isSuccess = params.get('oauth') === 'success';
+      var errorMsg = params.get('message') || '';
+
+      document.getElementById('icon').className = 'icon ' + (isSuccess ? 'success' : 'error');
+      document.getElementById('icon').innerHTML = isSuccess ? '&#10003;' : '&#10005;';
+      document.getElementById('title').textContent = isSuccess ? 'OAuth Connected' : 'OAuth Failed';
+      document.getElementById('message').textContent = isSuccess ? 'Successfully authenticated.' : errorMsg;
+
+      try {
+        if (window.opener) {
+          window.opener.postMessage(
+            { type: isSuccess ? 'oauth-success' : 'oauth-failure' },
+            '*'
+          );
+        }
+      } catch (e) {
+        // Cross-origin — opener may be null
+      }
+      window.close();
+    })();
+  </script>
+</body>
+</html>

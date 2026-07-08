@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 
 export class OAuthPopupCallbackController {
     constructor(private app: Express) {
-        this.app.get("/oauth-popup-callback", this.callback.bind(this));
+        this.app.get("/oauth-popup-callback.html", this.callback.bind(this));
     }
 
     private callback(req: Request, res: Response): void {
