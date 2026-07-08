@@ -552,10 +552,18 @@
                     } else if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
                         // Timed out — no longer connecting
                         if (pollInterval) clearInterval(pollInterval);
+                        if (oauthCleanup) {
+                            oauthCleanup();
+                            oauthCleanup = null;
+                        }
                         oauthConnectingServerId = null;
                     } else if (popup.closed) {
                         // Popup closed manually before connection was established
                         if (pollInterval) clearInterval(pollInterval);
+                        if (oauthCleanup) {
+                            oauthCleanup();
+                            oauthCleanup = null;
+                        }
                         oauthConnectingServerId = null;
                     }
                 } catch {
