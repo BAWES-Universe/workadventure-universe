@@ -550,12 +550,8 @@
                         oauthCleanup = null;
                     }
                     oauthConnectingServerId = null;
-                    void loadServers().then(() => {
-                        const server = servers.find((s) => s.id === serverId);
-                        if (server?.oauthConnected) {
-                            void handleTestConnection(serverId);
-                        }
-                    });
+                    // Note: loadServers() is handled by the reactive $: block that
+                    // watches oauthConnectingServerId transitions — don't call it here.
                 } else if (event.data?.type === "oauth-failure") {
                     if (oauthCleanup) {
                         oauthCleanup();
