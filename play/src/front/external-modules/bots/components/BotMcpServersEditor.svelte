@@ -385,7 +385,7 @@
 
     // OAuth flow state (per-server, like testingServerId)
     let oauthConnectingServerId: string | null = null;
-    let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
+    let oauthCleanup: (() => void) | null = null;
 
     // OAuth discovery state
     let oauthDiscoveryState: "idle" | "discovering" | "discovered" | "not_found" = "idle";
@@ -449,9 +449,9 @@
             discoveryAbortController.abort();
             discoveryAbortController = null;
         }
-        if (oauthPollInterval !== null) {
-            clearInterval(oauthPollInterval);
-            oauthPollInterval = null;
+        if (oauthCleanup) {
+            oauthCleanup();
+            oauthCleanup = null;
         }
     });
 
@@ -490,42 +490,40 @@
         oauthConnectingServerId = serverId;
         try {
             const redirectUrl = window.location.href.split("?")[0].split("#")[0];
-            const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
-            const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl, callbackUrl);
+            const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl);
 
-            const popup = window.open("about:blank", "oauth-popup", "width=600,height=700");
+            const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
             if (!popup) {
                 console.error("[BotMcpServersEditor] Popup blocked");
                 oauthConnectingServerId = null;
                 return;
             }
-            popup.opener = null;
-            popup.location.href = authorizeUrl;
 
-            // Clear any existing interval before setting a new one
-            if (oauthPollInterval !== null) {
-                clearInterval(oauthPollInterval);
+            // Clean up any previous listener before setting a new one
+            if (oauthCleanup) {
+                oauthCleanup();
+                oauthCleanup = null;
             }
-            oauthPollInterval = setInterval(() => {
-                try {
-                    if (popup.closed) {
-                        if (oauthPollInterval) {
-                            clearInterval(oauthPollInterval);
-                            oauthPollInterval = null;
-                        }
-                        oauthConnectingServerId = null;
-                        void loadServers().then(() => {
-                            const server = servers.find((s) => s.id === serverId);
-                            // Only test if OAuth actually completed (oauthConnected flag set)
-                            if (server?.oauthConnected) {
-                                void handleTestConnection(serverId);
-                            }
-                        });
+
+            // Listen for postMessage from the OAuth popup callback page.
+            // The callback page is now served from the same origin as this page
+            // (the opener), so postMessage and window.close() work reliably.
+            const messageHandler = (event: MessageEvent) => {
+                if (event.data?.type !== "oauth-success") return;
+                window.removeEventListener("message", messageHandler);
+                oauthConnectingServerId = null;
+                void loadServers().then(() => {
+                    const server = servers.find((s) => s.id === serverId);
+                    if (server?.oauthConnected) {
+                        void handleTestConnection(serverId);
                     }
-                } catch {
-                    // Cross-origin during redirect
-                }
-            }, 500);
+                });
+            };
+
+            window.addEventListener("message", messageHandler);
+            oauthCleanup = () => {
+                window.removeEventListener("message", messageHandler);
+            };
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
             oauthConnectingServerId = null;

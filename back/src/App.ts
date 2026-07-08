@@ -16,6 +16,7 @@ import {
     GRPC_MAX_MESSAGE_SIZE,
 } from "./Enum/EnvironmentVariable";
 import { PingController } from "./Controller/PingController";
+import { OAuthPopupCallbackController } from "./Controller/OAuthPopupCallbackController";
 import { spaceManager } from "./SpaceManager";
 import { setCapabilities } from "./Services/Capabilities";
 
@@ -26,6 +27,7 @@ class App {
     private prometheusController: PrometheusController;
     private debugController: DebugController;
     private pingController: PingController;
+    private oAuthPopupCallbackController: OAuthPopupCallbackController;
 
     constructor() {
         // Création de l'application principale
@@ -45,6 +47,7 @@ class App {
 
         this.debugController = new DebugController(this.app);
         this.pingController = new PingController(this.app);
+        this.oAuthPopupCallbackController = new OAuthPopupCallbackController(this.app);
     }
 
     public listen(): void {
