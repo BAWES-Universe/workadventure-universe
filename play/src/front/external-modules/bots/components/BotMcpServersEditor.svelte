@@ -385,6 +385,7 @@
 
     // OAuth flow state (per-server, like testingServerId)
     let oauthConnectingServerId: string | null = null;
+    let oauthCleanup: (() => void) | null = null;
     let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
 
     // OAuth discovery state
@@ -449,9 +450,9 @@
             discoveryAbortController.abort();
             discoveryAbortController = null;
         }
-        if (oauthPollInterval !== null) {
-            clearInterval(oauthPollInterval);
-            oauthPollInterval = null;
+        if (oauthCleanup) {
+            oauthCleanup();
+            oauthCleanup = null;
         }
     });
 
@@ -493,16 +494,60 @@
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl, callbackUrl);
 
-            const popup = window.open("about:blank", "oauth-popup", "width=600,height=700");
+            const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
             if (!popup) {
                 console.error("[BotMcpServersEditor] Popup blocked");
                 oauthConnectingServerId = null;
                 return;
             }
-            popup.opener = null;
-            popup.location.href = authorizeUrl;
 
-            // Clear any existing interval before setting a new one
+            // Clean up any previous listener before setting a new one
+            if (oauthCleanup) {
+                oauthCleanup();
+                oauthCleanup = null;
+            }
+
+            // Listen for postMessage from the OAuth popup callback page.
+            // The callback page is now served from the same origin as this page
+            // (the opener), so postMessage and window.close() work reliably.
+            // We validate event.origin to prevent cross-origin message spoofing.
+            const messageHandler = (event: MessageEvent) => {
+                if (event.origin !== window.location.origin) return;
+                if (event.data?.type === "oauth-success") {
+                    window.removeEventListener("message", messageHandler);
+                    if (oauthPollInterval !== null) {
+                        clearInterval(oauthPollInterval);
+                        oauthPollInterval = null;
+                    }
+                    oauthConnectingServerId = null;
+                    void loadServers().then(() => {
+                        const server = servers.find((s) => s.id === serverId);
+                        if (server?.oauthConnected) {
+                            void handleTestConnection(serverId);
+                        }
+                    });
+                } else if (event.data?.type === "oauth-failure") {
+                    window.removeEventListener("message", messageHandler);
+                    if (oauthPollInterval !== null) {
+                        clearInterval(oauthPollInterval);
+                        oauthPollInterval = null;
+                    }
+                    oauthConnectingServerId = null;
+                }
+            };
+
+            window.addEventListener("message", messageHandler);
+            oauthCleanup = () => {
+                window.removeEventListener("message", messageHandler);
+                if (oauthPollInterval !== null) {
+                    clearInterval(oauthPollInterval);
+                    oauthPollInterval = null;
+                }
+            };
+
+            // Poll popup.closed as a fallback for manual popup close.
+            // When the user closes the popup without completing OAuth, no
+            // postMessage fires — this interval resets the connecting state.
             if (oauthPollInterval !== null) {
                 clearInterval(oauthPollInterval);
             }
@@ -513,14 +558,11 @@
                             clearInterval(oauthPollInterval);
                             oauthPollInterval = null;
                         }
+                        if (oauthCleanup) {
+                            oauthCleanup();
+                            oauthCleanup = null;
+                        }
                         oauthConnectingServerId = null;
-                        void loadServers().then(() => {
-                            const server = servers.find((s) => s.id === serverId);
-                            // Only test if OAuth actually completed (oauthConnected flag set)
-                            if (server?.oauthConnected) {
-                                void handleTestConnection(serverId);
-                            }
-                        });
                     }
                 } catch {
                     // Cross-origin during redirect
