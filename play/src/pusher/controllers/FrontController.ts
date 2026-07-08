@@ -286,7 +286,7 @@ export class FrontController extends BaseHttpController {
     var isSuccess = ${isSuccess};
     document.getElementById("oauth-title").textContent = isSuccess ? "OAuth Connected" : "OAuth Failed";
     document.getElementById("oauth-message").textContent = isSuccess ? "Successfully authenticated." : ${safeErrorMessage};
-    try { if (window.opener) { window.opener.postMessage({ type: isSuccess ? "oauth-success" : "oauth-failure" }, "*"); } }
+    try { if (window.opener) { window.opener.postMessage({ type: isSuccess ? "oauth-success" : "oauth-failure" }, window.location.origin); } }
     catch (e) { /* cross-origin — opener may be null */ }
     window.close();
   </script>

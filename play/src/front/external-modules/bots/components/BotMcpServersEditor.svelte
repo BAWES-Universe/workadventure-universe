@@ -489,17 +489,25 @@
 
     async function handleOAuthConnect(serverId: string) {
         oauthConnectingServerId = serverId;
+
+        // Open a blank popup immediately before the async call, so the browser
+        // still recognizes this as user-initiated and doesn't block the popup.
+        // After startOAuth resolves, we navigate the placeholder to the authorize URL.
+        const popup = window.open("", "oauth-popup", "width=600,height=700");
+        if (!popup) {
+            console.error("[BotMcpServersEditor] Popup blocked");
+            oauthConnectingServerId = null;
+            return;
+        }
+
         try {
             const redirectUrl = window.location.href.split("?")[0].split("#")[0];
             const callbackUrl = `${window.location.origin}/api/oauth/mcp-callback`;
             const authorizeUrl = await botApiService.startOAuth(botId, serverId, redirectUrl, callbackUrl);
 
-            const popup = window.open(authorizeUrl, "oauth-popup", "width=600,height=700");
-            if (!popup) {
-                console.error("[BotMcpServersEditor] Popup blocked");
-                oauthConnectingServerId = null;
-                return;
-            }
+            // Navigate the placeholder popup to the actual authorize URL.
+            // eslint-disable-next-line require-atomic-updates
+            popup.location.href = authorizeUrl;
 
             // Clean up any previous listener before setting a new one
             if (oauthCleanup) {
@@ -571,6 +579,12 @@
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
             oauthConnectingServerId = null;
+            // Close the placeholder popup when startOAuth fails
+            try {
+                popup.close();
+            } catch {
+                // popup may already be closed
+            }
         }
     }
 
