@@ -386,6 +386,7 @@
     // OAuth flow state (per-server, like testingServerId)
     let oauthConnectingServerId: string | null = null;
     let oauthCleanup: (() => void) | null = null;
+    let oauthPollInterval: ReturnType<typeof setInterval> | null = null;
 
     // OAuth discovery state
     let oauthDiscoveryState: "idle" | "discovering" | "discovered" | "not_found" = "idle";
@@ -513,6 +514,10 @@
                 if (event.origin !== window.location.origin) return;
                 if (event.data?.type === "oauth-success") {
                     window.removeEventListener("message", messageHandler);
+                    if (oauthPollInterval !== null) {
+                        clearInterval(oauthPollInterval);
+                        oauthPollInterval = null;
+                    }
                     oauthConnectingServerId = null;
                     void loadServers().then(() => {
                         const server = servers.find((s) => s.id === serverId);
@@ -522,6 +527,10 @@
                     });
                 } else if (event.data?.type === "oauth-failure") {
                     window.removeEventListener("message", messageHandler);
+                    if (oauthPollInterval !== null) {
+                        clearInterval(oauthPollInterval);
+                        oauthPollInterval = null;
+                    }
                     oauthConnectingServerId = null;
                 }
             };
@@ -529,7 +538,31 @@
             window.addEventListener("message", messageHandler);
             oauthCleanup = () => {
                 window.removeEventListener("message", messageHandler);
+                if (oauthPollInterval !== null) {
+                    clearInterval(oauthPollInterval);
+                    oauthPollInterval = null;
+                }
             };
+
+            // Poll popup.closed as a fallback for manual popup close.
+            // When the user closes the popup without completing OAuth, no
+            // postMessage fires — this interval resets the connecting state.
+            if (oauthPollInterval !== null) {
+                clearInterval(oauthPollInterval);
+            }
+            oauthPollInterval = setInterval(() => {
+                try {
+                    if (popup.closed) {
+                        if (oauthPollInterval) {
+                            clearInterval(oauthPollInterval);
+                            oauthPollInterval = null;
+                        }
+                        oauthConnectingServerId = null;
+                    }
+                } catch {
+                    // Cross-origin during redirect
+                }
+            }, 500);
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
             oauthConnectingServerId = null;
