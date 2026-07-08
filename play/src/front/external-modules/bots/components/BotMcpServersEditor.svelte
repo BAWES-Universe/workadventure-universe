@@ -508,6 +508,8 @@
                 oauthCleanup = null;
             }
 
+            let pollInterval: ReturnType<typeof setInterval> | null = null;
+
             const handleOAuthComplete = () => {
                 if (oauthCleanup) {
                     oauthCleanup();
@@ -523,27 +525,53 @@
                 });
             };
 
-            // Listen for postMessage from the OAuth success page
+            // Fast path: listen for postMessage from the OAuth success page.
             // Works when popup is same-origin with parent (admin flow).
+            // Validate event.origin against known origins to prevent spoofing.
+            const knownOrigins = [window.location.origin];
             const messageHandler = (event: MessageEvent) => {
-                if (event.data?.type === "oauth-success") {
+                if (event.data?.type === "oauth-success" && knownOrigins.includes(event.origin)) {
                     handleOAuthComplete();
                 }
             };
 
-            // Listen for visibility change — fires when user returns to this tab
-            // after closing the popup. Works regardless of cross-origin restrictions.
-            const visibilityHandler = () => {
-                if (document.visibilityState === "visible" && popup.closed) {
-                    handleOAuthComplete();
+            // Poll the server for oauthConnected status.
+            // Reliable fallback for cross-origin flows (e.g. Sentry's dual-token
+            // chain) where postMessage may not reach this page.
+            const POLL_INTERVAL_MS = 2000;
+            const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+            const pollStart = Date.now();
+
+            const pollServerStatus = async (): Promise<void> => {
+                try {
+                    const freshServers = await botApiService.getBotMcpServers(botId);
+                    const server = freshServers.find((s) => s.id === serverId);
+                    if (server?.oauthConnected) {
+                        if (pollInterval) clearInterval(pollInterval);
+                        handleOAuthComplete();
+                    } else if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+                        // Timed out — no longer connecting
+                        if (pollInterval) clearInterval(pollInterval);
+                        oauthConnectingServerId = null;
+                    } else if (popup.closed) {
+                        // Popup closed manually before connection was established
+                        if (pollInterval) clearInterval(pollInterval);
+                        oauthConnectingServerId = null;
+                    }
+                } catch {
+                    // Server error during poll — retry next interval
                 }
             };
+
+            pollInterval = setInterval(() => void pollServerStatus(), POLL_INTERVAL_MS);
 
             window.addEventListener("message", messageHandler);
-            document.addEventListener("visibilitychange", visibilityHandler);
             oauthCleanup = () => {
                 window.removeEventListener("message", messageHandler);
-                document.removeEventListener("visibilitychange", visibilityHandler);
+                if (pollInterval) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                }
             };
         } catch (error) {
             console.error("[BotMcpServersEditor] OAuth error:", error);
