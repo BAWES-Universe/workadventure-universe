@@ -244,6 +244,12 @@ export class FrontController extends BaseHttpController {
             const iconHtml = isSuccess ? "&#10003;" : "&#10005;";
             const title = isSuccess ? "OAuth Connected" : "OAuth Failed";
 
+            // Escape </script> sequences inside the message to prevent premature
+            // HTML parser script-tag closure when the string appears inside a <script>
+            // block (a well-known XSS vector). JSON.stringify handles quotes, newlines,
+            // and backslashes, but NOT the HTML-special sequence </script>.
+            const safeErrorMessage = JSON.stringify(errorMessage).replace(/<\//g, "<\\/");
+
             res.type("html").send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -279,15 +285,12 @@ export class FrontController extends BaseHttpController {
   <script>
     var isSuccess = ${isSuccess};
     document.getElementById("oauth-title").textContent = isSuccess ? "OAuth Connected" : "OAuth Failed";
-    document.getElementById("oauth-message").textContent = isSuccess ? "Successfully authenticated." : ${JSON.stringify(
-        errorMessage
-    )};
+    document.getElementById("oauth-message").textContent = isSuccess ? "Successfully authenticated." : ${safeErrorMessage};
     try { if (window.opener) { window.opener.postMessage({ type: isSuccess ? "oauth-success" : "oauth-failure" }, "*"); } }
     catch (e) { /* cross-origin — opener may be null */ }
     window.close();
   </script>
-</body>
-</html>`);
+</body></html>`);
         });
     }
 
