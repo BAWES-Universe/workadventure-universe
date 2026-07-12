@@ -614,6 +614,26 @@
                     >
                         <IconX font-size="12" />
                     </button>
+                    {#if preview.type.includes("image") && typeof preview.url === "string"}
+                        <img
+                            draggable="false"
+                            class="w-full h-full object-cover rounded-[10px]"
+                            src={preview.url}
+                            alt={preview.name}
+                        />
+                    {:else}
+                        <div
+                            title={preview.name}
+                            class="flex flex-col items-start overflow-hidden text-ellipsis justify-between p-0.5 bg-contrast/90 h-full w-full text-xs rounded-[10px]"
+                        >
+                            <span class="line-clamp-2 indent-3 text-xs">
+                                {preview.name}
+                            </span>
+                            <div class="rounded-[6px] bg-white/10 p-0.5 text-xxs m-0.5">
+                                {formatBytes(preview.size)}
+                            </div>
+                        </div>
+                    {/if}
                     {#if isUploading}
                         <div
                             class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-[10px]"
@@ -638,25 +658,6 @@
                                     d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                                 />
                             </svg>
-                        </div>
-                    {:else if preview.type.includes("image") && typeof preview.url === "string"}
-                        <img
-                            draggable="false"
-                            class="w-full h-full object-cover rounded-[10px]"
-                            src={preview.url}
-                            alt={preview.name}
-                        />
-                    {:else}
-                        <div
-                            title={preview.name}
-                            class="flex flex-col items-start overflow-hidden text-ellipsis justify-between p-0.5 bg-contrast/90 h-full w-full text-xs rounded-[10px]"
-                        >
-                            <span class="line-clamp-2 indent-3 text-xs">
-                                {preview.name}
-                            </span>
-                            <div class="rounded-[6px] bg-white/10 p-0.5 text-xxs m-0.5">
-                                {formatBytes(preview.size)}
-                            </div>
                         </div>
                     {/if}
                 </div>

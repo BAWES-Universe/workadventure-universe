@@ -10,6 +10,7 @@ import { ByteLenghtBufferException } from "../Exception/ByteLenghtBufferExceptio
 import {
   ADMIN_API_URL,
   ENABLE_CHAT_UPLOAD,
+  S3_CDN_PUBLIC_URL,
   S3_CDN_USER_REFS_BUCKET,
   S3_CDN_BOT_GENS_BUCKET,
   UPLOAD_MAX_FILESIZE,
@@ -154,7 +155,9 @@ export class FileController {
             bucket
           );
           let location: string;
-          if (bucket) {
+          if (bucket && S3_CDN_PUBLIC_URL) {
+            location = `${S3_CDN_PUBLIC_URL}/${fileUuid}`;
+          } else if (bucket) {
             const cdnProvider = getCdnProvider(bucket);
             if (cdnProvider) {
               location = await cdnProvider.getSignedUrl(fileUuid);
