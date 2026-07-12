@@ -39,6 +39,7 @@
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { draftMessageService } from "../../Services/DraftMessageService";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
+    import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import MessageInput from "./MessageInput.svelte";
     import MessageFileInput from "./Message/MessageFileInput.svelte";
@@ -97,11 +98,11 @@
             // message contains HTML tags. Actually, the only tags we allow are for the new line, ie. <br> tags.
             // We can turn those back into carriage returns.
             const messageToSend = message.replace(/<br>/g, "\n");
-            sendMessage(messageToSend);
+            sendMessage(messageToSend).catch((error) => console.error(error));
         }
     }
 
-    function sendMessage(messageToSend: string) {
+    async function sendMessage(messageToSend: string) {
         if (applicationProperty && applicationProperty.link.length !== 0) {
             room?.sendMessage(applicationProperty.link);
         }
@@ -116,7 +117,7 @@
                 const uploadPromises = files.map(async ({ file }) => {
                     const formData = new FormData();
                     formData.append("file", file);
-                    const response = await fetch("/upload-file", {
+                    const response = await fetch(`${UPLOADER_URL}/upload-file`, {
                         method: "POST",
                         body: formData,
                     });
@@ -136,18 +137,17 @@
                         );
                     }
                 });
-                Promise.all(uploadPromises)
-                    .then(() => {
-                        files = [];
-                        filesPreview = [];
-                    })
-                    .catch((error) => {
-                        console.error("Error uploading file:", error);
-                        // If CDN is not configured, disable the button to prevent further failed attempts
-                        if (error.message?.includes("Transient storage not configured")) {
-                            fileAttachementEnabled = false;
-                        }
-                    });
+                try {
+                    await Promise.all(uploadPromises);
+                    files.splice(0, files.length);
+                    filesPreview.splice(0, filesPreview.length);
+                } catch (error: unknown) {
+                    console.error("Error uploading file:", error);
+                    // If CDN is not configured, disable the button to prevent further failed attempts
+                    if (error instanceof Error && error.message?.includes("Transient storage not configured")) {
+                        fileAttachementEnabled = false;
+                    }
+                }
             } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
                     fileListAcc.items.add(currentFile.file);
@@ -188,7 +188,7 @@
         // Check CDN config for proximity chat before enabling the button
         if (room instanceof ProximityChatRoom && isUploadEnabled) {
             try {
-                const configResponse = await fetch("/config");
+                const configResponse = await fetch(`${UPLOADER_URL}/config`);
                 if (configResponse.ok) {
                     const config = await configResponse.json();
                     fileAttachementEnabled = config.cdnConfigured;
