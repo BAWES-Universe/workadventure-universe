@@ -52,6 +52,7 @@
     let message = "";
     let messageInput: HTMLDivElement;
     let messageBarRef: HTMLDivElement;
+    let fileInputElement: HTMLInputElement | undefined;
     let stopTypingTimeOutID: undefined | ReturnType<typeof setTimeout>;
     let files: { id: string; file: File }[] = [];
     let filesPreview: { id: string; size: number; name: string; type: string; url: FileReader["result"] }[] = [];
@@ -94,7 +95,7 @@
             keyDownEvent.preventDefault();
         }
 
-        if (keyDownEvent.key === "Enter" && message.trim().length !== 0) {
+        if (keyDownEvent.key === "Enter" && (message.trim().length !== 0 || files.length !== 0)) {
             // message contains HTML tags. Actually, the only tags we allow are for the new line, ie. <br> tags.
             // We can turn those back into carriage returns.
             const messageToSend = message.replace(/<br>/g, "\n");
@@ -762,6 +763,29 @@
         dataText={$LL.chat.enter()}
         dataTestid="messageInput"
     />
+    {#if room instanceof ProximityChatRoom}
+        <input
+            type="file"
+            bind:this={fileInputElement}
+            hidden
+            multiple={false}
+            on:change={(e) => {
+                if (fileInputElement?.files) {
+                    handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
+                    fileInputElement.value = "";
+                }
+            }}
+        />
+        <button
+            data-testid="quickFileAttachmentButton"
+            class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none disabled:opacity-30"
+            disabled={!fileAttachementEnabled}
+            on:click={() => fileInputElement?.click()}
+            title={$LL.chat.fileAttachment.title()}
+        >
+            <IconPaperclip font-size={18} />
+        </button>
+    {/if}
     <button
         data-testid="addApplicationButton"
         class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
