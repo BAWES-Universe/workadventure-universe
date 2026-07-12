@@ -230,16 +230,18 @@ export class ProximityChatRoom implements ChatRoom {
         // Determine message type from media
         let messageType = action;
         if (url) {
-            if (mimeType?.startsWith("image/")) {
+            // Check URL extension first (always authoritative — the file UUID preserves the extension)
+            const urlType = this.inferTypeFromUrl(url);
+            if (urlType) {
+                messageType = urlType;
+            } else if (mimeType?.startsWith("image/")) {
                 messageType = "image";
             } else if (mimeType?.startsWith("audio/")) {
                 messageType = "audio";
             } else if (mimeType?.startsWith("video/")) {
                 messageType = "video";
             } else {
-                // Fall back to URL extension detection when mimeType is empty
-                // (common on mobile browsers where file.type is not populated)
-                messageType = this.inferTypeFromUrl(url) ?? "file";
+                messageType = "file";
             }
         }
 
@@ -350,15 +352,18 @@ export class ProximityChatRoom implements ChatRoom {
         // Determine message type from media
         let messageType: ChatMessageType = "proximity";
         if (url) {
-            if (mimeType?.startsWith("image/")) {
+            // Check URL extension first (always authoritative — the file UUID preserves the extension)
+            const urlType = this.inferTypeFromUrl(url);
+            if (urlType) {
+                messageType = urlType;
+            } else if (mimeType?.startsWith("image/")) {
                 messageType = "image";
             } else if (mimeType?.startsWith("audio/")) {
                 messageType = "audio";
             } else if (mimeType?.startsWith("video/")) {
                 messageType = "video";
             } else {
-                // Fall back to URL extension detection when mimeType is empty
-                messageType = this.inferTypeFromUrl(url) ?? "file";
+                messageType = "file";
             }
         }
 
