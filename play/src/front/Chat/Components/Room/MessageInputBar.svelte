@@ -162,7 +162,7 @@
                             if (!data || data.length === 0) {
                                 throw new Error("Upload returned no data");
                             }
-                            return { location: data[0].location, type: file.type };
+                            return { location: data[0].location, name: data[0].name, type: file.type };
                         })
                     );
                     // All uploads succeeded — now clear and send messages
@@ -172,7 +172,7 @@
                     const proximityRoom = room;
                     for (const result of results) {
                         proximityRoom.sendMessage(
-                            result.location,
+                            result.name || "",
                             "proximity",
                             true,
                             result.location,

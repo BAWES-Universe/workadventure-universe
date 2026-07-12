@@ -379,11 +379,13 @@ export class ProximityChatRoom implements ChatRoom {
             this.hasUnreadMessages.set(true);
             this.unreadNotificationCount.set(get(this.unreadNotificationCount) + 1);
         }
-        // Send bubble message to WorkAdventure scripting API
-        try {
-            iframeListener.sendUserInputChat(message, senderUserId);
-        } catch (e) {
-            console.error("Error while sending message to WorkAdventure scripting API", e);
+        // Send bubble message to WorkAdventure scripting API (text only)
+        if (messageType === "proximity") {
+            try {
+                iframeListener.sendUserInputChat(message, senderUserId);
+            } catch (e) {
+                console.error("Error while sending message to WorkAdventure scripting API", e);
+            }
         }
     }
 
