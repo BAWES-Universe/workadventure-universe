@@ -124,6 +124,18 @@ export class FileController {
           const filename = Buffer.from(file.originalname, "latin1").toString(
             "utf8"
           );
+          // Server-side unsafe extension check (matches frontend)
+          const ext = filename
+            .substring(filename.lastIndexOf("."))
+            .toLowerCase();
+          const UNSAFE_EXTENSIONS = [
+            ".exe", ".bat", ".cmd", ".com", ".msi", ".scr",
+            ".jar", ".dmg", ".pkg", ".app", ".sh", ".bash",
+            ".vbs", ".ps1", ".pl", ".py", ".rb",
+          ];
+          if (UNSAFE_EXTENSIONS.includes(ext)) {
+            throw new Error(`Unsafe file type: ${ext}`);
+          }
           // Always check file size locally, regardless of ADMIN_API_URL
           if (!ENABLE_CHAT_UPLOAD) {
             throw new DisabledChat("Upload is disabled");

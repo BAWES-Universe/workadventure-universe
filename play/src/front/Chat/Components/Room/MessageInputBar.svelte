@@ -143,7 +143,8 @@
                 try {
                     userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
                     isUploading = true;
-                    const results = await Promise.all(
+                    // Upload all files, tracking success/failure per file
+                    const uploadResults = await Promise.allSettled(
                         pendingFiles.map(async ({ file }) => {
                             const formData = new FormData();
                             formData.append("file", file);
@@ -165,12 +166,36 @@
                             return { location: data[0].location, name: data[0].name, type: file.type };
                         })
                     );
-                    // All uploads succeeded — now clear and send messages
-                    // eslint-disable-next-line require-atomic-updates
-                    files = [];
-                    filesPreview = [];
+                    // Separate successes from failures
+                    const succeeded: { location: string; name: string; type: string }[] = [];
+                    const failedIds: string[] = [];
+                    for (let i = 0; i < uploadResults.length; i++) {
+                        const pendingFile = pendingFiles[i];
+                        const result = uploadResults[i];
+                        if (result.status === "fulfilled") {
+                            succeeded.push(result.value);
+                        } else {
+                            failedIds.push(pendingFile.id);
+                        }
+                    }
+                    if (failedIds.length > 0) {
+                        // Keep only failed files for retry
+                        // eslint-disable-next-line require-atomic-updates
+                        files = pendingFiles.filter((f) => failedIds.includes(f.id));
+
+                        filesPreview = filesPreview.filter((p) => failedIds.includes(p.id));
+                        warningMessageStore.addWarningMessage(
+                            `Upload failed for ${failedIds.length} file(s). They are still in the input for retry.`
+                        );
+                    } else {
+                        // All succeeded — clear and send messages
+                        // eslint-disable-next-line require-atomic-updates
+                        files = [];
+                        filesPreview = [];
+                    }
+                    // Send messages for all successful uploads
                     const proximityRoom = room;
-                    for (const result of results) {
+                    for (const result of succeeded) {
                         proximityRoom.sendMessage(
                             result.name || "",
                             "proximity",
@@ -306,7 +331,7 @@
 
         // Pre-check: file count
         if (files.length + incoming.length > MAX_FILE_COUNT) {
-            warningMessageStore.addWarningMessage(`Maximum ${MAX_FILE_COUNT} files at a time.`);
+            warningMessageStore.addWarningMessage($LL.chat.fileAttachment.maxFileCount({ count: MAX_FILE_COUNT }));
             return;
         }
 
@@ -314,7 +339,7 @@
         for (const file of incoming) {
             const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
             if (UNSAFE_EXTENSIONS.includes(ext)) {
-                warningMessageStore.addWarningMessage(`"${file.name}" has an unsafe file type and cannot be uploaded.`);
+                warningMessageStore.addWarningMessage($LL.chat.fileAttachment.unsafeFileType({ name: file.name }));
                 return;
             }
         }
@@ -323,7 +348,7 @@
         for (const file of incoming) {
             if (file.size > UPLOAD_MAX_FILESIZE) {
                 warningMessageStore.addWarningMessage(
-                    `"${file.name}" is too large. Maximum size is ${UPLOAD_MAX_FILESIZE / 1048576} MB.`
+                    $LL.chat.fileAttachment.fileTooLarge({ name: file.name, size: UPLOAD_MAX_FILESIZE / 1048576 })
                 );
                 return;
             }
