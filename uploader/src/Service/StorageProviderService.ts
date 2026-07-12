@@ -32,6 +32,12 @@ if (S3_CDN_ACCESS_KEY_ID && S3_CDN_SECRET_ACCESS_KEY && (S3_CDN_USER_REFS_BUCKET
 }
 
 /**
+ * Cache of S3StorageProvider instances per bucket name.
+ * Avoids creating a new AWS.S3 client and re-running CORS setup on every upload.
+ */
+const cdnProviderCache = new Map<string, S3StorageProvider>();
+
+/**
  * Get the CDN provider for a specific bucket name.
  * Returns null if CDN provider is not configured.
  */
@@ -39,14 +45,18 @@ export function getCdnProvider(bucketName: string): StorageProvider | null {
     if (!cdnS3Provider) {
         return null;
     }
-    // Return a clone with the specific bucket name so different buckets are separated
-    return new S3StorageProvider(
-        bucketName,
-        S3_CDN_REGION,
-        S3_CDN_ENDPOINT,
-        S3_CDN_ACCESS_KEY_ID,
-        S3_CDN_SECRET_ACCESS_KEY,
-    );
+    let provider = cdnProviderCache.get(bucketName);
+    if (!provider) {
+        provider = new S3StorageProvider(
+            bucketName,
+            S3_CDN_REGION,
+            S3_CDN_ENDPOINT,
+            S3_CDN_ACCESS_KEY_ID,
+            S3_CDN_SECRET_ACCESS_KEY,
+        );
+        cdnProviderCache.set(bucketName, provider);
+    }
+    return provider;
 }
 
 /**

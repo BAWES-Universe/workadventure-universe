@@ -114,7 +114,8 @@
         if (files && files.length > 0) {
             if (room instanceof ProximityChatRoom) {
                 // Proximity chat: upload files to uploader, then send URL as message
-                const uploadPromises = files.map(async ({ file }) => {
+                const pendingFiles = files;
+                const uploadPromises = pendingFiles.map(async ({ file }) => {
                     const formData = new FormData();
                     formData.append("file", file);
                     const response = await fetch(`${UPLOADER_URL}/upload-file`, {
@@ -139,15 +140,17 @@
                 });
                 try {
                     await Promise.all(uploadPromises);
-                    files.splice(0, files.length);
-                    filesPreview.splice(0, filesPreview.length);
                 } catch (error: unknown) {
                     console.error("Error uploading file:", error);
                     // If CDN is not configured, disable the button to prevent further failed attempts
-                    if (error instanceof Error && error.message?.includes("Transient storage not configured")) {
+                    if (error instanceof Error && error.message.includes("Transient storage not configured")) {
                         fileAttachementEnabled = false;
                     }
+                    return;
                 }
+                // eslint-disable-next-line require-atomic-updates
+                files = [];
+                filesPreview = [];
             } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
                     fileListAcc.items.add(currentFile.file);
@@ -196,7 +199,7 @@
                     fileAttachementEnabled = false;
                 }
             } catch {
-                fileAttachementEnabled = isUploadEnabled;
+                fileAttachementEnabled = false;
             }
         } else {
             fileAttachementEnabled = isUploadEnabled;
