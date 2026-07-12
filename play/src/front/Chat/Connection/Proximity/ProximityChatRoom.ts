@@ -189,11 +189,32 @@ export class ProximityChatRoom implements ChatRoom {
             });
     }
 
-    sendMessage(message: string, action: ChatMessageType = "proximity", broadcast = true): void {
+    sendMessage(
+        message: string,
+        action: ChatMessageType = "proximity",
+        broadcast = true,
+        url?: string,
+        mediaType?: string,
+        mimeType?: string
+    ): void {
+        // Determine message type from media
+        let messageType = action;
+        if (url) {
+            if (mimeType?.startsWith("image/")) {
+                messageType = "image";
+            } else if (mimeType?.startsWith("audio/")) {
+                messageType = "audio";
+            } else if (mimeType?.startsWith("video/")) {
+                messageType = "video";
+            } else {
+                messageType = "file";
+            }
+        }
+
         // Create content message
         const newChatMessageContent = {
             body: message,
-            url: undefined,
+            url: url,
         };
 
         const spaceUser = this.users?.get(this._spaceUserId);
@@ -209,7 +230,7 @@ export class ProximityChatRoom implements ChatRoom {
             writable(newChatMessageContent),
             new Date(),
             true,
-            action
+            messageType
         );
 
         // Add message to the list
@@ -225,11 +246,14 @@ export class ProximityChatRoom implements ChatRoom {
                     message: message,
                     characterTextures: spaceUser?.characterTextures ?? [],
                     name: chatUser.username ?? "unknown",
+                    url: url,
+                    mediaType: mediaType,
+                    mimeType: mimeType,
                 },
             });
         }
 
-        if (action === "proximity") {
+        if (messageType === "proximity") {
             // Send local message to WorkAdventure scripting API
             try {
                 iframeListener.sendUserInputChat(message, undefined);
@@ -281,17 +305,34 @@ export class ProximityChatRoom implements ChatRoom {
         message: string,
         senderUserId: string,
         characterTextures: CharacterTextureMessage[],
-        name: string
+        name: string,
+        url?: string | null,
+        mediaType?: string | null,
+        mimeType?: string | null
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
             return;
         }
 
+        // Determine message type from media
+        let messageType: ChatMessageType = "proximity";
+        if (url) {
+            if (mimeType?.startsWith("image/")) {
+                messageType = "image";
+            } else if (mimeType?.startsWith("audio/")) {
+                messageType = "audio";
+            } else if (mimeType?.startsWith("video/")) {
+                messageType = "video";
+            } else {
+                messageType = "file";
+            }
+        }
+
         // Create content message
         const newChatMessageContent = {
             body: message,
-            url: undefined,
+            url: url ?? undefined,
         };
 
         const spaceUser = this.users?.get(senderUserId);
@@ -324,7 +365,7 @@ export class ProximityChatRoom implements ChatRoom {
             writable(newChatMessageContent),
             new Date(),
             false,
-            "proximity"
+            messageType
         );
 
         // Add message to the list
@@ -551,7 +592,10 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.message,
                 event.sender,
                 event.spaceMessage.characterTextures ?? [],
-                event.spaceMessage.name ?? ""
+                event.spaceMessage.name ?? "",
+                event.spaceMessage.url,
+                event.spaceMessage.mediaType,
+                event.spaceMessage.mimeType
             );
 
             // if the proximity chat is not open, open it to see the message

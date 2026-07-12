@@ -127,7 +127,14 @@
                     }
                     const data = await response.json();
                     if (data && data.length > 0) {
-                        room.sendMessage(data[0].location);
+                        room.sendMessage(
+                            data[0].location,
+                            "proximity",
+                            true,
+                            data[0].location,
+                            file.type.startsWith("image/") ? "image" : "file",
+                            file.type
+                        );
                     }
                 });
                 Promise.allSettled(uploadPromises)
