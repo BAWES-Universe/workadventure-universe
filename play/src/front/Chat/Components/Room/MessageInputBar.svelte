@@ -606,12 +606,40 @@
                         : ''}"
                 >
                     <button
-                        class="border-2 border-white border-solid absolute flex items-center justify-center rounded-full bg-secondary hover:bg-secondary-600 p-0.5 -start-2 -top-2"
+                        class="border-2 border-white border-solid absolute flex items-center justify-center rounded-full bg-secondary hover:bg-secondary-600 p-0.5 -start-2 -top-2 {isUploading
+                            ? 'hidden'
+                            : ''}"
                         on:click={() => deleteFile(preview.id)}
+                        disabled={isUploading}
                     >
                         <IconX font-size="12" />
                     </button>
-                    {#if preview.type.includes("image") && typeof preview.url === "string"}
+                    {#if isUploading}
+                        <div
+                            class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-[10px]"
+                        >
+                            <svg
+                                class="animate-spin h-5 w-5 text-white"
+                                xmlns="http://www.w3.org/2000/svg"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                            >
+                                <circle
+                                    class="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    stroke-width="4"
+                                />
+                                <path
+                                    class="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                />
+                            </svg>
+                        </div>
+                    {:else if preview.type.includes("image") && typeof preview.url === "string"}
                         <img
                             draggable="false"
                             class="w-full h-full object-cover rounded-[10px]"

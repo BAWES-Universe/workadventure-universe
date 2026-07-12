@@ -77,6 +77,7 @@ export class S3StorageProvider implements StorageProvider {
             // Create S3 service object with per-instance credentials
             const options: AWS.S3.ClientConfiguration = {
                 apiVersion: '2006-03-01',
+                signatureVersion: 'v4',
                 s3ForcePathStyle: true,
                 accessKeyId: this.accessKeyId,
                 secretAccessKey: this.secretAccessKey,
