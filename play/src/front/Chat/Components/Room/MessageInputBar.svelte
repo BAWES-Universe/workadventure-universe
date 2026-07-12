@@ -833,7 +833,7 @@
             type="file"
             bind:this={fileInputElement}
             hidden
-            multiple={false}
+            multiple
             accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.zip"
             on:change={(e) => {
                 if (fileInputElement?.files) {
@@ -847,7 +847,7 @@
             type="file"
             bind:this={fileInputElement}
             hidden
-            multiple={false}
+            multiple
             on:change={(e) => {
                 if (fileInputElement?.files) {
                     handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
