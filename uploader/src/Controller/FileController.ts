@@ -97,7 +97,7 @@ export class FileController {
       const files = request.files as Express.Multer.File[];
 
       const userRoomToken = request.body.userRoomToken;
-      const bucket: string | undefined = isCdnConfigured() ? S3_CDN_USER_REFS_BUCKET : undefined;
+      const bucket: string | undefined = S3_CDN_USER_REFS_BUCKET || undefined;
 
       try {
         const uploadedFiles: {

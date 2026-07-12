@@ -118,31 +118,42 @@
                 // Proximity chat: upload files to uploader, then send URL as message
                 const pendingFiles = files;
                 isUploading = true;
-                const uploadPromises = pendingFiles.map(async ({ file }) => {
-                    const formData = new FormData();
-                    formData.append("file", file);
-                    const response = await fetch(`${UPLOADER_URL}/upload-file`, {
-                        method: "POST",
-                        body: formData,
-                    });
-                    if (!response.ok) {
-                        const errData = await response.json().catch(() => ({}));
-                        throw new Error(errData.message || `Upload failed (${response.status})`);
-                    }
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        room.sendMessage(
-                            data[0].location,
+                const userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
+                try {
+                    const results = await Promise.all(
+                        pendingFiles.map(async ({ file }) => {
+                            const formData = new FormData();
+                            formData.append("file", file);
+                            if (userToken) {
+                                formData.append("userRoomToken", userToken);
+                            }
+                            const response = await fetch(`${UPLOADER_URL}/upload-file`, {
+                                method: "POST",
+                                body: formData,
+                            });
+                            if (!response.ok) {
+                                const errData = await response.json().catch(() => ({}));
+                                throw new Error(errData.message || `Upload failed (${response.status})`);
+                            }
+                            const data = await response.json();
+                            if (!data || data.length === 0) {
+                                throw new Error("Upload returned no data");
+                            }
+                            return { location: data[0].location, type: file.type };
+                        })
+                    );
+                    // All uploads succeeded — now send messages
+                    const proximityRoom = room;
+                    for (const result of results) {
+                        proximityRoom.sendMessage(
+                            result.location,
                             "proximity",
                             true,
-                            data[0].location,
-                            file.type.startsWith("image/") ? "image" : "file",
-                            file.type
+                            result.location,
+                            result.type.startsWith("image/") ? "image" : "file",
+                            result.type
                         );
                     }
-                });
-                try {
-                    await Promise.all(uploadPromises);
                 } catch (error: unknown) {
                     console.error("Error uploading file:", error);
                     if (error instanceof Error && error.message.includes("Transient storage not configured")) {
@@ -311,11 +322,6 @@
         chatInputFocusStore.set(false);
     }
 
-    function openFileAttachmentComponent() {
-        fileAttachmentComponentOpened = true;
-        applicationComponentOpened = false;
-        applicationProperty = undefined;
-    }
     function closeFileAttachmentComponent() {
         fileAttachmentComponentOpened = false;
         applicationComponentOpened = false;
@@ -512,22 +518,6 @@
 {/if}
 {#if applicationComponentOpened}
     <div class="w-full bg-contrast/50 rounded-t-2xl">
-        <div class="flex flex-wrap w-full justify-between items-center p-2 gap-2">
-            <button
-                data-testid="fileAttachmentButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openFileAttachmentComponent()}
-                class:bg-secondary-800={fileAttachmentComponentOpened}
-                disabled={!fileAttachementEnabled || isUploading}
-            >
-                <IconPaperclip font-size={32} />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.fileAttachment.title()}</h2>
-                <p class="text-xs p-0 m-0 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {$LL.chat.fileAttachment.description()}
-                </p>
-            </button>
-        </div>
-
         <div class="flex flex-wrap w-full justify-between items-center p-2 gap-2">
             <button
                 data-testid="youtubeApplicationButton"
@@ -783,6 +773,27 @@
             data-testid="quickFileAttachmentButton"
             class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none disabled:opacity-30"
             disabled={!fileAttachementEnabled || isUploading}
+            on:click={() => fileInputElement?.click()}
+            title={$LL.chat.fileAttachment.title()}
+        >
+            <IconPaperclip font-size={18} />
+        </button>
+    {:else}
+        <input
+            type="file"
+            bind:this={fileInputElement}
+            hidden
+            multiple={false}
+            on:change={(e) => {
+                if (fileInputElement?.files) {
+                    handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
+                    fileInputElement.value = "";
+                }
+            }}
+        />
+        <button
+            data-testid="quickFileAttachmentButton"
+            class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
             on:click={() => fileInputElement?.click()}
             title={$LL.chat.fileAttachment.title()}
         >
