@@ -1,7 +1,7 @@
 import { v4 } from "uuid";
 //import {HttpRequest, HttpResponse} from "uWebSockets.js";
 //import {Readable} from 'stream'
-import axios, { AxiosError } from "axios";
+import { AxiosError } from "axios";
 import { Express } from "express";
 import multer from "multer";
 import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
@@ -94,10 +94,15 @@ export class FileController {
       if (!request.files) {
         return response.status(400).send("No files were uploaded.");
       }
-      const files = request.files as Express.Multer.File[];
 
       const userRoomToken = request.body.userRoomToken;
       const bucket: string | undefined = S3_CDN_USER_REFS_BUCKET || undefined;
+
+      // Check file count cap
+      if (!request.files || (request.files as Express.Multer.File[]).length > 10) {
+        return response.status(400).json({ message: "too-many-files" });
+      }
+      const files = request.files as Express.Multer.File[];
 
       try {
         const uploadedFiles: {
@@ -109,39 +114,25 @@ export class FileController {
           type?: string;
         }[] = [];
 
+        // Validate session token if admin API is configured
+        if (ADMIN_API_URL && !userRoomToken) {
+          throw new NotLoggedUser();
+        }
+
         for (const file of files) {
           // This is needed because of a bug in busboy. Remove this when https://github.com/expressjs/multer/pull/1158 is merged
           const filename = Buffer.from(file.originalname, "latin1").toString(
             "utf8"
           );
-          if (ADMIN_API_URL) {
-            if (!userRoomToken) {
-              throw new NotLoggedUser();
-            } else {
-              await axios.get(`${ADMIN_API_URL}/api/limit/fileSize`, {
-                headers: { userRoomToken: userRoomToken },
-                params: { fileSize: file.buffer.byteLength },
-              });
-            }
-          } else {
-            console.log(
-              "FILE SIZE",
-              filename,
-              " : ",
-              file.buffer.byteLength,
-              "bytes",
-              "//",
-              UPLOAD_MAX_FILESIZE,
-              "bytes"
-            );
-            if (!ENABLE_CHAT_UPLOAD) {
-              throw new DisabledChat("Upload is disabled");
-            } else if (
-              UPLOAD_MAX_FILESIZE &&
-              file.buffer.byteLength > parseInt(UPLOAD_MAX_FILESIZE)
-            ) {
-              throw new ByteLenghtBufferException(`file-too-big`);
-            }
+          // Always check file size locally, regardless of ADMIN_API_URL
+          if (!ENABLE_CHAT_UPLOAD) {
+            throw new DisabledChat("Upload is disabled");
+          }
+          if (
+            UPLOAD_MAX_FILESIZE &&
+            file.buffer.byteLength > parseInt(UPLOAD_MAX_FILESIZE)
+          ) {
+            throw new ByteLenghtBufferException(`file-too-big`);
           }
           const fileUuid = await uploaderService.uploadFile(
             filename,

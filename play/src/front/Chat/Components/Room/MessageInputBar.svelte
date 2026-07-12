@@ -41,9 +41,33 @@
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import { localUserStore } from "../../../Connection/LocalUserStore";
+    import { warningMessageStore } from "../../../Stores/ErrorStore";
     import MessageInput from "./MessageInput.svelte";
     import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
     import { IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
+
+    // Frontend pre-check constants (server enforces the real limits)
+    const UPLOAD_MAX_FILESIZE = 10485760; // 10 MB — matches UPLOAD_MAX_FILESIZE env var
+    const MAX_FILE_COUNT = 10;
+    const UNSAFE_EXTENSIONS = [
+        ".exe",
+        ".bat",
+        ".cmd",
+        ".com",
+        ".msi",
+        ".scr",
+        ".jar",
+        ".dmg",
+        ".pkg",
+        ".app",
+        ".sh",
+        ".bash",
+        ".vbs",
+        ".ps1",
+        ".pl",
+        ".py",
+        ".rb",
+    ];
 
     export let room: ChatRoom;
     export let disabled = false;
@@ -140,7 +164,10 @@
                             return { location: data[0].location, type: file.type };
                         })
                     );
-                    // All uploads succeeded — now send messages
+                    // All uploads succeeded — now clear and send messages
+                    // eslint-disable-next-line require-atomic-updates
+                    files = [];
+                    filesPreview = [];
                     const proximityRoom = room;
                     for (const result of results) {
                         proximityRoom.sendMessage(
@@ -153,26 +180,28 @@
                         );
                     }
                 } catch (error: unknown) {
-                    console.error("Error uploading file:", error);
-                    if (error instanceof Error && error.message.includes("Transient storage not configured")) {
-                        fileAttachementEnabled = false;
+                    if (error instanceof Error) {
+                        warningMessageStore.addWarningMessage(error.message);
                     }
                     return;
                 } finally {
                     isUploading = false;
                 }
-                // eslint-disable-next-line require-atomic-updates
-                files = [];
-                filesPreview = [];
             } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
                     fileListAcc.items.add(currentFile.file);
                     return fileListAcc;
                 }, new DataTransfer()).files;
 
-                room.sendFiles(fileList).catch((error) => console.error(error));
-                files = [];
-                filesPreview = [];
+                room.sendFiles(fileList)
+                    .then(() => {
+                        files = [];
+                        filesPreview = [];
+                    })
+                    .catch((error) => {
+                        console.error("Error sending files:", error);
+                        warningMessageStore.addWarningMessage("Failed to send files.");
+                    });
             }
         }
 
@@ -272,7 +301,34 @@
     }
 
     export function handleFiles(event: CustomEvent<FileList>) {
-        const newFiles = [...event.detail].map((file) => ({ id: uuid(), file }));
+        const incoming = [...event.detail];
+
+        // Pre-check: file count
+        if (files.length + incoming.length > MAX_FILE_COUNT) {
+            warningMessageStore.addWarningMessage(`Maximum ${MAX_FILE_COUNT} files at a time.`);
+            return;
+        }
+
+        // Pre-check: unsafe extensions
+        for (const file of incoming) {
+            const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+            if (UNSAFE_EXTENSIONS.includes(ext)) {
+                warningMessageStore.addWarningMessage(`"${file.name}" has an unsafe file type and cannot be uploaded.`);
+                return;
+            }
+        }
+
+        // Pre-check: file size
+        for (const file of incoming) {
+            if (file.size > UPLOAD_MAX_FILESIZE) {
+                warningMessageStore.addWarningMessage(
+                    `"${file.name}" is too large. Maximum size is ${UPLOAD_MAX_FILESIZE / 1048576} MB.`
+                );
+                return;
+            }
+        }
+
+        const newFiles = incoming.map((file) => ({ id: uuid(), file }));
         files = [...files, ...newFiles];
         addToPreviews(newFiles);
     }
