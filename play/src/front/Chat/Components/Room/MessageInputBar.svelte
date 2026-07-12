@@ -14,6 +14,7 @@
 
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
+    import { fly } from "svelte/transition";
     import { v4 as uuid } from "uuid";
     import type { EmojiClickEvent } from "emoji-picker-element/shared";
     import { defautlNativeIntegrationAppName } from "@workadventure/shared-utils";
@@ -41,7 +42,6 @@
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import { localUserStore } from "../../../Connection/LocalUserStore";
-    import { warningMessageStore } from "../../../Stores/ErrorStore";
     import MessageInput from "./MessageInput.svelte";
     import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
     import { IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
@@ -84,6 +84,20 @@
     let applicationComponentOpened = false;
     let fileAttachementEnabled = false;
     let isUploading = false;
+    let uploadError: string | null = null;
+    let failedFileIds: Set<string> = new Set();
+    let uploadErrorTimeout: ReturnType<typeof setTimeout> | undefined;
+
+    function showUploadError(msg: string, failed?: Set<string>) {
+        uploadError = msg;
+        failedFileIds = failed ?? new Set();
+        clearTimeout(uploadErrorTimeout);
+        uploadErrorTimeout = setTimeout(() => {
+            uploadError = null;
+            failedFileIds = new Set();
+        }, 5000);
+    }
+
     let applicationProperty: ApplicationProperty | undefined = undefined;
     let replyMessageId: string | null = null;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
@@ -184,8 +198,9 @@
                         files = pendingFiles.filter((f) => failedIds.includes(f.id));
 
                         filesPreview = filesPreview.filter((p) => failedIds.includes(p.id));
-                        warningMessageStore.addWarningMessage(
-                            `Upload failed for ${failedIds.length} file(s). They are still in the input for retry.`
+                        showUploadError(
+                            `Upload failed for ${failedIds.length} file(s). Still in the input for retry.`,
+                            new Set(failedIds)
                         );
                     } else {
                         // All succeeded — clear and send messages
@@ -207,7 +222,7 @@
                     }
                 } catch (error: unknown) {
                     if (error instanceof Error) {
-                        warningMessageStore.addWarningMessage(error.message);
+                        showUploadError(error.message);
                     }
                     return;
                 } finally {
@@ -226,7 +241,7 @@
                     })
                     .catch((error) => {
                         console.error("Error sending files:", error);
-                        warningMessageStore.addWarningMessage("Failed to send files.");
+                        showUploadError("Failed to send files.");
                     });
             }
         }
@@ -329,34 +344,45 @@
     export function handleFiles(event: CustomEvent<FileList>) {
         const incoming = [...event.detail];
 
-        // Pre-check: file count
+        // Clear previous upload errors
+        uploadError = null;
+        failedFileIds = new Set();
+        clearTimeout(uploadErrorTimeout);
+
+        // Pre-check: file count (hard rejection — no files added)
         if (files.length + incoming.length > MAX_FILE_COUNT) {
-            warningMessageStore.addWarningMessage($LL.chat.fileAttachment.maxFileCount({ count: MAX_FILE_COUNT }));
+            showUploadError($LL.chat.fileAttachment.maxFileCount({ count: MAX_FILE_COUNT }));
             return;
         }
 
-        // Pre-check: unsafe extensions
+        // Run all checks per file, collect valid files and rejection reasons
+        const valid: File[] = [];
+        const reasons: string[] = [];
         for (const file of incoming) {
             const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
             if (UNSAFE_EXTENSIONS.includes(ext)) {
-                warningMessageStore.addWarningMessage($LL.chat.fileAttachment.unsafeFileType({ name: file.name }));
-                return;
+                reasons.push(`${file.name}: type not allowed`);
+                continue;
             }
-        }
-
-        // Pre-check: file size
-        for (const file of incoming) {
             if (file.size > UPLOAD_MAX_FILESIZE) {
-                warningMessageStore.addWarningMessage(
-                    $LL.chat.fileAttachment.fileTooLarge({ name: file.name, size: UPLOAD_MAX_FILESIZE / 1048576 })
-                );
-                return;
+                reasons.push(`${file.name}: too large (max ${UPLOAD_MAX_FILESIZE / 1048576} MB)`);
+                continue;
             }
+            valid.push(file);
         }
 
-        const newFiles = incoming.map((file) => ({ id: uuid(), file }));
-        files = [...files, ...newFiles];
-        addToPreviews(newFiles);
+        // Add valid files to preview
+        if (valid.length > 0) {
+            const newFiles = valid.map((file) => ({ id: uuid(), file }));
+            files = [...files, ...newFiles];
+            addToPreviews(newFiles);
+        }
+
+        // Show error for rejected files
+        if (reasons.length > 0) {
+            const msg = `${reasons.length} file(s) rejected: ${reasons.join(", ")}`;
+            showUploadError(msg);
+        }
     }
 
     function addToPreviews(files: { id: string; file: File }[]) {
@@ -553,12 +579,29 @@
 
 {#if files.length > 0}
     <div class="w-full p-1">
+        {#if uploadError}
+            <div
+                class="flex items-center justify-between px-3 py-1 mb-1 rounded-lg bg-red-900/70 text-red-200 text-xs"
+                transition:fly={{ y: -20, duration: 300 }}
+            >
+                <span class="truncate">⚠️ {uploadError}</span>
+                <button
+                    class="ml-2 shrink-0 hover:text-white"
+                    on:click={() => {
+                        uploadError = null;
+                        failedFileIds = new Set();
+                    }}
+                >×</button>
+            </div>
+        {/if}
         <div class="flex flex-row gap-2 w-full overflow-visible no-scroll-bar rounded-lg p-2 bg-contrast/80">
             {#each filesPreview as preview (preview.id)}
                 <div
                     class="relative content-center {preview.type.includes('image')
                         ? 'w-20'
-                        : 'w-28'} h-20 rounded-md backdrop-opacity-10 bg-white p-0.5"
+                        : 'w-28'} h-20 rounded-md backdrop-opacity-10 bg-white p-0.5 {failedFileIds.has(preview.id)
+                        ? 'ring-2 ring-red-500 opacity-60'
+                        : ''}"
                 >
                     <button
                         class="border-2 border-white border-solid absolute flex items-center justify-center rounded-full bg-secondary hover:bg-secondary-600 p-0.5 -start-2 -top-2"
