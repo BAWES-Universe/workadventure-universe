@@ -202,6 +202,7 @@
                             `Upload failed for ${failedIds.length} file(s). Still in the input for retry.`,
                             new Set(failedIds)
                         );
+                        return;
                     } else {
                         // All succeeded — clear and send messages
                         // eslint-disable-next-line require-atomic-updates
@@ -903,7 +904,7 @@
         data-testid="quickFileAttachmentButton"
         class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
         class:disabled:opacity-30={room instanceof ProximityChatRoom}
-        disabled={room instanceof ProximityChatRoom ? !fileAttachementEnabled || isUploading : false}
+        disabled={room instanceof ProximityChatRoom ? !fileAttachementEnabled || isUploading : !fileAttachementEnabled}
         on:click={() => fileInputElement?.click()}
         title={$LL.chat.fileAttachment.title()}
     >
