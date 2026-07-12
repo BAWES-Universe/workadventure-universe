@@ -229,5 +229,3 @@ export class FileController {
     });
   }
 }
-
-export { FileController };
