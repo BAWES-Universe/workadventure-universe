@@ -864,7 +864,7 @@
             data-testid="sendMessageButton"
             class="disabled:opacity-30 disabled:!cursor-none disabled:text-white py-0 px-3 m-0 bg-secondary h-full rounded-none"
             disabled={applicationPropertyInProcessing || isUploading}
-            on:click={() => sendMessage(message)}
+            on:click={() => sendMessage(message).catch((error) => console.error(error))}
         >
             <IconSend />
         </button>
