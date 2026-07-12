@@ -139,9 +139,10 @@
             if (room instanceof ProximityChatRoom) {
                 // Proximity chat: upload files to uploader, then send URL as message
                 const pendingFiles = files;
-                isUploading = true;
-                const userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
+                let userToken: string | undefined;
                 try {
+                    userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
+                    isUploading = true;
                     const results = await Promise.all(
                         pendingFiles.map(async ({ file }) => {
                             const formData = new FormData();
