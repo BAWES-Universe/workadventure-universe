@@ -578,7 +578,7 @@
     $: quotedMessageContent = $selectedChatMessageToReply?.content;
 </script>
 
-{#if files.length > 0}
+{#if files.length > 0 || uploadError}
     <div class="w-full p-1">
         {#if uploadError}
             <div
