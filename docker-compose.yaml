@@ -331,6 +331,13 @@ services:
       REDIS_DB_NUMBER: "${UPLOADER_REDIS_DB_NUMBER:-}"
       ENABLE_CHAT_UPLOAD: "$ENABLE_CHAT_UPLOAD"
       UPLOAD_MAX_FILESIZE: "${UPLOAD_MAX_FILESIZE:-}"
+      #CDN provider for proximity chat file uploads
+      S3_CDN_ACCESS_KEY_ID: "${S3_CDN_ACCESS_KEY_ID:-}"
+      S3_CDN_SECRET_ACCESS_KEY: "${S3_CDN_SECRET_ACCESS_KEY:-}"
+      S3_CDN_REGION: "${S3_CDN_REGION:-}"
+      S3_CDN_ENDPOINT: "${S3_CDN_ENDPOINT:-}"
+      S3_CDN_USER_REFS_BUCKET: "${S3_CDN_USER_REFS_BUCKET:-}"
+      S3_CDN_BOT_GENS_BUCKET: "${S3_CDN_BOT_GENS_BUCKET:-}"
     volumes:
       - .:/usr/src/app
     tmpfs: /tmp
