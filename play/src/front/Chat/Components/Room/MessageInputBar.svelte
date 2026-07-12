@@ -60,7 +60,6 @@
     let fileAttachmentComponentOpened = false;
     let fileAttachementEnabled = false;
     let applicationProperty: ApplicationProperty | undefined = undefined;
-    const isProximityChatRoom = room instanceof ProximityChatRoom;
     let replyMessageId: string | null = null;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
 
@@ -112,16 +111,34 @@
 
         // send files
         if (files && files.length > 0) {
-            if (!(room instanceof ProximityChatRoom)) {
+            if (room instanceof ProximityChatRoom) {
+                // Proximity chat: upload files to uploader, then send URL as message
+                for (const { file } of files) {
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    formData.append("bucket", "user-refs");
+                    fetch("/upload-file", {
+                        method: "POST",
+                        body: formData,
+                    })
+                        .then((res) => res.json())
+                        .then((data) => {
+                            if (data && data.length > 0) {
+                                room.sendMessage(data[0].location);
+                            }
+                        })
+                        .catch((error) => console.error("Error uploading file:", error));
+                }
+            } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
                     fileListAcc.items.add(currentFile.file);
                     return fileListAcc;
                 }, new DataTransfer()).files;
 
                 room.sendFiles(fileList).catch((error) => console.error(error));
-                files = [];
-                filesPreview = [];
             }
+            files = [];
+            filesPreview = [];
         }
 
         // send message
@@ -411,7 +428,7 @@
     $: quotedMessageContent = $selectedChatMessageToReply?.content;
 </script>
 
-{#if files.length > 0 && !(room instanceof ProximityChatRoom)}
+{#if files.length > 0}
     <div class="w-full p-1">
         <div class="flex flex-row gap-2 w-full overflow-visible no-scroll-bar rounded-lg p-2 bg-contrast/80">
             {#each filesPreview as preview (preview.id)}
@@ -459,14 +476,12 @@
                 class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
                 on:click={() => openFileAttachmentComponent()}
                 class:bg-secondary-800={fileAttachmentComponentOpened}
-                disabled={!fileAttachementEnabled || isProximityChatRoom}
+                disabled={!fileAttachementEnabled}
             >
                 <IconPaperclip font-size={32} />
                 <h2 class="text-sm p-0 m-0">{$LL.chat.fileAttachment.title()}</h2>
                 <p class="text-xs p-0 m-0 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {fileAttachementEnabled && !isProximityChatRoom
-                        ? $LL.chat.fileAttachment.description()
-                        : $LL.chat.fileAttachment.featureComingSoon()}
+                    {$LL.chat.fileAttachment.description()}
                 </p>
             </button>
         </div>
@@ -704,7 +719,7 @@
         {focusout}
         bind:message
         bind:messageInput
-        disabled={disabled && !isProximityChatRoom}
+        {disabled}
         inputClass="message-input flex-grow !m-0 px-5 py-2.5 max-h-36 overflow-auto  h-full rounded-xl wa-searchbar block text-white placeholder:text-base border-light-purple border !bg-transparent resize-none border-none outline-none shadow-none focus:ring-0"
         dataText={$LL.chat.enter()}
         dataTestid="messageInput"

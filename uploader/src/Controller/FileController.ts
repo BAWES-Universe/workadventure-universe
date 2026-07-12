@@ -4,7 +4,7 @@ import { v4 } from "uuid";
 import axios, { AxiosError } from "axios";
 import { Express } from "express";
 import multer from "multer";
-import { uploaderService } from "../Service/UploaderService";
+import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
 import { ByteLenghtBufferException } from "../Exception/ByteLenghtBufferException";
 import {
   ADMIN_API_URL,
@@ -94,6 +94,7 @@ export class FileController {
       const files = request.files as Express.Multer.File[];
 
       const userRoomToken = request.body.userRoomToken;
+      const bucket: string | undefined = request.body.bucket || undefined;
 
       try {
         const uploadedFiles: {
@@ -142,7 +143,8 @@ export class FileController {
           const fileUuid = await uploaderService.uploadFile(
             filename,
             file.buffer,
-            file.mimetype
+            file.mimetype,
+            bucket
           );
           const location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
           uploadedFiles.push({
@@ -189,6 +191,11 @@ export class FileController {
         } else if (err instanceof NotLoggedUser) {
           response.status(401);
           return response.json({ message: "not-logged" });
+        } else if (err instanceof CdnNotConfiguredError) {
+          response.status(400);
+          return response.json({
+            message: err.message,
+          });
         }
         throw err;
       }

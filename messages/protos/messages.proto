@@ -1002,6 +1002,9 @@ message SpaceMessage {
   string message = 1;
   repeated CharacterTextureMessage characterTextures = 2;
   optional string name = 3;
+  optional string url = 4;
+  optional string mediaType = 5;
+  optional string mimeType = 6;
 }
 
 message SpaceIsTyping {
