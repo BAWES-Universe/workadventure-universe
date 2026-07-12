@@ -113,22 +113,29 @@
         if (files && files.length > 0) {
             if (room instanceof ProximityChatRoom) {
                 // Proximity chat: upload files to uploader, then send URL as message
-                for (const { file } of files) {
+                const uploadPromises = files.map(async ({ file }) => {
                     const formData = new FormData();
                     formData.append("file", file);
                     formData.append("bucket", "user-refs");
-                    fetch("/upload-file", {
+                    const response = await fetch("/upload-file", {
                         method: "POST",
                         body: formData,
+                    });
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        throw new Error(errData.message || `Upload failed (${response.status})`);
+                    }
+                    const data = await response.json();
+                    if (data && data.length > 0) {
+                        room.sendMessage(data[0].location);
+                    }
+                });
+                Promise.allSettled(uploadPromises)
+                    .then(() => {
+                        files = [];
+                        filesPreview = [];
                     })
-                        .then((res) => res.json())
-                        .then((data) => {
-                            if (data && data.length > 0) {
-                                room.sendMessage(data[0].location);
-                            }
-                        })
-                        .catch((error) => console.error("Error uploading file:", error));
-                }
+                    .catch((error) => console.error("Error uploading file:", error));
             } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
                     fileListAcc.items.add(currentFile.file);
@@ -136,9 +143,9 @@
                 }, new DataTransfer()).files;
 
                 room.sendFiles(fileList).catch((error) => console.error(error));
+                files = [];
+                filesPreview = [];
             }
-            files = [];
-            filesPreview = [];
         }
 
         // send message
@@ -719,7 +726,7 @@
         {focusout}
         bind:message
         bind:messageInput
-        {disabled}
+        disabled={room instanceof ProximityChatRoom ? false : disabled}
         inputClass="message-input flex-grow !m-0 px-5 py-2.5 max-h-36 overflow-auto  h-full rounded-xl wa-searchbar block text-white placeholder:text-base border-light-purple border !bg-transparent resize-none border-none outline-none shadow-none focus:ring-0"
         dataText={$LL.chat.enter()}
         dataTestid="messageInput"
