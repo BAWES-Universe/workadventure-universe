@@ -42,7 +42,6 @@
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import MessageInput from "./MessageInput.svelte";
-    import MessageFileInput from "./Message/MessageFileInput.svelte";
     import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
     import { IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
@@ -59,7 +58,6 @@
     const TYPINT_TIMEOUT = 10000;
 
     let applicationComponentOpened = false;
-    let fileAttachmentComponentOpened = false;
     let fileAttachementEnabled = false;
     let isUploading = false;
     let applicationProperty: ApplicationProperty | undefined = undefined;
@@ -322,11 +320,6 @@
         chatInputFocusStore.set(false);
     }
 
-    function closeFileAttachmentComponent() {
-        fileAttachmentComponentOpened = false;
-        applicationComponentOpened = false;
-        applicationProperty = undefined;
-    }
     // This function open the application part to propose to the user to add a new application or close application part
     function toggleApplicationComponent() {
         applicationComponentOpened = !applicationComponentOpened;
@@ -711,9 +704,6 @@
         />
     </div>
 {/if}
-{#if fileAttachmentComponentOpened}
-    <MessageFileInput {room} on:fileUploaded={() => closeFileAttachmentComponent()} />
-{/if}
 <div
     class="flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
     bind:this={messageBarRef}
@@ -762,6 +752,7 @@
             bind:this={fileInputElement}
             hidden
             multiple={false}
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.zip"
             on:change={(e) => {
                 if (fileInputElement?.files) {
                     handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
@@ -769,15 +760,6 @@
                 }
             }}
         />
-        <button
-            data-testid="quickFileAttachmentButton"
-            class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none disabled:opacity-30"
-            disabled={!fileAttachementEnabled || isUploading}
-            on:click={() => fileInputElement?.click()}
-            title={$LL.chat.fileAttachment.title()}
-        >
-            <IconPaperclip font-size={18} />
-        </button>
     {:else}
         <input
             type="file"
@@ -791,15 +773,17 @@
                 }
             }}
         />
-        <button
-            data-testid="quickFileAttachmentButton"
-            class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
-            on:click={() => fileInputElement?.click()}
-            title={$LL.chat.fileAttachment.title()}
-        >
-            <IconPaperclip font-size={18} />
-        </button>
     {/if}
+    <button
+        data-testid="quickFileAttachmentButton"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        class:disabled:opacity-30={room instanceof ProximityChatRoom}
+        disabled={room instanceof ProximityChatRoom ? !fileAttachementEnabled || isUploading : false}
+        on:click={() => fileInputElement?.click()}
+        title={$LL.chat.fileAttachment.title()}
+    >
+        <IconPaperclip font-size={18} />
+    </button>
     <button
         data-testid="addApplicationButton"
         class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"

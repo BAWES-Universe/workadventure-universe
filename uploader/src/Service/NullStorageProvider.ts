@@ -22,4 +22,8 @@ export class NullStorageProvider implements StorageProvider,TempStorageProvider 
     copyFile(fileId: string, target: TargetDevice): void {
         throw new Error("S3 and Redis for upload file are not defined");
     }
+
+    getSignedUrl(key: string): Promise<string> {
+        throw new Error("S3 and Redis for upload file are not defined");
+    }
 }

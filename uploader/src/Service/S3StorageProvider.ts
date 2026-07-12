@@ -55,6 +55,11 @@ export class S3StorageProvider implements StorageProvider {
         return fileUuid
     }
 
+    async getSignedUrl(key: string): Promise<string> {
+        const params = {Bucket: this.bucketName, Key: key, Expires: UPLOADER_AWS_SIGNED_URL_EXPIRATION};
+        return await this.S3().getSignedUrlPromise('getObject', params);
+    }
+
     async deleteFileById(fileId: string): Promise<void> {
         const deleteParams: S3.Types.DeleteObjectRequest = {
             Bucket: this.bucketName,
@@ -64,12 +69,7 @@ export class S3StorageProvider implements StorageProvider {
     }
 
     copyFile(fileId: string, target: TargetDevice): void {
-        this.getExternalDownloadLink(fileId).then(link => target.copyFromLink(link))
-    }
-
-    private async getExternalDownloadLink(fileId: string): Promise<string> {
-        const params = {Bucket: this.bucketName, Key: fileId, Expires: UPLOADER_AWS_SIGNED_URL_EXPIRATION};
-        return await this.S3().getSignedUrlPromise('getObject', params);
+        this.getSignedUrl(fileId).then(link => target.copyFromLink(link))
     }
 
     private S3() {

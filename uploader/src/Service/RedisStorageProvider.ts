@@ -42,6 +42,10 @@ export class RedisStorageProvider implements StorageProvider, TempStorageProvide
         return this.redisClient.get(commandOptions({ returnBuffers: true }), fileId)
     }
 
+    async getSignedUrl(key: string): Promise<string> {
+        throw new Error("Signed URLs are not supported for Redis storage");
+    }
+
     copyFile(fileId: string, target: TargetDevice): void {
         this.get(fileId).then((buffer: Buffer | undefined | null)=> {
             target.copyFromBuffer(buffer)

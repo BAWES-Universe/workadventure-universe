@@ -5,7 +5,7 @@ import axios, { AxiosError } from "axios";
 import { Express } from "express";
 import multer from "multer";
 import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
-import { isCdnConfigured } from "../Service/StorageProviderService";
+import { getCdnProvider, isCdnConfigured } from "../Service/StorageProviderService";
 import { ByteLenghtBufferException } from "../Exception/ByteLenghtBufferException";
 import {
   ADMIN_API_URL,
@@ -149,7 +149,17 @@ export class FileController {
             file.mimetype,
             bucket
           );
-          const location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
+          let location: string;
+          if (bucket) {
+            const cdnProvider = getCdnProvider(bucket);
+            if (cdnProvider) {
+              location = await cdnProvider.getSignedUrl(fileUuid);
+            } else {
+              location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
+            }
+          } else {
+            location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
+          }
           uploadedFiles.push({
             name: filename,
             id: fileUuid,
