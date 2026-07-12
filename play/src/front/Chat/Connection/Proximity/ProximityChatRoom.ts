@@ -189,6 +189,36 @@ export class ProximityChatRoom implements ChatRoom {
             });
     }
 
+    private inferTypeFromUrl(url: string): ChatMessageType | undefined {
+        const ext = url.split(".").pop()?.toLowerCase();
+        switch (ext) {
+            case "png":
+            case "jpg":
+            case "jpeg":
+            case "gif":
+            case "webp":
+            case "bmp":
+            case "svg":
+                return "image";
+            case "mp4":
+            case "webm":
+            case "ogg":
+            case "mov":
+            case "avi":
+            case "mkv":
+                return "video";
+            case "mp3":
+            case "wav":
+            case "aac":
+            case "flac":
+            case "m4a":
+            case "wma":
+                return "audio";
+            default:
+                return undefined;
+        }
+    }
+
     sendMessage(
         message: string,
         action: ChatMessageType = "proximity",
@@ -207,7 +237,9 @@ export class ProximityChatRoom implements ChatRoom {
             } else if (mimeType?.startsWith("video/")) {
                 messageType = "video";
             } else {
-                messageType = "file";
+                // Fall back to URL extension detection when mimeType is empty
+                // (common on mobile browsers where file.type is not populated)
+                messageType = this.inferTypeFromUrl(url) ?? "file";
             }
         }
 
@@ -325,7 +357,8 @@ export class ProximityChatRoom implements ChatRoom {
             } else if (mimeType?.startsWith("video/")) {
                 messageType = "video";
             } else {
-                messageType = "file";
+                // Fall back to URL extension detection when mimeType is empty
+                messageType = this.inferTypeFromUrl(url) ?? "file";
             }
         }
 
