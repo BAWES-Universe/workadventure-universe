@@ -301,6 +301,7 @@
     });
 
     onDestroy(() => {
+        clearTimeout(uploadErrorTimeout);
         draftMessageService.saveDraft({
             id: draftId,
             roomId: room.id,

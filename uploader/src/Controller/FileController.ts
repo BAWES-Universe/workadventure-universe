@@ -11,6 +11,7 @@ import {
   ADMIN_API_URL,
   ENABLE_CHAT_UPLOAD,
   S3_CDN_USER_REFS_BUCKET,
+  S3_CDN_BOT_GENS_BUCKET,
   UPLOAD_MAX_FILESIZE,
   UPLOADER_URL,
 } from "../Enum/EnvironmentVariable";
@@ -96,7 +97,7 @@ export class FileController {
       }
 
       const userRoomToken = request.body.userRoomToken;
-      const bucket: string | undefined = S3_CDN_USER_REFS_BUCKET || undefined;
+      const bucket: string | undefined = S3_CDN_USER_REFS_BUCKET || S3_CDN_BOT_GENS_BUCKET || undefined;
 
       // Check file count cap
       if (!request.files || (request.files as Express.Multer.File[]).length > 10) {
