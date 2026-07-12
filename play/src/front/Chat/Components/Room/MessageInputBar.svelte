@@ -61,6 +61,7 @@
     let applicationComponentOpened = false;
     let fileAttachmentComponentOpened = false;
     let fileAttachementEnabled = false;
+    let isUploading = false;
     let applicationProperty: ApplicationProperty | undefined = undefined;
     let replyMessageId: string | null = null;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
@@ -116,6 +117,7 @@
             if (room instanceof ProximityChatRoom) {
                 // Proximity chat: upload files to uploader, then send URL as message
                 const pendingFiles = files;
+                isUploading = true;
                 const uploadPromises = pendingFiles.map(async ({ file }) => {
                     const formData = new FormData();
                     formData.append("file", file);
@@ -143,11 +145,12 @@
                     await Promise.all(uploadPromises);
                 } catch (error: unknown) {
                     console.error("Error uploading file:", error);
-                    // If CDN is not configured, disable the button to prevent further failed attempts
                     if (error instanceof Error && error.message.includes("Transient storage not configured")) {
                         fileAttachementEnabled = false;
                     }
                     return;
+                } finally {
+                    isUploading = false;
                 }
                 // eslint-disable-next-line require-atomic-updates
                 files = [];
@@ -515,7 +518,7 @@
                 class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
                 on:click={() => openFileAttachmentComponent()}
                 class:bg-secondary-800={fileAttachmentComponentOpened}
-                disabled={!fileAttachementEnabled}
+                disabled={!fileAttachementEnabled || isUploading}
             >
                 <IconPaperclip font-size={32} />
                 <h2 class="text-sm p-0 m-0">{$LL.chat.fileAttachment.title()}</h2>
@@ -779,7 +782,7 @@
         <button
             data-testid="quickFileAttachmentButton"
             class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none disabled:opacity-30"
-            disabled={!fileAttachementEnabled}
+            disabled={!fileAttachementEnabled || isUploading}
             on:click={() => fileInputElement?.click()}
             title={$LL.chat.fileAttachment.title()}
         >
@@ -808,7 +811,7 @@
         <button
             data-testid="sendMessageButton"
             class="disabled:opacity-30 disabled:!cursor-none disabled:text-white py-0 px-3 m-0 bg-secondary h-full rounded-none"
-            disabled={applicationPropertyInProcessing}
+            disabled={applicationPropertyInProcessing || isUploading}
             on:click={() => sendMessage(message)}
         >
             <IconSend />
