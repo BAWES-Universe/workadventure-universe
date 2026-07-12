@@ -5,10 +5,12 @@ import axios, { AxiosError } from "axios";
 import { Express } from "express";
 import multer from "multer";
 import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
+import { isCdnConfigured } from "../Service/StorageProviderService";
 import { ByteLenghtBufferException } from "../Exception/ByteLenghtBufferException";
 import {
   ADMIN_API_URL,
   ENABLE_CHAT_UPLOAD,
+  S3_CDN_USER_REFS_BUCKET,
   UPLOAD_MAX_FILESIZE,
   UPLOADER_URL,
 } from "../Enum/EnvironmentVariable";
@@ -31,6 +33,7 @@ export class FileController {
     this.uploadFile();
     this.deleteUploadedFile();
     this.ping();
+    this.config();
   }
 
   uploadAudioMessage() {
@@ -94,7 +97,7 @@ export class FileController {
       const files = request.files as Express.Multer.File[];
 
       const userRoomToken = request.body.userRoomToken;
-      const bucket: string | undefined = request.body.bucket || undefined;
+      const bucket: string | undefined = request.body.bucket || S3_CDN_USER_REFS_BUCKET || undefined;
 
       try {
         const uploadedFiles: {
@@ -217,4 +220,14 @@ export class FileController {
       res.status(200).send("pong");
     });
   }
+
+  config() {
+    this.App.get("/config", (req, res) => {
+      res.json({
+        cdnConfigured: isCdnConfigured(),
+      });
+    });
+  }
 }
+
+export { FileController };

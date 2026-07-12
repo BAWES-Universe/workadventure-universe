@@ -116,7 +116,6 @@
                 const uploadPromises = files.map(async ({ file }) => {
                     const formData = new FormData();
                     formData.append("file", file);
-                    formData.append("bucket", "user-refs");
                     const response = await fetch("/upload-file", {
                         method: "POST",
                         body: formData,
@@ -137,12 +136,18 @@
                         );
                     }
                 });
-                Promise.allSettled(uploadPromises)
+                Promise.all(uploadPromises)
                     .then(() => {
                         files = [];
                         filesPreview = [];
                     })
-                    .catch((error) => console.error("Error uploading file:", error));
+                    .catch((error) => {
+                        console.error("Error uploading file:", error);
+                        // If CDN is not configured, disable the button to prevent further failed attempts
+                        if (error.message?.includes("Transient storage not configured")) {
+                            fileAttachementEnabled = false;
+                        }
+                    });
             } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
                     fileListAcc.items.add(currentFile.file);
@@ -179,7 +184,23 @@
     }
 
     onMount(async () => {
-        fileAttachementEnabled = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+        const isUploadEnabled = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+        // Check CDN config for proximity chat before enabling the button
+        if (room instanceof ProximityChatRoom && isUploadEnabled) {
+            try {
+                const configResponse = await fetch("/config");
+                if (configResponse.ok) {
+                    const config = await configResponse.json();
+                    fileAttachementEnabled = config.cdnConfigured;
+                } else {
+                    fileAttachementEnabled = false;
+                }
+            } catch {
+                fileAttachementEnabled = isUploadEnabled;
+            }
+        } else {
+            fileAttachementEnabled = isUploadEnabled;
+        }
         const draft = await draftMessageService.loadDraft(draftId);
         if (draft) {
             message = draft.message ?? "";
