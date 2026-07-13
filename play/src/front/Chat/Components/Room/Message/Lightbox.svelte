@@ -267,5 +267,6 @@
     [data-lightbox] img {
         touch-action: none;
         transition: transform 0.05s linear, box-shadow 0.2s ease;
+        transform-origin: 0 0;
     }
 </style>
