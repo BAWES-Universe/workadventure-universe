@@ -1330,7 +1330,9 @@ export class BotClient {
      */
     async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url, alt ? this.inferMimeFromExt(url) : undefined);
-        this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '');
+        if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '')) {
+            throw new Error(`Bot is not in space ${spaceName} — cannot send image`);
+        }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent image to ${spaceName}: ${location}`);
         }
@@ -1342,7 +1344,9 @@ export class BotClient {
      */
     async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url);
-        this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '');
+        if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '')) {
+            throw new Error(`Bot is not in space ${spaceName} — cannot send file`);
+        }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent file to ${spaceName}: ${location}`);
         }
@@ -1354,7 +1358,9 @@ export class BotClient {
      */
     async sendAudio(spaceName: string, url: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url);
-        this.sendMediaMessage(spaceName, location, mediaType, mimeType);
+        if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+            throw new Error(`Bot is not in space ${spaceName} — cannot send audio`);
+        }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent audio to ${spaceName}: ${location}`);
         }
@@ -1366,7 +1372,9 @@ export class BotClient {
      */
     async sendVideo(spaceName: string, url: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url);
-        this.sendMediaMessage(spaceName, location, mediaType, mimeType);
+        if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+            throw new Error(`Bot is not in space ${spaceName} — cannot send video`);
+        }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent video to ${spaceName}: ${location}`);
         }
@@ -1376,13 +1384,13 @@ export class BotClient {
     /**
      * Send a media message to a space via publicEvent spaceMessage.
      */
-    private sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): void {
+    private sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName} — cannot send media`);
             }
-            return;
+            return false;
         }
 
         this.send({
@@ -1406,6 +1414,7 @@ export class BotClient {
                 },
             },
         });
+        return true;
     }
 
     /**
