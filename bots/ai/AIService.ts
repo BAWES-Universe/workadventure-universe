@@ -694,9 +694,19 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             }
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId);
 
+                            // Collect URLs that were already sent by explicit send_* tool calls
+                            // so autoSendMedia doesn't re-send them via parent tool results
+                            const alreadySentUrls = new Set<string>();
+                            for (const tr of toolResults) {
+                                if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
+                                    const loc = tr.result?.location;
+                                    if (typeof loc === 'string') alreadySentUrls.add(loc);
+                                }
+                            }
+
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
-                            await this.autoSendMedia(toolResults, botClient, spaceName);
+                            await this.autoSendMedia(toolResults, botClient, spaceName, alreadySentUrls);
 
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
@@ -2017,7 +2027,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private async autoSendMedia(
         toolResults: Array<{ id: string; name: string; result: any }>,
         botClient?: BotClient,
-        spaceName?: string
+        spaceName?: string,
+        alreadySentUrls?: Set<string>
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
@@ -2039,6 +2050,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             let lastError: string | null = null;
 
             for (const url of urls) {
+                // Skip URLs that were already sent by the AI's explicit send_* tool call
+                if (alreadySentUrls?.has(url)) continue;
                 const ext = this.getExtension(url);
                 try {
                     if (IMAGE_EXT_SET.has(ext)) {

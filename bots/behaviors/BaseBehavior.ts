@@ -1059,10 +1059,12 @@ export abstract class BaseBehavior {
             // This is the correct time to generate greetings (after memory is ready)
             if (botId) {
                 // Retry any pending media that was queued when the user left
-                // Fire-and-forget — runs before the greeting so media lands first
-                this.retryPendingMedia(spaceName, user).catch(err => {
+                // Must complete before greeting so autoDeliveredMedia fact is set
+                try {
+                    await this.retryPendingMedia(spaceName, user);
+                } catch (err) {
                     console.error(`[Behavior] Error retrying pending media:`, err);
-                });
+                }
                 this.onMemoryReady?.(spaceName, user);
             }
         }
