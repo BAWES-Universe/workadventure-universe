@@ -330,6 +330,9 @@ const chat: DeepPartial<Translation["chat"]> = {
         title: "Allega file",
         description: "Allega un file alla tua chat",
         featureComingSoon: "Funzionalità in arrivo!",
+        maxFileCount: "Massimo {count} file alla volta.",
+        unsafeFileType: '"{name}" ha un tipo di file non sicuro e non può essere caricato.',
+        fileTooLarge: '"{name}" è troppo grande. La dimensione massima è {size} MB.',
     },
 };
 
