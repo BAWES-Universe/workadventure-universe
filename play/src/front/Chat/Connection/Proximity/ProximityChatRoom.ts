@@ -243,6 +243,13 @@ export class ProximityChatRoom implements ChatRoom {
             } else {
                 messageType = "file";
             }
+            console.log("[ProximityChatRoom] sendMessage type inference:", {
+                url,
+                mimeType,
+                urlType,
+                messageType,
+                action,
+            });
         }
 
         // Create content message
@@ -344,6 +351,15 @@ export class ProximityChatRoom implements ChatRoom {
         mediaType?: string | null,
         mimeType?: string | null
     ): void {
+        console.log("[ProximityChatRoom] addNewMessage called:", {
+            message,
+            senderUserId,
+            name,
+            url,
+            mediaType,
+            mimeType,
+        });
+
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
             return;
@@ -365,6 +381,13 @@ export class ProximityChatRoom implements ChatRoom {
             } else {
                 messageType = "file";
             }
+            console.log("[ProximityChatRoom] addNewMessage type inference:", {
+                message,
+                url,
+                mimeType,
+                urlType,
+                messageType,
+            });
         }
 
         // Create content message
