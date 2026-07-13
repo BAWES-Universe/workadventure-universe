@@ -1907,7 +1907,7 @@ export class BotClient {
         }
     }
 
-    private handleSubMessage(message: ServerToClientMessage['message']): void {
+    private handleSubMessage(message: any): void {
         if (!message) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[Bot ${this.config.botId}] ⚠️ handleSubMessage called with null/undefined message`);
@@ -2300,6 +2300,12 @@ export class BotClient {
                 // Respond to server ping to keep connection alive
                 this.sendPong();
                 break;
+            default:
+                // Unhandled message types — bots only process what they need
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] Unhandled message type: ${message.$case}`);
+                }
+                break;
         }
     }
 
@@ -2334,8 +2340,8 @@ export class BotClient {
         }
 
         try {
-            // Default filterType to ALL_USERS (0) if not provided
-            const filterType = request.filterType ?? FilterType.ALL_USERS;
+            // Default filterType to ALL_USERS (0) — field removed from protobuf
+            const filterType = FilterType.ALL_USERS;
             const propertiesToSync = request.propertiesToSync || [];
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2572,7 +2578,7 @@ export class BotClient {
         }
     }
 
-    private sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;

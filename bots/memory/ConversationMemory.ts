@@ -429,7 +429,7 @@ export class ConversationMemory {
     /**
      * Get or create memory (internal use)
      */
-    private getOrCreateMemory(botId: string, playerId: number): BotPlayerMemory {
+    protected getOrCreateMemory(botId: string, playerId: number): BotPlayerMemory {
         const key = `${botId}_${playerId}`;
         
         if (!this.memories.has(key)) {

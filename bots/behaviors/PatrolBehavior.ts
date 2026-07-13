@@ -7,7 +7,7 @@
 
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
-import { PositionMessage_Direction } from '@workadventure/messages';
+import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';

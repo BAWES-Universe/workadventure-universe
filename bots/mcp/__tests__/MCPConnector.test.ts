@@ -33,7 +33,7 @@ vi.mock('axios', () => ({
     },
 }));
 
-const mockedAxios = vi.mocked(axios);
+const mockedAxios = vi.mocked(axios, true);
 
 // Helper: make axios.isAxiosError return true for our mock errors
 function makeAxiosError(status: number, data?: any): any {

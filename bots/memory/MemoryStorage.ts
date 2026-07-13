@@ -55,7 +55,7 @@ export class MemoryStorage {
         }
 
         this.saveTimer = setInterval(async () => {
-            const { botId, memories } = saveCallback();
+            const { botId, memories } = saveCallback() as any;
             if (memories.length > 0) {
                 await this.saveMemories(botId, memories);
             }
@@ -232,7 +232,7 @@ export class MemoryStorage {
             // Top-level identification
             userUuid: memory.userUuid,
             userId: memory.userId,
-            userName: memory.playerName,
+            userName: (memory as any).playerName,
             isGuest: memory.isGuest,
             
             // Nested memories object (what Admin API looks for)
@@ -268,7 +268,7 @@ export class MemoryStorage {
             userId: data.userId || memoryData.userId,
             isGuest: data.isGuest ?? memoryData.isGuest ?? true,
             playerId: memoryData.playerId || 0,
-            playerName: data.userName || memoryData.playerName,
+            playerName: (data as any).userName || (memoryData as any).playerName,
             conversationHistory: memoryData.conversationHistory || [],
             maxHistorySize: memoryData.maxHistorySize || 50,
             personalInfo: {

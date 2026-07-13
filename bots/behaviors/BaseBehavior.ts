@@ -29,6 +29,7 @@ export abstract class BaseBehavior {
     protected adminApiService: AdminApiService | null = null;
     protected conversationStorage: ConversationStorage | null = null;
     protected responseProcessor: ResponseProcessor | null = null;
+    protected metricsCollector: BotMetricsCollector | null = null;
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;

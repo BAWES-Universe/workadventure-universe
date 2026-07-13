@@ -1235,7 +1235,7 @@ export class BotAPI {
                 const startTime = req.query.startTime ? parseInt(req.query.startTime as string, 10) : undefined;
                 const endTime = req.query.endTime ? parseInt(req.query.endTime as string, 10) : undefined;
 
-                const analytics = this.botManager.getConversationAnalytics();
+                const analytics = (this.botManager as any).getConversationAnalytics?.();
                 if (!analytics) {
                     res.status(503).json({ error: 'Conversation analytics not available' });
                     return;
@@ -1253,7 +1253,7 @@ export class BotAPI {
         this.app.get('/api/bots/:botId/purposes', async (req: BotAPIRequest, res: Response) => {
             try {
                 const { botId } = req.params;
-                const analytics = this.botManager.getConversationAnalytics();
+                const analytics = (this.botManager as any).getConversationAnalytics?.();
                 if (!analytics) {
                     res.status(503).json({ error: 'Conversation analytics not available' });
                     return;
@@ -1307,6 +1307,8 @@ export class BotAPI {
                     id: testSuiteId,
                     name: `On-demand Test Suite`,
                     testCases: cases,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
                 };
 
                 // Run the tests
@@ -1352,6 +1354,9 @@ export class BotAPI {
                 // Mark all conversation turns as preserveContext to maintain context across turns
                 const testCases = messages.map((msg: string, index: number) => ({
                     id: `turn-${index + 1}`,
+                    name: `Turn ${index + 1}`,
+                    botId: botId as string,
+                    chatInstructions: '',
                     input: msg,
                     expectedBehavior: {
                         shouldNotContain: ['[', ']', '<think>', '</think>', 'END_TOOL'],
@@ -1367,6 +1372,8 @@ export class BotAPI {
                     id: testSuiteId,
                     name: `Conversation Test with ${userName}`,
                     testCases: testCases,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
                 };
 
                 // Run as a single conversation (preserves context)

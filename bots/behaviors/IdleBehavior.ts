@@ -3,7 +3,7 @@
  */
 
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
-import { PositionMessage_Direction } from '@workadventure/messages';
+import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';

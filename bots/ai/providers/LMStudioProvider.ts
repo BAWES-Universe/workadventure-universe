@@ -247,7 +247,7 @@ export class LMStudioProvider implements AIProvider {
                     throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
                 }
 
-                const data = await response.json();
+                const data = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
                 const content = data.choices?.[0]?.message?.content || '';
                 const tokensUsed = data.usage?.total_tokens || 0;
                 const promptTokens = data.usage?.prompt_tokens || 0;

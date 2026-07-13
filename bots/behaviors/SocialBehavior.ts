@@ -2164,7 +2164,7 @@ export class SocialBehavior extends BaseBehavior {
         // Log direct movement
         movementLogger.log({
             timestamp: Date.now(),
-            botId: this.bot.config.botId,
+            botId: this.bot.getBotId(),
             eventType: 'move',
             position: { x: newX, y: newY },
             targetPosition: player.position,
@@ -2266,7 +2266,7 @@ export class SocialBehavior extends BaseBehavior {
             // Log direct movement
             movementLogger.log({
                 timestamp: Date.now(),
-                botId: this.bot.config.botId,
+                botId: this.bot.getBotId(),
                 eventType: 'move',
                 position: { x: newX, y: newY },
                 targetPosition: this.wanderTarget,

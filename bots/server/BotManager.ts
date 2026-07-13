@@ -54,8 +54,8 @@ export class BotManager {
     private conversationCleanup: ConversationCleanup;
     private autoImprovement: AutoImprovement | null = null;
     private selfImprovementLoop: SelfImprovementLoop | null = null;
-    private purposeDetector: PurposeDetector | null = null;
-    private conversationAnalytics: ConversationAnalytics | null = null;
+    // private purposeDetector: PurposeDetector | null = null;
+    // private conversationAnalytics: ConversationAnalytics | null = null;
     private testRunner: BotTestRunner | null = null;
     private conversationReplay: ConversationReplay | null = null;
     private autoPilot: AutoPilotImprovement | null = null;
@@ -274,20 +274,20 @@ export class BotManager {
         
         // Transform Admin API config format to behavior format
         const transformBehaviorConfig = (type: string, cfg: Record<string, any>): Record<string, any> => {
-            const transformed = { ...cfg, type };
-            
+            const transformed: any = { ...(cfg as any), type };
+
             // Transform patrol config: patrolWaypoints → waypoints
             if (type === 'patrol') {
                 // Convert patrolWaypoints to waypoints (Admin API uses patrolWaypoints)
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, cfg.patrolWaypoints, `waypoints:`, cfg.waypoints);
+                    console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, (cfg as any).patrolWaypoints, `waypoints:`, (cfg as any).waypoints);
                 }
-                if (cfg.patrolWaypoints && Array.isArray(cfg.patrolWaypoints)) {
-                    transformed.waypoints = cfg.patrolWaypoints;
+                if ((cfg as any).patrolWaypoints && Array.isArray((cfg as any).patrolWaypoints)) {
+                    transformed.waypoints = (cfg as any).patrolWaypoints;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[BotManager] Set waypoints from patrolWaypoints:`, transformed.waypoints);
                     }
-                } else if (cfg.waypoints && Array.isArray(cfg.waypoints)) {
+                } else if ((cfg as any).waypoints && Array.isArray((cfg as any).waypoints)) {
                     // Already has waypoints, use it
                     transformed.waypoints = cfg.waypoints;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -622,9 +622,9 @@ export class BotManager {
     /**
      * Get conversation analytics
      */
-    getConversationAnalytics(): ConversationAnalytics | null {
-        return this.conversationAnalytics;
-    }
+    // getConversationAnalytics(): ConversationAnalytics | null {
+    //     return this.conversationAnalytics;
+    // }
 
     /**
      * Get ConversationMemory instance
@@ -727,7 +727,7 @@ export class BotManager {
             }
             
             // Transform config for behavior (similar to spawnBot)
-            const transformBehaviorConfig = (type: string, cfg: Record<string, unknown>): Record<string, unknown> => {
+            const transformBehaviorConfig = (type: string, cfg: any): Record<string, unknown> => {
                 const transformed: Record<string, unknown> = { ...cfg };
                 
                 // Transform patrol waypoints
@@ -784,7 +784,7 @@ export class BotManager {
                 return transformed;
             };
             
-            const createBehavior = (type: string, cfg: Record<string, unknown>) => {
+            const createBehavior = (type: string, cfg: any) => {
                 const transformedConfig = transformBehaviorConfig(type, cfg);
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[BotManager] Creating new ${type} behavior with config:`, JSON.stringify(transformedConfig, null, 2));
@@ -795,8 +795,8 @@ export class BotManager {
                         return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
                     case 'patrol':
                         // Final safety check for waypoints
-                        if (!transformedConfig.waypoints || !Array.isArray(transformedConfig.waypoints)) {
-                            transformedConfig.waypoints = [];
+                        if (!(transformedConfig as any).waypoints || !Array.isArray((transformedConfig as any).waypoints)) {
+                            (transformedConfig as any).waypoints = [];
                         }
                         return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
                     case 'social':
@@ -806,7 +806,7 @@ export class BotManager {
                 }
             };
             
-            const behavior = createBehavior(newBehaviorType, newBehaviorConfig);
+            const behavior = createBehavior(newBehaviorType, newBehaviorConfig as any);
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
             instance.client.setBehavior(behavior);
