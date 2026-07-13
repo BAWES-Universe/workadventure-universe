@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy } from "svelte";
+    import { createEventDispatcher } from "svelte";
     import { fade } from "svelte/transition";
 
     export let src: string | undefined;
@@ -185,42 +185,13 @@
         }
     }
 
-    // Close when clicking on the backdrop but NOT on the image or its controls.
-    // Toggle a window click listener reactively based on lightbox visibility.
-    // Using a JS-only listener avoids svelte-check a11y warnings that fire
-    // when event handlers are attached to non-interactive template elements.
-    //
-    // The $: block runs synchronously when show=true, BEFORE the DOM renders.
-    // This means the click event that OPENED the lightbox propagates to window
-    // while the lightbox hasn't rendered yet — target.closest(...) would miss
-    // the content and immediately close().  Skip that first click event.
-    let removeBackdropListener: (() => void) | null = null;
-    let ignoreNextClick = false;
-    $: {
-        if (show) {
-            const handler = (e: MouseEvent) => {
-                if (ignoreNextClick) {
-                    ignoreNextClick = false;
-                    return;
-                }
-                const target = e.target as HTMLElement;
-                if (!target.closest("[data-lightbox-content]")) {
-                    close();
-                }
-            };
-            window.addEventListener("click", handler);
-            removeBackdropListener = () => window.removeEventListener("click", handler);
-        } else {
-            removeBackdropListener?.();
-            removeBackdropListener = null;
-            ignoreNextClick = true;
+    function onBackdropClick(e: MouseEvent): void {
+        // Close when clicking on the backdrop but NOT on the image or its controls
+        const target = e.target as HTMLElement;
+        if (!target.closest("[data-lightbox-content]")) {
+            close();
         }
     }
-
-    onDestroy(() => {
-        removeBackdropListener?.();
-        removeBackdropListener = null;
-    });
 </script>
 
 <svelte:window on:keydown={onKeyDown} />
@@ -233,6 +204,7 @@
         class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80"
         style="opacity: 1;"
         transition:fade={{ duration: 200 }}
+        on:click={onBackdropClick}
         role="dialog"
         aria-label="Image lightbox"
     >
