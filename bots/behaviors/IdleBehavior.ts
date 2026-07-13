@@ -372,6 +372,13 @@ export class IdleBehavior extends BaseBehavior {
             console.log(`[IdleBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
         }
 
+        // If the user sent a file/image/audio/video along with their message,
+        // augment the message text with the URL so the AI knows about it.
+        if (url) {
+            const mediaLabel = mediaType || 'file';
+            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+        }
+
         // Get user info from bot's player map
         const playerInfo = this.bot.getPlayerInfo(senderId);
         const userName = playerInfo?.name;

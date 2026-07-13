@@ -678,6 +678,17 @@ export class SocialBehavior extends BaseBehavior {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
         }
+
+        // If the user sent a file/image/audio/video along with their message,
+        // augment the message text with the URL so the AI knows about it.
+        // The filename alone (e.g. "artist-full-trans.png") isn't actionable.
+        if (url) {
+            const mediaLabel = mediaType || 'file';
+            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Augmented message with URL: ${message}`);
+            }
+        }
         
         let conversation = this.activeConversations.get(senderId);
         

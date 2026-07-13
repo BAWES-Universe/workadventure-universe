@@ -1690,6 +1690,13 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const botId = this.bot.getBotId();
         const config = this.config as PatrolBehaviorConfig;
 
+        // If the user sent a file/image/audio/video along with their message,
+        // augment the message text with the URL so the AI knows about it.
+        if (url) {
+            const mediaLabel = mediaType || 'file';
+            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+        }
+
         // Only respond if respondToPlayers is enabled (default true)
         if (config.respondToPlayers === false) {
             return;
