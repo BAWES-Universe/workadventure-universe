@@ -6,7 +6,7 @@ export interface StorageProvider {
 
     deleteFileById(fileId: string): Promise<void>;
 
-    copyFile(fileId: string, target: TargetDevice): void
+    copyFile(fileId: string, target: TargetDevice): Promise<void>
 
     /**
      * Get a signed/download URL for a stored object.

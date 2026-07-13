@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, onDestroy, createEventDispatcher } from "svelte";
+    import { createEventDispatcher } from "svelte";
     import { fade } from "svelte/transition";
 
     export let src: string | undefined;
@@ -60,14 +60,6 @@
             },
         };
     }
-
-    onMount(() => {
-        window.addEventListener("keydown", onKeyDown);
-    });
-
-    onDestroy(() => {
-        window.removeEventListener("keydown", onKeyDown);
-    });
 
     function setScale(newScale: number, cx = 0, cy = 0): void {
         // Zoom toward a point on the image

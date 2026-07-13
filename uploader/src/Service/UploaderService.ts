@@ -40,8 +40,8 @@ class UploaderService{
         return this.tempStorageProvider.get(fileId);
     }
 
-    copyFile(fileId: string, target: TargetDevice) {
-        this.storageProvider.copyFile(fileId, target)
+    async copyFile(fileId: string, target: TargetDevice): Promise<void> {
+        await this.storageProvider.copyFile(fileId, target)
     }
 }
 

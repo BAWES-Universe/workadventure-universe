@@ -68,8 +68,9 @@ export class S3StorageProvider implements StorageProvider {
         await this.S3().deleteObject(deleteParams).promise();
     }
 
-    copyFile(fileId: string, target: TargetDevice): void {
-        this.getSignedUrl(fileId).then(link => target.copyFromLink(link))
+    async copyFile(fileId: string, target: TargetDevice): Promise<void> {
+        const link = await this.getSignedUrl(fileId);
+        target.copyFromLink(link);
     }
 
     private S3() {
@@ -97,13 +98,10 @@ export class S3StorageProvider implements StorageProvider {
                     "ExposeHeaders": [ "Access-Control-Allow-Origin" ]
                 }
             ]
-            console.log(options);
-            this.s3.putBucketCors({Bucket: this.bucketName, CORSConfiguration: {CORSRules: corsRules}}, (err, _data)=> {
-                if (err) {
+            this.s3.putBucketCors({Bucket: this.bucketName, CORSConfiguration: {CORSRules: corsRules}}).promise()
+                .catch(err => {
                     console.log("Could not setup CORS for S3 bucket", err);
-                    return
-                }
-            })
+                })
         }
         return this.s3
     }

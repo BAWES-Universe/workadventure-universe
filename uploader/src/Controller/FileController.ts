@@ -88,7 +88,10 @@ export class FileController {
     this.App.get("/upload-file/:id", (request, response) => {
       const id = request.params["id"];
       const targetDevice = new HttpResponseDevice(id, response);
-      uploaderService.copyFile(id, targetDevice);
+      uploaderService.copyFile(id, targetDevice).catch((e) => {
+          console.error(e);
+          return response.status(500).send("Internal server error");
+      });
     });
   }
 

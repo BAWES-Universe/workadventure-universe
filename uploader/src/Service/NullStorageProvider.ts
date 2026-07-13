@@ -19,7 +19,7 @@ export class NullStorageProvider implements StorageProvider,TempStorageProvider 
         throw new Error("No providers setup for temporary storage");
     }
 
-    copyFile(fileId: string, target: TargetDevice): void {
+    async copyFile(fileId: string, target: TargetDevice): Promise<void> {
         throw new Error("S3 and Redis for upload file are not defined");
     }
 
