@@ -706,7 +706,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
-                            await this.autoSendMedia(toolResults, botClient, spaceName, alreadySentUrls);
+                            await this.autoSendMedia(toolResults, botClient, spaceName, alreadySentUrls, botId, playerId);
 
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
@@ -2028,7 +2028,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolResults: Array<{ id: string; name: string; result: any }>,
         botClient?: BotClient,
         spaceName?: string,
-        alreadySentUrls?: Set<string>
+        alreadySentUrls?: Set<string>,
+        botId?: string,
+        playerId?: number
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
@@ -2072,6 +2074,34 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     lastError = err.message;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.error(`[AIService] autoSendMedia failed for ${url}: ${err.message}`);
+                    }
+                    // Queue for retry, consistent with explicit send_* tool behavior
+                    if (botId && playerId !== undefined) {
+                        const memory = this.conversationMemory?.getMemory(botId, playerId);
+                        if (memory) {
+                            if (!memory.pendingMedia) memory.pendingMedia = [];
+                            if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                                let mediaType: 'image' | 'file' | 'audio' | 'video';
+                                const ext = this.getExtension(url);
+                                if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
+                                    mediaType = 'image';
+                                } else if (ext && ['mp4', 'webm'].includes(ext)) {
+                                    mediaType = 'video';
+                                } else if (ext && ['mp3', 'wav', 'ogg'].includes(ext)) {
+                                    mediaType = 'audio';
+                                } else {
+                                    mediaType = 'file';
+                                }
+                                memory.pendingMedia.push({
+                                    url,
+                                    mediaType,
+                                    mimeType: '',
+                                    caption: '',
+                                    createdAt: Date.now(),
+                                    retryCount: 0,
+                                });
+                            }
+                        }
                     }
                 }
             }
