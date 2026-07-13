@@ -121,7 +121,7 @@
         isDragging = false;
 
         if (scale <= 1) {
-            if (swipeDy > window.innerHeight * 0.15) {
+            if (Math.abs(swipeDy) > window.innerHeight * 0.15) {
                 close();
                 return;
             }
@@ -173,7 +173,11 @@
     }
 
     function onBackdropClick(e: MouseEvent): void {
-        if (e.target === e.currentTarget) close();
+        // Close when clicking on the backdrop but NOT on the image or its controls
+        const target = e.target as HTMLElement;
+        if (!target.closest("[data-lightbox-content]")) {
+            close();
+        }
     }
 </script>
 
@@ -191,60 +195,62 @@
         role="dialog"
         aria-label="Image lightbox"
     >
-        <!-- Close button -->
-        <button
-            class="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
-            on:click={close}
-            aria-label="Close"
-        >
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                fill="none"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+        <div data-lightbox-content class="relative w-full h-full flex items-center justify-center">
+            <!-- Close button -->
+            <button
+                class="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
+                on:click={close}
+                aria-label="Close"
             >
-                <path d="M18 6l-12 12" />
-                <path d="M6 6l12 12" />
-            </svg>
-        </button>
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    fill="none"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M18 6l-12 12" />
+                    <path d="M6 6l12 12" />
+                </svg>
+            </button>
 
-        <!-- Image with zoom/pan -->
-        <div
-            class="flex items-center justify-center w-full h-full select-none touch-none"
-            style="cursor: {scale > 1 ? 'grab' : isDragging ? 'grabbing' : 'zoom-in'};"
-            on:wheel|preventDefault={onWheel}
-            on:pointerdown={onPointerDown}
-            on:pointermove={onPointerMove}
-            on:pointerup={onPointerUp}
-            on:pointercancel={onPointerUp}
-            on:touchstart|preventDefault={onTouchStart}
-            on:touchmove|preventDefault={onTouchMove}
-            role="img"
-            aria-label="Zoomable image"
-        >
-            <img
-                {src}
-                {alt}
-                draggable="false"
-                class="max-h-[90vh] max-w-[90vw] object-contain rounded-sm"
-                class:shadow-2xl={scale === 1}
-                style="transform: translate({tx}px, {ty}px) scale({scale});"
-            />
-        </div>
-
-        <!-- Zoom indicator -->
-        {#if scale > 1}
+            <!-- Image with zoom/pan -->
             <div
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/60 text-white text-xs"
+                class="flex items-center justify-center w-full h-full select-none touch-none"
+                style="cursor: {scale > 1 ? 'grab' : isDragging ? 'grabbing' : 'zoom-in'};"
+                on:wheel|preventDefault={onWheel}
+                on:pointerdown={onPointerDown}
+                on:pointermove={onPointerMove}
+                on:pointerup={onPointerUp}
+                on:pointercancel={onPointerUp}
+                on:touchstart|preventDefault={onTouchStart}
+                on:touchmove|preventDefault={onTouchMove}
+                role="img"
+                aria-label="Zoomable image"
             >
-                {scale.toFixed(1)}×
+                <img
+                    {src}
+                    {alt}
+                    draggable="false"
+                    class="max-h-[90vh] max-w-[90vw] object-contain rounded-sm"
+                    class:shadow-2xl={scale === 1}
+                    style="transform: translate({tx}px, {ty}px) scale({scale});"
+                />
             </div>
-        {/if}
+
+            <!-- Zoom indicator -->
+            {#if scale > 1}
+                <div
+                    class="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/60 text-white text-xs"
+                >
+                    {scale.toFixed(1)}×
+                </div>
+            {/if}
+        </div>
     </div>
 {/if}
 
