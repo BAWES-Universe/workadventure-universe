@@ -385,6 +385,9 @@
             const msg = `${reasons.length} file(s) rejected: ${reasons.join(", ")}`;
             showUploadError(msg);
         }
+
+        // Return focus to the message input so Enter sends the message instead of re-opening the file picker
+        messageInput.focus();
     }
 
     function addToPreviews(files: { id: string; file: File }[]) {
@@ -592,8 +595,8 @@
                     on:click={() => {
                         uploadError = null;
                         failedFileIds = new Set();
-                    }}
-                >×</button>
+                    }}>×</button
+                >
             </div>
         {/if}
         <div class="flex flex-row gap-2 w-full overflow-visible no-scroll-bar rounded-lg p-2 bg-contrast/80">
@@ -635,9 +638,7 @@
                         </div>
                     {/if}
                     {#if isUploading}
-                        <div
-                            class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-[10px]"
-                        >
+                        <div class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-[10px]">
                             <svg
                                 class="animate-spin h-5 w-5 text-white"
                                 xmlns="http://www.w3.org/2000/svg"
