@@ -360,8 +360,9 @@ TOOLS & ACTIONS (Be seamless):
 - **CRITICAL**: NEVER mention tools, tool names, or technical details - just give the answer like a human would
 - **CRITICAL**: After calling a tool, respond naturally with the results (e.g., "Khalid ABC is here" not "I'll check who's here. (tool call: get_people_on_map)")
 - Just answer the question directly - don't explain that you're checking or looking something up
+- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.
 
-**ACCURACY & TRUTHFULNESS (Be honest, like a real person):**
+**ACCURACY & TRUTHFULNESS (Be honest, like a real person):
 - Only mention things you actually know - use location names exactly as shown in "Current Location Context"
 - Never invent details - if you don't know something, don't make it up
 - Never mention areas that aren't actually in the current location context
@@ -692,6 +693,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                 })));
                             }
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName);
+
+                            // Auto-send interceptor: scan all tool results for media URLs
+                            // and send them inline. Non-media results pass through unchanged.
+                            await this.autoSendMedia(toolResults, botClient, spaceName);
+
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -1945,6 +1951,136 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Auto-send media URLs from MCP tool results to the conversation.
+     * This is a code-level interceptor (Layer 3): after any tool returns a result
+     * containing an image/audio/video URL, automatically call send_image/send_file
+     * and replace the raw URL with a clean status message.
+     * Non-media results pass through unchanged.
+     */
+    private async autoSendMedia(
+        toolResults: Array<{ id: string; name: string; result: any }>,
+        botClient?: BotClient,
+        spaceName?: string
+    ): Promise<Array<{ id: string; name: string; result: any }>> {
+        if (!botClient || !spaceName) return toolResults;
+
+        const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
+        const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
+        const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
+
+        for (const tr of toolResults) {
+            // Skip results from our own media tools (they already handled sending)
+            if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to'].includes(tr.name)) {
+                continue;
+            }
+
+            const urls = this.extractUrlsFromResult(tr.result);
+            if (urls.length === 0) continue;
+
+            let sentCount = 0;
+            let lastError: string | null = null;
+
+            for (const url of urls) {
+                const ext = this.getExtension(url);
+                try {
+                    if (IMAGE_EXT_SET.has(ext)) {
+                        await botClient.sendImage(spaceName, url);
+                        sentCount++;
+                    } else if (VIDEO_EXT_SET.has(ext)) {
+                        await botClient.sendVideo(spaceName, url);
+                        sentCount++;
+                    } else if (AUDIO_EXT_SET.has(ext)) {
+                        await botClient.sendAudio(spaceName, url);
+                        sentCount++;
+                    } else {
+                        // File with other extension — attempt as file
+                        await botClient.sendFile(spaceName, url);
+                        sentCount++;
+                    }
+                } catch (err: any) {
+                    lastError = err.message;
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error(`[AIService] autoSendMedia failed for ${url}: ${err.message}`);
+                    }
+                }
+            }
+
+            if (sentCount > 0) {
+                const label = sentCount === 1 ? 'media file' : 'media files';
+                tr.result = {
+                    success: true,
+                    message: `Auto-sent ${sentCount} ${label} to the conversation.`
+                };
+            } else if (lastError) {
+                tr.result = { error: `Failed to auto-send media: ${lastError}` };
+            }
+        }
+
+        return toolResults;
+    }
+
+    /**
+     * Extract image/file URLs from a tool result.
+     * Handles: string URLs, { url: "..." } objects, MCP content arrays, and nested results.
+     */
+    private extractUrlsFromResult(result: any): string[] {
+        if (!result) return [];
+
+        const MEDIA_URL_PATTERN = /https?:\/\/[^\s"']+\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mp3|wav|ogg)(\?[^\s"']*)?/gi;
+        const urls: string[] = [];
+        const seen = new Set<string>();
+
+        const addUrl = (url: string) => {
+            // Clean trailing punctuation that could be part of surrounding text
+            const clean = url.replace(/[.,;:!?)"'\]}>]+$/, '');
+            if (MEDIA_URL_PATTERN.test(clean) && !seen.has(clean)) {
+                seen.add(clean);
+                urls.push(clean);
+            }
+        };
+
+        // Case 1: result is a string (common MCP fallback)
+        if (typeof result === 'string') {
+            const matches = result.match(MEDIA_URL_PATTERN);
+            if (matches) matches.forEach(addUrl);
+            return urls;
+        }
+
+        // Case 2: result is an object or array
+        if (typeof result === 'object') {
+            // Walk the result recursively (limited depth)
+            const walk = (obj: any, depth: number) => {
+                if (depth > 4 || obj === null || obj === undefined) return;
+                if (typeof obj === 'string') {
+                    const matches = obj.match(MEDIA_URL_PATTERN);
+                    if (matches) matches.forEach(addUrl);
+                } else if (Array.isArray(obj)) {
+                    obj.forEach(item => walk(item, depth + 1));
+                } else if (typeof obj === 'object') {
+                    for (const val of Object.values(obj)) {
+                        walk(val, depth + 1);
+                    }
+                }
+            };
+            walk(result, 0);
+        }
+
+        return urls;
+    }
+
+    /**
+     * Get file extension from a URL, lowercased.
+     */
+    private getExtension(url: string): string {
+        try {
+            const pathname = new URL(url).pathname;
+            const match = pathname.match(/\.(\w+)$/);
+            return match ? match[1].toLowerCase() : '';
+        } catch {
+            return '';
+        }
+    }    /**
      * Format tool results for AI
      */
     private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {
