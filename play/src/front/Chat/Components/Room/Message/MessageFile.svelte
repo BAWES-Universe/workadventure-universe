@@ -8,6 +8,8 @@
 
 <a
     href={$content.url}
+    target="_blank"
+    rel="noopener noreferrer"
     download
     class="flex items-center text-white hover:bg-white/10 px-2 py-2 rounded-md hover:no-underline hover:text-white font-bold cursor-pointer"
 >
