@@ -189,10 +189,20 @@
     // Toggle a window click listener reactively based on lightbox visibility.
     // Using a JS-only listener avoids svelte-check a11y warnings that fire
     // when event handlers are attached to non-interactive template elements.
+    //
+    // The $: block runs synchronously when show=true, BEFORE the DOM renders.
+    // This means the click event that OPENED the lightbox propagates to window
+    // while the lightbox hasn't rendered yet — target.closest(...) would miss
+    // the content and immediately close().  Skip that first click event.
     let removeBackdropListener: (() => void) | null = null;
+    let ignoreNextClick = false;
     $: {
         if (show) {
             const handler = (e: MouseEvent) => {
+                if (ignoreNextClick) {
+                    ignoreNextClick = false;
+                    return;
+                }
                 const target = e.target as HTMLElement;
                 if (!target.closest("[data-lightbox-content]")) {
                     close();
@@ -203,6 +213,7 @@
         } else {
             removeBackdropListener?.();
             removeBackdropListener = null;
+            ignoreNextClick = true;
         }
     }
 
