@@ -44,19 +44,11 @@ export class SocialBehavior extends BaseBehavior {
     private lastWanderFailure: number = 0; // Track when pathfinding failed
     private wanderInProgress: boolean = false; // Prevent multiple concurrent calls
     private readonly WANDER_FAILURE_COOLDOWN = 2000; // 2 seconds before retrying after failure
-    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
     private currentSpaceName: string | null = null; // Track current space to prevent wandering
 
     constructor(config: SocialBehaviorConfig) {
         super(config);
         // ConversationMemory will be set by BotManager via setConversationMemory
-    }
-    
-    /**
-     * Set conversation memory (called by BotManager to share the persistent memory instance)
-     */
-    setConversationMemory(memory: ConversationMemory): void {
-        this.conversationMemory = memory;
     }
     
     /**

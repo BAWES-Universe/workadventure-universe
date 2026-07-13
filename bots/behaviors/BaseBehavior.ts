@@ -30,6 +30,7 @@ export abstract class BaseBehavior {
     protected conversationStorage: ConversationStorage | null = null;
     protected responseProcessor: ResponseProcessor | null = null;
     protected metricsCollector: BotMetricsCollector | null = null;
+    protected conversationMemory: ConversationMemory | null = null;
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
@@ -123,9 +124,11 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * Set conversation memory (optional - behaviors can override to use shared memory)
+     * Set conversation memory (behaviors can override to use shared memory)
      */
-    setConversationMemory?(memory: ConversationMemory): void;
+    setConversationMemory(memory: ConversationMemory): void {
+        this.conversationMemory = memory;
+    }
     
     /**
      * Helper method to set user UUID in conversation memory (behaviors can override)
@@ -955,7 +958,7 @@ export abstract class BaseBehavior {
         const botClient = this.bot;
         if (!botId || !botClient || !this.conversationStorage) return;
 
-        const memory = (this.conversationStorage as any).getMemory?.(botId, user.id) as any;
+        const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
         if (!memory?.pendingMedia?.length) return;
 
         const remaining: any[] = [];

@@ -23,18 +23,10 @@ export interface IdleBehaviorConfig extends BehaviorConfig {
 export class IdleBehavior extends BaseBehavior {
     private lastAnimationTime: number = 0;
     private greetedPlayers: Set<number> = new Set();
-    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
 
     constructor(config: IdleBehaviorConfig) {
         super(config);
         // ConversationMemory will be set by BotManager via setConversationMemory
-    }
-    
-    /**
-     * Set conversation memory (called by BotManager to share the persistent memory instance)
-     */
-    setConversationMemory(memory: ConversationMemory): void {
-        this.conversationMemory = memory;
     }
     
     /**

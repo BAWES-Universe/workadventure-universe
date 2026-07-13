@@ -2091,6 +2091,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const addUrl = (url: string) => {
             // Clean trailing punctuation that could be part of surrounding text
             const clean = url.replace(/[.,;:!?)"'\]}>]+$/, '');
+            MEDIA_URL_PATTERN.lastIndex = 0;
             if (MEDIA_URL_PATTERN.test(clean) && !seen.has(clean)) {
                 seen.add(clean);
                 urls.push(clean);

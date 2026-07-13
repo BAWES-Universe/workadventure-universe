@@ -33,7 +33,6 @@ export class PatrolBehavior extends BaseBehavior {
     private targetWaypoint: PositionInterface | null = null;
     private currentSpaceName: string | null = null;
     private spaceLeftTime: number = 0;
-    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
     private readonly RESUME_DELAY = 500;
     private lastPathfindingLog: number = 0; // Rate limit pathfinding logs
     private lastMoveAttemptLog: number = 0; // Rate limit move attempt logs
@@ -48,13 +47,6 @@ export class PatrolBehavior extends BaseBehavior {
         super(config);
         // ConversationMemory will be set by BotManager via setConversationMemory
         this.updateTargetWaypoint();
-    }
-    
-    /**
-     * Set conversation memory (called by BotManager to share the persistent memory instance)
-     */
-    setConversationMemory(memory: ConversationMemory): void {
-        this.conversationMemory = memory;
     }
     
     /**
