@@ -43,6 +43,7 @@ export interface BotConfig {
     characterTextureIds: string[];
     companionTextureId?: string;
     token?: string;
+    uploaderUrl?: string;
 }
 
 export class BotClient {
@@ -1238,6 +1239,192 @@ export class BotClient {
     }
 
     /**
+     * Upload a file from a URL to the uploader service using bot service auth.
+     * Fetches the content from the provided URL (e.g. MCP tool output) and POSTs it
+     * to the uploader's /upload-file endpoint with the BOT_SERVICE_TOKEN header.
+     * Returns the CDN location and inferred media type.
+     */
+    private async uploadMedia(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
+        const uploaderUrl = this.config.uploaderUrl || process.env.UPLOADER_URL;
+        if (!uploaderUrl) {
+            throw new Error('[BotClient] UPLOADER_URL not configured — cannot upload media');
+        }
+
+        // If the URL is already on our uploader/CDN, no need to re-upload
+        if (url.startsWith(uploaderUrl) || url.includes('/upload-file/')) {
+            // Infer media type from URL or mimeType
+            const mediaType = this.inferMediaTypeFromUrl(url, mimeType);
+            return { location: url, mediaType, mimeType: mimeType || 'application/octet-stream' };
+        }
+
+        // Fetch the content from the remote URL
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`[BotClient] Failed to fetch media from ${url}: ${response.status} ${response.statusText}`);
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const contentType = mimeType || response.headers.get('content-type') || 'application/octet-stream';
+
+        // Extract filename from URL for the upload
+        const urlPath = new URL(url).pathname;
+        const filename = urlPath.split('/').pop() || `bot-media-${Date.now()}`;
+
+        // Build multipart form data
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: contentType });
+        formData.append('file', blob, filename);
+
+        // Upload to uploader with bot service token
+        const uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
+            method: 'POST',
+            headers: {
+                'x-bot-service-token': process.env.BOT_SERVICE_TOKEN || '',
+            },
+            body: formData,
+        });
+
+        if (!uploadResponse.ok) {
+            const errorText = await uploadResponse.text();
+            throw new Error(`[BotClient] Upload failed: ${uploadResponse.status} — ${errorText}`);
+        }
+
+        const result = await uploadResponse.json();
+        if (!Array.isArray(result) || result.length === 0) {
+            throw new Error('[BotClient] Upload response missing file data');
+        }
+
+        const uploadedFile = result[0];
+        const location = uploadedFile.location || uploadedFile.url;
+        const mediaType = this.inferMediaTypeFromUrl(location, contentType);
+
+        return { location, mediaType, mimeType: contentType };
+    }
+
+    /**
+     * Infer media type from URL extension or mime type
+     */
+    private inferMediaTypeFromUrl(url: string, mimeType?: string): string {
+        const ext = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
+        const mime = mimeType?.toLowerCase() || '';
+
+        // Check mime type first
+        if (mime.startsWith('image/')) return 'image';
+        if (mime.startsWith('audio/')) return 'audio';
+        if (mime.startsWith('video/')) return 'video';
+        if (mime.startsWith('text/') || mime === 'application/pdf') return 'file';
+
+        // Fallback to extension
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+        const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma'];
+        const videoExts = ['mp4', 'webm', 'avi', 'mov', 'mkv', 'flv', 'wmv'];
+
+        if (imageExts.includes(ext)) return 'image';
+        if (audioExts.includes(ext)) return 'audio';
+        if (videoExts.includes(ext)) return 'video';
+        return 'file';
+    }
+
+    /**
+     * Send an image to a space.
+     * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
+     */
+    async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
+        const { location, mediaType, mimeType } = await this.uploadMedia(url, alt ? this.inferMimeFromExt(url) : undefined);
+        this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '');
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Sent image to ${spaceName}: ${location}`);
+        }
+        return location;
+    }
+
+    /**
+     * Send a file to a space.
+     */
+    async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
+        const { location, mediaType, mimeType } = await this.uploadMedia(url);
+        this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '');
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Sent file to ${spaceName}: ${location}`);
+        }
+        return location;
+    }
+
+    /**
+     * Send audio to a space.
+     */
+    async sendAudio(spaceName: string, url: string): Promise<string> {
+        const { location, mediaType, mimeType } = await this.uploadMedia(url);
+        this.sendMediaMessage(spaceName, location, mediaType, mimeType);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Sent audio to ${spaceName}: ${location}`);
+        }
+        return location;
+    }
+
+    /**
+     * Send video to a space.
+     */
+    async sendVideo(spaceName: string, url: string): Promise<string> {
+        const { location, mediaType, mimeType } = await this.uploadMedia(url);
+        this.sendMediaMessage(spaceName, location, mediaType, mimeType);
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[Bot ${this.config.botId}] Sent video to ${spaceName}: ${location}`);
+        }
+        return location;
+    }
+
+    /**
+     * Send a media message to a space via publicEvent spaceMessage.
+     */
+    private sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): void {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName} — cannot send media`);
+            }
+            return;
+        }
+
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceMessage',
+                            spaceMessage: {
+                                message: caption || '',
+                                characterTextures: [],
+                                name: this.config.name,
+                                url,
+                                mediaType,
+                                mimeType,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    /**
+     * Infer mime type from file extension
+     */
+    private inferMimeFromExt(url: string): string {
+        const ext = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
+        const mimeMap: Record<string, string> = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+            gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+            mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg',
+            mp4: 'video/mp4', webm: 'video/webm',
+            pdf: 'application/pdf', txt: 'text/plain',
+            json: 'application/json', csv: 'text/csv',
+        };
+        return mimeMap[ext] || 'application/octet-stream';
+    }
+
+    /**
      * Send a streaming response chunk to the space.
      * Used by bot behaviors to stream AI-generated text token-by-token
      * to the frontend instead of waiting for the complete response.
@@ -2067,7 +2254,10 @@ export class BotClient {
                         this.behavior.onChatMessage(
                             spaceName,
                             spaceMessage.message,
-                            senderId
+                            senderId,
+                            spaceMessage.url,
+                            spaceMessage.mediaType,
+                            spaceMessage.mimeType
                         );
                     } else {
                         if (senderId === 0) {

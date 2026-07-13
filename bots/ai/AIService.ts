@@ -691,7 +691,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName);
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -1457,6 +1457,90 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     },
                 },
             });
+
+            // Tool: Send image to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_image',
+                    description: 'Send an image to the current conversation. Use this when you generate or have an image URL to share with the person you are talking to. Call this tool silently — do NOT announce it. After sending, respond naturally (e.g., "Here you go!" or "Check this out!").',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the image to send (can be a URL from another tool or generation output)'
+                            },
+                            alt: {
+                                type: 'string',
+                                description: 'Optional description or caption for the image'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
+
+            // Tool: Send file to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_file',
+                    description: 'Send a file to the current conversation. Use this when you generate or have a file URL (PDF, document, spreadsheet, etc.) to share with the person you are talking to. Call this tool silently — do NOT announce it.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the file to send'
+                            },
+                            filename: {
+                                type: 'string',
+                                description: 'Optional display filename for the file'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
+
+            // Tool: Send audio to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_audio',
+                    description: 'Send an audio clip to the current conversation. Use this when you generate or have an audio URL (music, voice recording, sound effect) to share. Call this tool silently — do NOT announce it.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the audio to send'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
+
+            // Tool: Send video to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_video',
+                    description: 'Send a video to the current conversation. Use this when you generate or have a video URL to share. Call this tool silently — do NOT announce it.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the video to send'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
         }
 
         // Add MCP tools
@@ -1506,7 +1590,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botClient?: BotClient,
         adminApiService?: AdminApiService,
         toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>,
-        playerUuid?: string
+        playerUuid?: string,
+        spaceName?: string
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1710,6 +1795,92 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         break;
 
 
+                    case 'send_image':
+                        if (botClient) {
+                            try {
+                                const parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? JSON.parse(toolCall.arguments)
+                                    : toolCall.arguments || {};
+                                const imageUrl = parsedArgs.url;
+                                const alt = parsedArgs.alt || '';
+                                if (!imageUrl) {
+                                    result = { error: 'Missing required parameter: url' };
+                                    break;
+                                }
+                                const location = await botClient.sendImage(spaceName, imageUrl, alt);
+                                result = { success: true, location, message: `Image sent to conversation` };
+                            } catch (error: any) {
+                                result = { error: `Failed to send image: ${error.message}` };
+                            }
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'send_file':
+                        if (botClient) {
+                            try {
+                                const parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? JSON.parse(toolCall.arguments)
+                                    : toolCall.arguments || {};
+                                const fileUrl = parsedArgs.url;
+                                const filename = parsedArgs.filename || '';
+                                if (!fileUrl) {
+                                    result = { error: 'Missing required parameter: url' };
+                                    break;
+                                }
+                                const location = await botClient.sendFile(spaceName, fileUrl, filename);
+                                result = { success: true, location, message: `File sent to conversation` };
+                            } catch (error: any) {
+                                result = { error: `Failed to send file: ${error.message}` };
+                            }
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'send_audio':
+                        if (botClient) {
+                            try {
+                                const parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? JSON.parse(toolCall.arguments)
+                                    : toolCall.arguments || {};
+                                const audioUrl = parsedArgs.url;
+                                if (!audioUrl) {
+                                    result = { error: 'Missing required parameter: url' };
+                                    break;
+                                }
+                                const location = await botClient.sendAudio(spaceName, audioUrl);
+                                result = { success: true, location, message: `Audio sent to conversation` };
+                            } catch (error: any) {
+                                result = { error: `Failed to send audio: ${error.message}` };
+                            }
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'send_video':
+                        if (botClient) {
+                            try {
+                                const parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? JSON.parse(toolCall.arguments)
+                                    : toolCall.arguments || {};
+                                const videoUrl = parsedArgs.url;
+                                if (!videoUrl) {
+                                    result = { error: 'Missing required parameter: url' };
+                                    break;
+                                }
+                                const location = await botClient.sendVideo(spaceName, videoUrl);
+                                result = { success: true, location, message: `Video sent to conversation` };
+                            } catch (error: any) {
+                                result = { error: `Failed to send video: ${error.message}` };
+                            }
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
                     default: {
                         // Check if this is an MCP tool (not a hardcoded one)
                         const mcpServerConfig = toolServerMap?.get(toolCall.name);
@@ -1788,6 +1959,38 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
                 if (r.result.success) {
                     return `navigate_to: Successfully started navigating. You are now leading people to the destination. The bot has started moving. If the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading. Respond naturally like "I'm leading you there now, just follow me!" or "Come on, follow me!" - don't mention tools or technical details.`;
+                }
+            }
+            if (r.name === 'send_image' && r.result) {
+                if (r.result.error) {
+                    return `send_image: Error - ${r.result.error}. Tell the user you couldn't send the image.`;
+                }
+                if (r.result.success) {
+                    return `send_image: Successfully sent the image to the conversation. Do NOT repeat the URL or explain technical details — just respond naturally (e.g., "Here you go!" or "Check this out!" or ask if they like it). Mention the CDN URL only if the user specifically asks where the image is stored.`;
+                }
+            }
+            if (r.name === 'send_file' && r.result) {
+                if (r.result.error) {
+                    return `send_file: Error - ${r.result.error}. Tell the user you couldn't send the file.`;
+                }
+                if (r.result.success) {
+                    return `send_file: Successfully sent the file to the conversation. Do NOT explain technical details — just respond naturally.`;
+                }
+            }
+            if (r.name === 'send_audio' && r.result) {
+                if (r.result.error) {
+                    return `send_audio: Error - ${r.result.error}. Tell the user you couldn't send the audio.`;
+                }
+                if (r.result.success) {
+                    return `send_audio: Successfully sent the audio to the conversation. Respond naturally.`;
+                }
+            }
+            if (r.name === 'send_video' && r.result) {
+                if (r.result.error) {
+                    return `send_video: Error - ${r.result.error}. Tell the user you couldn't send the video.`;
+                }
+                if (r.result.success) {
+                    return `send_video: Successfully sent the video to the conversation. Respond naturally.`;
                 }
             }
             // Fallback to JSON for other results or errors

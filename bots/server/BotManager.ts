@@ -258,6 +258,7 @@ export class BotManager {
             position,
             viewport: { top: 0, bottom: 1000, left: 0, right: 1000 }, // TODO: Get from config
             characterTextureIds: config.characterTextureIds || [], // TODO: Get from config or WAM file
+            uploaderUrl: process.env.UPLOADER_URL,
         };
         
         const client = new BotClient(botConfig);

@@ -1684,7 +1684,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Handle chat messages from players
      */
-    onChatMessage(spaceName: string, message: string, senderId: number): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
         if (!this.bot) return;
 
         const botId = this.bot.getBotId();

@@ -361,7 +361,7 @@ export class IdleBehavior extends BaseBehavior {
         super.onSpaceLeft(spaceName);
     }
 
-    onChatMessage(spaceName: string, message: string, senderId: number): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
         if (!this.bot) {
             console.warn(`[IdleBehavior] onChatMessage: bot is null`);
             return;

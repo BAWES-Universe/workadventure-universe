@@ -1143,7 +1143,7 @@ export abstract class BaseBehavior {
      * @param message Chat message
      * @param senderId Sender's user ID
      */
-    onChatMessage(spaceName: string, message: string, senderId: number): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
         // Default: do nothing
     }
 
