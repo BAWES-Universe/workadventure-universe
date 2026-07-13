@@ -132,7 +132,7 @@
             keyDownEvent.preventDefault();
         }
 
-        if (keyDownEvent.key === "Enter" && (message.trim().length !== 0 || files.length !== 0)) {
+        if (keyDownEvent.key === "Enter" && !isUploading && (message.trim().length !== 0 || files.length !== 0)) {
             // message contains HTML tags. Actually, the only tags we allow are for the new line, ie. <br> tags.
             // We can turn those back into carriage returns.
             const messageToSend = message.replace(/<br>/g, "\n");
