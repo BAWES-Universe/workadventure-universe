@@ -36,6 +36,13 @@
     // Portal: move lightbox DOM to body so position:fixed escapes chat sidebar transforms
     let lightboxEl: HTMLElement | undefined;
 
+    // Reset transform state whenever the lightbox opens (handles switching between images)
+    $: if (show) {
+        scale = 1;
+        tx = 0;
+        ty = 0;
+    }
+
     function close(): void {
         dispatch("close");
     }
@@ -74,8 +81,8 @@
         const delta = -e.deltaY * 0.002;
         if (delta === 0) return;
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const cx = ((e.clientX - rect.left) / rect.width) * (e.currentTarget as HTMLElement).offsetWidth;
-        const cy = ((e.clientY - rect.top) / rect.height) * (e.currentTarget as HTMLElement).offsetHeight;
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
         const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
         setScale(newScale, cx, cy);
     }
@@ -129,8 +136,8 @@
             const dy = _e.clientY - tapY;
             if (now - lastTapTime < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
                 const rect = (_e.currentTarget as HTMLElement).getBoundingClientRect();
-                const cx = ((_e.clientX - rect.left) / rect.width) * rect.width;
-                const cy = ((_e.clientY - rect.top) / rect.height) * rect.height;
+                const cx = _e.clientX - rect.left;
+                const cy = _e.clientY - rect.top;
                 setScale(ZOOM_STEP, cx, cy);
                 lastTapTime = 0;
                 return;
