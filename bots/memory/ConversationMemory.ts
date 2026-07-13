@@ -743,6 +743,13 @@ export class ConversationMemory {
             context.push(`\nWhat you know about them: ${personalDetails.join('. ')}.`);
         }
 
+        // Auto-delivered media notification — tells the bot something it
+        // previously failed to send was delivered while the user was away
+        const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
+        if (autoDelivered) {
+            context.push(`\n[Note: ${autoDelivered} media item(s) you prepared earlier were delivered to them while they were away.]`);
+        }
+
         // Natural emotion expression
         const botFeelingsDesc = this.describeEmotionNatural(emotions.botEmotion);
         const personFeelingsDesc = this.describeEmotionNatural(emotions.personEmotion);
