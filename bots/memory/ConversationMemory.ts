@@ -744,10 +744,10 @@ export class ConversationMemory {
         }
 
         // Auto-delivered media notification — tells the bot something it
-        // previously failed to send was delivered while the user was away
+        // previously failed to send was delivered when the user rejoined
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
-            context.push(`\n[Note: ${autoDelivered} media item(s) you prepared earlier were delivered to them while they were away.]`);
+            context.push(`\n[Note: ${autoDelivered} media item(s) you prepared earlier were just delivered to them as they rejoined.]`);
         }
 
         // Natural emotion expression
