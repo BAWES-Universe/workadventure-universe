@@ -33,12 +33,25 @@
     // Swipe-to-dismiss
     let swipeDy = 0;
 
+    // Portal: move lightbox DOM to body so position:fixed escapes chat sidebar transforms
+    let lightboxEl: HTMLElement | undefined;
+
     function close(): void {
         dispatch("close");
     }
 
     function onKeyDown(e: KeyboardEvent): void {
         if (e.key === "Escape") close();
+    }
+
+    // Svelte portal action — teleports element to document.body
+    function portal(node: HTMLElement) {
+        document.body.appendChild(node);
+        return {
+            destroy() {
+                if (node.parentNode) node.parentNode.removeChild(node);
+            },
+        };
     }
 
     onMount(() => {
@@ -50,14 +63,12 @@
     });
 
     function setScale(newScale: number, cx = 0, cy = 0): void {
-        // Zoom toward a point on the image
         const ratio = newScale / scale;
         tx = cx - ratio * (cx - tx);
         ty = cy - ratio * (cy - ty);
         scale = newScale;
     }
 
-    // --- Zoom (scroll wheel) ---
     function onWheel(e: WheelEvent): void {
         e.preventDefault();
         const delta = -e.deltaY * 0.002;
@@ -69,7 +80,6 @@
         setScale(newScale, cx, cy);
     }
 
-    // --- Pointer (mouse + single-finger touch) ---
     function onPointerDown(e: PointerEvent): void {
         isDragging = true;
         lastX = e.clientX;
@@ -90,11 +100,9 @@
             tx += dx;
             ty += dy;
         } else {
-            // Swipe-to-dismiss: track vertical displacement with resistance
             swipeDy = e.clientY - startY;
             ty = swipeDy * 0.4;
-            // Fade backdrop slightly on swipe
-            const backdrop = (e.currentTarget as HTMLElement).closest("[data-lightbox]") as HTMLElement;
+            const backdrop = lightboxEl;
             if (backdrop) {
                 const opacity = Math.max(0.3, 1 - Math.abs(swipeDy) / (window.innerHeight * 0.3));
                 backdrop.style.opacity = String(opacity);
@@ -110,14 +118,11 @@
                 close();
                 return;
             }
-            // Snap back
             tx = 0;
             ty = 0;
-            const backdrop = document.querySelector("[data-lightbox]") as HTMLElement;
-            if (backdrop) backdrop.style.opacity = "";
+            if (lightboxEl) lightboxEl.style.opacity = "";
         }
 
-        // Double-tap detection (only at scale=1 or close to it)
         if (scale <= 1.1) {
             const now = Date.now();
             const dx = _e.clientX - tapX;
@@ -138,7 +143,6 @@
         swipeDy = 0;
     }
 
-    // --- Touch (pinch zoom only) ---
     function onTouchStart(e: TouchEvent): void {
         if (e.touches.length === 2) {
             initialPinchDist = Math.hypot(
@@ -170,8 +174,10 @@
 
 {#if show}
     <div
+        use:portal
+        bind:this={lightboxEl}
         data-lightbox
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+        class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80"
         style="opacity: 1;"
         transition:fade={{ duration: 200 }}
         on:click={onBackdropClick}
@@ -237,9 +243,7 @@
 
 <style>
     [data-lightbox] img {
-        /* Prevent default touch behaviors on mobile */
         touch-action: none;
-        /* Smooth drag feel */
         transition: transform 0.05s linear, box-shadow 0.2s ease;
     }
 </style>
