@@ -699,8 +699,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             const alreadySentUrls = new Set<string>();
                             for (const tr of toolResults) {
                                 if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
-                                    const loc = tr.result?.location;
-                                    if (typeof loc === 'string') alreadySentUrls.add(loc);
+                                    const orig = tr.result?.originalUrl;
+                                    if (typeof orig === 'string') alreadySentUrls.add(orig);
                                 }
                             }
 
@@ -1830,7 +1830,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 const location = await botClient.sendImage(spaceName, imageUrl, alt);
-                                result = { success: true, location, message: `Image sent to conversation` };
+                                result = { success: true, location, originalUrl: imageUrl, message: `Image sent to conversation` };
                             } catch (error: any) {
                                 // Save original URL for retry — upload succeeded but user left the space
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
@@ -1871,7 +1871,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 const location = await botClient.sendFile(spaceName, fileUrl, filename);
-                                result = { success: true, location, message: `File sent to conversation` };
+                                result = { success: true, location, originalUrl: fileUrl, message: `File sent to conversation` };
                             } catch (error: any) {
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
@@ -1910,7 +1910,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 const location = await botClient.sendAudio(spaceName, audioUrl);
-                                result = { success: true, location, message: `Audio sent to conversation` };
+                                result = { success: true, location, originalUrl: audioUrl, message: `Audio sent to conversation` };
                             } catch (error: any) {
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
@@ -1948,7 +1948,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 const location = await botClient.sendVideo(spaceName, videoUrl);
-                                result = { success: true, location, message: `Video sent to conversation` };
+                                result = { success: true, location, originalUrl: videoUrl, message: `Video sent to conversation` };
                             } catch (error: any) {
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
@@ -2078,10 +2078,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
             if (sentCount > 0) {
                 const label = sentCount === 1 ? 'media file' : 'media files';
+                const original = tr.result;
                 tr.result = {
                     success: true,
                     message: `Auto-sent ${sentCount} ${label} to the conversation.`
                 };
+                // Preserve non-URL metadata from the original result
+                // so the AI retains context (e.g., model name, seed, parameters)
+                if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
+                    for (const [key, val] of Object.entries(original)) {
+                        if (typeof val !== 'string' || !/^https?:\/\//.test(val)) {
+                            tr.result[key] = val;
+                        }
+                    }
+                }
             } else if (lastError) {
                 tr.result = { error: `Failed to auto-send media: ${lastError}` };
             }
