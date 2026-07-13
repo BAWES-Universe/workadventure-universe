@@ -456,9 +456,9 @@ const chat: DeepPartial<Translation["chat"]> = {
         title: "إرفاق ملف",
         description: "تحميل ومشاركة ملف",
         featureComingSoon: "قريبًا!",
-        maxFileCount: "Maximum {count} files at a time.",
-        unsafeFileType: '"{name}" has an unsafe file type and cannot be uploaded.',
-        fileTooLarge: '"{name}" is too large. Maximum size is {size} MB.',
+        maxFileCount: "الحد الأقصى {count} ملفات في المرة الواحدة.",
+        unsafeFileType: 'لا يمكن رفع "{name}" لأنه من نوع ملف غير آمن.',
+        fileTooLarge: '"{name}" كبير جدًا. الحد الأقصى هو {size} ميغابايت.',
     },
     loginTokenError: "حدث خطأ. يرجى إعادة الاتصال", // An error occurred. Please try to reconnect
     reconnect: "إعادة الاتصال", // Reconnect
