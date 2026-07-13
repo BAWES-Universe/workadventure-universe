@@ -1,14 +1,19 @@
 import { v4 } from "uuid";
 //import {HttpRequest, HttpResponse} from "uWebSockets.js";
 //import {Readable} from 'stream'
-import axios, { AxiosError } from "axios";
+import { AxiosError } from "axios";
 import { Express } from "express";
 import multer from "multer";
-import { uploaderService } from "../Service/UploaderService";
+import { uploaderService, CdnNotConfiguredError } from "../Service/UploaderService";
+import { getCdnProvider, isCdnConfigured } from "../Service/StorageProviderService";
 import { ByteLenghtBufferException } from "../Exception/ByteLenghtBufferException";
 import {
   ADMIN_API_URL,
   ENABLE_CHAT_UPLOAD,
+  S3_CDN_USER_REFS_PUBLIC_URL,
+  S3_CDN_BOT_GENS_PUBLIC_URL,
+  S3_CDN_USER_REFS_BUCKET,
+  S3_CDN_BOT_GENS_BUCKET,
   UPLOAD_MAX_FILESIZE,
   UPLOADER_URL,
 } from "../Enum/EnvironmentVariable";
@@ -31,6 +36,7 @@ export class FileController {
     this.uploadFile();
     this.deleteUploadedFile();
     this.ping();
+    this.config();
   }
 
   uploadAudioMessage() {
@@ -82,7 +88,10 @@ export class FileController {
     this.App.get("/upload-file/:id", (request, response) => {
       const id = request.params["id"];
       const targetDevice = new HttpResponseDevice(id, response);
-      uploaderService.copyFile(id, targetDevice);
+      uploaderService.copyFile(id, targetDevice).catch((e) => {
+          console.error(e);
+          return response.status(500).send("Internal server error");
+      });
     });
   }
 
@@ -91,9 +100,15 @@ export class FileController {
       if (!request.files) {
         return response.status(400).send("No files were uploaded.");
       }
-      const files = request.files as Express.Multer.File[];
 
       const userRoomToken = request.body.userRoomToken;
+      const bucket: string | undefined = S3_CDN_USER_REFS_BUCKET || S3_CDN_BOT_GENS_BUCKET || undefined;
+
+      // Check file count cap
+      if (!request.files || (request.files as Express.Multer.File[]).length > 10) {
+        return response.status(400).json({ message: "too-many-files" });
+      }
+      const files = request.files as Express.Multer.File[];
 
       try {
         const uploadedFiles: {
@@ -105,46 +120,59 @@ export class FileController {
           type?: string;
         }[] = [];
 
+        // Validate session token if admin API is configured
+        if (ADMIN_API_URL && !userRoomToken) {
+          throw new NotLoggedUser();
+        }
+
         for (const file of files) {
           // This is needed because of a bug in busboy. Remove this when https://github.com/expressjs/multer/pull/1158 is merged
           const filename = Buffer.from(file.originalname, "latin1").toString(
             "utf8"
           );
-          if (ADMIN_API_URL) {
-            if (!userRoomToken) {
-              throw new NotLoggedUser();
-            } else {
-              await axios.get(`${ADMIN_API_URL}/api/limit/fileSize`, {
-                headers: { userRoomToken: userRoomToken },
-                params: { fileSize: file.buffer.byteLength },
-              });
-            }
-          } else {
-            console.log(
-              "FILE SIZE",
-              filename,
-              " : ",
-              file.buffer.byteLength,
-              "bytes",
-              "//",
-              UPLOAD_MAX_FILESIZE,
-              "bytes"
-            );
-            if (!ENABLE_CHAT_UPLOAD) {
-              throw new DisabledChat("Upload is disabled");
-            } else if (
-              UPLOAD_MAX_FILESIZE &&
-              file.buffer.byteLength > parseInt(UPLOAD_MAX_FILESIZE)
-            ) {
-              throw new ByteLenghtBufferException(`file-too-big`);
-            }
+          // Server-side unsafe extension check (matches frontend)
+          const ext = filename
+            .substring(filename.lastIndexOf("."))
+            .toLowerCase();
+          const UNSAFE_EXTENSIONS = [
+            ".exe", ".bat", ".cmd", ".com", ".msi", ".scr",
+            ".jar", ".dmg", ".pkg", ".app", ".sh", ".bash",
+            ".vbs", ".ps1", ".pl", ".py", ".rb",
+          ];
+          if (UNSAFE_EXTENSIONS.includes(ext)) {
+            throw new Error(`Unsafe file type: ${ext}`);
+          }
+          // Always check file size locally, regardless of ADMIN_API_URL
+          if (!ENABLE_CHAT_UPLOAD) {
+            throw new DisabledChat("Upload is disabled");
+          }
+          if (
+            UPLOAD_MAX_FILESIZE &&
+            file.buffer.byteLength > parseInt(UPLOAD_MAX_FILESIZE)
+          ) {
+            throw new ByteLenghtBufferException(`file-too-big`);
           }
           const fileUuid = await uploaderService.uploadFile(
             filename,
             file.buffer,
-            file.mimetype
+            file.mimetype,
+            bucket
           );
-          const location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
+          let location: string;
+          if (bucket === S3_CDN_USER_REFS_BUCKET && S3_CDN_USER_REFS_PUBLIC_URL) {
+            location = `${S3_CDN_USER_REFS_PUBLIC_URL}/${fileUuid}`;
+          } else if (bucket === S3_CDN_BOT_GENS_BUCKET && S3_CDN_BOT_GENS_PUBLIC_URL) {
+            location = `${S3_CDN_BOT_GENS_PUBLIC_URL}/${fileUuid}`;
+          } else if (bucket) {
+            const cdnProvider = getCdnProvider(bucket);
+            if (cdnProvider) {
+              location = await cdnProvider.getSignedUrl(fileUuid);
+            } else {
+              location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
+            }
+          } else {
+            location = `${UPLOADER_URL}/upload-file/${fileUuid}`;
+          }
           uploadedFiles.push({
             name: filename,
             id: fileUuid,
@@ -189,8 +217,16 @@ export class FileController {
         } else if (err instanceof NotLoggedUser) {
           response.status(401);
           return response.json({ message: "not-logged" });
+        } else if (err instanceof CdnNotConfiguredError) {
+          response.status(400);
+          return response.json({
+            message: err.message,
+          });
+        } else {
+          console.error(err);
+          response.status(500);
+          return response.json({ message: "Internal server error" });
         }
-        throw err;
       }
     });
   }
@@ -208,6 +244,14 @@ export class FileController {
   ping() {
     this.App.get("/ping", (req, res) => {
       res.status(200).send("pong");
+    });
+  }
+
+  config() {
+    this.App.get("/config", (req, res) => {
+      res.json({
+        cdnConfigured: isCdnConfigured(),
+      });
     });
   }
 }

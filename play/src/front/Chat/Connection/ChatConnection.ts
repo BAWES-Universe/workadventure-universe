@@ -66,7 +66,14 @@ export interface ChatRoom {
     readonly unreadNotificationCount: Readable<number>;
     readonly pictureStore: PictureStore;
     readonly messages: Readable<readonly ChatMessage[]>;
-    readonly sendMessage: (message: string) => void;
+    readonly sendMessage: (
+        message: string,
+        type?: ChatMessageType,
+        broadcast?: boolean,
+        url?: string,
+        mediaType?: string,
+        mimeType?: string
+    ) => void;
     readonly sendFiles: (files: FileList) => Promise<void>;
     readonly setTimelineAsRead: () => void;
     readonly hasPreviousMessage: Readable<boolean>;

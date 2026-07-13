@@ -311,6 +311,9 @@ const chat: DeepPartial<Translation["chat"]> = {
         title: "ファイル添付",
         description: "ファイルをアップロードして共有する",
         featureComingSoon: "近日公開予定！",
+        maxFileCount: "最大{count}ファイルまで同時にアップロードできます。",
+        unsafeFileType: '"{name}"は安全でないファイルタイプのため、アップロードできません。',
+        fileTooLarge: '"{name}"は大きすぎます。最大サイズは{size}MBです。',
     },
 };
 

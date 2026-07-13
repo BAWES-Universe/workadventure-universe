@@ -14,16 +14,26 @@ import {TargetDevice} from "./TargetDevice";
 export class S3StorageProvider implements StorageProvider {
     private s3: AWS.S3 | undefined;
 
-    static isEnabled():boolean {
+    constructor(
+        private bucketName: string = AWS_BUCKET ?? '',
+        private region: string | undefined = AWS_DEFAULT_REGION,
+        private endpoint: string | undefined = AWS_ENDPOINT,
+        private accessKeyId: string | undefined = AWS_ACCESS_KEY_ID,
+        private secretAccessKey: string | undefined = AWS_SECRET_ACCESS_KEY,
+    ) {
+    }
+
+    static isEnabled(): boolean {
         return !!AWS_BUCKET && !!AWS_ACCESS_KEY_ID && !!AWS_SECRET_ACCESS_KEY && !!AWS_DEFAULT_REGION
     }
 
-    constructor() {
-    }
-
-    async upload(fileUuid: string, chunks: Buffer, mimeType:string|undefined): Promise<string> {
+    async upload(fileUuid: string, chunks: Buffer, mimeType:string|undefined, bucket?: string): Promise<string> {
+        const targetBucket = bucket || this.bucketName;
+        if (!targetBucket) {
+            throw new Error("No bucket configured for upload");
+        }
         let uploadParams: S3.Types.PutObjectRequest = {
-            Bucket: `${AWS_BUCKET ?? ''}`,
+            Bucket: targetBucket,
             Key: fileUuid,
             Body: chunks
         };
@@ -45,41 +55,40 @@ export class S3StorageProvider implements StorageProvider {
         return fileUuid
     }
 
+    async getSignedUrl(key: string): Promise<string> {
+        const params = {Bucket: this.bucketName, Key: key, Expires: UPLOADER_AWS_SIGNED_URL_EXPIRATION};
+        return await this.S3().getSignedUrlPromise('getObject', params);
+    }
+
     async deleteFileById(fileId: string): Promise<void> {
         const deleteParams: S3.Types.DeleteObjectRequest = {
-            Bucket: `${AWS_BUCKET ?? ''}`,
+            Bucket: this.bucketName,
             Key: fileId
         };
         await this.S3().deleteObject(deleteParams).promise();
     }
 
-    copyFile(fileId: string, target: TargetDevice): void {
-        this.getExternalDownloadLink(fileId).then(link => target.copyFromLink(link))
-    }
-
-    private async getExternalDownloadLink(fileId: string): Promise<string> {
-        const params = {Bucket: AWS_BUCKET, Key: fileId, Expires: UPLOADER_AWS_SIGNED_URL_EXPIRATION};
-        return await this.S3().getSignedUrlPromise('getObject', params);
+    async copyFile(fileId: string, target: TargetDevice): Promise<void> {
+        const link = await this.getSignedUrl(fileId);
+        target.copyFromLink(link);
     }
 
     private S3() {
         if (this.s3 === undefined) {
-            // Set the region
-            AWS.config.update({
-                accessKeyId: (AWS_ACCESS_KEY_ID),
-                secretAccessKey: (AWS_SECRET_ACCESS_KEY),
-                region: (AWS_DEFAULT_REGION)
-            });
-
-            // Create S3 service object
-            const options = {apiVersion: '2006-03-01', s3ForcePathStyle: true};
-            if (AWS_ENDPOINT){
-                // @ts-ignore
-                options.endpoint = AWS_ENDPOINT
+            // Create S3 service object with per-instance credentials
+            const options: AWS.S3.ClientConfiguration = {
+                apiVersion: '2006-03-01',
+                signatureVersion: 'v4',
+                s3ForcePathStyle: true,
+                accessKeyId: this.accessKeyId,
+                secretAccessKey: this.secretAccessKey,
+                region: this.region,
+            };
+            if (this.endpoint){
+                (options as Record<string, unknown>).endpoint = this.endpoint
             }
-            if (!AWS_BUCKET) throw new Error(`AWS_BUCKET must be set `)
+            if (!this.bucketName) throw new Error(`Bucket name must be set on S3StorageProvider`)
             this.s3 = new AWS.S3(options);
-            const bucket:string = AWS_BUCKET
             const corsRules:CORSRules = [
                 {
                     "AllowedHeaders": [ "Authorization" ],
@@ -89,13 +98,10 @@ export class S3StorageProvider implements StorageProvider {
                     "ExposeHeaders": [ "Access-Control-Allow-Origin" ]
                 }
             ]
-            console.log(options);
-            this.s3.putBucketCors({Bucket: bucket, CORSConfiguration: {CORSRules: corsRules}}, (err, _data)=> {
-                if (err) {
+            this.s3.putBucketCors({Bucket: this.bucketName, CORSConfiguration: {CORSRules: corsRules}}).promise()
+                .catch(err => {
                     console.log("Could not setup CORS for S3 bucket", err);
-                    return
-                }
-            })
+                })
         }
         return this.s3
     }

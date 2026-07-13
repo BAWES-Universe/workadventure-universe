@@ -20,6 +20,9 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             message: event.spaceMessage.message,
             characterTextures: sender.characterTextures,
             name: sender.name,
+            url: event.spaceMessage.url,
+            mediaType: event.spaceMessage.mediaType,
+            mimeType: event.spaceMessage.mimeType,
         },
     };
 });

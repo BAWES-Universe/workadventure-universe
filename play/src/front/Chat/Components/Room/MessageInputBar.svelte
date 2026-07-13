@@ -14,6 +14,7 @@
 
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
+    import { fly } from "svelte/transition";
     import { v4 as uuid } from "uuid";
     import type { EmojiClickEvent } from "emoji-picker-element/shared";
     import { defautlNativeIntegrationAppName } from "@workadventure/shared-utils";
@@ -39,11 +40,34 @@
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { draftMessageService } from "../../Services/DraftMessageService";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
+    import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import MessageInput from "./MessageInput.svelte";
-    import MessageFileInput from "./Message/MessageFileInput.svelte";
     import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
     import { IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
+
+    // Frontend pre-check constants (server enforces the real limits)
+    const UPLOAD_MAX_FILESIZE = 10485760; // 10 MB — matches UPLOAD_MAX_FILESIZE env var
+    const MAX_FILE_COUNT = 10;
+    const UNSAFE_EXTENSIONS = [
+        ".exe",
+        ".bat",
+        ".cmd",
+        ".com",
+        ".msi",
+        ".scr",
+        ".jar",
+        ".dmg",
+        ".pkg",
+        ".app",
+        ".sh",
+        ".bash",
+        ".vbs",
+        ".ps1",
+        ".pl",
+        ".py",
+        ".rb",
+    ];
 
     export let room: ChatRoom;
     export let disabled = false;
@@ -51,16 +75,30 @@
     let message = "";
     let messageInput: HTMLDivElement;
     let messageBarRef: HTMLDivElement;
+    let fileInputElement: HTMLInputElement | undefined;
     let stopTypingTimeOutID: undefined | ReturnType<typeof setTimeout>;
     let files: { id: string; file: File }[] = [];
     let filesPreview: { id: string; size: number; name: string; type: string; url: FileReader["result"] }[] = [];
     const TYPINT_TIMEOUT = 10000;
 
     let applicationComponentOpened = false;
-    let fileAttachmentComponentOpened = false;
     let fileAttachementEnabled = false;
+    let isUploading = false;
+    let uploadError: string | null = null;
+    let failedFileIds: Set<string> = new Set();
+    let uploadErrorTimeout: ReturnType<typeof setTimeout> | undefined;
+
+    function showUploadError(msg: string, failed?: Set<string>) {
+        uploadError = msg;
+        failedFileIds = failed ?? new Set();
+        clearTimeout(uploadErrorTimeout);
+        uploadErrorTimeout = setTimeout(() => {
+            uploadError = null;
+            failedFileIds = new Set();
+        }, 5000);
+    }
+
     let applicationProperty: ApplicationProperty | undefined = undefined;
-    const isProximityChatRoom = room instanceof ProximityChatRoom;
     let replyMessageId: string | null = null;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
 
@@ -94,15 +132,15 @@
             keyDownEvent.preventDefault();
         }
 
-        if (keyDownEvent.key === "Enter" && message.trim().length !== 0) {
+        if (keyDownEvent.key === "Enter" && !isUploading && (message.trim().length !== 0 || files.length !== 0)) {
             // message contains HTML tags. Actually, the only tags we allow are for the new line, ie. <br> tags.
             // We can turn those back into carriage returns.
             const messageToSend = message.replace(/<br>/g, "\n");
-            sendMessage(messageToSend);
+            sendMessage(messageToSend).catch((error) => console.error(error));
         }
     }
 
-    function sendMessage(messageToSend: string) {
+    async function sendMessage(messageToSend: string) {
         if (applicationProperty && applicationProperty.link.length !== 0) {
             room?.sendMessage(applicationProperty.link);
         }
@@ -112,15 +150,104 @@
 
         // send files
         if (files && files.length > 0) {
-            if (!(room instanceof ProximityChatRoom)) {
+            if (room instanceof ProximityChatRoom) {
+                // Proximity chat: upload files to uploader, then send URL as message
+                const pendingFiles = files;
+                let userToken: string | undefined;
+                try {
+                    userToken = gameManager.getCurrentGameScene().connection?.userRoomToken;
+                    isUploading = true;
+                    // Upload all files, tracking success/failure per file
+                    const uploadResults = await Promise.allSettled(
+                        pendingFiles.map(async ({ file }) => {
+                            const formData = new FormData();
+                            formData.append("file", file);
+                            if (userToken) {
+                                formData.append("userRoomToken", userToken);
+                            }
+                            const response = await fetch(`${UPLOADER_URL}/upload-file`, {
+                                method: "POST",
+                                body: formData,
+                            });
+                            if (!response.ok) {
+                                const errData = await response.json().catch(() => ({}));
+                                throw new Error(errData.message || `Upload failed (${response.status})`);
+                            }
+                            const data = await response.json();
+                            if (!data || data.length === 0) {
+                                throw new Error("Upload returned no data");
+                            }
+                            return { location: data[0].location, name: data[0].name, type: file.type };
+                        })
+                    );
+                    // Separate successes from failures
+                    const succeeded: { location: string; name: string; type: string }[] = [];
+                    const failedIds: string[] = [];
+                    for (let i = 0; i < uploadResults.length; i++) {
+                        const pendingFile = pendingFiles[i];
+                        const result = uploadResults[i];
+                        if (result.status === "fulfilled") {
+                            succeeded.push(result.value);
+                        } else {
+                            failedIds.push(pendingFile.id);
+                        }
+                    }
+                    if (failedIds.length > 0) {
+                        // Keep only failed files for retry
+                        // eslint-disable-next-line require-atomic-updates
+                        files = pendingFiles.filter((f) => failedIds.includes(f.id));
+
+                        filesPreview = filesPreview.filter((p) => failedIds.includes(p.id));
+                        showUploadError(
+                            `Upload failed for ${failedIds.length} file(s). Still in the input for retry.`,
+                            new Set(failedIds)
+                        );
+                        // Don't return — still send text and successful uploads below
+                    } else {
+                        // All succeeded — clear and send messages
+                        // eslint-disable-next-line require-atomic-updates
+                        files = [];
+                        filesPreview = [];
+                    }
+                    // Send messages for all successful uploads
+                    const proximityRoom = room;
+                    for (const result of succeeded) {
+                        proximityRoom.sendMessage(
+                            result.name || "",
+                            "proximity",
+                            true,
+                            result.location,
+                            result.type.startsWith("image/") ? "image" : "file",
+                            result.type
+                        );
+                    }
+                } catch (error: unknown) {
+                    if (error instanceof Error) {
+                        showUploadError(error.message);
+                    }
+                    // Don't return — still send text message below
+                } finally {
+                    isUploading = false;
+                }
+            } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
                     fileListAcc.items.add(currentFile.file);
                     return fileListAcc;
                 }, new DataTransfer()).files;
 
-                room.sendFiles(fileList).catch((error) => console.error(error));
-                files = [];
-                filesPreview = [];
+                isUploading = true;
+                room.sendFiles(fileList)
+                    .then(() => {
+                        files = [];
+                        filesPreview = [];
+                    })
+                    .catch((error) => {
+                        console.error("Error sending files:", error);
+                        showUploadError("Failed to send files.");
+                    })
+                    .finally(() => {
+                        isUploading = false;
+                    });
             }
         }
 
@@ -148,7 +275,23 @@
     }
 
     onMount(async () => {
-        fileAttachementEnabled = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+        const isUploadEnabled = gameManager.getCurrentGameScene().room.isChatUploadEnabled;
+        // Check CDN config for proximity chat before enabling the button
+        if (room instanceof ProximityChatRoom && isUploadEnabled) {
+            try {
+                const configResponse = await fetch(`${UPLOADER_URL}/config`);
+                if (configResponse.ok) {
+                    const config = await configResponse.json();
+                    fileAttachementEnabled = config.cdnConfigured;
+                } else {
+                    fileAttachementEnabled = false;
+                }
+            } catch {
+                fileAttachementEnabled = false;
+            }
+        } else {
+            fileAttachementEnabled = isUploadEnabled;
+        }
         const draft = await draftMessageService.loadDraft(draftId);
         if (draft) {
             message = draft.message ?? "";
@@ -162,6 +305,7 @@
     });
 
     onDestroy(() => {
+        clearTimeout(uploadErrorTimeout);
         draftMessageService.saveDraft({
             id: draftId,
             roomId: room.id,
@@ -204,9 +348,50 @@
     }
 
     export function handleFiles(event: CustomEvent<FileList>) {
-        const newFiles = [...event.detail].map((file) => ({ id: uuid(), file }));
-        files = [...files, ...newFiles];
-        addToPreviews(newFiles);
+        const incoming = [...event.detail];
+
+        // Clear previous upload errors
+        uploadError = null;
+        failedFileIds = new Set();
+        clearTimeout(uploadErrorTimeout);
+
+        // Pre-check: file count (hard rejection — no files added)
+        if (files.length + incoming.length > MAX_FILE_COUNT) {
+            showUploadError($LL.chat.fileAttachment.maxFileCount({ count: MAX_FILE_COUNT }));
+            return;
+        }
+
+        // Run all checks per file, collect valid files and rejection reasons
+        const valid: File[] = [];
+        const reasons: string[] = [];
+        for (const file of incoming) {
+            const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+            if (UNSAFE_EXTENSIONS.includes(ext)) {
+                reasons.push(`${file.name}: type not allowed`);
+                continue;
+            }
+            if (file.size > UPLOAD_MAX_FILESIZE) {
+                reasons.push(`${file.name}: too large (max ${UPLOAD_MAX_FILESIZE / 1048576} MB)`);
+                continue;
+            }
+            valid.push(file);
+        }
+
+        // Add valid files to preview
+        if (valid.length > 0) {
+            const newFiles = valid.map((file) => ({ id: uuid(), file }));
+            files = [...files, ...newFiles];
+            addToPreviews(newFiles);
+        }
+
+        // Show error for rejected files
+        if (reasons.length > 0) {
+            const msg = `${reasons.length} file(s) rejected: ${reasons.join(", ")}`;
+            showUploadError(msg);
+        }
+
+        // Return focus to the message input so Enter sends the message instead of re-opening the file picker
+        messageInput.focus();
     }
 
     function addToPreviews(files: { id: string; file: File }[]) {
@@ -252,16 +437,6 @@
         chatInputFocusStore.set(false);
     }
 
-    function openFileAttachmentComponent() {
-        fileAttachmentComponentOpened = true;
-        applicationComponentOpened = false;
-        applicationProperty = undefined;
-    }
-    function closeFileAttachmentComponent() {
-        fileAttachmentComponentOpened = false;
-        applicationComponentOpened = false;
-        applicationProperty = undefined;
-    }
     // This function open the application part to propose to the user to add a new application or close application part
     function toggleApplicationComponent() {
         applicationComponentOpened = !applicationComponentOpened;
@@ -411,18 +586,38 @@
     $: quotedMessageContent = $selectedChatMessageToReply?.content;
 </script>
 
-{#if files.length > 0 && !(room instanceof ProximityChatRoom)}
+{#if files.length > 0 || uploadError}
     <div class="w-full p-1">
+        {#if uploadError}
+            <div
+                class="flex items-center justify-between px-3 py-1 mb-1 rounded-lg bg-red-900/70 text-red-200 text-xs"
+                transition:fly={{ y: -20, duration: 300 }}
+            >
+                <span class="truncate">⚠️ {uploadError}</span>
+                <button
+                    class="ml-2 shrink-0 hover:text-white"
+                    on:click={() => {
+                        uploadError = null;
+                        failedFileIds = new Set();
+                    }}>×</button
+                >
+            </div>
+        {/if}
         <div class="flex flex-row gap-2 w-full overflow-visible no-scroll-bar rounded-lg p-2 bg-contrast/80">
             {#each filesPreview as preview (preview.id)}
                 <div
                     class="relative content-center {preview.type.includes('image')
                         ? 'w-20'
-                        : 'w-28'} h-20 rounded-md backdrop-opacity-10 bg-white p-0.5"
+                        : 'w-28'} h-20 rounded-md backdrop-opacity-10 bg-white p-0.5 {failedFileIds.has(preview.id)
+                        ? 'ring-2 ring-red-500 opacity-60'
+                        : ''}"
                 >
                     <button
-                        class="border-2 border-white border-solid absolute flex items-center justify-center rounded-full bg-secondary hover:bg-secondary-600 p-0.5 -start-2 -top-2"
+                        class="border-2 border-white border-solid absolute flex items-center justify-center rounded-full bg-secondary hover:bg-secondary-600 p-0.5 -start-2 -top-2 {isUploading
+                            ? 'hidden'
+                            : ''}"
                         on:click={() => deleteFile(preview.id)}
+                        disabled={isUploading}
                     >
                         <IconX font-size="12" />
                     </button>
@@ -446,6 +641,30 @@
                             </div>
                         </div>
                     {/if}
+                    {#if isUploading}
+                        <div class="absolute inset-0 flex items-center justify-center bg-black/40 rounded-[10px]">
+                            <svg
+                                class="animate-spin h-5 w-5 text-white"
+                                xmlns="http://www.w3.org/2000/svg"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                            >
+                                <circle
+                                    class="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    stroke-width="4"
+                                />
+                                <path
+                                    class="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                />
+                            </svg>
+                        </div>
+                    {/if}
                 </div>
             {/each}
         </div>
@@ -453,24 +672,6 @@
 {/if}
 {#if applicationComponentOpened}
     <div class="w-full bg-contrast/50 rounded-t-2xl">
-        <div class="flex flex-wrap w-full justify-between items-center p-2 gap-2">
-            <button
-                data-testid="fileAttachmentButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openFileAttachmentComponent()}
-                class:bg-secondary-800={fileAttachmentComponentOpened}
-                disabled={!fileAttachementEnabled || isProximityChatRoom}
-            >
-                <IconPaperclip font-size={32} />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.fileAttachment.title()}</h2>
-                <p class="text-xs p-0 m-0 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {fileAttachementEnabled && !isProximityChatRoom
-                        ? $LL.chat.fileAttachment.description()
-                        : $LL.chat.fileAttachment.featureComingSoon()}
-                </p>
-            </button>
-        </div>
-
         <div class="flex flex-wrap w-full justify-between items-center p-2 gap-2">
             <button
                 data-testid="youtubeApplicationButton"
@@ -664,9 +865,6 @@
         />
     </div>
 {/if}
-{#if fileAttachmentComponentOpened}
-    <MessageFileInput {room} on:fileUploaded={() => closeFileAttachmentComponent()} />
-{/if}
 <div
     class="flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
     bind:this={messageBarRef}
@@ -704,11 +902,49 @@
         {focusout}
         bind:message
         bind:messageInput
-        disabled={disabled && !isProximityChatRoom}
+        disabled={room instanceof ProximityChatRoom ? false : disabled}
         inputClass="message-input flex-grow !m-0 px-5 py-2.5 max-h-36 overflow-auto  h-full rounded-xl wa-searchbar block text-white placeholder:text-base border-light-purple border !bg-transparent resize-none border-none outline-none shadow-none focus:ring-0"
         dataText={$LL.chat.enter()}
         dataTestid="messageInput"
     />
+    {#if room instanceof ProximityChatRoom}
+        <input
+            type="file"
+            bind:this={fileInputElement}
+            hidden
+            multiple
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.json,.zip"
+            on:change={(e) => {
+                if (fileInputElement?.files) {
+                    handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
+                    fileInputElement.value = "";
+                }
+            }}
+        />
+    {:else}
+        <input
+            type="file"
+            bind:this={fileInputElement}
+            hidden
+            multiple
+            on:change={(e) => {
+                if (fileInputElement?.files) {
+                    handleFiles(new CustomEvent("files", { detail: fileInputElement.files }));
+                    fileInputElement.value = "";
+                }
+            }}
+        />
+    {/if}
+    <button
+        data-testid="quickFileAttachmentButton"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        class:disabled:opacity-30={room instanceof ProximityChatRoom}
+        disabled={room instanceof ProximityChatRoom ? !fileAttachementEnabled || isUploading : !fileAttachementEnabled}
+        on:click={() => fileInputElement?.click()}
+        title={$LL.chat.fileAttachment.title()}
+    >
+        <IconPaperclip font-size={18} />
+    </button>
     <button
         data-testid="addApplicationButton"
         class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
@@ -731,8 +967,8 @@
         <button
             data-testid="sendMessageButton"
             class="disabled:opacity-30 disabled:!cursor-none disabled:text-white py-0 px-3 m-0 bg-secondary h-full rounded-none"
-            disabled={applicationPropertyInProcessing}
-            on:click={() => sendMessage(message)}
+            disabled={applicationPropertyInProcessing || isUploading}
+            on:click={() => sendMessage(message).catch((error) => console.error(error))}
         >
             <IconSend />
         </button>
