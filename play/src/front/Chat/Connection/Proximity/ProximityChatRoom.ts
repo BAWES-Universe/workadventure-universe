@@ -190,7 +190,9 @@ export class ProximityChatRoom implements ChatRoom {
     }
 
     private inferTypeFromUrl(url: string): ChatMessageType | undefined {
-        const ext = url.split(".").pop()?.toLowerCase();
+        // Strip query string first — presigned URLs have params after ?
+        const pathPart = url.split("?")[0];
+        const ext = pathPart.split(".").pop()?.toLowerCase();
         switch (ext) {
             case "png":
             case "jpg":

@@ -235,6 +235,7 @@
                     return fileListAcc;
                 }, new DataTransfer()).files;
 
+                isUploading = true;
                 room.sendFiles(fileList)
                     .then(() => {
                         files = [];
@@ -243,6 +244,9 @@
                     .catch((error) => {
                         console.error("Error sending files:", error);
                         showUploadError("Failed to send files.");
+                    })
+                    .finally(() => {
+                        isUploading = false;
                     });
             }
         }
