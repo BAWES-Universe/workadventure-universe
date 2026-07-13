@@ -2175,6 +2175,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (r.result.error) {
                     return `send_image: Error - ${r.result.error}. Tell the user you couldn't send the image.`;
                 }
+                if (r.result.note) {
+                    return `send_image: ${r.result.note}`;
+                }
                 if (r.result.success) {
                     return `send_image: Successfully sent the image to the conversation. Do NOT repeat the URL or explain technical details — just respond naturally (e.g., "Here you go!" or "Check this out!" or ask if they like it). Mention the CDN URL only if the user specifically asks where the image is stored.`;
                 }
@@ -2182,6 +2185,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (r.name === 'send_file' && r.result) {
                 if (r.result.error) {
                     return `send_file: Error - ${r.result.error}. Tell the user you couldn't send the file.`;
+                }
+                if (r.result.note) {
+                    return `send_file: ${r.result.note}`;
                 }
                 if (r.result.success) {
                     return `send_file: Successfully sent the file to the conversation. Do NOT explain technical details — just respond naturally.`;
@@ -2191,6 +2197,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (r.result.error) {
                     return `send_audio: Error - ${r.result.error}. Tell the user you couldn't send the audio.`;
                 }
+                if (r.result.note) {
+                    return `send_audio: ${r.result.note}`;
+                }
                 if (r.result.success) {
                     return `send_audio: Successfully sent the audio to the conversation. Respond naturally.`;
                 }
@@ -2198,6 +2207,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (r.name === 'send_video' && r.result) {
                 if (r.result.error) {
                     return `send_video: Error - ${r.result.error}. Tell the user you couldn't send the video.`;
+                }
+                if (r.result.note) {
+                    return `send_video: ${r.result.note}`;
                 }
                 if (r.result.success) {
                     return `send_video: Successfully sent the video to the conversation. Respond naturally.`;
