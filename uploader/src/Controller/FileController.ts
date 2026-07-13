@@ -222,8 +222,11 @@ export class FileController {
           return response.json({
             message: err.message,
           });
+        } else {
+          console.error(err);
+          response.status(500);
+          return response.json({ message: "Internal server error" });
         }
-        throw err;
       }
     });
   }
