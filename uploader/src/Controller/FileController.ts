@@ -152,6 +152,13 @@ export class FileController {
           ) {
             throw new ByteLenghtBufferException(`file-too-big`);
           }
+          // Check per-user quota via Admin API if configured
+          if (ADMIN_API_URL && userRoomToken) {
+            await axios.get(`${ADMIN_API_URL}/api/limit/fileSize`, {
+              headers: { userRoomToken: userRoomToken },
+              params: { fileSize: file.buffer.byteLength },
+            });
+          }
           const fileUuid = await uploaderService.uploadFile(
             filename,
             file.buffer,
@@ -222,8 +229,11 @@ export class FileController {
           return response.json({
             message: err.message,
           });
+        } else {
+          console.error(err);
+          response.status(500);
+          return response.json({ message: "Internal server error" });
         }
-        throw err;
       }
     });
   }
