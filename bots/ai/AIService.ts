@@ -692,7 +692,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId);
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
@@ -1597,7 +1597,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         adminApiService?: AdminApiService,
         toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>,
         playerUuid?: string,
-        spaceName?: string
+        spaceName?: string,
+        botId?: string,
+        playerId?: number
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1803,12 +1805,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     case 'send_image':
                         if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const imageUrl = parsedArgs.url;
+                            const alt = parsedArgs.alt || '';
                             try {
-                                const parsedArgs = typeof toolCall.arguments === 'string'
-                                    ? JSON.parse(toolCall.arguments)
-                                    : toolCall.arguments || {};
-                                const imageUrl = parsedArgs.url;
-                                const alt = parsedArgs.alt || '';
                                 if (!imageUrl) {
                                     result = { error: 'Missing required parameter: url' };
                                     break;
@@ -1820,7 +1822,22 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendImage(spaceName, imageUrl, alt);
                                 result = { success: true, location, message: `Image sent to conversation` };
                             } catch (error: any) {
-                                result = { error: `Failed to send image: ${error.message}` };
+                                // Save original URL for retry — upload succeeded but user left the space
+                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                if (memory) {
+                                    if (!memory.pendingMedia) memory.pendingMedia = [];
+                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                                        memory.pendingMedia.push({
+                                            url: imageUrl,
+                                            mediaType: 'image',
+                                            mimeType: '',
+                                            caption: alt,
+                                            createdAt: Date.now(),
+                                            retryCount: 0,
+                                        });
+                                    }
+                                }
+                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
                             }
                         } else {
                             result = { error: 'Bot client not available' };
@@ -1829,12 +1846,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     case 'send_file':
                         if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const fileUrl = parsedArgs.url;
+                            const filename = parsedArgs.filename || '';
                             try {
-                                const parsedArgs = typeof toolCall.arguments === 'string'
-                                    ? JSON.parse(toolCall.arguments)
-                                    : toolCall.arguments || {};
-                                const fileUrl = parsedArgs.url;
-                                const filename = parsedArgs.filename || '';
                                 if (!fileUrl) {
                                     result = { error: 'Missing required parameter: url' };
                                     break;
@@ -1846,7 +1863,21 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendFile(spaceName, fileUrl, filename);
                                 result = { success: true, location, message: `File sent to conversation` };
                             } catch (error: any) {
-                                result = { error: `Failed to send file: ${error.message}` };
+                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                if (memory) {
+                                    if (!memory.pendingMedia) memory.pendingMedia = [];
+                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                                        memory.pendingMedia.push({
+                                            url: fileUrl,
+                                            mediaType: 'file',
+                                            mimeType: '',
+                                            caption: filename,
+                                            createdAt: Date.now(),
+                                            retryCount: 0,
+                                        });
+                                    }
+                                }
+                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
                             }
                         } else {
                             result = { error: 'Bot client not available' };
@@ -1855,11 +1886,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     case 'send_audio':
                         if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const audioUrl = parsedArgs.url;
                             try {
-                                const parsedArgs = typeof toolCall.arguments === 'string'
-                                    ? JSON.parse(toolCall.arguments)
-                                    : toolCall.arguments || {};
-                                const audioUrl = parsedArgs.url;
                                 if (!audioUrl) {
                                     result = { error: 'Missing required parameter: url' };
                                     break;
@@ -1871,7 +1902,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendAudio(spaceName, audioUrl);
                                 result = { success: true, location, message: `Audio sent to conversation` };
                             } catch (error: any) {
-                                result = { error: `Failed to send audio: ${error.message}` };
+                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                if (memory) {
+                                    if (!memory.pendingMedia) memory.pendingMedia = [];
+                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                                        memory.pendingMedia.push({
+                                            url: audioUrl,
+                                            mediaType: 'audio',
+                                            mimeType: '',
+                                            createdAt: Date.now(),
+                                            retryCount: 0,
+                                        });
+                                    }
+                                }
+                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
                             }
                         } else {
                             result = { error: 'Bot client not available' };
@@ -1880,11 +1924,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                     case 'send_video':
                         if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const videoUrl = parsedArgs.url;
                             try {
-                                const parsedArgs = typeof toolCall.arguments === 'string'
-                                    ? JSON.parse(toolCall.arguments)
-                                    : toolCall.arguments || {};
-                                const videoUrl = parsedArgs.url;
                                 if (!videoUrl) {
                                     result = { error: 'Missing required parameter: url' };
                                     break;
@@ -1896,7 +1940,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendVideo(spaceName, videoUrl);
                                 result = { success: true, location, message: `Video sent to conversation` };
                             } catch (error: any) {
-                                result = { error: `Failed to send video: ${error.message}` };
+                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                if (memory) {
+                                    if (!memory.pendingMedia) memory.pendingMedia = [];
+                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                                        memory.pendingMedia.push({
+                                            url: videoUrl,
+                                            mediaType: 'video',
+                                            mimeType: '',
+                                            createdAt: Date.now(),
+                                            retryCount: 0,
+                                        });
+                                    }
+                                }
+                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
                             }
                         } else {
                             result = { error: 'Bot client not available' };

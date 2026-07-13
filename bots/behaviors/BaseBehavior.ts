@@ -945,6 +945,67 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Retry any pending media that was queued when the user previously left the space.
+     * Re-uploads (CDN copies are fast) and re-sends. On success, injects an
+     * autoDeliveredMedia fact so the greeting AI knows not to re-announce it.
+     */
+    protected async retryPendingMedia(spaceName: string, user: SpaceUser & { id: number }): Promise<void> {
+        const botId = this.bot?.getBotId();
+        const botClient = this.bot;
+        if (!botId || !botClient || !this.conversationStorage) return;
+
+        const memory = (this.conversationStorage as any).getMemory?.(botId, user.id) as any;
+        if (!memory?.pendingMedia?.length) return;
+
+        const remaining: any[] = [];
+        for (const pending of memory.pendingMedia) {
+            if (pending.retryCount >= 3) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] Dropping pending media after ${pending.retryCount} retries: ${pending.url.substring(0, 60)}`);
+                }
+                continue;
+            }
+            pending.retryCount++;
+            let success = false;
+            try {
+                switch (pending.mediaType) {
+                    case 'image':
+                        await botClient.sendImage(spaceName, pending.url, pending.caption);
+                        break;
+                    case 'file':
+                        await botClient.sendFile(spaceName, pending.url, pending.caption);
+                        break;
+                    case 'audio':
+                        await botClient.sendAudio(spaceName, pending.url);
+                        break;
+                    case 'video':
+                        await botClient.sendVideo(spaceName, pending.url);
+                        break;
+                }
+                success = true;
+            } catch (err) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] Retry failed for ${pending.mediaType}: ${(err as Error).message}`);
+                }
+            }
+            if (success) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] ✅ Auto-delivered pending ${pending.mediaType} to user ${user.id}`);
+                }
+            } else {
+                remaining.push(pending);
+            }
+        }
+        memory.pendingMedia = remaining;
+
+        // If any items were delivered, inject a fact so the greeting AI knows
+        if (remaining.length < memory.pendingMedia.length) {
+            const deliveredCount = (memory.pendingMedia as any[]).length - remaining.length;
+            memory.personalInfo.facts.set('autoDeliveredMedia', String(deliveredCount));
+        }
+    }
+
+    /**
      * Called when a user joins the space
      * @param spaceName Space name
      * @param user User that joined
@@ -991,6 +1052,11 @@ export abstract class BaseBehavior {
             // Notify behavior that memory is restored and UUID is available
             // This is the correct time to generate greetings (after memory is ready)
             if (botId) {
+                // Retry any pending media that was queued when the user left
+                // Fire-and-forget — runs before the greeting so media lands first
+                this.retryPendingMedia(spaceName, user).catch(err => {
+                    console.error(`[Behavior] Error retrying pending media:`, err);
+                });
                 this.onMemoryReady?.(spaceName, user);
             }
         }

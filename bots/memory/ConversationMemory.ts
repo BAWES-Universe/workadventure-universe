@@ -65,6 +65,19 @@ export interface RelationshipContext {
     }>;
 }
 
+/**
+ * Pending media item — an uploaded file that couldn't be delivered
+ * because the user left the space. Retried on reconnect.
+ */
+export interface PendingMedia {
+    url: string;
+    mediaType: 'image' | 'file' | 'audio' | 'video';
+    mimeType: string;
+    caption?: string;
+    createdAt: number;
+    retryCount: number;
+}
+
 export interface BotPlayerMemory {
     // UUID matching fields (for persistence across sessions)
     userUuid: string; // REQUIRED - WorkAdventure UUID
@@ -90,6 +103,10 @@ export interface BotPlayerMemory {
     // Metadata
     lastUpdated: number;
     createdAt: number;
+    
+    // Pending media delivery (items that were uploaded but couldn't be sent)
+    pendingMedia: PendingMedia[];
+    maxPendingMedia: number;
 }
 
 export class ConversationMemory {
@@ -451,6 +468,8 @@ export class ConversationMemory {
                 },
                 lastUpdated: now,
                 createdAt: now,
+                pendingMedia: [],
+                maxPendingMedia: 5,
             });
 
             // Cleanup old memories if we exceed limit
