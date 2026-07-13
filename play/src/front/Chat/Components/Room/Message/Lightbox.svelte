@@ -70,19 +70,30 @@
     });
 
     function setScale(newScale: number, cx = 0, cy = 0): void {
+        // Zoom toward a point on the image
         const ratio = newScale / scale;
         tx = cx - ratio * (cx - tx);
         ty = cy - ratio * (cy - ty);
         scale = newScale;
     }
 
+    /** Get cursor position relative to the image element's top-left (in image-local coords) */
+    function imageLocalCoords(e: { clientX: number; clientY: number }): { cx: number; cy: number } {
+        const container = document.querySelector("[data-lightbox] img");
+        if (!container) return { cx: 0, cy: 0 };
+        const rect = container.getBoundingClientRect();
+        return {
+            cx: e.clientX - rect.left,
+            cy: e.clientY - rect.top,
+        };
+    }
+
+    // --- Zoom (scroll wheel) ---
     function onWheel(e: WheelEvent): void {
         e.preventDefault();
         const delta = -e.deltaY * 0.002;
         if (delta === 0) return;
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const cx = e.clientX - rect.left;
-        const cy = e.clientY - rect.top;
+        const { cx, cy } = imageLocalCoords(e);
         const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
         setScale(newScale, cx, cy);
     }
@@ -135,9 +146,7 @@
             const dx = _e.clientX - tapX;
             const dy = _e.clientY - tapY;
             if (now - lastTapTime < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
-                const rect = (_e.currentTarget as HTMLElement).getBoundingClientRect();
-                const cx = _e.clientX - rect.left;
-                const cy = _e.clientY - rect.top;
+                const { cx, cy } = imageLocalCoords(_e);
                 setScale(ZOOM_STEP, cx, cy);
                 lastTapTime = 0;
                 return;
