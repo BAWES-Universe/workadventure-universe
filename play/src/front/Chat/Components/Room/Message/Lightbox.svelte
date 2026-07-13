@@ -96,6 +96,11 @@
         const { cx, cy } = imageLocalCoords(e);
         const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
         setScale(newScale, cx, cy);
+        // Re-center when scrolled all the way out
+        if (scale === MIN_SCALE) {
+            tx = 0;
+            ty = 0;
+        }
     }
 
     function onPointerDown(e: PointerEvent): void {
@@ -141,20 +146,27 @@
             if (lightboxEl) lightboxEl.style.opacity = "";
         }
 
-        if (scale <= 1.1) {
-            const now = Date.now();
-            const dx = _e.clientX - tapX;
-            const dy = _e.clientY - tapY;
-            if (now - lastTapTime < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
+        // Double-tap detection (toggle zoom at any scale)
+        const now = Date.now();
+        const dx = _e.clientX - tapX;
+        const dy = _e.clientY - tapY;
+        if (now - lastTapTime < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
+            if (scale <= 1.1) {
+                // Zoom in toward cursor
                 const { cx, cy } = imageLocalCoords(_e);
                 setScale(ZOOM_STEP, cx, cy);
-                lastTapTime = 0;
-                return;
+            } else {
+                // Zoom out to 1x and re-center
+                scale = 1;
+                tx = 0;
+                ty = 0;
             }
-            lastTapTime = now;
-            tapX = _e.clientX;
-            tapY = _e.clientY;
+            lastTapTime = 0;
+            return;
         }
+        lastTapTime = now;
+        tapX = _e.clientX;
+        tapY = _e.clientY;
 
         swipeDy = 0;
     }
