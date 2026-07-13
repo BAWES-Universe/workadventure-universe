@@ -186,6 +186,7 @@
     }
 
     function onBackdropClick(e: MouseEvent): void {
+        if (!show) return;
         // Close when clicking on the backdrop but NOT on the image or its controls
         const target = e.target as HTMLElement;
         if (!target.closest("[data-lightbox-content]")) {
@@ -194,7 +195,7 @@
     }
 </script>
 
-<svelte:window on:keydown={onKeyDown} />
+<svelte:window on:keydown={onKeyDown} on:click={onBackdropClick} />
 
 {#if show}
     <div
@@ -204,7 +205,6 @@
         class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80"
         style="opacity: 1;"
         transition:fade={{ duration: 200 }}
-        on:click={onBackdropClick}
         role="dialog"
         aria-label="Image lightbox"
     >
