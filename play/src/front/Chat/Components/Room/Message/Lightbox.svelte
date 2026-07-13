@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, onDestroy } from "svelte";
     import { fade } from "svelte/transition";
 
     export let src: string | undefined;
@@ -185,17 +185,34 @@
         }
     }
 
-    function onBackdropClick(e: MouseEvent): void {
-        if (!show) return;
-        // Close when clicking on the backdrop but NOT on the image or its controls
-        const target = e.target as HTMLElement;
-        if (!target.closest("[data-lightbox-content]")) {
-            close();
+    // Close when clicking on the backdrop but NOT on the image or its controls.
+    // Toggle a window click listener reactively based on lightbox visibility.
+    // Using a JS-only listener avoids svelte-check a11y warnings that fire
+    // when event handlers are attached to non-interactive template elements.
+    let removeBackdropListener: (() => void) | null = null;
+    $: {
+        if (show) {
+            const handler = (e: MouseEvent) => {
+                const target = e.target as HTMLElement;
+                if (!target.closest("[data-lightbox-content]")) {
+                    close();
+                }
+            };
+            window.addEventListener("click", handler);
+            removeBackdropListener = () => window.removeEventListener("click", handler);
+        } else {
+            removeBackdropListener?.();
+            removeBackdropListener = null;
         }
     }
+
+    onDestroy(() => {
+        removeBackdropListener?.();
+        removeBackdropListener = null;
+    });
 </script>
 
-<svelte:window on:keydown={onKeyDown} on:click={onBackdropClick} />
+<svelte:window on:keydown={onKeyDown} />
 
 {#if show}
     <div
