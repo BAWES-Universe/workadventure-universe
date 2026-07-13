@@ -202,7 +202,7 @@
                             `Upload failed for ${failedIds.length} file(s). Still in the input for retry.`,
                             new Set(failedIds)
                         );
-                        return;
+                        // Don't return — still send text and successful uploads below
                     } else {
                         // All succeeded — clear and send messages
                         // eslint-disable-next-line require-atomic-updates
@@ -225,7 +225,7 @@
                     if (error instanceof Error) {
                         showUploadError(error.message);
                     }
-                    return;
+                    // Don't return — still send text message below
                 } finally {
                     isUploading = false;
                 }
