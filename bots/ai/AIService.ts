@@ -1807,6 +1807,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     result = { error: 'Missing required parameter: url' };
                                     break;
                                 }
+                                if (!spaceName) {
+                                    result = { error: 'Cannot send image: not currently in a conversation space' };
+                                    break;
+                                }
                                 const location = await botClient.sendImage(spaceName, imageUrl, alt);
                                 result = { success: true, location, message: `Image sent to conversation` };
                             } catch (error: any) {
@@ -1827,6 +1831,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const filename = parsedArgs.filename || '';
                                 if (!fileUrl) {
                                     result = { error: 'Missing required parameter: url' };
+                                    break;
+                                }
+                                if (!spaceName) {
+                                    result = { error: 'Cannot send file: not currently in a conversation space' };
                                     break;
                                 }
                                 const location = await botClient.sendFile(spaceName, fileUrl, filename);
@@ -1850,6 +1858,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     result = { error: 'Missing required parameter: url' };
                                     break;
                                 }
+                                if (!spaceName) {
+                                    result = { error: 'Cannot send audio: not currently in a conversation space' };
+                                    break;
+                                }
                                 const location = await botClient.sendAudio(spaceName, audioUrl);
                                 result = { success: true, location, message: `Audio sent to conversation` };
                             } catch (error: any) {
@@ -1869,6 +1881,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const videoUrl = parsedArgs.url;
                                 if (!videoUrl) {
                                     result = { error: 'Missing required parameter: url' };
+                                    break;
+                                }
+                                if (!spaceName) {
+                                    result = { error: 'Cannot send video: not currently in a conversation space' };
                                     break;
                                 }
                                 const location = await botClient.sendVideo(spaceName, videoUrl);
