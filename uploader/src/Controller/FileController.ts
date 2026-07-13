@@ -102,7 +102,7 @@ export class FileController {
       }
 
       const userRoomToken = request.body.userRoomToken;
-      const bucket: string | undefined = S3_CDN_USER_REFS_BUCKET || S3_CDN_BOT_GENS_BUCKET || undefined;
+      const bucket: string | undefined = request.body.bucket || S3_CDN_USER_REFS_BUCKET || S3_CDN_BOT_GENS_BUCKET || undefined;
 
       // Check file count cap
       if (!request.files || (request.files as Express.Multer.File[]).length > 10) {
