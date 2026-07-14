@@ -1283,7 +1283,7 @@ export class BotClient {
      * Skips DNS for literal IP addresses (already validated by isPrivateHost).
      */
     private async resolveIsExternal(hostname: string): Promise<boolean> {
-        if (/^[\d.]+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname) || hostname.startsWith('[')) {
+        if (/^[\d.]+$/.test(hostname) || (/^[0-9a-f:]+$/i.test(hostname) && hostname.includes(':')) || hostname.startsWith('[')) {
             return true;
         }
         let safe = true;
