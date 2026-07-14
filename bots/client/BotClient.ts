@@ -1331,7 +1331,11 @@ export class BotClient {
     async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url, this.inferMimeFromExt(url));
         if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '')) {
-            throw new Error(`Bot is not in space ${spaceName} — cannot send image`);
+            const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
+            (err as any)._cdnUrl = location;
+            (err as any)._mediaType = mediaType;
+            (err as any)._mimeType = mimeType;
+            throw err;
         }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent image to ${spaceName}: ${location}`);
@@ -1345,7 +1349,11 @@ export class BotClient {
     async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url);
         if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '')) {
-            throw new Error(`Bot is not in space ${spaceName} — cannot send file`);
+            const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
+            (err as any)._cdnUrl = location;
+            (err as any)._mediaType = mediaType;
+            (err as any)._mimeType = mimeType;
+            throw err;
         }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent file to ${spaceName}: ${location}`);
@@ -1359,7 +1367,11 @@ export class BotClient {
     async sendAudio(spaceName: string, url: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url);
         if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
-            throw new Error(`Bot is not in space ${spaceName} — cannot send audio`);
+            const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
+            (err as any)._cdnUrl = location;
+            (err as any)._mediaType = mediaType;
+            (err as any)._mimeType = mimeType;
+            throw err;
         }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent audio to ${spaceName}: ${location}`);
@@ -1373,7 +1385,11 @@ export class BotClient {
     async sendVideo(spaceName: string, url: string): Promise<string> {
         const { location, mediaType, mimeType } = await this.uploadMedia(url);
         if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
-            throw new Error(`Bot is not in space ${spaceName} — cannot send video`);
+            const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
+            (err as any)._cdnUrl = location;
+            (err as any)._mediaType = mediaType;
+            (err as any)._mimeType = mimeType;
+            throw err;
         }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Sent video to ${spaceName}: ${location}`);
@@ -1382,9 +1398,18 @@ export class BotClient {
     }
 
     /**
+     * Upload a media file to the CDN and return the CDN URL.
+     * Public wrapper around the private uploadMedia method.
+     * Useful for callers that need the CDN URL before deciding to send.
+     */
+    async uploadToCDN(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
+        return this.uploadMedia(url, mimeType);
+    }
+
+    /**
      * Send a media message to a space via publicEvent spaceMessage.
      */
-    private sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): boolean {
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

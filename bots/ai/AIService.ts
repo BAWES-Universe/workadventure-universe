@@ -1832,15 +1832,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendImage(spaceName, imageUrl, alt);
                                 result = { success: true, location, originalUrl: imageUrl, message: `Image sent to conversation` };
                             } catch (error: any) {
-                                // Save original URL for retry — upload succeeded but user left the space
+                                // Use CDN URL from error (upload already succeeded, but send failed)
+                                // This avoids storing presigned/temporary URLs that may expire
+                                const cdnUrl = error._cdnUrl || imageUrl;
+                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'image';
+                                const mimeType = error._mimeType || '';
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                         memory.pendingMedia.push({
-                                            url: imageUrl,
-                                            mediaType: 'image',
-                                            mimeType: '',
+                                            url: cdnUrl,
+                                            mediaType,
+                                            mimeType,
                                             caption: alt,
                                             createdAt: Date.now(),
                                             retryCount: 0,
@@ -1873,14 +1877,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendFile(spaceName, fileUrl, filename);
                                 result = { success: true, location, originalUrl: fileUrl, message: `File sent to conversation` };
                             } catch (error: any) {
+                                const cdnUrl = error._cdnUrl || fileUrl;
+                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'file';
+                                const mimeType = error._mimeType || '';
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                         memory.pendingMedia.push({
-                                            url: fileUrl,
-                                            mediaType: 'file',
-                                            mimeType: '',
+                                            url: cdnUrl,
+                                            mediaType,
+                                            mimeType,
                                             caption: filename,
                                             createdAt: Date.now(),
                                             retryCount: 0,
@@ -1912,14 +1919,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendAudio(spaceName, audioUrl);
                                 result = { success: true, location, originalUrl: audioUrl, message: `Audio sent to conversation` };
                             } catch (error: any) {
+                                const cdnUrl = error._cdnUrl || audioUrl;
+                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'audio';
+                                const mimeType = error._mimeType || '';
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                         memory.pendingMedia.push({
-                                            url: audioUrl,
-                                            mediaType: 'audio',
-                                            mimeType: '',
+                                            url: cdnUrl,
+                                            mediaType,
+                                            mimeType,
                                             createdAt: Date.now(),
                                             retryCount: 0,
                                         });
@@ -1950,14 +1960,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const location = await botClient.sendVideo(spaceName, videoUrl);
                                 result = { success: true, location, originalUrl: videoUrl, message: `Video sent to conversation` };
                             } catch (error: any) {
+                                const cdnUrl = error._cdnUrl || videoUrl;
+                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'video';
+                                const mimeType = error._mimeType || '';
                                 const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                         memory.pendingMedia.push({
-                                            url: videoUrl,
-                                            mediaType: 'video',
-                                            mimeType: '',
+                                            url: cdnUrl,
+                                            mediaType,
+                                            mimeType,
                                             createdAt: Date.now(),
                                             retryCount: 0,
                                         });
@@ -2075,27 +2088,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.error(`[AIService] autoSendMedia failed for ${url}: ${err.message}`);
                     }
-                    // Queue for retry, consistent with explicit send_* tool behavior
+                    // Queue CDN URL for retry (avoids storing presigned/temporary URLs)
+                    const cdnUrl = err._cdnUrl || url;
+                    const mType: 'image' | 'file' | 'audio' | 'video' = err._mediaType || (IMAGE_EXT_SET.has(ext) ? 'image' : VIDEO_EXT_SET.has(ext) ? 'video' : AUDIO_EXT_SET.has(ext) ? 'audio' : 'file');
+                    const mMime = err._mimeType || '';
                     if (botId && playerId !== undefined) {
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
                             if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
-                                let mediaType: 'image' | 'file' | 'audio' | 'video';
-                                const ext = this.getExtension(url);
-                                if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
-                                    mediaType = 'image';
-                                } else if (ext && ['mp4', 'webm'].includes(ext)) {
-                                    mediaType = 'video';
-                                } else if (ext && ['mp3', 'wav', 'ogg'].includes(ext)) {
-                                    mediaType = 'audio';
-                                } else {
-                                    mediaType = 'file';
-                                }
                                 memory.pendingMedia.push({
-                                    url,
-                                    mediaType,
-                                    mimeType: '',
+                                    url: cdnUrl,
+                                    mediaType: mType,
+                                    mimeType: mMime,
                                     caption: '',
                                     createdAt: Date.now(),
                                     retryCount: 0,
@@ -2109,9 +2114,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (sentCount > 0) {
                 const label = sentCount === 1 ? 'media file' : 'media files';
                 const original = tr.result;
+                let message = `Auto-sent ${sentCount} ${label} to the conversation.`;
+                if (lastError) {
+                    message += ` ${urls.length - sentCount} file(s) queued for retry.`;
+                }
                 tr.result = {
                     success: true,
-                    message: `Auto-sent ${sentCount} ${label} to the conversation.`
+                    message
                 };
                 // Preserve non-URL metadata from the original result
                 // so the AI retains context (e.g., model name, seed, parameters)
