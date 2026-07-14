@@ -16,7 +16,7 @@ vi.mock("../ai/encryption", () => ({
 }));
 
 // ---- Helper: build a minimal AIProviderConfig for OpenAI ----
-function buildConfig(extra: Record<string, any> = {}): Record<string, any> {
+function buildConfig(extra: Record<string, any> = {}): AIProviderConfig {
     return {
         providerId: "openai-1",
         name: "TestOpenAI",

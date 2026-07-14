@@ -42,6 +42,7 @@ export interface BotConfiguration {
     };
     enabled?: boolean; // Whether bot is active (defaults to true if not specified)
     characterTextureIds?: string[]; // Character texture IDs for bot appearance
+    position?: { x: number; y: number }; // Teleport position (runtime-only, not persisted)
     createdAt: Date;
     updatedAt: Date;
 }

@@ -271,6 +271,8 @@ export class MemoryStorage {
             playerName: (data as any).userName || (memoryData as any).playerName,
             conversationHistory: memoryData.conversationHistory || [],
             maxHistorySize: memoryData.maxHistorySize || 50,
+            pendingMedia: memoryData.pendingMedia || [],
+            maxPendingMedia: memoryData.maxPendingMedia || 5,
             personalInfo: {
                 ...personalInfo,
                 facts: new Map(personalInfo.facts || []),

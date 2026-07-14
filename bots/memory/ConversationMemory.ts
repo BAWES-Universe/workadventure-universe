@@ -83,6 +83,7 @@ export interface BotPlayerMemory {
     userUuid: string; // REQUIRED - WorkAdventure UUID
     userId?: string; // Optional - User.id if authenticated (set by Admin API after UUID matching)
     isGuest?: boolean; // Optional - true if not authenticated (defaults to true)
+    playerName?: string; // Persistent display name, round-tripped through Admin API
     
     // Internal tracking (not persisted to Admin API)
     playerId: number; // Internal use only - for in-memory tracking

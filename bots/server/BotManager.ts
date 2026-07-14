@@ -371,7 +371,7 @@ export class BotManager {
             
             switch (type) {
                 case 'idle':
-                    return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
+                    return new IdleBehavior(transformedConfig as ConstructorParameters<typeof IdleBehavior>[0]);
                 case 'patrol':
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[BotManager] Creating PatrolBehavior with config:`, JSON.stringify(transformedConfig, null, 2));
@@ -384,9 +384,9 @@ export class BotManager {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[BotManager] Final waypoints before constructor:`, transformedConfig.waypoints);
                     }
-                    return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
+                    return new PatrolBehavior(transformedConfig as ConstructorParameters<typeof PatrolBehavior>[0]);
                 case 'social':
-                    return new SocialBehavior(transformedConfig as Parameters<typeof SocialBehavior>[0]);
+                    return new SocialBehavior(transformedConfig as ConstructorParameters<typeof SocialBehavior>[0]);
                 default:
                     throw new Error(`Unknown behavior type: ${type}`);
             }
@@ -792,15 +792,15 @@ export class BotManager {
                 
                 switch (type) {
                     case 'idle':
-                        return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
+                        return new IdleBehavior(transformedConfig as ConstructorParameters<typeof IdleBehavior>[0]);
                     case 'patrol':
                         // Final safety check for waypoints
                         if (!(transformedConfig as any).waypoints || !Array.isArray((transformedConfig as any).waypoints)) {
                             (transformedConfig as any).waypoints = [];
                         }
-                        return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
+                        return new PatrolBehavior(transformedConfig as ConstructorParameters<typeof PatrolBehavior>[0]);
                     case 'social':
-                        return new SocialBehavior(transformedConfig as Parameters<typeof SocialBehavior>[0]);
+                        return new SocialBehavior(transformedConfig as ConstructorParameters<typeof SocialBehavior>[0]);
                     default:
                         throw new Error(`Unknown behavior type: ${type}`);
                 }
@@ -1023,8 +1023,8 @@ export class BotManager {
 
             // Ensure room exists (fallback - should already exist)
             if (!room) {
-                const newRoom = {
-                    botIds: new Set(),
+                const newRoom: RoomState = {
+                    botIds: new Set<string>(),
                     lastActivity: Date.now(),
                 };
                 this.roomsWithBots.set(roomId, newRoom);
@@ -1176,7 +1176,7 @@ export class BotManager {
                 return new Map();
             }
 
-            const rooms: Record<string, number> = await response.json();
+            const rooms: Record<string, number> = await response.json() as Record<string, number>;
             const roomMap = new Map<string, number>();
             
             for (const [roomUrl, userCount] of Object.entries(rooms)) {
