@@ -275,7 +275,7 @@ export class MemoryStorage {
             conversationHistory: memoryData.conversationHistory || [],
             maxHistorySize: memoryData.maxHistorySize || 50,
             pendingMedia: data.pendingMedia || memoryData.pendingMedia || [],
-            pendingAutoSend: memoryData.pendingAutoSend || [],
+            pendingAutoSend: data.pendingAutoSend || memoryData.pendingAutoSend || [],
             maxPendingMedia: data.maxPendingMedia ?? memoryData.maxPendingMedia ?? 5,
             personalInfo: {
                 ...personalInfo,
