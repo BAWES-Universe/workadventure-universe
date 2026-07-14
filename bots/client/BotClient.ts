@@ -1329,7 +1329,7 @@ export class BotClient {
      * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
      */
     async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
-        const { location, mediaType, mimeType } = await this.uploadMedia(url, alt ? this.inferMimeFromExt(url) : undefined);
+        const { location, mediaType, mimeType } = await this.uploadMedia(url, this.inferMimeFromExt(url));
         if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '')) {
             throw new Error(`Bot is not in space ${spaceName} — cannot send image`);
         }

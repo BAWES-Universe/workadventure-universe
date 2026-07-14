@@ -1016,7 +1016,7 @@ export abstract class BaseBehavior {
      * @param spaceName Space name
      * @param user User that joined
      */
-    onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): void {
+    async onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): Promise<void> {
         // Skip if it's the bot itself
         if (user.id === this.bot?.getUserId()) {
             return;
