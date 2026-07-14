@@ -1549,18 +1549,35 @@ export class BotClient {
         if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') {
             return true;
         }
+        // IPv6-mapped IPv4 (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1) — SSRF bypass vector
+        if (/^::ffff:/i.test(hostname)) {
+            const embeddedIpv4 = hostname.replace(/^::ffff:/i, '').replace(/^\[|\]$/g, '');
+            // Check if the embedded address is a private/reserved IP
+            if (/^127\.\d+\.\d+\.\d+$/.test(embeddedIpv4)) return true;
+            if (/^10\.\d+\.\d+\.\d+$/.test(embeddedIpv4)) return true;
+            if (/^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(embeddedIpv4)) return true;
+            if (/^192\.168\.\d+\.\d+$/.test(embeddedIpv4)) return true;
+            if (/^169\.254\.\d+\.\d+$/.test(embeddedIpv4)) return true;
+            if (embeddedIpv4 === '0.0.0.0') return true;
+        }
         // IPv4 private ranges
         if (/^10\./.test(hostname)) return true;
         if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
         if (/^192\.168\./.test(hostname)) return true;
         // IPv4 link-local
         if (/^169\.254\./.test(hostname)) return true;
+        // Reserved / zero address
+        if (hostname === '0.0.0.0') return true;
         // IPv6 documentation / private / unique-local
         if (hostname === '::' || hostname === '[::]') return true;
         if (/^fc00:/i.test(hostname) || /^fd00:/i.test(hostname)) return true;
         if (/^fe80:/i.test(hostname)) return true;
         // host.docker.internal or similar Docker/Kubernetes internal names
         if (hostname.endsWith('.internal') || hostname === 'host.docker.internal') return true;
+        // Cloud metadata services
+        if (hostname === 'metadata.google.internal' || hostname === 'metadata.internal') return true;
+        // mDNS / link-local hostnames
+        if (hostname.endsWith('.local')) return true;
         return false;
     }
 
