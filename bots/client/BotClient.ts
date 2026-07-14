@@ -1613,8 +1613,8 @@ export class BotClient {
         // Strip brackets from IPv6 literals (Node.js URL normalizes [::ffff:127.0.0.1] to [::ffff:7f00:1])
         const raw = hostname.replace(/^\[|\]$/g, '');
 
-        // Localhost / loopback
-        if (raw === 'localhost' || raw === '127.0.0.1' || raw === '::1') {
+        // Localhost / loopback (entire 127.0.0.0/8 range)
+        if (raw === 'localhost' || raw === '::1' || /^127\.\d+\.\d+\.\d+$/.test(raw)) {
             return true;
         }
         // IPv6-mapped IPv4 (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1) — SSRF bypass vector
