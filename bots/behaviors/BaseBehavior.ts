@@ -956,7 +956,7 @@ export abstract class BaseBehavior {
     protected async retryPendingMedia(spaceName: string, user: SpaceUser & { id: number }): Promise<void> {
         const botId = this.bot?.getBotId();
         const botClient = this.bot;
-        if (!botId || !botClient || !this.conversationStorage) return;
+        if (!botId || !botClient || !this.conversationMemory) return;
 
         const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
         if (!memory?.pendingMedia?.length) return;
