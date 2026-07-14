@@ -1837,7 +1837,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const cdnUrl = error._cdnUrl || imageUrl;
                                 const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'image';
                                 const mimeType = error._mimeType || '';
-                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
@@ -1880,7 +1880,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const cdnUrl = error._cdnUrl || fileUrl;
                                 const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'file';
                                 const mimeType = error._mimeType || '';
-                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
@@ -1922,7 +1922,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const cdnUrl = error._cdnUrl || audioUrl;
                                 const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'audio';
                                 const mimeType = error._mimeType || '';
-                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
@@ -1963,7 +1963,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const cdnUrl = error._cdnUrl || videoUrl;
                                 const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'video';
                                 const mimeType = error._mimeType || '';
-                                const memory = botId && playerId ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
                                 if (memory) {
                                     if (!memory.pendingMedia) memory.pendingMedia = [];
                                     if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
