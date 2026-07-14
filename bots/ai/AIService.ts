@@ -2210,6 +2210,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             }
             // Fallback to JSON for other results or errors
+            if (r.result === null || r.result === undefined) {
+                return `${r.name}: Tool failed to return a result (timed out or server error). Let the user know the operation didn't complete.`;
+            }
             return `${r.name}: ${JSON.stringify(r.result)}`;
         }).join('\\n');
     }

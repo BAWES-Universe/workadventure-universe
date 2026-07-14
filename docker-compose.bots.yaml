@@ -47,3 +47,7 @@ services:
       retries: 3
       start_period: 40s
 
+
+  uploader:
+    environment:
+      BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN}
