@@ -1364,43 +1364,44 @@ export class BotClient {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
 
-        let response: Response;
+        const MAX_SIZE = 25 * 1024 * 1024;
+
         try {
-            response = await this.fetchWithRedirectFollow(url, { signal: controller.signal });
+            const response = await this.fetchWithRedirectFollow(url, { signal: controller.signal });
+            if (!response.ok) {
+                throw new Error(`[BotClient] Failed to fetch media from ${url}: ${response.status} ${response.statusText}`);
+            }
+
+            // Stream the response body with a size cap (25 MB)
+            // Timeout remains active throughout streaming to prevent hung connections
+            const contentType = mimeType || response.headers.get('content-type') || 'application/octet-stream';
+            const chunks: Buffer[] = [];
+            let totalSize = 0;
+
+            if (!response.body) {
+                throw new Error('[BotClient] Response has no body stream');
+            }
+            const reader = response.body.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    totalSize += value.length;
+                    if (totalSize > MAX_SIZE) {
+                        reader.cancel();
+                        throw new Error(`[BotClient] Media exceeds maximum size of ${MAX_SIZE / 1024 / 1024} MB`);
+                    }
+                    chunks.push(Buffer.from(value));
+                }
+            } finally {
+                reader.cancel().catch(() => {}); // Release the stream reader
+            }
+            const buffer = Buffer.concat(chunks);
+
+            return { buffer, contentType };
         } finally {
             clearTimeout(timeoutId);
         }
-        if (!response.ok) {
-            throw new Error(`[BotClient] Failed to fetch media from ${url}: ${response.status} ${response.statusText}`);
-        }
-
-        // Stream the response body with a size cap (25 MB)
-        const MAX_SIZE = 25 * 1024 * 1024;
-        const contentType = mimeType || response.headers.get('content-type') || 'application/octet-stream';
-        const chunks: Buffer[] = [];
-        let totalSize = 0;
-
-        if (!response.body) {
-            throw new Error('[BotClient] Response has no body stream');
-        }
-        const reader = response.body.getReader();
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                totalSize += value.length;
-                if (totalSize > MAX_SIZE) {
-                    reader.cancel();
-                    throw new Error(`[BotClient] Media exceeds maximum size of ${MAX_SIZE / 1024 / 1024} MB`);
-                }
-                chunks.push(Buffer.from(value));
-            }
-        } finally {
-            reader.cancel().catch(() => {}); // Release the stream reader
-        }
-        const buffer = Buffer.concat(chunks);
-
-        return { buffer, contentType };
     }
 
     /**
