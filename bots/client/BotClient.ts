@@ -29,6 +29,7 @@ import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
+import { resolve4, resolve6 } from 'dns/promises';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -1238,6 +1239,44 @@ export class BotClient {
         });
     }
 
+    /** Return true when `ip` is a private/reserved address (both IPv4 and IPv6). */
+    private isPrivateIp(ip: string): boolean {
+        if (/^127\.\d+\.\d+\.\d+$/.test(ip)) return true;
+        if (/^::ffff:127\.\d+\.\d+\.\d+$/i.test(ip)) return true;
+        if (ip === '0.0.0.0' || ip === '::1' || /^::$/.test(ip)) return true;
+        if (/^10\.\d+\.\d+\.\d+$/.test(ip)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(ip)) return true;
+        if (/^192\.168\.\d+\.\d+$/.test(ip)) return true;
+        if (/^169\.254\.\d+\.\d+$/.test(ip) && ip !== '169.254.169.254') return true;
+        // AWS metadata endpoint — still private
+        if (ip === '169.254.169.254') return true;
+        // IPv6 unique-local / link-local
+        if (/^f[cd][0-9a-f]{0,3}:/i.test(ip)) return true;
+        if (/^fe[89a-b][0-9a-f]:/i.test(ip)) return true;
+        return false;
+    }
+
+    /**
+     * Resolve a hostname via DNS and validate none of the resolved addresses
+     * are private. Returns true when all resolved IPs are external.
+     * Skips DNS for literal IP addresses (already validated by isPrivateHost).
+     */
+    private async resolveIsExternal(hostname: string): Promise<boolean> {
+        if (/^[\d.]+$/.test(hostname) || /^[0-9a-f:]+$/i.test(hostname) || hostname.startsWith('[')) {
+            return true;
+        }
+        let safe = true;
+        try {
+            const v4 = await resolve4(hostname);
+            if (v4.some(ip => this.isPrivateIp(ip))) safe = false;
+        } catch { /* no A record — not a problem */ }
+        try {
+            const v6 = await resolve6(hostname);
+            if (v6.some(ip => this.isPrivateIp(ip))) safe = false;
+        } catch { /* no AAAA record — not a problem */ }
+        return safe;
+    }
+
     /** Follow HTTP redirects with SSRF validation on each hop (max 5 hops). */
     private async fetchWithRedirectFollow(
         url: string,
@@ -1260,6 +1299,11 @@ export class BotClient {
         }
         if (this.isPrivateHost(parsedUrl.hostname)) {
             throw new Error(`[BotClient] Redirect target is a private or reserved address: ${parsedUrl.hostname}`);
+        }
+        // DNS-level SSRF guard: resolve hostname and verify resolved IPs are not private
+        const hostnameSafe = await this.resolveIsExternal(parsedUrl.hostname);
+        if (!hostnameSafe) {
+            throw new Error(`[BotClient] URL hostname '${parsedUrl.hostname}' resolves to a private/internal IP address`);
         }
 
         const response = await fetch(url, { ...init, redirect: 'manual' });
