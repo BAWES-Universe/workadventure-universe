@@ -3,7 +3,7 @@
  */
 
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
-import { PositionMessage_Direction } from '@workadventure/messages';
+import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
@@ -23,18 +23,10 @@ export interface IdleBehaviorConfig extends BehaviorConfig {
 export class IdleBehavior extends BaseBehavior {
     private lastAnimationTime: number = 0;
     private greetedPlayers: Set<number> = new Set();
-    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
 
     constructor(config: IdleBehaviorConfig) {
         super(config);
         // ConversationMemory will be set by BotManager via setConversationMemory
-    }
-    
-    /**
-     * Set conversation memory (called by BotManager to share the persistent memory instance)
-     */
-    setConversationMemory(memory: ConversationMemory): void {
-        this.conversationMemory = memory;
     }
     
     /**
@@ -361,7 +353,7 @@ export class IdleBehavior extends BaseBehavior {
         super.onSpaceLeft(spaceName);
     }
 
-    onChatMessage(spaceName: string, message: string, senderId: number): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
         if (!this.bot) {
             console.warn(`[IdleBehavior] onChatMessage: bot is null`);
             return;
@@ -370,6 +362,13 @@ export class IdleBehavior extends BaseBehavior {
         const botId = this.bot.getBotId();
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[IdleBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
+        }
+
+        // If the user sent a file/image/audio/video along with their message,
+        // augment the message text with the URL so the AI knows about it.
+        if (url) {
+            const mediaLabel = mediaType || 'file';
+            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
         }
 
         // Get user info from bot's player map

@@ -16,6 +16,7 @@ services:
       ADMIN_API_URL: ${ADMIN_API_URL:-}
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
       BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN}
+      UPLOADER_URL: ${UPLOADER_URL:-http://uploader:8080}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       WORKADVENTURE_URL: ws://pusher:8080
       REDIS_HOST: redis
@@ -46,3 +47,7 @@ services:
       retries: 3
       start_period: 40s
 
+
+  uploader:
+    environment:
+      BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN}

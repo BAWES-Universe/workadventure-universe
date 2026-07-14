@@ -29,6 +29,8 @@ export abstract class BaseBehavior {
     protected adminApiService: AdminApiService | null = null;
     protected conversationStorage: ConversationStorage | null = null;
     protected responseProcessor: ResponseProcessor | null = null;
+    protected metricsCollector: BotMetricsCollector | null = null;
+    protected conversationMemory: ConversationMemory | null = null;
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
@@ -122,9 +124,11 @@ export abstract class BaseBehavior {
     }
 
     /**
-     * Set conversation memory (optional - behaviors can override to use shared memory)
+     * Set conversation memory (behaviors can override to use shared memory)
      */
-    setConversationMemory?(memory: ConversationMemory): void;
+    setConversationMemory(memory: ConversationMemory): void {
+        this.conversationMemory = memory;
+    }
     
     /**
      * Helper method to set user UUID in conversation memory (behaviors can override)
@@ -945,11 +949,81 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Retry any pending media that was queued when the user previously left the space.
+     * Re-uploads (CDN copies are fast) and re-sends. On success, injects an
+     * autoDeliveredMedia fact so the greeting AI knows not to re-announce it.
+     */
+    protected async retryPendingMedia(spaceName: string, user: SpaceUser & { id: number }): Promise<void> {
+        const botId = this.bot?.getBotId();
+        const botClient = this.bot;
+        if (!botId || !botClient || !this.conversationMemory) return;
+
+        const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
+        if (!memory?.pendingMedia?.length) return;
+
+        const remaining: any[] = [];
+        let deliveredCount = 0;
+
+        async function sendMedia(
+            botClient: BotClient,
+            spaceName: string,
+            mediaType: string,
+            url: string,
+            mimeType: string,
+            caption?: string
+        ): Promise<void> {
+            // Use sendMediaMessage directly — pending.url is already a CDN URL
+            // from the cached upload, so there's no need to re-upload via sendImage/etc.
+            if (!botClient.sendMediaMessage(spaceName, url, mediaType, mimeType || 'application/octet-stream', caption || '')) {
+                // sendMediaMessage already logs 'not in space'
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] Retry failed: not in space ${spaceName}`);
+                }
+                throw new Error(`Not in space ${spaceName}`);
+            }
+        }
+
+        for (const pending of memory.pendingMedia) {
+            if (pending.retryCount >= 3) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] Dropping pending media after ${pending.retryCount} retries: ${pending.url.substring(0, 60)}`);
+                }
+                continue;
+            }
+            pending.retryCount++;
+            let success = false;
+            try {
+                await sendMedia(botClient, spaceName, pending.mediaType, pending.url, pending.mimeType, pending.caption);
+                success = true;
+            } catch (err) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] Retry failed for ${pending.mediaType}: ${(err as Error).message}`);
+                }
+            }
+            if (success) {
+                deliveredCount++;
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] ✅ Auto-delivered pending ${pending.mediaType} to user ${user.id}`);
+                }
+            } else {
+                remaining.push(pending);
+            }
+        }
+        memory.pendingMedia = remaining;
+
+        // If any items were delivered, inject a fact so the greeting AI knows
+        // not to re-announce. Delivered just now as the user rejoined.
+        if (deliveredCount > 0) {
+            memory.personalInfo.facts.set('autoDeliveredMedia', String(deliveredCount));
+        }
+    }
+
+    /**
      * Called when a user joins the space
      * @param spaceName Space name
      * @param user User that joined
      */
-    onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): void {
+    async onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): Promise<void> {
         // Skip if it's the bot itself
         if (user.id === this.bot?.getUserId()) {
             return;
@@ -978,6 +1052,14 @@ export abstract class BaseBehavior {
             this.pendingSpaceUserIdToUserId.delete(user.spaceUserId);
         }
         
+        // Track this user as engaged IMMEDIATELY, before any async work.
+        // This prevents a race with onSpaceUserLeft: if the user leaves
+        // during retryPendingMedia, onSpaceUserLeft's engagedWithUsers.delete()
+        // will correctly remove them. Without this ordering, the engagedWithUsers.set()
+        // after the await would re-add the user after they'd already left.
+        this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
+        this.isEngaged = this.engagedWithUsers.size > 0;
+        
         // Also track UUID in PersistentMemory for memory/emotion persistence
         if (user.uuid) {
             const botId = this.bot?.getBotId();
@@ -991,15 +1073,21 @@ export abstract class BaseBehavior {
             // Notify behavior that memory is restored and UUID is available
             // This is the correct time to generate greetings (after memory is ready)
             if (botId) {
-                this.onMemoryReady?.(spaceName, user);
+                // Retry any pending media that was queued when the user left
+                // Must complete before greeting so autoDeliveredMedia fact is set
+                try {
+                    await this.retryPendingMedia(spaceName, user);
+                } catch (err) {
+                    console.error(`[Behavior] Error retrying pending media:`, err);
+                }
+                // Only notify memory ready if the user is still engaged
+                // (they may have left during the async retry)
+                if (this.engagedWithUsers.has(user.id)) {
+                    this.onMemoryReady?.(spaceName, user);
+                }
             }
         }
 
-        // Track this user as engaged
-        // Note: SpaceUser doesn't have position info - we'll get it from room player data if needed
-        this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
-        this.isEngaged = this.engagedWithUsers.size > 0;
-        
         // If leading and space name not set yet, set it now (space was just created)
         if (this.isLeading && !this.leadingSpaceName) {
             this.leadingSpaceName = spaceName;
@@ -1009,7 +1097,8 @@ export abstract class BaseBehavior {
         }
 
         // Try to get player position from room data if available
-        if (this.bot) {
+        // Only if the user is still engaged (they may have left during async retryPendingMedia)
+        if (this.bot && this.engagedWithUsers.has(user.id)) {
             const playerInfo = this.bot.getPlayerInfo(user.id);
             if (playerInfo?.position) {
                 this.engagedWithUsers.set(user.id, { spaceName, position: playerInfo.position });
@@ -1143,7 +1232,7 @@ export abstract class BaseBehavior {
      * @param message Chat message
      * @param senderId Sender's user ID
      */
-    onChatMessage(spaceName: string, message: string, senderId: number): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
         // Default: do nothing
     }
 

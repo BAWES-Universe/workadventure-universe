@@ -482,7 +482,7 @@ export class OpenAIProvider implements AIProvider {
                     }
                 }
 
-                const data = await finalResponse.json();
+                const data = await finalResponse.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
                 const content = data.choices?.[0]?.message?.content || '';
                 const tokensUsed = data.usage?.total_tokens || 0;
                 const promptTokens = data.usage?.prompt_tokens || 0;

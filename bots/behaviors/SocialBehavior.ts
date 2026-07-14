@@ -44,19 +44,11 @@ export class SocialBehavior extends BaseBehavior {
     private lastWanderFailure: number = 0; // Track when pathfinding failed
     private wanderInProgress: boolean = false; // Prevent multiple concurrent calls
     private readonly WANDER_FAILURE_COOLDOWN = 2000; // 2 seconds before retrying after failure
-    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
     private currentSpaceName: string | null = null; // Track current space to prevent wandering
 
     constructor(config: SocialBehaviorConfig) {
         super(config);
         // ConversationMemory will be set by BotManager via setConversationMemory
-    }
-    
-    /**
-     * Set conversation memory (called by BotManager to share the persistent memory instance)
-     */
-    setConversationMemory(memory: ConversationMemory): void {
-        this.conversationMemory = memory;
     }
     
     /**
@@ -562,7 +554,7 @@ export class SocialBehavior extends BaseBehavior {
         });
     }
 
-    onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): void {
+    async onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): Promise<void> {
         if (!this.bot) return;
 
         // Call base behavior first to track engagement
@@ -668,7 +660,7 @@ export class SocialBehavior extends BaseBehavior {
         this.targetPlayerId = null;
     }
 
-    onChatMessage(spaceName: string, message: string, senderId: number): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
         if (!this.bot) {
             console.warn(`[SocialBehavior] onChatMessage: bot is null`);
             return;
@@ -677,6 +669,17 @@ export class SocialBehavior extends BaseBehavior {
         const botId = this.bot.getBotId();
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] onChatMessage received: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
+        }
+
+        // If the user sent a file/image/audio/video along with their message,
+        // augment the message text with the URL so the AI knows about it.
+        // The filename alone (e.g. "artist-full-trans.png") isn't actionable.
+        if (url) {
+            const mediaLabel = mediaType || 'file';
+            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[SocialBehavior] Augmented message with URL: ${message}`);
+            }
         }
         
         let conversation = this.activeConversations.get(senderId);
@@ -2153,7 +2156,7 @@ export class SocialBehavior extends BaseBehavior {
         // Log direct movement
         movementLogger.log({
             timestamp: Date.now(),
-            botId: this.bot.config.botId,
+            botId: this.bot.getBotId(),
             eventType: 'move',
             position: { x: newX, y: newY },
             targetPosition: player.position,
@@ -2255,7 +2258,7 @@ export class SocialBehavior extends BaseBehavior {
             // Log direct movement
             movementLogger.log({
                 timestamp: Date.now(),
-                botId: this.bot.config.botId,
+                botId: this.bot.getBotId(),
                 eventType: 'move',
                 position: { x: newX, y: newY },
                 targetPosition: this.wanderTarget,

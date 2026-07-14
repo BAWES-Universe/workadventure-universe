@@ -197,18 +197,19 @@
 <svelte:window on:keydown={onKeyDown} />
 
 {#if show}
-    <div
+    <button
+        type="button"
+        tabindex="-1"
         use:portal
         bind:this={lightboxEl}
         data-lightbox
-        class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80"
-        style="opacity: 1;"
+        class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 w-full h-full m-0"
+        style="opacity: 1; border: none; padding: 0; background: rgba(0,0,0,0.8); cursor: default; font: inherit; color: inherit;"
         transition:fade={{ duration: 200 }}
         on:click={onBackdropClick}
-        role="dialog"
         aria-label="Image lightbox"
     >
-        <div data-lightbox-content class="relative w-full h-full flex items-center justify-center">
+        <div data-lightbox-content class="relative w-full h-full flex items-center justify-center" role="none">
             <!-- Close button -->
             <button
                 class="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
@@ -242,8 +243,8 @@
                 on:pointercancel={onPointerUp}
                 on:touchstart|preventDefault={onTouchStart}
                 on:touchmove|preventDefault={onTouchMove}
-                role="img"
-                aria-label="Zoomable image"
+                role="presentation"
+                tabindex="-1"
             >
                 <img
                     {src}
@@ -264,7 +265,7 @@
                 </div>
             {/if}
         </div>
-    </div>
+    </button>
 {/if}
 
 <style>

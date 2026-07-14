@@ -14,6 +14,7 @@ import {
   S3_CDN_BOT_GENS_PUBLIC_URL,
   S3_CDN_USER_REFS_BUCKET,
   S3_CDN_BOT_GENS_BUCKET,
+  BOT_SERVICE_TOKEN,
   UPLOAD_MAX_FILESIZE,
   UPLOADER_URL,
 } from "../Enum/EnvironmentVariable";
@@ -102,7 +103,13 @@ export class FileController {
       }
 
       const userRoomToken = request.body.userRoomToken;
-      const bucket: string | undefined = S3_CDN_USER_REFS_BUCKET || S3_CDN_BOT_GENS_BUCKET || undefined;
+      const botServiceToken = request.headers["x-bot-service-token"] as string | undefined;
+      
+      // Bot service token check: if valid, route to bot-gens bucket and skip user auth
+      const isBotUpload = BOT_SERVICE_TOKEN && botServiceToken === BOT_SERVICE_TOKEN;
+      const bucket: string | undefined = isBotUpload
+        ? (S3_CDN_BOT_GENS_BUCKET || undefined)
+        : (S3_CDN_USER_REFS_BUCKET || S3_CDN_BOT_GENS_BUCKET || undefined);
 
       // Check file count cap
       if (!request.files || (request.files as Express.Multer.File[]).length > 10) {
@@ -120,8 +127,8 @@ export class FileController {
           type?: string;
         }[] = [];
 
-        // Validate session token if admin API is configured
-        if (ADMIN_API_URL && !userRoomToken) {
+        // Validate session token if admin API is configured (skip for bot uploads)
+        if (ADMIN_API_URL && !userRoomToken && !isBotUpload) {
           throw new NotLoggedUser();
         }
 

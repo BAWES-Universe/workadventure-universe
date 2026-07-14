@@ -54,8 +54,6 @@ export class BotManager {
     private conversationCleanup: ConversationCleanup;
     private autoImprovement: AutoImprovement | null = null;
     private selfImprovementLoop: SelfImprovementLoop | null = null;
-    private purposeDetector: PurposeDetector | null = null;
-    private conversationAnalytics: ConversationAnalytics | null = null;
     private testRunner: BotTestRunner | null = null;
     private conversationReplay: ConversationReplay | null = null;
     private autoPilot: AutoPilotImprovement | null = null;
@@ -169,8 +167,6 @@ export class BotManager {
         // Note: This requires PersistentMemory, but we're using ConversationMemory for now
         // In production, this would use PersistentMemory
         // For now, create a placeholder that will work with ConversationMemory
-        // this.purposeDetector = new PurposeDetector(this.persistentMemory, this.aiService);
-        // this.conversationAnalytics = new ConversationAnalytics(this.persistentMemory, this.metricsCollector);
     }
     
     /**
@@ -258,6 +254,7 @@ export class BotManager {
             position,
             viewport: { top: 0, bottom: 1000, left: 0, right: 1000 }, // TODO: Get from config
             characterTextureIds: config.characterTextureIds || [], // TODO: Get from config or WAM file
+            uploaderUrl: process.env.UPLOADER_URL,
         };
         
         const client = new BotClient(botConfig);
@@ -273,20 +270,20 @@ export class BotManager {
         
         // Transform Admin API config format to behavior format
         const transformBehaviorConfig = (type: string, cfg: Record<string, any>): Record<string, any> => {
-            const transformed = { ...cfg, type };
-            
+            const transformed: any = { ...(cfg as any), type };
+
             // Transform patrol config: patrolWaypoints → waypoints
             if (type === 'patrol') {
                 // Convert patrolWaypoints to waypoints (Admin API uses patrolWaypoints)
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, cfg.patrolWaypoints, `waypoints:`, cfg.waypoints);
+                    console.log(`[BotManager] Transforming patrol config, patrolWaypoints:`, (cfg as any).patrolWaypoints, `waypoints:`, (cfg as any).waypoints);
                 }
-                if (cfg.patrolWaypoints && Array.isArray(cfg.patrolWaypoints)) {
-                    transformed.waypoints = cfg.patrolWaypoints;
+                if ((cfg as any).patrolWaypoints && Array.isArray((cfg as any).patrolWaypoints)) {
+                    transformed.waypoints = (cfg as any).patrolWaypoints;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[BotManager] Set waypoints from patrolWaypoints:`, transformed.waypoints);
                     }
-                } else if (cfg.waypoints && Array.isArray(cfg.waypoints)) {
+                } else if ((cfg as any).waypoints && Array.isArray((cfg as any).waypoints)) {
                     // Already has waypoints, use it
                     transformed.waypoints = cfg.waypoints;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -370,7 +367,7 @@ export class BotManager {
             
             switch (type) {
                 case 'idle':
-                    return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
+                    return new IdleBehavior(transformedConfig as ConstructorParameters<typeof IdleBehavior>[0]);
                 case 'patrol':
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[BotManager] Creating PatrolBehavior with config:`, JSON.stringify(transformedConfig, null, 2));
@@ -383,9 +380,9 @@ export class BotManager {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.log(`[BotManager] Final waypoints before constructor:`, transformedConfig.waypoints);
                     }
-                    return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
+                    return new PatrolBehavior(transformedConfig as ConstructorParameters<typeof PatrolBehavior>[0]);
                 case 'social':
-                    return new SocialBehavior(transformedConfig as Parameters<typeof SocialBehavior>[0]);
+                    return new SocialBehavior(transformedConfig as ConstructorParameters<typeof SocialBehavior>[0]);
                 default:
                     throw new Error(`Unknown behavior type: ${type}`);
             }
@@ -619,13 +616,6 @@ export class BotManager {
     }
 
     /**
-     * Get conversation analytics
-     */
-    getConversationAnalytics(): ConversationAnalytics | null {
-        return this.conversationAnalytics;
-    }
-
-    /**
      * Get ConversationMemory instance
      */
     getConversationMemory(): ConversationMemory {
@@ -783,7 +773,7 @@ export class BotManager {
                 return transformed;
             };
             
-            const createBehavior = (type: string, cfg: Record<string, unknown>) => {
+            const createBehavior = (type: string, cfg: any) => {
                 const transformedConfig = transformBehaviorConfig(type, cfg);
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[BotManager] Creating new ${type} behavior with config:`, JSON.stringify(transformedConfig, null, 2));
@@ -791,23 +781,26 @@ export class BotManager {
                 
                 switch (type) {
                     case 'idle':
-                        return new IdleBehavior(transformedConfig as Parameters<typeof IdleBehavior>[0]);
+                        return new IdleBehavior(transformedConfig as ConstructorParameters<typeof IdleBehavior>[0]);
                     case 'patrol':
                         // Final safety check for waypoints
-                        if (!transformedConfig.waypoints || !Array.isArray(transformedConfig.waypoints)) {
-                            transformedConfig.waypoints = [];
+                        if (!(transformedConfig as any).waypoints || !Array.isArray((transformedConfig as any).waypoints)) {
+                            (transformedConfig as any).waypoints = [];
                         }
-                        return new PatrolBehavior(transformedConfig as Parameters<typeof PatrolBehavior>[0]);
+                        return new PatrolBehavior(transformedConfig as ConstructorParameters<typeof PatrolBehavior>[0]);
                     case 'social':
-                        return new SocialBehavior(transformedConfig as Parameters<typeof SocialBehavior>[0]);
+                        return new SocialBehavior(transformedConfig as ConstructorParameters<typeof SocialBehavior>[0]);
                     default:
                         throw new Error(`Unknown behavior type: ${type}`);
                 }
             };
             
-            const behavior = createBehavior(newBehaviorType, newBehaviorConfig);
+            const behavior = createBehavior(newBehaviorType, newBehaviorConfig as any);
             // Set services for behavior (required for AI responses)
             behavior.setServices(this.aiService, this.adminApiService, this.conversationStorage, this.responseProcessor, this.metricsCollector);
+            if (behavior.setConversationMemory) {
+                behavior.setConversationMemory(this.conversationMemory);
+            }
             instance.client.setBehavior(behavior);
             
             if (updates.behaviorType) {
@@ -1019,8 +1012,8 @@ export class BotManager {
 
             // Ensure room exists (fallback - should already exist)
             if (!room) {
-                const newRoom = {
-                    botIds: new Set(),
+                const newRoom: RoomState = {
+                    botIds: new Set<string>(),
                     lastActivity: Date.now(),
                 };
                 this.roomsWithBots.set(roomId, newRoom);
@@ -1172,7 +1165,7 @@ export class BotManager {
                 return new Map();
             }
 
-            const rooms: Record<string, number> = await response.json();
+            const rooms: Record<string, number> = await response.json() as Record<string, number>;
             const roomMap = new Map<string, number>();
             
             for (const [roomUrl, userCount] of Object.entries(rooms)) {

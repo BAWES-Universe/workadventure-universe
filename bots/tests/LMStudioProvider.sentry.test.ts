@@ -8,9 +8,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { LMStudioProvider } from "../ai/providers/LMStudioProvider";
+import type { AIProviderConfig } from "../ai/types";
 
 // ---- Helper: build config ----
-function buildConfig(extra: Record<string, any> = {}): Record<string, any> {
+function buildConfig(extra: Record<string, any> = {}): AIProviderConfig {
     return {
         providerId: "lmstudio-1",
         name: "TestLMStudio",

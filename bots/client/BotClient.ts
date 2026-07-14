@@ -43,6 +43,7 @@ export interface BotConfig {
     characterTextureIds: string[];
     companionTextureId?: string;
     token?: string;
+    uploaderUrl?: string;
 }
 
 export class BotClient {
@@ -1238,6 +1239,329 @@ export class BotClient {
     }
 
     /**
+     * Upload a file from a URL to the uploader service using bot service auth.
+     * Fetches the content from the provided URL (e.g. MCP tool output) and POSTs it
+     * to the uploader's /upload-file endpoint with the BOT_SERVICE_TOKEN header.
+     * Returns the CDN location and inferred media type.
+     */
+    private async uploadMedia(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
+        const uploaderUrl = this.config.uploaderUrl || process.env.UPLOADER_URL;
+        if (!uploaderUrl) {
+            throw new Error('[BotClient] UPLOADER_URL not configured — cannot upload media');
+        }
+
+        // If the URL is already on our uploader/CDN, no need to re-upload
+        if (url.startsWith(uploaderUrl) || url.includes('/upload-file/')) {
+            // Infer media type from URL or mimeType
+            const mediaType = this.inferMediaTypeFromUrl(url, mimeType);
+            return { location: url, mediaType, mimeType: mimeType || 'application/octet-stream' };
+        }
+
+        // Validate URL before fetching — SSRF prevention
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            throw new Error(`[BotClient] Invalid URL: ${url}`);
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            throw new Error(`[BotClient] Unsupported URL scheme: ${parsedUrl.protocol}`);
+        }
+        const hostname = parsedUrl.hostname;
+        if (this.isPrivateHost(hostname)) {
+            throw new Error(`[BotClient] URL points to a private or reserved address: ${hostname}`);
+        }
+
+        // Fetch with timeout and size limit
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
+
+        let response: Response;
+        try {
+            response = await fetch(url, { signal: controller.signal });
+        } finally {
+            clearTimeout(timeoutId);
+        }
+        if (!response.ok) {
+            throw new Error(`[BotClient] Failed to fetch media from ${url}: ${response.status} ${response.statusText}`);
+        }
+
+        // Stream the response body with a size cap (25 MB)
+        const MAX_SIZE = 25 * 1024 * 1024;
+        const contentType = mimeType || response.headers.get('content-type') || 'application/octet-stream';
+        const chunks: Buffer[] = [];
+        let totalSize = 0;
+
+        if (!response.body) {
+            throw new Error('[BotClient] Response has no body stream');
+        }
+        const reader = response.body.getReader();
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                totalSize += value.length;
+                if (totalSize > MAX_SIZE) {
+                    reader.cancel();
+                    throw new Error(`[BotClient] Media exceeds maximum size of ${MAX_SIZE / 1024 / 1024} MB`);
+                }
+                chunks.push(Buffer.from(value));
+            }
+        } finally {
+            reader.cancel().catch(() => {}); // Release the stream reader
+        }
+        const buffer = Buffer.concat(chunks);
+
+        // Extract filename from URL for the upload
+        const urlPath = new URL(url).pathname;
+        const filename = urlPath.split('/').pop() || `bot-media-${Date.now()}`;
+
+        // Build multipart form data
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: contentType });
+        formData.append('file', blob, filename);
+
+        // Upload to uploader with bot service token
+        const uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
+            method: 'POST',
+            headers: {
+                'x-bot-service-token': process.env.BOT_SERVICE_TOKEN || '',
+            },
+            body: formData,
+        });
+
+        if (!uploadResponse.ok) {
+            const errorText = await uploadResponse.text();
+            throw new Error(`[BotClient] Upload failed: ${uploadResponse.status} — ${errorText}`);
+        }
+
+        const result = await uploadResponse.json();
+        if (!Array.isArray(result) || result.length === 0) {
+            throw new Error('[BotClient] Upload response missing file data');
+        }
+
+        const uploadedFile = result[0];
+        const location = uploadedFile.location || uploadedFile.url;
+        const mediaType = this.inferMediaTypeFromUrl(location, contentType);
+
+        return { location, mediaType, mimeType: contentType };
+    }
+
+    /**
+     * Infer media type from URL extension or mime type
+     */
+    private inferMediaTypeFromUrl(url: string, mimeType?: string): string {
+        const ext = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
+        const mime = mimeType?.toLowerCase() || '';
+
+        // Check mime type first
+        if (mime.startsWith('image/')) return 'image';
+        if (mime.startsWith('audio/')) return 'audio';
+        if (mime.startsWith('video/')) return 'video';
+        if (mime.startsWith('text/') || mime === 'application/pdf') return 'file';
+
+        // Fallback to extension
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+        const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma'];
+        const videoExts = ['mp4', 'webm', 'avi', 'mov', 'mkv', 'flv', 'wmv'];
+
+        if (imageExts.includes(ext)) return 'image';
+        if (audioExts.includes(ext)) return 'audio';
+        if (videoExts.includes(ext)) return 'video';
+        return 'file';
+    }
+
+    /**
+     * Send an image to a space.
+     * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
+     */
+    async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '')) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent image to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Send a file to a space.
+     */
+    async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '')) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent file to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Send audio to a space.
+     */
+    async sendAudio(spaceName: string, url: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent audio to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Send video to a space.
+     */
+    async sendVideo(spaceName: string, url: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent video to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Upload a media file to the CDN and return the CDN URL.
+     * Public wrapper around the private uploadMedia method.
+     * Useful for callers that need the CDN URL before deciding to send.
+     */
+    async uploadToCDN(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
+        return this.uploadMedia(url, mimeType);
+    }
+
+    /**
+     * Check if a hostname resolves to a private or link-local address.
+     * Prevents SSRF attacks by rejecting internal network targets.
+     */
+    private isPrivateHost(hostname: string): boolean {
+        // Localhost / loopback
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') {
+            return true;
+        }
+        // IPv4 private ranges
+        if (/^10\./.test(hostname)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+        if (/^192\.168\./.test(hostname)) return true;
+        // IPv4 link-local
+        if (/^169\.254\./.test(hostname)) return true;
+        // IPv6 documentation / private / unique-local
+        if (hostname === '::' || hostname === '[::]') return true;
+        if (/^fc00:/i.test(hostname) || /^fd00:/i.test(hostname)) return true;
+        if (/^fe80:/i.test(hostname)) return true;
+        // host.docker.internal or similar Docker/Kubernetes internal names
+        if (hostname.endsWith('.internal') || hostname === 'host.docker.internal') return true;
+        return false;
+    }
+
+    /**
+     * Send a media message to a space via publicEvent spaceMessage.
+     */
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): boolean {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName} — cannot send media`);
+            }
+            return false;
+        }
+
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceMessage',
+                            spaceMessage: {
+                                message: caption || '',
+                                characterTextures: [],
+                                name: this.config.name,
+                                url,
+                                mediaType,
+                                mimeType,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        return true;
+    }
+
+    /**
+     * Infer mime type from file extension
+     */
+    private inferMimeFromExt(url: string): string {
+        const ext = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
+        const mimeMap: Record<string, string> = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+            gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+            mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg',
+            mp4: 'video/mp4', webm: 'video/webm',
+            pdf: 'application/pdf', txt: 'text/plain',
+            json: 'application/json', csv: 'text/csv',
+        };
+        return mimeMap[ext] || '';
+    }
+
+    /**
      * Send a streaming response chunk to the space.
      * Used by bot behaviors to stream AI-generated text token-by-token
      * to the frontend instead of waiting for the complete response.
@@ -1711,7 +2035,7 @@ export class BotClient {
         }
     }
 
-    private handleSubMessage(message: ServerToClientMessage['message']): void {
+    private handleSubMessage(message: any): void {
         if (!message) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[Bot ${this.config.botId}] ⚠️ handleSubMessage called with null/undefined message`);
@@ -2067,7 +2391,10 @@ export class BotClient {
                         this.behavior.onChatMessage(
                             spaceName,
                             spaceMessage.message,
-                            senderId
+                            senderId,
+                            spaceMessage.url,
+                            spaceMessage.mediaType,
+                            spaceMessage.mimeType
                         );
                     } else {
                         if (senderId === 0) {
@@ -2100,6 +2427,12 @@ export class BotClient {
             case 'pingMessage':
                 // Respond to server ping to keep connection alive
                 this.sendPong();
+                break;
+            default:
+                // Unhandled message types — bots only process what they need
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] Unhandled message type: ${message.$case}`);
+                }
                 break;
         }
     }
@@ -2135,8 +2468,8 @@ export class BotClient {
         }
 
         try {
-            // Default filterType to ALL_USERS (0) if not provided
-            const filterType = request.filterType ?? FilterType.ALL_USERS;
+            // Default filterType to ALL_USERS (0) — field removed from protobuf
+            const filterType = FilterType.ALL_USERS;
             const propertiesToSync = request.propertiesToSync || [];
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2373,7 +2706,7 @@ export class BotClient {
         }
     }
 
-    private sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;

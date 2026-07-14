@@ -7,7 +7,7 @@
 
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
-import { PositionMessage_Direction } from '@workadventure/messages';
+import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
@@ -33,7 +33,6 @@ export class PatrolBehavior extends BaseBehavior {
     private targetWaypoint: PositionInterface | null = null;
     private currentSpaceName: string | null = null;
     private spaceLeftTime: number = 0;
-    private conversationMemory: ConversationMemory | null = null; // Will be set by setConversationMemory
     private readonly RESUME_DELAY = 500;
     private lastPathfindingLog: number = 0; // Rate limit pathfinding logs
     private lastMoveAttemptLog: number = 0; // Rate limit move attempt logs
@@ -48,13 +47,6 @@ export class PatrolBehavior extends BaseBehavior {
         super(config);
         // ConversationMemory will be set by BotManager via setConversationMemory
         this.updateTargetWaypoint();
-    }
-    
-    /**
-     * Set conversation memory (called by BotManager to share the persistent memory instance)
-     */
-    setConversationMemory(memory: ConversationMemory): void {
-        this.conversationMemory = memory;
     }
     
     /**
@@ -749,9 +741,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         });
     }
     
-    onSpaceUserJoined(spaceName: string, user: any): void {
+    async onSpaceUserJoined(spaceName: string, user: any): Promise<void> {
         if (!this.currentSpaceName) return;
-        super.onSpaceUserJoined(spaceName, user);
+        await super.onSpaceUserJoined(spaceName, user);
         
         // When a user joins the space, add them to nearbyPlayers if not already there
         // This ensures stationary players are detected
@@ -1684,11 +1676,18 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Handle chat messages from players
      */
-    onChatMessage(spaceName: string, message: string, senderId: number): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
         if (!this.bot) return;
 
         const botId = this.bot.getBotId();
         const config = this.config as PatrolBehaviorConfig;
+
+        // If the user sent a file/image/audio/video along with their message,
+        // augment the message text with the URL so the AI knows about it.
+        if (url) {
+            const mediaLabel = mediaType || 'file';
+            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+        }
 
         // Only respond if respondToPlayers is enabled (default true)
         if (config.respondToPlayers === false) {

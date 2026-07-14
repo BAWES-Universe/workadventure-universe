@@ -11,7 +11,7 @@
 
 import { AIService } from './AIService';
 import { ContextManager } from './ContextManager';
-import type { AIStreamChunk } from './AIService';
+import type { AIStreamChunk } from './types';
 
 export interface MultiPromptConfig {
     enableAnalysis?: boolean; // Analyze conversation before responding
@@ -113,8 +113,8 @@ export class MultiPromptAIService {
             if (chunk.content) {
                 fullResponse += chunk.content;
             }
-            if (chunk.tokensUsed) {
-                responseTokens = chunk.tokensUsed;
+            if (chunk.metadata?.tokensUsed) {
+                responseTokens = chunk.metadata.tokensUsed;
             }
             yield chunk;
         }
@@ -133,8 +133,8 @@ export class MultiPromptAIService {
                     response: responseTokens,
                     total: analysisTokens + summarizationTokens + responseTokens,
                 },
-            },
-        };
+            } as any,
+        } as any;
     }
 
     /**
