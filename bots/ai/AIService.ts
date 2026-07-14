@@ -1975,6 +1975,42 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
+        // Flush deferred media (pendingAutoSend) before processing tool results.
+        // These are items that were queued by retryPendingMedia but deferred so they
+        // appear in chat after the "X entered" system message and alongside the greeting.
+        if (botId && playerId !== undefined) {
+            const memory = this.conversationMemory?.getMemory(botId, playerId);
+            if (memory?.pendingAutoSend?.length) {
+                const pending = [...memory.pendingAutoSend];
+                memory.pendingAutoSend = [];
+                for (const item of pending) {
+                    try {
+                        switch (item.mediaType) {
+                            case 'image':
+                                await botClient.sendImage(spaceName, item.url, item.caption);
+                                break;
+                            case 'file':
+                                await botClient.sendFile(spaceName, item.url, item.caption);
+                                break;
+                            case 'audio':
+                                await botClient.sendAudio(spaceName, item.url);
+                                break;
+                            case 'video':
+                                await botClient.sendVideo(spaceName, item.url);
+                                break;
+                        }
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] ✅ Flushed deferred ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
+                        }
+                    } catch (err) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.error(`[AIService] Failed to flush deferred ${item.mediaType}: ${(err as Error).message}`);
+                        }
+                    }
+                }
+            }
+        }
+
         const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
         const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
         const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
