@@ -1049,6 +1049,14 @@ export abstract class BaseBehavior {
             this.pendingSpaceUserIdToUserId.delete(user.spaceUserId);
         }
         
+        // Track this user as engaged IMMEDIATELY, before any async work.
+        // This prevents a race with onSpaceUserLeft: if the user leaves
+        // during retryPendingMedia, onSpaceUserLeft's engagedWithUsers.delete()
+        // will correctly remove them. Without this ordering, the engagedWithUsers.set()
+        // after the await would re-add the user after they'd already left.
+        this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
+        this.isEngaged = this.engagedWithUsers.size > 0;
+        
         // Also track UUID in PersistentMemory for memory/emotion persistence
         if (user.uuid) {
             const botId = this.bot?.getBotId();
@@ -1073,11 +1081,6 @@ export abstract class BaseBehavior {
             }
         }
 
-        // Track this user as engaged
-        // Note: SpaceUser doesn't have position info - we'll get it from room player data if needed
-        this.engagedWithUsers.set(user.id, { spaceName, position: undefined });
-        this.isEngaged = this.engagedWithUsers.size > 0;
-        
         // If leading and space name not set yet, set it now (space was just created)
         if (this.isLeading && !this.leadingSpaceName) {
             this.leadingSpaceName = spaceName;
@@ -1087,7 +1090,8 @@ export abstract class BaseBehavior {
         }
 
         // Try to get player position from room data if available
-        if (this.bot) {
+        // Only if the user is still engaged (they may have left during async retryPendingMedia)
+        if (this.bot && this.engagedWithUsers.has(user.id)) {
             const playerInfo = this.bot.getPlayerInfo(user.id);
             if (playerInfo?.position) {
                 this.engagedWithUsers.set(user.id, { spaceName, position: playerInfo.position });
