@@ -1357,7 +1357,7 @@ export class BotClient {
     async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
-            const { location, mediaType, mimeType } = await this.uploadMedia(url);
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '')) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
                 (err as any)._cdnUrl = location;
@@ -1383,7 +1383,7 @@ export class BotClient {
     async sendAudio(spaceName: string, url: string): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
-            const { location, mediaType, mimeType } = await this.uploadMedia(url);
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
                 (err as any)._cdnUrl = location;
@@ -1409,7 +1409,7 @@ export class BotClient {
     async sendVideo(spaceName: string, url: string): Promise<string> {
         const mimeHint = this.inferMimeFromExt(url);
         try {
-            const { location, mediaType, mimeType } = await this.uploadMedia(url);
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
             if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
                 (err as any)._cdnUrl = location;
