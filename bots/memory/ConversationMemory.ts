@@ -108,6 +108,9 @@ export interface BotPlayerMemory {
     // Pending media delivery (items that were uploaded but couldn't be sent)
     pendingMedia: PendingMedia[];
     maxPendingMedia: number;
+    
+    // Deferred media (uploaded & ready, but deferred until the conversation turn for correct ordering)
+    pendingAutoSend: PendingMedia[];
 }
 
 export class ConversationMemory {
@@ -470,6 +473,7 @@ export class ConversationMemory {
                 lastUpdated: now,
                 createdAt: now,
                 pendingMedia: [],
+                pendingAutoSend: [],
                 maxPendingMedia: 5,
             });
 
