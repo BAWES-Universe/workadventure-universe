@@ -2152,7 +2152,7 @@ export class BotClient {
     /**
      * Handle incoming WebSocket message
      */
-    private handleMessage(data: ArrayBuffer): void {
+    private async handleMessage(data: ArrayBuffer): Promise<void> {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] 📨 Received message, size: ${data.byteLength} bytes`);
         }
@@ -2177,11 +2177,11 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📦 Batch message with ${msg.batchMessage.payload.length} sub-messages`);
                     }
                     for (const subMessage of msg.batchMessage.payload) {
-                        this.handleSubMessage(subMessage.message);
+                        await this.handleSubMessage(subMessage.message);
                     }
                     break;
                 default:
-                    this.handleSubMessage(msg);
+                    await this.handleSubMessage(msg);
             }
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] ❌ Error handling message:`, error);
