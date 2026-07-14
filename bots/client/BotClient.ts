@@ -1430,7 +1430,7 @@ export class BotClient {
             pdf: 'application/pdf', txt: 'text/plain',
             json: 'application/json', csv: 'text/csv',
         };
-        return mimeMap[ext] || 'application/octet-stream';
+        return mimeMap[ext] || '';
     }
 
     /**
