@@ -962,7 +962,7 @@ export abstract class BaseBehavior {
         if (!memory?.pendingMedia?.length) return;
 
         const remaining: any[] = [];
-        const originalCount = memory.pendingMedia.length;
+        let deliveredCount = 0;
         for (const pending of memory.pendingMedia) {
             if (pending.retryCount >= 3) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -998,6 +998,7 @@ export abstract class BaseBehavior {
                 }
             }
             if (success) {
+                deliveredCount++;
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[Behavior] ✅ Auto-delivered pending ${pending.mediaType} to user ${user.id}`);
                 }
@@ -1009,8 +1010,7 @@ export abstract class BaseBehavior {
 
         // If any items were delivered, inject a fact so the greeting AI knows
         // not to re-announce. Delivered just now as the user rejoined.
-        if (remaining.length < originalCount) {
-            const deliveredCount = originalCount - remaining.length;
+        if (deliveredCount > 0) {
             memory.personalInfo.facts.set('autoDeliveredMedia', String(deliveredCount));
         }
     }
