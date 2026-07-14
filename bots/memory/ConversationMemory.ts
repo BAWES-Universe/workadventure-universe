@@ -749,7 +749,10 @@ export class ConversationMemory {
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
             context.push(`\n[Note: ${autoDelivered} media item(s) you prepared earlier were just delivered to them as they rejoined.]`);
-            personalInfo.facts.delete('autoDeliveredMedia');
+            // Mark as consumed instead of deleting — if the downstream AI call fails,
+            // the fact survives for the retry. Empty string is falsy so the guard
+            // above naturally skips it on subsequent reads, preventing duplicate mentions.
+            personalInfo.facts.set('autoDeliveredMedia', '');
         }
 
         // Natural emotion expression
