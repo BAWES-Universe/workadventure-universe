@@ -1241,8 +1241,8 @@ export class BotClient {
 
     /** Return true when `ip` is a private/reserved address (both IPv4 and IPv6). */
     private isPrivateIp(ip: string): boolean {
+        // IPv4 ranges
         if (/^127\.\d+\.\d+\.\d+$/.test(ip)) return true;
-        if (/^::ffff:127\.\d+\.\d+\.\d+$/i.test(ip)) return true;
         if (ip === '0.0.0.0' || ip === '::1' || /^::$/.test(ip)) return true;
         if (/^10\.\d+\.\d+\.\d+$/.test(ip)) return true;
         if (/^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(ip)) return true;
@@ -1253,6 +1253,27 @@ export class BotClient {
         // IPv6 unique-local / link-local
         if (/^f[cd][0-9a-f]{0,3}:/i.test(ip)) return true;
         if (/^fe[89a-b][0-9a-f]:/i.test(ip)) return true;
+        // IPv6-mapped IPv4 — handle both dot-decimal and hex forms
+        if (/^::ffff:/i.test(ip)) {
+            const embedded = ip.replace(/^::ffff:/i, '');
+            // Dot-decimal: ::ffff:127.0.0.1
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(embedded) && this.isPrivateIp(embedded)) return true;
+            // Hex form: ::ffff:7f00:1 — parse and recurse
+            const parts = embedded.split(':');
+            if (parts.length === 2) {
+                const hexStr = parts.map(p => p.padStart(4, '0')).join('');
+                const val = parseInt(hexStr, 16);
+                if (!isNaN(val)) {
+                    const decoded = [
+                        (val >>> 24) & 0xff,
+                        (val >>> 16) & 0xff,
+                        (val >>> 8) & 0xff,
+                        val & 0xff,
+                    ].join('.');
+                    if (this.isPrivateIp(decoded)) return true;
+                }
+            }
+        }
         return false;
     }
 
@@ -1589,39 +1610,55 @@ export class BotClient {
      * Prevents SSRF attacks by rejecting internal network targets.
      */
     private isPrivateHost(hostname: string): boolean {
+        // Strip brackets from IPv6 literals (Node.js URL normalizes [::ffff:127.0.0.1] to [::ffff:7f00:1])
+        const raw = hostname.replace(/^\[|\]$/g, '');
+
         // Localhost / loopback
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') {
+        if (raw === 'localhost' || raw === '127.0.0.1' || raw === '::1') {
             return true;
         }
         // IPv6-mapped IPv4 (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1) — SSRF bypass vector
-        if (/^::ffff:/i.test(hostname)) {
-            const embeddedIpv4 = hostname.replace(/^::ffff:/i, '').replace(/^\[|\]$/g, '');
-            // Check if the embedded address is a private/reserved IP
-            if (/^127\.\d+\.\d+\.\d+$/.test(embeddedIpv4)) return true;
-            if (/^10\.\d+\.\d+\.\d+$/.test(embeddedIpv4)) return true;
-            if (/^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(embeddedIpv4)) return true;
-            if (/^192\.168\.\d+\.\d+$/.test(embeddedIpv4)) return true;
-            if (/^169\.254\.\d+\.\d+$/.test(embeddedIpv4)) return true;
-            if (embeddedIpv4 === '0.0.0.0') return true;
+        if (/^::ffff:/i.test(raw)) {
+            const embedded = raw.replace(/^::ffff:/i, '');
+            // Dot-decimal form (unusual with brackets stripped, but handle it)
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(embedded)) {
+                if (this.isPrivateIp(embedded)) return true;
+            } else {
+                // Hex form: "7f00:1", "a00:1", "c0a8:101" — normalize to dotted decimal
+                const parts = embedded.split(':');
+                if (parts.length === 2) {
+                    const hexStr = parts.map(p => p.padStart(4, '0')).join('');
+                    const val = parseInt(hexStr, 16);
+                    if (!isNaN(val)) {
+                        const ip = [
+                            (val >>> 24) & 0xff,
+                            (val >>> 16) & 0xff,
+                            (val >>> 8) & 0xff,
+                            val & 0xff,
+                        ].join('.');
+                        if (this.isPrivateIp(ip)) return true;
+                    }
+                }
+            }
         }
         // IPv4 private ranges
-        if (/^10\./.test(hostname)) return true;
-        if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
-        if (/^192\.168\./.test(hostname)) return true;
+        if (/^10\./.test(raw)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(raw)) return true;
+        if (/^192\.168\./.test(raw)) return true;
         // IPv4 link-local
-        if (/^169\.254\./.test(hostname)) return true;
+        if (/^169\.254\./.test(raw)) return true;
         // Reserved / zero address
-        if (hostname === '0.0.0.0') return true;
+        if (raw === '0.0.0.0') return true;
         // IPv6 documentation / private / unique-local
-        if (hostname === '::' || hostname === '[::]') return true;
-        if (/^fc00:/i.test(hostname) || /^fd00:/i.test(hostname)) return true;
-        if (/^fe80:/i.test(hostname)) return true;
+        if (raw === '::') return true;
+        if (/^fc00:/i.test(raw) || /^fd00:/i.test(raw)) return true;
+        if (/^fe80:/i.test(raw)) return true;
         // host.docker.internal or similar Docker/Kubernetes internal names
-        if (hostname.endsWith('.internal') || hostname === 'host.docker.internal') return true;
+        if (raw.endsWith('.internal') || raw === 'host.docker.internal') return true;
         // Cloud metadata services
-        if (hostname === 'metadata.google.internal' || hostname === 'metadata.internal') return true;
+        if (raw === 'metadata.google.internal' || raw === 'metadata.internal') return true;
         // mDNS / link-local hostnames
-        if (hostname.endsWith('.local')) return true;
+        if (raw.endsWith('.local')) return true;
         return false;
     }
 
