@@ -2188,7 +2188,7 @@ export class BotClient {
         }
     }
 
-    private handleSubMessage(message: any): void {
+    private async handleSubMessage(message: any): Promise<void> {
         if (!message) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[Bot ${this.config.botId}] ⚠️ handleSubMessage called with null/undefined message`);
@@ -2394,7 +2394,7 @@ export class BotClient {
                             }
                             
                             // Call onSpaceUserJoined to track UUIDs and auth status
-                            this.behavior.onSpaceUserJoined(spaceName, userWithId);
+                            await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                         } else {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[Bot ${this.config.botId}] Could not extract numeric userId from SpaceUser "${spaceUser.name}" (spaceUserId: ${spaceUser.spaceUserId || 'unknown'}, UUID: ${spaceUser.uuid || 'unknown'})`);
@@ -2445,7 +2445,7 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID from addSpaceUserMessage for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
                     }
                     
-                    this.behavior.onSpaceUserJoined(spaceName, userWithId);
+                    await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                 }
                 break;
 
