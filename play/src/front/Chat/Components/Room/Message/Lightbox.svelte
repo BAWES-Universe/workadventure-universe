@@ -197,17 +197,19 @@
 <svelte:window on:keydown={onKeyDown} />
 
 {#if show}
-    <button
-        type="button"
-        tabindex="-1"
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Image lightbox"
         use:portal
         bind:this={lightboxEl}
         data-lightbox
         class="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 w-full h-full m-0"
-        style="opacity: 1; border: none; padding: 0; background: rgba(0,0,0,0.8); cursor: default; font: inherit; color: inherit;"
+        style="opacity: 1; background: rgba(0,0,0,0.8);"
         transition:fade={{ duration: 200 }}
         on:click={onBackdropClick}
-        aria-label="Image lightbox"
+        on:keydown={onKeyDown}
     >
         <div data-lightbox-content class="relative w-full h-full flex items-center justify-center" role="none">
             <!-- Close button -->
@@ -265,7 +267,7 @@
                 </div>
             {/if}
         </div>
-    </button>
+    </div>
 {/if}
 
 <style>
