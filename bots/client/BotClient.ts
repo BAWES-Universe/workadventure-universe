@@ -1278,7 +1278,7 @@ export class BotClient {
 
         let response: Response;
         try {
-            response = await fetch(url, { signal: controller.signal });
+            response = await fetch(url, { signal: controller.signal, redirect: 'manual' });
         } finally {
             clearTimeout(timeoutId);
         }
@@ -1322,20 +1322,28 @@ export class BotClient {
         formData.append('file', blob, filename);
 
         // Upload to uploader with bot service token
-        const uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
-            method: 'POST',
-            headers: {
-                'x-bot-service-token': process.env.BOT_SERVICE_TOKEN || '',
-            },
-            body: formData,
-        });
+        const uploadController = new AbortController();
+        const uploadTimeoutId = setTimeout(() => uploadController.abort(), 30_000);
+        let uploadResponse: Response | undefined;
+        try {
+            uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
+                method: 'POST',
+                headers: {
+                    'x-bot-service-token': process.env.BOT_SERVICE_TOKEN || '',
+                },
+                body: formData,
+                signal: uploadController.signal,
+            });
 
-        if (!uploadResponse.ok) {
-            const errorText = await uploadResponse.text();
-            throw new Error(`[BotClient] Upload failed: ${uploadResponse.status} — ${errorText}`);
+            if (!uploadResponse.ok) {
+                const errorText = await uploadResponse.text();
+                throw new Error(`[BotClient] Upload failed: ${uploadResponse.status} — ${errorText}`);
+            }
+        } finally {
+            clearTimeout(uploadTimeoutId);
         }
 
-        const result = await uploadResponse.json();
+        const result = await uploadResponse!.json();
         if (!Array.isArray(result) || result.length === 0) {
             throw new Error('[BotClient] Upload response missing file data');
         }

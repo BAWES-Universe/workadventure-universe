@@ -18,7 +18,7 @@ const mockParentSpan = {
     setAttribute: mockParentSpanSetAttribute,
 };
 
-const mockStartSpanManual = vi.fn((_opts: any, callback: (span: any) => any) => {
+const mockStartSpanManual = vi.fn((_opts: unknown, callback: (span: any) => any) => {
     return callback(mockParentSpan);
 });
 const mockScopeSetConversationId = vi.fn();

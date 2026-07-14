@@ -44,6 +44,22 @@ export interface AIStreamChunk {
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
+        // MultiPromptAIService analysis metadata
+        analysis?: {
+            tokensUsed: number;
+            inputMessage: string;
+            responseContent: string;
+            rawResponse: string;
+        };
+        summarization?: {
+            tokensUsed: number;
+            preSummaryInput: string;
+            responseContent: string;
+            rawResponse: string;
+        };
+        analysisTokens?: number;
+        summarizationTokens?: number;
+        responseTokens?: number;
     };
 }
 

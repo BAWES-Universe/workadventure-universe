@@ -558,7 +558,7 @@ export class SocialBehavior extends BaseBehavior {
         if (!this.bot) return;
 
         // Call base behavior first to track engagement
-        super.onSpaceUserJoined(spaceName, user);
+        await super.onSpaceUserJoined(spaceName, user);
 
         // Get the userId from the SpaceUser (it's 'id' field, not 'userId')
         const playerId = user.id;

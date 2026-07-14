@@ -123,18 +123,15 @@ export class MultiPromptAIService {
         yield {
             content: '',
             done: true,
-            tokensUsed: analysisTokens + summarizationTokens + responseTokens,
             metadata: {
                 analysis: analysisResult,
                 summarization: summarizationResult,
-                tokenUsage: {
-                    analysis: analysisTokens,
-                    summarization: summarizationTokens,
-                    response: responseTokens,
-                    total: analysisTokens + summarizationTokens + responseTokens,
-                },
-            } as any,
-        } as any;
+                analysisTokens,
+                summarizationTokens,
+                responseTokens: responseTokens,
+                tokensUsed: analysisTokens + summarizationTokens + responseTokens,
+            },
+        };
     }
 
     /**
