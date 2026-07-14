@@ -1238,25 +1238,48 @@ export class BotClient {
         });
     }
 
-    /**
-     * Upload a file from a URL to the uploader service using bot service auth.
-     * Fetches the content from the provided URL (e.g. MCP tool output) and POSTs it
-     * to the uploader's /upload-file endpoint with the BOT_SERVICE_TOKEN header.
-     * Returns the CDN location and inferred media type.
-     */
-    private async uploadMedia(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
-        const uploaderUrl = this.config.uploaderUrl || process.env.UPLOADER_URL;
-        if (!uploaderUrl) {
-            throw new Error('[BotClient] UPLOADER_URL not configured — cannot upload media');
+    /** Follow HTTP redirects with SSRF validation on each hop (max 5 hops). */
+    private async fetchWithRedirectFollow(
+        url: string,
+        init: RequestInit & { signal: AbortSignal },
+        redirectCount = 0,
+    ): Promise<Response> {
+        if (redirectCount > 5) {
+            throw new Error(`[BotClient] Too many redirects fetching: ${url}`);
         }
 
-        // If the URL is already on our uploader/CDN, no need to re-upload
-        if (url.startsWith(uploaderUrl) || url.includes('/upload-file/')) {
-            // Infer media type from URL or mimeType
-            const mediaType = this.inferMediaTypeFromUrl(url, mimeType);
-            return { location: url, mediaType, mimeType: mimeType || 'application/octet-stream' };
+        // Validate each hop's hostname
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            throw new Error(`[BotClient] Invalid redirect URL: ${url}`);
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            throw new Error(`[BotClient] Unsupported redirect scheme: ${parsedUrl.protocol}`);
+        }
+        if (this.isPrivateHost(parsedUrl.hostname)) {
+            throw new Error(`[BotClient] Redirect target is a private or reserved address: ${parsedUrl.hostname}`);
         }
 
+        const response = await fetch(url, { ...init, redirect: 'manual' });
+
+        // 3xx — manually follow with SSRF check on the redirect target
+        if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get('location');
+            if (!location) {
+                throw new Error(`[BotClient] Redirect ${response.status} with no Location header: ${url}`);
+            }
+            // Resolve relative redirects against the current URL
+            const redirectTarget = new URL(location, url).href;
+            return this.fetchWithRedirectFollow(redirectTarget, init, redirectCount + 1);
+        }
+
+        return response;
+    }
+
+    /** Fetch a URL's body as a buffer with SSRF-safe redirect following, timeout, and size cap. */
+    private async fetchMediaBuffer(url: string, mimeType?: string): Promise<{ buffer: Buffer; contentType: string }> {
         // Validate URL before fetching — SSRF prevention
         let parsedUrl: URL;
         try {
@@ -1272,13 +1295,13 @@ export class BotClient {
             throw new Error(`[BotClient] URL points to a private or reserved address: ${hostname}`);
         }
 
-        // Fetch with timeout and size limit
+        // Fetch with timeout, size limit, and SSRF-safe redirect following
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
 
         let response: Response;
         try {
-            response = await fetch(url, { signal: controller.signal });
+            response = await this.fetchWithRedirectFollow(url, { signal: controller.signal });
         } finally {
             clearTimeout(timeoutId);
         }
@@ -1312,6 +1335,30 @@ export class BotClient {
         }
         const buffer = Buffer.concat(chunks);
 
+        return { buffer, contentType };
+    }
+
+    /**
+     * Upload a file from a URL to the uploader service using bot service auth.
+     * Fetches the content from the provided URL (e.g. MCP tool output) and POSTs it
+     * to the uploader's /upload-file endpoint with the BOT_SERVICE_TOKEN header.
+     * Returns the CDN location and inferred media type.
+     */
+    private async uploadMedia(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
+        const uploaderUrl = this.config.uploaderUrl || process.env.UPLOADER_URL;
+        if (!uploaderUrl) {
+            throw new Error('[BotClient] UPLOADER_URL not configured — cannot upload media');
+        }
+
+        // If the URL is already on our uploader/CDN, no need to re-upload
+        if (url.startsWith(uploaderUrl) || url.includes('/upload-file/')) {
+            // Infer media type from URL or mimeType
+            const mediaType = this.inferMediaTypeFromUrl(url, mimeType);
+            return { location: url, mediaType, mimeType: mimeType || 'application/octet-stream' };
+        }
+        // Fetch media content with SSRF-safe redirect following, timeout, and size limit
+        const { buffer, contentType } = await this.fetchMediaBuffer(url, mimeType);
+
         // Extract filename from URL for the upload
         const urlPath = new URL(url).pathname;
         const filename = urlPath.split('/').pop() || `bot-media-${Date.now()}`;
@@ -1322,20 +1369,28 @@ export class BotClient {
         formData.append('file', blob, filename);
 
         // Upload to uploader with bot service token
-        const uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
-            method: 'POST',
-            headers: {
-                'x-bot-service-token': process.env.BOT_SERVICE_TOKEN || '',
-            },
-            body: formData,
-        });
+        const uploadController = new AbortController();
+        const uploadTimeoutId = setTimeout(() => uploadController.abort(), 30_000);
+        let uploadResponse: Response | undefined;
+        try {
+            uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
+                method: 'POST',
+                headers: {
+                    'x-bot-service-token': process.env.BOT_SERVICE_TOKEN || '',
+                },
+                body: formData,
+                signal: uploadController.signal,
+            });
 
-        if (!uploadResponse.ok) {
-            const errorText = await uploadResponse.text();
-            throw new Error(`[BotClient] Upload failed: ${uploadResponse.status} — ${errorText}`);
+            if (!uploadResponse.ok) {
+                const errorText = await uploadResponse.text();
+                throw new Error(`[BotClient] Upload failed: ${uploadResponse.status} — ${errorText}`);
+            }
+        } finally {
+            clearTimeout(uploadTimeoutId);
         }
 
-        const result = await uploadResponse.json();
+        const result = await uploadResponse!.json();
         if (!Array.isArray(result) || result.length === 0) {
             throw new Error('[BotClient] Upload response missing file data');
         }
