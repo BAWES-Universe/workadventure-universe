@@ -2062,11 +2062,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (urls.length === 0) continue;
 
             let sentCount = 0;
+            let skippedCount = 0;
             let lastError: string | null = null;
 
             for (const url of urls) {
                 // Skip URLs that were already sent by the AI's explicit send_* tool call
-                if (alreadySentUrls?.has(url)) continue;
+                if (alreadySentUrls?.has(url)) {
+                    skippedCount++;
+                    continue;
+                }
                 const ext = this.getExtension(url);
                 try {
                     if (IMAGE_EXT_SET.has(ext)) {
@@ -2116,7 +2120,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 const original = tr.result;
                 let message = `Auto-sent ${sentCount} ${label} to the conversation.`;
                 if (lastError) {
-                    message += ` ${urls.length - sentCount} file(s) queued for retry.`;
+                    message += ` ${urls.length - sentCount - skippedCount} file(s) queued for retry.`;
                 }
                 tr.result = {
                     success: true,

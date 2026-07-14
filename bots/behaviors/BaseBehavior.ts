@@ -970,23 +970,27 @@ export abstract class BaseBehavior {
                 }
                 continue;
             }
+            async function sendMedia(
+                botClient: BotClient,
+                spaceName: string,
+                mediaType: string,
+                url: string,
+                caption?: string
+            ): Promise<void> {
+                // Use sendMediaMessage directly — pending.url is already a CDN URL
+                // from the cached upload, so there's no need to re-upload via sendImage/etc.
+                if (!botClient.sendMediaMessage(spaceName, url, mediaType, pending.mimeType || 'application/octet-stream', caption || '')) {
+                    // sendMediaMessage already logs 'not in space'
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[Behavior] Retry failed: not in space ${spaceName}`);
+                    }
+                    throw new Error(`Not in space ${spaceName}`);
+                }
+            }
             pending.retryCount++;
             let success = false;
             try {
-                switch (pending.mediaType) {
-                    case 'image':
-                        await botClient.sendImage(spaceName, pending.url, pending.caption);
-                        break;
-                    case 'file':
-                        await botClient.sendFile(spaceName, pending.url, pending.caption);
-                        break;
-                    case 'audio':
-                        await botClient.sendAudio(spaceName, pending.url);
-                        break;
-                    case 'video':
-                        await botClient.sendVideo(spaceName, pending.url);
-                        break;
-                }
+                await sendMedia(botClient, spaceName, pending.mediaType, pending.url, pending.caption);
                 success = true;
             } catch (err) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
