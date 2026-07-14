@@ -554,7 +554,7 @@ export class SocialBehavior extends BaseBehavior {
         });
     }
 
-    onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): void {
+    async onSpaceUserJoined(spaceName: string, user: SpaceUser & { id: number }): Promise<void> {
         if (!this.bot) return;
 
         // Call base behavior first to track engagement

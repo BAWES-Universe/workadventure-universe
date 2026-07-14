@@ -741,7 +741,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         });
     }
     
-    onSpaceUserJoined(spaceName: string, user: any): void {
+    async onSpaceUserJoined(spaceName: string, user: any): Promise<void> {
         if (!this.currentSpaceName) return;
         super.onSpaceUserJoined(spaceName, user);
         
