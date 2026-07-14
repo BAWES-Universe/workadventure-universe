@@ -234,6 +234,8 @@ export class MemoryStorage {
             userId: memory.userId,
             userName: (memory as any).playerName,
             isGuest: memory.isGuest,
+            pendingMedia: memory.pendingMedia || [],
+            maxPendingMedia: memory.maxPendingMedia || 5,
             
             // Nested memories object (what Admin API looks for)
             memories: {

@@ -749,6 +749,7 @@ export class ConversationMemory {
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
             context.push(`\n[Note: ${autoDelivered} media item(s) you prepared earlier were just delivered to them as they rejoined.]`);
+            personalInfo.facts.delete('autoDeliveredMedia');
         }
 
         // Natural emotion expression
