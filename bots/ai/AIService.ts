@@ -2262,7 +2262,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     });
                 }
             }
-            return { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
+            return { success: false, originalUrl: url, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
         }
     }
 }

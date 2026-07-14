@@ -2152,7 +2152,7 @@ export class BotClient {
     /**
      * Handle incoming WebSocket message
      */
-    private handleMessage(data: ArrayBuffer): void {
+    private async handleMessage(data: ArrayBuffer): Promise<void> {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] 📨 Received message, size: ${data.byteLength} bytes`);
         }
@@ -2177,18 +2177,18 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📦 Batch message with ${msg.batchMessage.payload.length} sub-messages`);
                     }
                     for (const subMessage of msg.batchMessage.payload) {
-                        this.handleSubMessage(subMessage.message);
+                        await this.handleSubMessage(subMessage.message);
                     }
                     break;
                 default:
-                    this.handleSubMessage(msg);
+                    await this.handleSubMessage(msg);
             }
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] ❌ Error handling message:`, error);
         }
     }
 
-    private handleSubMessage(message: any): void {
+    private async handleSubMessage(message: any): Promise<void> {
         if (!message) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[Bot ${this.config.botId}] ⚠️ handleSubMessage called with null/undefined message`);
@@ -2394,7 +2394,7 @@ export class BotClient {
                             }
                             
                             // Call onSpaceUserJoined to track UUIDs and auth status
-                            this.behavior.onSpaceUserJoined(spaceName, userWithId);
+                            await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                         } else {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[Bot ${this.config.botId}] Could not extract numeric userId from SpaceUser "${spaceUser.name}" (spaceUserId: ${spaceUser.spaceUserId || 'unknown'}, UUID: ${spaceUser.uuid || 'unknown'})`);
@@ -2445,7 +2445,7 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID from addSpaceUserMessage for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
                     }
                     
-                    this.behavior.onSpaceUserJoined(spaceName, userWithId);
+                    await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                 }
                 break;
 
