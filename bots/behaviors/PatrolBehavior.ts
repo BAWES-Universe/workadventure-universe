@@ -743,7 +743,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     
     async onSpaceUserJoined(spaceName: string, user: any): Promise<void> {
         if (!this.currentSpaceName) return;
-        super.onSpaceUserJoined(spaceName, user);
+        await super.onSpaceUserJoined(spaceName, user);
         
         // When a user joins the space, add them to nearbyPlayers if not already there
         // This ensures stationary players are detected

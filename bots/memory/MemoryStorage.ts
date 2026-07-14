@@ -42,7 +42,7 @@ export class MemoryStorage {
     /**
      * Start periodic saving
      */
-    startAutoSave(saveCallback: () => BotPlayerMemory[]): void {
+    startAutoSave(saveCallback: () => { botId: string; memories: BotPlayerMemory[] }): void {
         if (!this.isConfigured()) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn('[MemoryStorage] Admin API not configured, auto-save disabled');
@@ -55,7 +55,7 @@ export class MemoryStorage {
         }
 
         this.saveTimer = setInterval(async () => {
-            const { botId, memories } = saveCallback() as any;
+            const { botId, memories } = saveCallback();
             if (memories.length > 0) {
                 await this.saveMemories(botId, memories);
             }
@@ -232,7 +232,7 @@ export class MemoryStorage {
             // Top-level identification
             userUuid: memory.userUuid,
             userId: memory.userId,
-            userName: (memory as any).playerName,
+            userName: memory.playerName,
             isGuest: memory.isGuest,
             pendingMedia: memory.pendingMedia || [],
             maxPendingMedia: memory.maxPendingMedia || 5,
@@ -270,7 +270,7 @@ export class MemoryStorage {
             userId: data.userId || memoryData.userId,
             isGuest: data.isGuest ?? memoryData.isGuest ?? true,
             playerId: memoryData.playerId || 0,
-            playerName: (data as any).userName || (memoryData as any).playerName,
+            playerName: data.userName || memoryData.playerName,
             conversationHistory: memoryData.conversationHistory || [],
             maxHistorySize: memoryData.maxHistorySize || 50,
             pendingMedia: data.pendingMedia || memoryData.pendingMedia || [],

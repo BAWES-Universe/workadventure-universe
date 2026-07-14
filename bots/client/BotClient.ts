@@ -1257,13 +1257,60 @@ export class BotClient {
             return { location: url, mediaType, mimeType: mimeType || 'application/octet-stream' };
         }
 
-        // Fetch the content from the remote URL
-        const response = await fetch(url);
+        // Validate URL before fetching — SSRF prevention
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            throw new Error(`[BotClient] Invalid URL: ${url}`);
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            throw new Error(`[BotClient] Unsupported URL scheme: ${parsedUrl.protocol}`);
+        }
+        const hostname = parsedUrl.hostname;
+        if (this.isPrivateHost(hostname)) {
+            throw new Error(`[BotClient] URL points to a private or reserved address: ${hostname}`);
+        }
+
+        // Fetch with timeout and size limit
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
+
+        let response: Response;
+        try {
+            response = await fetch(url, { signal: controller.signal });
+        } finally {
+            clearTimeout(timeoutId);
+        }
         if (!response.ok) {
             throw new Error(`[BotClient] Failed to fetch media from ${url}: ${response.status} ${response.statusText}`);
         }
-        const buffer = Buffer.from(await response.arrayBuffer());
+
+        // Stream the response body with a size cap (25 MB)
+        const MAX_SIZE = 25 * 1024 * 1024;
         const contentType = mimeType || response.headers.get('content-type') || 'application/octet-stream';
+        const chunks: Buffer[] = [];
+        let totalSize = 0;
+
+        if (!response.body) {
+            throw new Error('[BotClient] Response has no body stream');
+        }
+        const reader = response.body.getReader();
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                totalSize += value.length;
+                if (totalSize > MAX_SIZE) {
+                    reader.cancel();
+                    throw new Error(`[BotClient] Media exceeds maximum size of ${MAX_SIZE / 1024 / 1024} MB`);
+                }
+                chunks.push(Buffer.from(value));
+            }
+        } finally {
+            reader.cancel().catch(() => {}); // Release the stream reader
+        }
+        const buffer = Buffer.concat(chunks);
 
         // Extract filename from URL for the upload
         const urlPath = new URL(url).pathname;
@@ -1436,6 +1483,30 @@ export class BotClient {
      */
     async uploadToCDN(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
         return this.uploadMedia(url, mimeType);
+    }
+
+    /**
+     * Check if a hostname resolves to a private or link-local address.
+     * Prevents SSRF attacks by rejecting internal network targets.
+     */
+    private isPrivateHost(hostname: string): boolean {
+        // Localhost / loopback
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') {
+            return true;
+        }
+        // IPv4 private ranges
+        if (/^10\./.test(hostname)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+        if (/^192\.168\./.test(hostname)) return true;
+        // IPv4 link-local
+        if (/^169\.254\./.test(hostname)) return true;
+        // IPv6 documentation / private / unique-local
+        if (hostname === '::' || hostname === '[::]') return true;
+        if (/^fc00:/i.test(hostname) || /^fd00:/i.test(hostname)) return true;
+        if (/^fe80:/i.test(hostname)) return true;
+        // host.docker.internal or similar Docker/Kubernetes internal names
+        if (hostname.endsWith('.internal') || hostname === 'host.docker.internal') return true;
+        return false;
     }
 
     /**

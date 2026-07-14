@@ -54,8 +54,6 @@ export class BotManager {
     private conversationCleanup: ConversationCleanup;
     private autoImprovement: AutoImprovement | null = null;
     private selfImprovementLoop: SelfImprovementLoop | null = null;
-    // private purposeDetector: PurposeDetector | null = null;
-    // private conversationAnalytics: ConversationAnalytics | null = null;
     private testRunner: BotTestRunner | null = null;
     private conversationReplay: ConversationReplay | null = null;
     private autoPilot: AutoPilotImprovement | null = null;
@@ -169,8 +167,6 @@ export class BotManager {
         // Note: This requires PersistentMemory, but we're using ConversationMemory for now
         // In production, this would use PersistentMemory
         // For now, create a placeholder that will work with ConversationMemory
-        // this.purposeDetector = new PurposeDetector(this.persistentMemory, this.aiService);
-        // this.conversationAnalytics = new ConversationAnalytics(this.persistentMemory, this.metricsCollector);
     }
     
     /**
@@ -620,13 +616,6 @@ export class BotManager {
     }
 
     /**
-     * Get conversation analytics
-     */
-    // getConversationAnalytics(): ConversationAnalytics | null {
-    //     return this.conversationAnalytics;
-    // }
-
-    /**
      * Get ConversationMemory instance
      */
     getConversationMemory(): ConversationMemory {
@@ -727,7 +716,7 @@ export class BotManager {
             }
             
             // Transform config for behavior (similar to spawnBot)
-            const transformBehaviorConfig = (type: string, cfg: any): Record<string, unknown> => {
+            const transformBehaviorConfig = (type: string, cfg: Record<string, unknown>): Record<string, unknown> => {
                 const transformed: Record<string, unknown> = { ...cfg };
                 
                 // Transform patrol waypoints

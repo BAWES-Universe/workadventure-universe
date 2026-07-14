@@ -1820,39 +1820,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 : toolCall.arguments || {};
                             const imageUrl = parsedArgs.url;
                             const alt = parsedArgs.alt || '';
-                            try {
-                                if (!imageUrl) {
-                                    result = { error: 'Missing required parameter: url' };
-                                    break;
-                                }
-                                if (!spaceName) {
-                                    result = { error: 'Cannot send image: not currently in a conversation space' };
-                                    break;
-                                }
-                                const location = await botClient.sendImage(spaceName, imageUrl, alt);
-                                result = { success: true, location, originalUrl: imageUrl, message: `Image sent to conversation` };
-                            } catch (error: any) {
-                                // Use CDN URL from error (upload already succeeded, but send failed)
-                                // This avoids storing presigned/temporary URLs that may expire
-                                const cdnUrl = error._cdnUrl || imageUrl;
-                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'image';
-                                const mimeType = error._mimeType || '';
-                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
-                                if (memory) {
-                                    if (!memory.pendingMedia) memory.pendingMedia = [];
-                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
-                                        memory.pendingMedia.push({
-                                            url: cdnUrl,
-                                            mediaType,
-                                            mimeType,
-                                            caption: alt,
-                                            createdAt: Date.now(),
-                                            retryCount: 0,
-                                        });
-                                    }
-                                }
-                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
+                            if (!imageUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
                             }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send image: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, imageUrl, alt, 'image',
+                                () => botClient.sendImage(spaceName, imageUrl, alt),
+                                botId, playerId
+                            );
                         } else {
                             result = { error: 'Bot client not available' };
                         }
@@ -1865,37 +1845,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 : toolCall.arguments || {};
                             const fileUrl = parsedArgs.url;
                             const filename = parsedArgs.filename || '';
-                            try {
-                                if (!fileUrl) {
-                                    result = { error: 'Missing required parameter: url' };
-                                    break;
-                                }
-                                if (!spaceName) {
-                                    result = { error: 'Cannot send file: not currently in a conversation space' };
-                                    break;
-                                }
-                                const location = await botClient.sendFile(spaceName, fileUrl, filename);
-                                result = { success: true, location, originalUrl: fileUrl, message: `File sent to conversation` };
-                            } catch (error: any) {
-                                const cdnUrl = error._cdnUrl || fileUrl;
-                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'file';
-                                const mimeType = error._mimeType || '';
-                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
-                                if (memory) {
-                                    if (!memory.pendingMedia) memory.pendingMedia = [];
-                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
-                                        memory.pendingMedia.push({
-                                            url: cdnUrl,
-                                            mediaType,
-                                            mimeType,
-                                            caption: filename,
-                                            createdAt: Date.now(),
-                                            retryCount: 0,
-                                        });
-                                    }
-                                }
-                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
+                            if (!fileUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
                             }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send file: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, fileUrl, filename, 'file',
+                                () => botClient.sendFile(spaceName, fileUrl, filename),
+                                botId, playerId
+                            );
                         } else {
                             result = { error: 'Bot client not available' };
                         }
@@ -1907,36 +1869,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 ? JSON.parse(toolCall.arguments)
                                 : toolCall.arguments || {};
                             const audioUrl = parsedArgs.url;
-                            try {
-                                if (!audioUrl) {
-                                    result = { error: 'Missing required parameter: url' };
-                                    break;
-                                }
-                                if (!spaceName) {
-                                    result = { error: 'Cannot send audio: not currently in a conversation space' };
-                                    break;
-                                }
-                                const location = await botClient.sendAudio(spaceName, audioUrl);
-                                result = { success: true, location, originalUrl: audioUrl, message: `Audio sent to conversation` };
-                            } catch (error: any) {
-                                const cdnUrl = error._cdnUrl || audioUrl;
-                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'audio';
-                                const mimeType = error._mimeType || '';
-                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
-                                if (memory) {
-                                    if (!memory.pendingMedia) memory.pendingMedia = [];
-                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
-                                        memory.pendingMedia.push({
-                                            url: cdnUrl,
-                                            mediaType,
-                                            mimeType,
-                                            createdAt: Date.now(),
-                                            retryCount: 0,
-                                        });
-                                    }
-                                }
-                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
+                            if (!audioUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
                             }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send audio: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, audioUrl, '', 'audio',
+                                () => botClient.sendAudio(spaceName, audioUrl),
+                                botId, playerId
+                            );
                         } else {
                             result = { error: 'Bot client not available' };
                         }
@@ -1948,36 +1893,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 ? JSON.parse(toolCall.arguments)
                                 : toolCall.arguments || {};
                             const videoUrl = parsedArgs.url;
-                            try {
-                                if (!videoUrl) {
-                                    result = { error: 'Missing required parameter: url' };
-                                    break;
-                                }
-                                if (!spaceName) {
-                                    result = { error: 'Cannot send video: not currently in a conversation space' };
-                                    break;
-                                }
-                                const location = await botClient.sendVideo(spaceName, videoUrl);
-                                result = { success: true, location, originalUrl: videoUrl, message: `Video sent to conversation` };
-                            } catch (error: any) {
-                                const cdnUrl = error._cdnUrl || videoUrl;
-                                const mediaType: 'image' | 'file' | 'audio' | 'video' = error._mediaType || 'video';
-                                const mimeType = error._mimeType || '';
-                                const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
-                                if (memory) {
-                                    if (!memory.pendingMedia) memory.pendingMedia = [];
-                                    if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
-                                        memory.pendingMedia.push({
-                                            url: cdnUrl,
-                                            mediaType,
-                                            mimeType,
-                                            createdAt: Date.now(),
-                                            retryCount: 0,
-                                        });
-                                    }
-                                }
-                                result = { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
+                            if (!videoUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
                             }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send video: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, videoUrl, '', 'video',
+                                () => botClient.sendVideo(spaceName, videoUrl),
+                                botId, playerId
+                            );
                         } else {
                             result = { error: 'Bot client not available' };
                         }
@@ -2283,7 +2211,50 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
             // Fallback to JSON for other results or errors
             return `${r.name}: ${JSON.stringify(r.result)}`;
-        }).join('\n');
+        }).join('\\n');
+    }
+
+    /**
+     * Send media with automatic retry queuing on failure.
+     * Shared by send_image, send_file, send_audio, send_video tool handlers.
+     * On success returns { success, location, originalUrl, message }.
+     * On failure queues the CDN URL for retry and returns { success: false, note }.
+     */
+    private async sendMediaWithRetry(
+        botClient: BotClient,
+        spaceName: string,
+        url: string,
+        caption: string,
+        mediaType: 'image' | 'file' | 'audio' | 'video',
+        sendFn: () => Promise<string>,
+        botId?: string,
+        playerId?: number
+    ): Promise<any> {
+        try {
+            const location = await sendFn();
+            return { success: true, location, originalUrl: url, message: `${mediaType} sent to conversation` };
+        } catch (error: any) {
+            // Use CDN URL from error (upload already succeeded, but send failed)
+            // This avoids storing presigned/temporary URLs that may expire
+            const cdnUrl = error._cdnUrl || url;
+            const mimeType = error._mimeType || '';
+            const mediaTypeDefault: 'image' | 'file' | 'audio' | 'video' = error._mediaType || mediaType;
+            const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+            if (memory) {
+                if (!memory.pendingMedia) memory.pendingMedia = [];
+                if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                    memory.pendingMedia.push({
+                        url: cdnUrl,
+                        mediaType: mediaTypeDefault,
+                        mimeType,
+                        caption: caption || undefined,
+                        createdAt: Date.now(),
+                        retryCount: 0,
+                    });
+                }
+            }
+            return { success: false, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
+        }
     }
 }
 

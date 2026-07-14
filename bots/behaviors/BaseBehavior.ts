@@ -963,6 +963,26 @@ export abstract class BaseBehavior {
 
         const remaining: any[] = [];
         let deliveredCount = 0;
+
+        async function sendMedia(
+            botClient: BotClient,
+            spaceName: string,
+            mediaType: string,
+            url: string,
+            mimeType: string,
+            caption?: string
+        ): Promise<void> {
+            // Use sendMediaMessage directly — pending.url is already a CDN URL
+            // from the cached upload, so there's no need to re-upload via sendImage/etc.
+            if (!botClient.sendMediaMessage(spaceName, url, mediaType, mimeType || 'application/octet-stream', caption || '')) {
+                // sendMediaMessage already logs 'not in space'
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Behavior] Retry failed: not in space ${spaceName}`);
+                }
+                throw new Error(`Not in space ${spaceName}`);
+            }
+        }
+
         for (const pending of memory.pendingMedia) {
             if (pending.retryCount >= 3) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -970,27 +990,10 @@ export abstract class BaseBehavior {
                 }
                 continue;
             }
-            async function sendMedia(
-                botClient: BotClient,
-                spaceName: string,
-                mediaType: string,
-                url: string,
-                caption?: string
-            ): Promise<void> {
-                // Use sendMediaMessage directly — pending.url is already a CDN URL
-                // from the cached upload, so there's no need to re-upload via sendImage/etc.
-                if (!botClient.sendMediaMessage(spaceName, url, mediaType, pending.mimeType || 'application/octet-stream', caption || '')) {
-                    // sendMediaMessage already logs 'not in space'
-                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[Behavior] Retry failed: not in space ${spaceName}`);
-                    }
-                    throw new Error(`Not in space ${spaceName}`);
-                }
-            }
             pending.retryCount++;
             let success = false;
             try {
-                await sendMedia(botClient, spaceName, pending.mediaType, pending.url, pending.caption);
+                await sendMedia(botClient, spaceName, pending.mediaType, pending.url, pending.mimeType, pending.caption);
                 success = true;
             } catch (err) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1077,7 +1080,11 @@ export abstract class BaseBehavior {
                 } catch (err) {
                     console.error(`[Behavior] Error retrying pending media:`, err);
                 }
-                this.onMemoryReady?.(spaceName, user);
+                // Only notify memory ready if the user is still engaged
+                // (they may have left during the async retry)
+                if (this.engagedWithUsers.has(user.id)) {
+                    this.onMemoryReady?.(spaceName, user);
+                }
             }
         }
 

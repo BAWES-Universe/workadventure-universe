@@ -113,8 +113,8 @@ export class MultiPromptAIService {
             if (chunk.content) {
                 fullResponse += chunk.content;
             }
-            if ((chunk as any).tokensUsed) {
-                responseTokens = (chunk as any).tokensUsed;
+            if (chunk.metadata?.tokensUsed) {
+                responseTokens = chunk.metadata.tokensUsed;
             }
             yield chunk;
         }
@@ -133,7 +133,7 @@ export class MultiPromptAIService {
                     response: responseTokens,
                     total: analysisTokens + summarizationTokens + responseTokens,
                 },
-            },
+            } as any,
         } as any;
     }
 
