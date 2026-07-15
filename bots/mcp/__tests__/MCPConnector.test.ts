@@ -650,9 +650,18 @@ describe('MCPConnector', () => {
     // --- Timeout ----------------------------------------------------------
 
     describe('timeout handling', () => {
+        beforeEach(() => {
+            // Wire isCancel to recognize AbortController timeout errors
+            mockedAxios.isCancel.mockImplementation(
+                (err: any) => err?.code === 'ERR_CANCELED'
+            );
+        });
+
         it(`enforces ${REQUEST_TIMEOUT / 1000}s REQUEST_TIMEOUT and cancels on timeout`, async () => {
             // Verify the timeout contract
             expect(REQUEST_TIMEOUT).toBe(60_000);
+
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
             // Simulate timeout by having the mock throw a cancellation error
             mockedAxios.post
@@ -672,7 +681,13 @@ describe('MCPConnector', () => {
                 'none'
             );
 
+            // Verify the timeout-specific code path was exercised
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining('timed out after')
+            );
             expect(result.error).toContain('Tool unavailable');
+
+            warnSpy.mockRestore();
         });
     });
 });
