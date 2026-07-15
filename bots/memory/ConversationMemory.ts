@@ -744,12 +744,15 @@ export class ConversationMemory {
             context.push(`\nWhat you know about them: ${personalDetails.join('. ')}.`);
         }
 
-        // Auto-delivered media notification — tells the bot something it
-        // previously failed to send is being re-sent alongside the greeting.
-        // Uses directive language to prevent the bot from regenerating the same items.
+        // Auto-delivered media notification — tells the bot that images it
+        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent.
+        // Must explicitly state the generation itself succeeded, because the
+        // conversation history may contain the bot saying "the generation
+        // failed" (from the interrupted session), and the bot trusts history
+        // more than a bare note.
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
-            context.push(`\n[System: ${autoDelivered} media item(s) you failed to send previously are being re-sent NOW alongside this message. Do NOT generate or request these items again — they are already on their way to the user.]`);
+            context.push(`\n[System: ${autoDelivered} visual(s) you already GENERATED SUCCESSFULLY in the previous conversation but couldn't deliver at that moment are being re-sent NOW alongside this message. They exist. Do NOT generate or request them again — they are on their way to the user.]`);
             // Mark as consumed instead of deleting — if the downstream AI call fails,
             // the fact survives for the retry. Empty string is falsy so the guard
             // above naturally skips it on subsequent reads, preventing duplicate mentions.
