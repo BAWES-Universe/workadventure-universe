@@ -961,27 +961,9 @@ export abstract class BaseBehavior {
         const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
         if (!memory?.pendingMedia?.length) return;
 
-        const remaining: any[] = [];
-        let deliveredCount = 0;
-
-        async function sendMedia(
-            botClient: BotClient,
-            spaceName: string,
-            mediaType: string,
-            url: string,
-            mimeType: string,
-            caption?: string
-        ): Promise<void> {
-            // Use sendMediaMessage directly — pending.url is already a CDN URL
-            // from the cached upload, so there's no need to re-upload via sendImage/etc.
-            if (!botClient.sendMediaMessage(spaceName, url, mediaType, mimeType || 'application/octet-stream', caption || '')) {
-                // sendMediaMessage already logs 'not in space'
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Behavior] Retry failed: not in space ${spaceName}`);
-                }
-                throw new Error(`Not in space ${spaceName}`);
-            }
-        }
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000; // Must match AIService.ts
+        let deliverableCount = 0;
 
         for (const pending of memory.pendingMedia) {
             if (pending.retryCount >= 3) {
@@ -990,31 +972,31 @@ export abstract class BaseBehavior {
                 }
                 continue;
             }
-            pending.retryCount++;
-            let success = false;
-            try {
-                await sendMedia(botClient, spaceName, pending.mediaType, pending.url, pending.mimeType, pending.caption);
-                success = true;
-            } catch (err) {
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Behavior] Retry failed for ${pending.mediaType}: ${(err as Error).message}`);
-                }
+            // Don't count items that flushPendingMedia will skip due to the
+            // minimum retry window — the AI would falsely promise delivery.
+            if (pending.lastRetryAt && (now - pending.lastRetryAt) < MIN_RETRY_INTERVAL_MS) {
+                continue;
             }
-            if (success) {
-                deliveredCount++;
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Behavior] ✅ Auto-delivered pending ${pending.mediaType} to user ${user.id}`);
-                }
-            } else {
-                remaining.push(pending);
+            // Don't increment retryCount here — the actual send attempt happens
+            // during the conversation turn (flushPendingMedia). Counting retries on
+            // re-entry alone would burn through the limit without any send attempt.
+            deliverableCount++;
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Queued pending ${pending.mediaType} for conversation-turn delivery to user ${user.id}`);
             }
         }
-        memory.pendingMedia = remaining;
+        // Remove exhausted items (retryCount >= 3) so they don't accumulate
+        // indefinitely, generating log spam on every re-join and consuming
+        // limited slots in the pendingMedia array.
+        memory.pendingMedia = memory.pendingMedia.filter(p => p.retryCount < 3);
+        // Keep ready items in pendingMedia — flushPendingMedia will send them
+        // during the conversation turn (after "New discussion with..." appears).
 
-        // If any items were delivered, inject a fact so the greeting AI knows
-        // not to re-announce. Delivered just now as the user rejoined.
-        if (deliveredCount > 0) {
-            memory.personalInfo.facts.set('autoDeliveredMedia', String(deliveredCount));
+        // Set the fact optimistically so the AI knows media will appear alongside
+        // its greeting. The count only includes deliverable items (retryCount < 3
+        // AND not within the MIN_RETRY_INTERVAL window).
+        if (deliverableCount > 0) {
+            memory.personalInfo.facts.set('autoDeliveredMedia', String(deliverableCount));
         }
     }
 

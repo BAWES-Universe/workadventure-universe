@@ -643,6 +643,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             toolCallAccumulator.clear();
                             // Yield the accumulated pre-tool content (already streamed) as final
                             yield {content: '', done: true, metadata: chunk.metadata};
+                            streamCompleted = true;
                             break;
                         }
                         
@@ -681,6 +682,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         let previousRoundStartTime = 0;
                         let previousRoundInput = '';
 
+                        // FlushPendingMedia runs AFTER the for-await loop (below),
+                        // unconditionally, to cover both tool-call and no-tool-call paths.
+                        // Do NOT call it here — doing so would double-process the same
+                        // items on tool-call turns, burning through the retry limit.
+
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
 
@@ -703,6 +709,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                     if (typeof orig === 'string') alreadySentUrls.add(orig);
                                 }
                             }
+
+                            // Pre-queue media URLs to pendingMedia as a safety net.
+                            // If the generator is cancelled before autoSendMedia runs
+                            // (user leaves mid-turn), the URLs are already persisted
+                            // and will be delivered by flushPendingMedia on re-entry.
+                            this.preQueueToolResults(toolResults, alreadySentUrls, botId, playerId);
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
@@ -1208,6 +1220,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // Always close Sentry span and restore scope, even if PostHog fails
                     parentSpan?.end();
                     sentrySetSpan?.(sentryScope, previousSpan);
+                }
+
+                // Flush any pendingMedia queued by retryPendingMedia on re-join.
+                // This is the SOLE flush call — it runs unconditionally after the
+                // stream ends, covering both tool-call and no-tool-call paths.
+                // The in-tool-call-block flush was removed to prevent the same items
+                // from being double-processed (retryCount burned through twice as fast).
+                //
+                // Guard with streamCompleted: if the stream threw (API/network error),
+                // the bot produced no message and the user would get media without
+                // context. Preserve the items for the next re-entry instead.
+                if (streamCompleted) {
+                    this.flushPendingMedia(botClient, spaceName, botId, playerId);
                 }
 
                 // Always track usage, even if stream doesn't complete normally
@@ -1959,6 +1984,72 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Pre-queue media URLs from tool results to pendingMedia as a safety net.
+     *
+     * Runs immediately after executeToolCalls returns and BEFORE autoSendMedia
+     * processes the results. If the generator is cancelled mid-turn (user leaves),
+     * the URLs are already persisted in pendingMedia and will be delivered by
+     * flushPendingMedia on re-entry. autoSendMedia removes successfully sent
+     * URLs from pendingMedia, so in the normal flow this is a no-op pass-through.
+     *
+     * Tool-agnostic — reuses extractUrlsFromResult which works with any MCP tool.
+     */
+    private preQueueToolResults(
+        toolResults: Array<{ id: string; name: string; result: any }>,
+        alreadySentUrls: Set<string>,
+        botId?: string,
+        playerId?: number
+    ): void {
+        if (!botId || playerId === undefined) return;
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return;
+        if (!memory.pendingMedia) memory.pendingMedia = [];
+        if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+
+        const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
+        const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
+        const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
+
+        for (const tr of toolResults) {
+            // Skip results from media tools and built-in tools — they don't produce URLs to extract
+            if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to'].includes(tr.name)) {
+                continue;
+            }
+
+            const urls = this.extractUrlsFromResult(tr.result);
+            if (urls.length === 0) continue;
+
+            for (const url of urls) {
+                // Skip URLs already sent by explicit send_* tool calls
+                if (alreadySentUrls.has(url)) continue;
+                // Skip internal/local URLs
+                try {
+                    const hostname = new URL(url).hostname;
+                    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) continue;
+                } catch { continue; }
+
+                if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+
+                const ext = this.getExtension(url);
+                const mediaType: 'image' | 'file' | 'audio' | 'video' =
+                    IMAGE_EXT_SET.has(ext) ? 'image' :
+                    VIDEO_EXT_SET.has(ext) ? 'video' :
+                    AUDIO_EXT_SET.has(ext) ? 'audio' : 'file';
+
+                memory.pendingMedia.push({
+                    url,
+                    mediaType,
+                    mimeType: '',
+                    caption: '',
+                    createdAt: Date.now(),
+                    retryCount: 0,
+                });
+            }
+        }
+    }
+
+    /**
      * Auto-send media URLs from MCP tool results to the conversation.
      * This is a code-level interceptor (Layer 3): after any tool returns a result
      * containing an image/audio/video URL, automatically call send_image/send_file
@@ -1978,6 +2069,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
         const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
         const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
+        // Track successfully sent URLs so pre-queued pendingMedia items are cleaned up
+        const sentUrls = new Set<string>();
 
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
@@ -1999,21 +2092,36 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     skippedCount++;
                     continue;
                 }
+                // Skip internal/local URLs that can't be accessed by the frontend.
+                // Tools like list_generations may return local filesystem paths that
+                // match the media URL pattern but aren't real CDN URLs.
+                try {
+                    const hostname = new URL(url).hostname;
+                    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) {
+                        continue;
+                    }
+                } catch {
+                    continue; // Invalid URL — skip
+                }
                 const ext = this.getExtension(url);
                 try {
                     if (IMAGE_EXT_SET.has(ext)) {
                         await botClient.sendImage(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     } else if (VIDEO_EXT_SET.has(ext)) {
                         await botClient.sendVideo(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     } else if (AUDIO_EXT_SET.has(ext)) {
                         await botClient.sendAudio(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     } else {
                         // File with other extension — attempt as file
                         await botClient.sendFile(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     }
                 } catch (err: any) {
                     lastError = err.message;
@@ -2028,7 +2136,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
-                            if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                            // Avoid duplicate — preQueueToolResults may have already pushed this URL
+                            if (!memory.pendingMedia.some(p => p.url === cdnUrl) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                 memory.pendingMedia.push({
                                     url: cdnUrl,
                                     mediaType: mType,
@@ -2074,7 +2183,76 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         }
 
+        // Clean up pendingMedia — remove URLs that were successfully delivered.
+        // These were pre-queued by preQueueToolResults as a safety net; now that
+        // autoSendMedia succeeded, they don't need retry.
+        if (botId && playerId !== undefined && sentUrls.size > 0) {
+            const memory = this.conversationMemory?.getMemory(botId, playerId);
+            if (memory?.pendingMedia) {
+                memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
+            }
+        }
+
         return toolResults;
+    }
+
+    /**
+     * Flush pendingMedia items queued by retryPendingMedia on user re-join.
+     * Runs unconditionally after the greeting stream so media appears after
+     * "New discussion with..." and alongside the AI response.
+     */
+    private flushPendingMedia(
+        botClient: BotClient,
+        spaceName: string,
+        botId: string,
+        playerId: number
+    ): void {
+        // generateBotResponseStream can be called without botClient or spaceName
+        // (both are optional/undefined in its signature). Guard here prevents
+        // a runtime TypeError on botClient.sendMediaMessage() below.
+        if (!botClient || !spaceName) return;
+
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.pendingMedia?.length) return;
+
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000; // Don't retry the same item more than once per 10s
+        const remaining: typeof memory.pendingMedia = [];
+
+        for (const item of memory.pendingMedia) {
+            if (item.retryCount >= 3) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] Dropping pending ${item.mediaType} after ${item.retryCount} retries: ${item.url.substring(0, 60)}`);
+                }
+                continue;
+            }
+            // Don't retry if the last attempt was too recent — prevents rapid
+            // re-entry from burning through the retry limit within seconds.
+            if (item.lastRetryAt && (now - item.lastRetryAt) < MIN_RETRY_INTERVAL_MS) {
+                remaining.push(item);
+                continue;
+            }
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '')) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
+                }
+            } else {
+                // Send failed — increment retryCount and keep for next attempt
+                item.retryCount++;
+                item.lastRetryAt = now;
+                remaining.push(item);
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry ${item.retryCount}: ${item.url.substring(0, 60)}`);
+                }
+            }
+        }
+        memory.pendingMedia = remaining;
+
+        // Note: do NOT re-set autoDeliveredMedia here — it was already set by
+        // retryPendingMedia and consumed by getConversationContext before the
+        // conversation turn started. Re-setting it causes a stale value to leak
+        // to the next turn, where getConversationContext reads it again and
+        // injects a misleading "[Note: N media item(s)...]" into the AI prompt.
     }
 
     /**
