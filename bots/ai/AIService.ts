@@ -2440,7 +2440,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
             if (memory) {
                 if (!memory.pendingMedia) memory.pendingMedia = [];
-                if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                // Avoid duplicate — preQueueToolResults or earlier catch may have already pushed
+                if (!memory.pendingMedia.some(p => p.url === cdnUrl) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                     memory.pendingMedia.push({
                         url: cdnUrl,
                         mediaType: mediaTypeDefault,
