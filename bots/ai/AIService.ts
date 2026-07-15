@@ -360,6 +360,7 @@ TOOLS & ACTIONS (Be seamless):
 - **CRITICAL**: NEVER mention tools, tool names, or technical details - just give the answer like a human would
 - **CRITICAL**: After calling a tool, respond naturally with the results (e.g., "Khalid ABC is here" not "I'll check who's here. (tool call: get_people_on_map)")
 - Just answer the question directly - don't explain that you're checking or looking something up
+- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.
 
 **ACCURACY & TRUTHFULNESS (Be honest, like a real person):**
 - Only mention things you actually know - use location names exactly as shown in "Current Location Context"
@@ -642,6 +643,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             toolCallAccumulator.clear();
                             // Yield the accumulated pre-tool content (already streamed) as final
                             yield {content: '', done: true, metadata: chunk.metadata};
+                            streamCompleted = true;
                             break;
                         }
                         
@@ -680,6 +682,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         let previousRoundStartTime = 0;
                         let previousRoundInput = '';
 
+                        // FlushPendingMedia runs AFTER the for-await loop (below),
+                        // unconditionally, to cover both tool-call and no-tool-call paths.
+                        // Do NOT call it here — doing so would double-process the same
+                        // items on tool-call turns, burning through the retry limit.
+
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
 
@@ -691,7 +698,28 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId);
+
+                            // Collect URLs that were already sent by explicit send_* tool calls
+                            // so autoSendMedia doesn't re-send them via parent tool results
+                            const alreadySentUrls = new Set<string>();
+                            for (const tr of toolResults) {
+                                if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
+                                    const orig = tr.result?.originalUrl;
+                                    if (typeof orig === 'string') alreadySentUrls.add(orig);
+                                }
+                            }
+
+                            // Pre-queue media URLs to pendingMedia as a safety net.
+                            // If the generator is cancelled before autoSendMedia runs
+                            // (user leaves mid-turn), the URLs are already persisted
+                            // and will be delivered by flushPendingMedia on re-entry.
+                            this.preQueueToolResults(toolResults, alreadySentUrls, botId, playerId);
+
+                            // Auto-send interceptor: scan all tool results for media URLs
+                            // and send them inline. Non-media results pass through unchanged.
+                            await this.autoSendMedia(toolResults, botClient, spaceName, alreadySentUrls, botId, playerId);
+
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -1194,6 +1222,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     sentrySetSpan?.(sentryScope, previousSpan);
                 }
 
+                // Flush any pendingMedia queued by retryPendingMedia on re-join.
+                // This is the SOLE flush call — it runs unconditionally after the
+                // stream ends, covering both tool-call and no-tool-call paths.
+                // The in-tool-call-block flush was removed to prevent the same items
+                // from being double-processed (retryCount burned through twice as fast).
+                //
+                // Guard with streamCompleted: if the stream threw (API/network error),
+                // the bot produced no message and the user would get media without
+                // context. Preserve the items for the next re-entry instead.
+                if (streamCompleted) {
+                    this.flushPendingMedia(botClient, spaceName, botId, playerId);
+                }
+
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1457,6 +1498,90 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     },
                 },
             });
+
+            // Tool: Send image to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_image',
+                    description: 'Send an image to the current conversation. Use this when you generate or have an image URL to share with the person you are talking to. Call this tool silently — do NOT announce it. After sending, respond naturally (e.g., "Here you go!" or "Check this out!").',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the image to send (can be a URL from another tool or generation output)'
+                            },
+                            alt: {
+                                type: 'string',
+                                description: 'Optional description or caption for the image'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
+
+            // Tool: Send file to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_file',
+                    description: 'Send a file to the current conversation. Use this when you generate or have a file URL (PDF, document, spreadsheet, etc.) to share with the person you are talking to. Call this tool silently — do NOT announce it.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the file to send'
+                            },
+                            filename: {
+                                type: 'string',
+                                description: 'Optional display filename for the file'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
+
+            // Tool: Send audio to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_audio',
+                    description: 'Send an audio clip to the current conversation. Use this when you generate or have an audio URL (music, voice recording, sound effect) to share. Call this tool silently — do NOT announce it.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the audio to send'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
+
+            // Tool: Send video to conversation
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'send_video',
+                    description: 'Send a video to the current conversation. Use this when you generate or have a video URL to share. Call this tool silently — do NOT announce it.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            url: {
+                                type: 'string',
+                                description: 'URL of the video to send'
+                            }
+                        },
+                        required: ['url']
+                    },
+                },
+            });
         }
 
         // Add MCP tools
@@ -1506,7 +1631,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botClient?: BotClient,
         adminApiService?: AdminApiService,
         toolServerMap?: Map<string, { serverId: string; serverUrl: string; authType: string; authConfig?: string; headers?: Record<string, string> }>,
-        playerUuid?: string
+        playerUuid?: string,
+        spaceName?: string,
+        botId?: string,
+        playerId?: number
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -1710,6 +1838,104 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         break;
 
 
+                    case 'send_image':
+                        if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const imageUrl = parsedArgs.url;
+                            const alt = parsedArgs.alt || '';
+                            if (!imageUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
+                            }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send image: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, imageUrl, alt, 'image',
+                                () => botClient.sendImage(spaceName, imageUrl, alt),
+                                botId, playerId
+                            );
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'send_file':
+                        if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const fileUrl = parsedArgs.url;
+                            const filename = parsedArgs.filename || '';
+                            if (!fileUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
+                            }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send file: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, fileUrl, filename, 'file',
+                                () => botClient.sendFile(spaceName, fileUrl, filename),
+                                botId, playerId
+                            );
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'send_audio':
+                        if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const audioUrl = parsedArgs.url;
+                            if (!audioUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
+                            }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send audio: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, audioUrl, '', 'audio',
+                                () => botClient.sendAudio(spaceName, audioUrl),
+                                botId, playerId
+                            );
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
+                    case 'send_video':
+                        if (botClient) {
+                            const parsedArgs = typeof toolCall.arguments === 'string'
+                                ? JSON.parse(toolCall.arguments)
+                                : toolCall.arguments || {};
+                            const videoUrl = parsedArgs.url;
+                            if (!videoUrl) {
+                                result = { error: 'Missing required parameter: url' };
+                                break;
+                            }
+                            if (!spaceName) {
+                                result = { error: 'Cannot send video: not currently in a conversation space' };
+                                break;
+                            }
+                            result = await this.sendMediaWithRetry(
+                                botClient, spaceName, videoUrl, '', 'video',
+                                () => botClient.sendVideo(spaceName, videoUrl),
+                                botId, playerId
+                            );
+                        } else {
+                            result = { error: 'Bot client not available' };
+                        }
+                        break;
+
                     default: {
                         // Check if this is an MCP tool (not a hardcoded one)
                         const mcpServerConfig = toolServerMap?.get(toolCall.name);
@@ -1758,6 +1984,351 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Pre-queue media URLs from tool results to pendingMedia as a safety net.
+     *
+     * Runs immediately after executeToolCalls returns and BEFORE autoSendMedia
+     * processes the results. If the generator is cancelled mid-turn (user leaves),
+     * the URLs are already persisted in pendingMedia and will be delivered by
+     * flushPendingMedia on re-entry. autoSendMedia removes successfully sent
+     * URLs from pendingMedia, so in the normal flow this is a no-op pass-through.
+     *
+     * Tool-agnostic — reuses extractUrlsFromResult which works with any MCP tool.
+     */
+    private preQueueToolResults(
+        toolResults: Array<{ id: string; name: string; result: any }>,
+        alreadySentUrls: Set<string>,
+        botId?: string,
+        playerId?: number
+    ): void {
+        if (!botId || playerId === undefined) return;
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return;
+        if (!memory.pendingMedia) memory.pendingMedia = [];
+        if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+
+        const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
+        const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
+        const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
+
+        for (const tr of toolResults) {
+            // Skip results from media tools and built-in tools — they don't produce URLs to extract
+            if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to'].includes(tr.name)) {
+                continue;
+            }
+
+            const urls = this.extractUrlsFromResult(tr.result);
+            if (urls.length === 0) continue;
+
+            for (const url of urls) {
+                // Skip URLs already sent by explicit send_* tool calls
+                if (alreadySentUrls.has(url)) continue;
+                // Skip internal/local URLs
+                try {
+                    const hostname = new URL(url).hostname;
+                    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) continue;
+                } catch { continue; }
+
+                if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+
+                const ext = this.getExtension(url);
+                const mediaType: 'image' | 'file' | 'audio' | 'video' =
+                    IMAGE_EXT_SET.has(ext) ? 'image' :
+                    VIDEO_EXT_SET.has(ext) ? 'video' :
+                    AUDIO_EXT_SET.has(ext) ? 'audio' : 'file';
+
+                memory.pendingMedia.push({
+                    url,
+                    mediaType,
+                    mimeType: '',
+                    caption: '',
+                    createdAt: Date.now(),
+                    retryCount: 0,
+                });
+            }
+        }
+    }
+
+    /**
+     * Auto-send media URLs from MCP tool results to the conversation.
+     * This is a code-level interceptor (Layer 3): after any tool returns a result
+     * containing an image/audio/video URL, automatically call send_image/send_file
+     * and replace the raw URL with a clean status message.
+     * Non-media results pass through unchanged.
+     */
+    private async autoSendMedia(
+        toolResults: Array<{ id: string; name: string; result: any }>,
+        botClient?: BotClient,
+        spaceName?: string,
+        alreadySentUrls?: Set<string>,
+        botId?: string,
+        playerId?: number
+    ): Promise<Array<{ id: string; name: string; result: any }>> {
+        if (!botClient || !spaceName) return toolResults;
+
+        const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
+        const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
+        const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
+        // Track successfully sent URLs so pre-queued pendingMedia items are cleaned up
+        const sentUrls = new Set<string>();
+
+        for (const tr of toolResults) {
+            // Skip results from our own media tools (they already handled sending)
+            if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to'].includes(tr.name)) {
+                continue;
+            }
+
+            const urls = this.extractUrlsFromResult(tr.result);
+            if (urls.length === 0) continue;
+
+            let sentCount = 0;
+            let skippedCount = 0;
+            let lastError: string | null = null;
+
+            for (const url of urls) {
+                // Skip URLs that were already sent by the AI's explicit send_* tool call
+                if (alreadySentUrls?.has(url)) {
+                    skippedCount++;
+                    continue;
+                }
+                // Skip internal/local URLs that can't be accessed by the frontend.
+                // Tools like list_generations may return local filesystem paths that
+                // match the media URL pattern but aren't real CDN URLs.
+                try {
+                    const hostname = new URL(url).hostname;
+                    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) {
+                        continue;
+                    }
+                } catch {
+                    continue; // Invalid URL — skip
+                }
+                const ext = this.getExtension(url);
+                try {
+                    if (IMAGE_EXT_SET.has(ext)) {
+                        await botClient.sendImage(spaceName, url);
+                        sentCount++;
+                        sentUrls.add(url);
+                    } else if (VIDEO_EXT_SET.has(ext)) {
+                        await botClient.sendVideo(spaceName, url);
+                        sentCount++;
+                        sentUrls.add(url);
+                    } else if (AUDIO_EXT_SET.has(ext)) {
+                        await botClient.sendAudio(spaceName, url);
+                        sentCount++;
+                        sentUrls.add(url);
+                    } else {
+                        // File with other extension — attempt as file
+                        await botClient.sendFile(spaceName, url);
+                        sentCount++;
+                        sentUrls.add(url);
+                    }
+                } catch (err: any) {
+                    lastError = err.message;
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error(`[AIService] autoSendMedia failed for ${url}: ${err.message}`);
+                    }
+                    // Queue CDN URL for retry (avoids storing presigned/temporary URLs)
+                    const cdnUrl = err._cdnUrl || url;
+                    const mType: 'image' | 'file' | 'audio' | 'video' = err._mediaType || (IMAGE_EXT_SET.has(ext) ? 'image' : VIDEO_EXT_SET.has(ext) ? 'video' : AUDIO_EXT_SET.has(ext) ? 'audio' : 'file');
+                    const mMime = err._mimeType || '';
+                    if (botId && playerId !== undefined) {
+                        const memory = this.conversationMemory?.getMemory(botId, playerId);
+                        if (memory) {
+                            if (!memory.pendingMedia) memory.pendingMedia = [];
+                            // Avoid duplicate — preQueueToolResults may have already pushed the
+                            // original URL, while _cdnUrl on the error gives us the CDN URL.
+                            if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                                memory.pendingMedia.push({
+                                    url: cdnUrl,
+                                    mediaType: mType,
+                                    mimeType: mMime,
+                                    caption: '',
+                                    createdAt: Date.now(),
+                                    retryCount: 0,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (sentCount > 0) {
+                const label = sentCount === 1 ? 'media file' : 'media files';
+                const original = tr.result;
+                let message = `Auto-sent ${sentCount} ${label} to the conversation.`;
+                if (lastError) {
+                    message += ` ${urls.length - sentCount - skippedCount} file(s) queued for retry.`;
+                }
+                tr.result = {
+                    success: true,
+                    message
+                };
+                // Preserve non-URL metadata from the original result
+                // so the AI retains context (e.g., model name, seed, parameters)
+                if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
+                    for (const [key, val] of Object.entries(original)) {
+                        if (typeof val !== 'string' || !/^https?:\/\//.test(val)) {
+                            tr.result[key] = val;
+                        }
+                    }
+                }
+            } else if (lastError) {
+                // "Not in space" means the user left mid-turn — the URL was already
+                // queued to pendingMedia by the catch block and will be delivered
+                // on re-entry. Return a non-error result so the AI's follow-up loop
+                // doesn't waste credits trying to regenerate the same images.
+                if (lastError.includes('not in space') || lastError.includes('cannot send')) {
+                    tr.result = {
+                        success: true,
+                        message: `${urls.length} file(s) queued for delivery. Will appear when the user returns.`
+                    };
+                } else {
+                    tr.result = { error: `Failed to auto-send media: ${lastError}` };
+                }
+            } else if (skippedCount > 0) {
+                const label = skippedCount === 1 ? 'media file was' : 'media files were';
+                tr.result = {
+                    success: true,
+                    message: `All ${skippedCount} ${label} already sent to the conversation.`,
+                };
+            }
+        }
+
+        // Clean up pendingMedia — remove URLs that were successfully delivered.
+        // These were pre-queued by preQueueToolResults as a safety net; now that
+        // autoSendMedia succeeded, they don't need retry.
+        if (botId && playerId !== undefined && sentUrls.size > 0) {
+            const memory = this.conversationMemory?.getMemory(botId, playerId);
+            if (memory?.pendingMedia) {
+                memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
+            }
+        }
+
+        return toolResults;
+    }
+
+    /**
+     * Flush pendingMedia items queued by retryPendingMedia on user re-join.
+     * Runs unconditionally after the greeting stream so media appears after
+     * "New discussion with..." and alongside the AI response.
+     */
+    private flushPendingMedia(
+        botClient: BotClient,
+        spaceName: string,
+        botId: string,
+        playerId: number
+    ): void {
+        // generateBotResponseStream can be called without botClient or spaceName
+        // (both are optional/undefined in its signature). Guard here prevents
+        // a runtime TypeError on botClient.sendMediaMessage() below.
+        if (!botClient || !spaceName) return;
+
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.pendingMedia?.length) return;
+
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000; // Don't retry the same item more than once per 10s
+        const remaining: typeof memory.pendingMedia = [];
+
+        for (const item of memory.pendingMedia) {
+            if (item.retryCount >= 3) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] Dropping pending ${item.mediaType} after ${item.retryCount} retries: ${item.url.substring(0, 60)}`);
+                }
+                continue;
+            }
+            // Don't retry if the last attempt was too recent — prevents rapid
+            // re-entry from burning through the retry limit within seconds.
+            if (item.lastRetryAt && (now - item.lastRetryAt) < MIN_RETRY_INTERVAL_MS) {
+                remaining.push(item);
+                continue;
+            }
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '')) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
+                }
+            } else {
+                // Send failed — increment retryCount and keep for next attempt
+                item.retryCount++;
+                item.lastRetryAt = now;
+                remaining.push(item);
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry ${item.retryCount}: ${item.url.substring(0, 60)}`);
+                }
+            }
+        }
+        memory.pendingMedia = remaining;
+
+        // Note: do NOT re-set autoDeliveredMedia here — it was already set by
+        // retryPendingMedia and consumed by getConversationContext before the
+        // conversation turn started. Re-setting it causes a stale value to leak
+        // to the next turn, where getConversationContext reads it again and
+        // injects a misleading "[Note: N media item(s)...]" into the AI prompt.
+    }
+
+    /**
+     * Extract image/file URLs from a tool result.
+     * Handles: string URLs, { url: "..." } objects, MCP content arrays, and nested results.
+     */
+    private extractUrlsFromResult(result: any): string[] {
+        if (!result) return [];
+
+        const MEDIA_URL_PATTERN = /https?:\/\/[^\s"']+\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mp3|wav|ogg)(\?[^\s"']*)?/gi;
+        const urls: string[] = [];
+        const seen = new Set<string>();
+
+        const addUrl = (url: string) => {
+            // Clean trailing punctuation that could be part of surrounding text
+            const clean = url.replace(/[.,;:!?)"'\]}>]+$/, '');
+            MEDIA_URL_PATTERN.lastIndex = 0;
+            if (MEDIA_URL_PATTERN.test(clean) && !seen.has(clean)) {
+                seen.add(clean);
+                urls.push(clean);
+            }
+        };
+
+        // Case 1: result is a string (common MCP fallback)
+        if (typeof result === 'string') {
+            const matches = result.match(MEDIA_URL_PATTERN);
+            if (matches) matches.forEach(addUrl);
+            return urls;
+        }
+
+        // Case 2: result is an object or array
+        if (typeof result === 'object') {
+            // Walk the result recursively (limited depth)
+            const walk = (obj: any, depth: number) => {
+                if (depth > 4 || obj === null || obj === undefined) return;
+                if (typeof obj === 'string') {
+                    const matches = obj.match(MEDIA_URL_PATTERN);
+                    if (matches) matches.forEach(addUrl);
+                } else if (Array.isArray(obj)) {
+                    obj.forEach(item => walk(item, depth + 1));
+                } else if (typeof obj === 'object') {
+                    for (const val of Object.values(obj)) {
+                        walk(val, depth + 1);
+                    }
+                }
+            };
+            walk(result, 0);
+        }
+
+        return urls;
+    }
+
+    /**
+     * Get file extension from a URL, lowercased.
+     */
+    private getExtension(url: string): string {
+        try {
+            const pathname = new URL(url).pathname;
+            const match = pathname.match(/\.(\w+)$/);
+            return match ? match[1].toLowerCase() : '';
+        } catch {
+            return '';
+        }
+    }    /**
      * Format tool results for AI
      */
     private formatToolResults(results: Array<{ id: string; name: string; result: any }>): string {
@@ -1790,9 +2361,100 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     return `navigate_to: Successfully started navigating. You are now leading people to the destination. The bot has started moving. If the user asks "why aren't you taking me" or "why aren't you moving", reassure them that you are leading them and they should follow. Do NOT say you can't take them - you already started leading. Respond naturally like "I'm leading you there now, just follow me!" or "Come on, follow me!" - don't mention tools or technical details.`;
                 }
             }
+            if (r.name === 'send_image' && r.result) {
+                if (r.result.error) {
+                    return `send_image: Error - ${r.result.error}. Tell the user you couldn't send the image.`;
+                }
+                if (r.result.note) {
+                    return `send_image: ${r.result.note}`;
+                }
+                if (r.result.success) {
+                    return `send_image: Successfully sent the image to the conversation. Do NOT repeat the URL or explain technical details — just respond naturally (e.g., "Here you go!" or "Check this out!" or ask if they like it). Mention the CDN URL only if the user specifically asks where the image is stored.`;
+                }
+            }
+            if (r.name === 'send_file' && r.result) {
+                if (r.result.error) {
+                    return `send_file: Error - ${r.result.error}. Tell the user you couldn't send the file.`;
+                }
+                if (r.result.note) {
+                    return `send_file: ${r.result.note}`;
+                }
+                if (r.result.success) {
+                    return `send_file: Successfully sent the file to the conversation. Do NOT explain technical details — just respond naturally.`;
+                }
+            }
+            if (r.name === 'send_audio' && r.result) {
+                if (r.result.error) {
+                    return `send_audio: Error - ${r.result.error}. Tell the user you couldn't send the audio.`;
+                }
+                if (r.result.note) {
+                    return `send_audio: ${r.result.note}`;
+                }
+                if (r.result.success) {
+                    return `send_audio: Successfully sent the audio to the conversation. Respond naturally.`;
+                }
+            }
+            if (r.name === 'send_video' && r.result) {
+                if (r.result.error) {
+                    return `send_video: Error - ${r.result.error}. Tell the user you couldn't send the video.`;
+                }
+                if (r.result.note) {
+                    return `send_video: ${r.result.note}`;
+                }
+                if (r.result.success) {
+                    return `send_video: Successfully sent the video to the conversation. Respond naturally.`;
+                }
+            }
             // Fallback to JSON for other results or errors
+            if (r.result === null || r.result === undefined) {
+                return `${r.name}: The tool returned no result.`;
+            }
             return `${r.name}: ${JSON.stringify(r.result)}`;
         }).join('\n');
+    }
+
+    /**
+     * Send media with automatic retry queuing on failure.
+     * Shared by send_image, send_file, send_audio, send_video tool handlers.
+     * On success returns { success, location, originalUrl, message }.
+     * On failure queues the CDN URL for retry and returns { success: false, note }.
+     */
+    private async sendMediaWithRetry(
+        botClient: BotClient,
+        spaceName: string,
+        url: string,
+        caption: string,
+        mediaType: 'image' | 'file' | 'audio' | 'video',
+        sendFn: () => Promise<string>,
+        botId?: string,
+        playerId?: number
+    ): Promise<any> {
+        try {
+            const location = await sendFn();
+            return { success: true, location, originalUrl: url, message: `${mediaType} sent to conversation` };
+        } catch (error: any) {
+            // Use CDN URL from error (upload already succeeded, but send failed)
+            // This avoids storing presigned/temporary URLs that may expire
+            const cdnUrl = error._cdnUrl || url;
+            const mimeType = error._mimeType || '';
+            const mediaTypeDefault: 'image' | 'file' | 'audio' | 'video' = error._mediaType || mediaType;
+            const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
+            if (memory) {
+                if (!memory.pendingMedia) memory.pendingMedia = [];
+                // Avoid duplicate — preQueueToolResults or earlier catch may have already pushed
+                if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                    memory.pendingMedia.push({
+                        url: cdnUrl,
+                        mediaType: mediaTypeDefault,
+                        mimeType,
+                        caption: caption || undefined,
+                        createdAt: Date.now(),
+                        retryCount: 0,
+                    });
+                }
+            }
+            return { success: false, originalUrl: url, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
+        }
     }
 }
 

@@ -6,7 +6,7 @@
  * 2. discoverTools caching works (second call within 1h uses cache)
  * 3. discoverTools graceful degradation (unreachable server returns empty)
  * 4. executeToolCall sends correct JSON-RPC and returns result
- * 5. executeToolCall 10s timeout behaviour
+ * 5. executeToolCall 60s timeout behaviour (REQUEST_TIMEOUT)
  * 6. Auth injection: none/bearer/api-key
  * 7. AIService integration: buildTools includes MCP tools
  * 8. AIService integration: executeToolCalls routes MCP tools correctly
@@ -14,7 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
-import { MCPConnector, type McpToolDefinition } from '../MCPConnector';
+import { MCPConnector, REQUEST_TIMEOUT, type McpToolDefinition } from '../MCPConnector';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -33,7 +33,7 @@ vi.mock('axios', () => ({
     },
 }));
 
-const mockedAxios = vi.mocked(axios);
+const mockedAxios = vi.mocked(axios, true);
 
 // Helper: make axios.isAxiosError return true for our mock errors
 function makeAxiosError(status: number, data?: any): any {
@@ -650,13 +650,20 @@ describe('MCPConnector', () => {
     // --- Timeout ----------------------------------------------------------
 
     describe('timeout handling', () => {
-        it('returns error when server takes too long', async () => {
-            // Simulate timeout by having the promise never resolve
-            // axios does support timeout via signal, but our mock just needs to throw
-            // We'll simulate an abort error
-            const abortError: any = new Error('canceled');
-            abortError.isCanceled = true;
+        beforeEach(() => {
+            // Wire isCancel to recognize AbortController timeout errors
+            mockedAxios.isCancel.mockImplementation(
+                (err: any) => err?.code === 'ERR_CANCELED'
+            );
+        });
 
+        it(`enforces ${REQUEST_TIMEOUT / 1000}s REQUEST_TIMEOUT and cancels on timeout`, async () => {
+            // Verify the timeout contract
+            expect(REQUEST_TIMEOUT).toBe(60_000);
+
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+            // Simulate timeout by having the mock throw a cancellation error
             mockedAxios.post
                 .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
                 .mockImplementationOnce(async () => {
@@ -674,7 +681,13 @@ describe('MCPConnector', () => {
                 'none'
             );
 
+            // Verify the timeout-specific code path was exercised
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining('timed out after')
+            );
             expect(result.error).toContain('Tool unavailable');
+
+            warnSpy.mockRestore();
         });
     });
 });

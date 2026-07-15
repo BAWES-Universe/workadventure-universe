@@ -50,7 +50,7 @@ interface CachedTools {
 
 const toolListCache = new Map<string, CachedTools>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
-const REQUEST_TIMEOUT = 10_000; // 10 seconds
+export const REQUEST_TIMEOUT = 60_000; // 60 seconds
 
 // Cache of initialized MCP sessions per (server URL + auth context).
 // Includes auth type/config in the key so bots with different credentials

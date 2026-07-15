@@ -42,7 +42,7 @@ export class MemoryStorage {
     /**
      * Start periodic saving
      */
-    startAutoSave(saveCallback: () => BotPlayerMemory[]): void {
+    startAutoSave(saveCallback: () => { botId: string; memories: BotPlayerMemory[] }): void {
         if (!this.isConfigured()) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn('[MemoryStorage] Admin API not configured, auto-save disabled');
@@ -234,6 +234,8 @@ export class MemoryStorage {
             userId: memory.userId,
             userName: memory.playerName,
             isGuest: memory.isGuest,
+            pendingMedia: memory.pendingMedia || [],
+            maxPendingMedia: memory.maxPendingMedia ?? 5,
             
             // Nested memories object (what Admin API looks for)
             memories: {
@@ -271,6 +273,8 @@ export class MemoryStorage {
             playerName: data.userName || memoryData.playerName,
             conversationHistory: memoryData.conversationHistory || [],
             maxHistorySize: memoryData.maxHistorySize || 50,
+            pendingMedia: data.pendingMedia || memoryData.pendingMedia || [],
+            maxPendingMedia: data.maxPendingMedia ?? memoryData.maxPendingMedia ?? 5,
             personalInfo: {
                 ...personalInfo,
                 facts: new Map(personalInfo.facts || []),

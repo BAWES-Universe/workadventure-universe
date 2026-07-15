@@ -18,6 +18,7 @@ const S3_CDN_REGION = process.env.S3_CDN_REGION;
 
 const S3_CDN_USER_REFS_PUBLIC_URL = process.env.S3_CDN_USER_REFS_PUBLIC_URL;
 const S3_CDN_BOT_GENS_PUBLIC_URL = process.env.S3_CDN_BOT_GENS_PUBLIC_URL;
+const BOT_SERVICE_TOKEN = process.env.BOT_SERVICE_TOKEN;
 const REDIS_HOST = process.env.REDIS_HOST;
 const REDIS_PORT = process.env.REDIS_PORT || "6379";
 const REDIS_DB_NUMBER = process.env.REDIS_DB_NUMBER;
@@ -61,4 +62,5 @@ export {
     S3_CDN_REGION,
     S3_CDN_USER_REFS_PUBLIC_URL,
     S3_CDN_BOT_GENS_PUBLIC_URL,
+    BOT_SERVICE_TOKEN,
 };

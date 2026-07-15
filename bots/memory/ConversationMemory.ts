@@ -65,11 +65,27 @@ export interface RelationshipContext {
     }>;
 }
 
+/**
+ * Pending media item — an uploaded file that couldn't be delivered
+ * because the user left the space. Retried on reconnect.
+ */
+export interface PendingMedia {
+    url: string;
+    mediaType: 'image' | 'file' | 'audio' | 'video';
+    mimeType: string;
+    caption?: string;
+    createdAt: number;
+    retryCount: number;
+    /** Timestamp of the last send attempt, used to enforce MIN_RETRY_INTERVAL */
+    lastRetryAt?: number;
+}
+
 export interface BotPlayerMemory {
     // UUID matching fields (for persistence across sessions)
     userUuid: string; // REQUIRED - WorkAdventure UUID
     userId?: string; // Optional - User.id if authenticated (set by Admin API after UUID matching)
     isGuest?: boolean; // Optional - true if not authenticated (defaults to true)
+    playerName?: string; // Persistent display name, round-tripped through Admin API
     
     // Internal tracking (not persisted to Admin API)
     playerId: number; // Internal use only - for in-memory tracking
@@ -90,6 +106,10 @@ export interface BotPlayerMemory {
     // Metadata
     lastUpdated: number;
     createdAt: number;
+    
+    // Pending media delivery (items that were uploaded but couldn't be sent)
+    pendingMedia: PendingMedia[];
+    maxPendingMedia: number;
 }
 
 export class ConversationMemory {
@@ -412,7 +432,7 @@ export class ConversationMemory {
     /**
      * Get or create memory (internal use)
      */
-    private getOrCreateMemory(botId: string, playerId: number): BotPlayerMemory {
+    protected getOrCreateMemory(botId: string, playerId: number): BotPlayerMemory {
         const key = `${botId}_${playerId}`;
         
         if (!this.memories.has(key)) {
@@ -451,6 +471,8 @@ export class ConversationMemory {
                 },
                 lastUpdated: now,
                 createdAt: now,
+                pendingMedia: [],
+                maxPendingMedia: 5,
             });
 
             // Cleanup old memories if we exceed limit
@@ -701,6 +723,23 @@ export class ConversationMemory {
         }
         if (personalInfo.preferences && personalInfo.preferences.length > 0) {
             personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
+        }
+
+        // Auto-delivered media notification — tells the bot that images it
+        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent.
+        // MUST run BEFORE the personal-details fact iteration below, so it's
+        // consumed (set to '') before that loop includes it as a raw key-value.
+        // Otherwise the bot sees both 'You remember: autoDeliveredMedia: 1' AND
+        // the system note, which undermines the directive.
+        const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
+        if (autoDelivered) {
+            context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
+            // Delete the fact so the facts iteration below doesn't include
+            // "autoDeliveredMedia: " in the AI's context. On the same-turn retry
+            // (AI call fails), getConversationContext runs again — the guard above
+            // skips a missing key the same way it skips an empty string, and
+            // retryPendingMedia re-sets the fact from scratch on next re-entry.
+            personalInfo.facts.delete('autoDeliveredMedia');
         }
 
         // Natural facts recall (especially current state)

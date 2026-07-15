@@ -29,6 +29,7 @@ import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
+import { resolve4, resolve6 } from 'dns/promises';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -43,6 +44,7 @@ export interface BotConfig {
     characterTextureIds: string[];
     companionTextureId?: string;
     token?: string;
+    uploaderUrl?: string;
 }
 
 export class BotClient {
@@ -1237,6 +1239,482 @@ export class BotClient {
         });
     }
 
+    /** Return true when `ip` is a private/reserved address (both IPv4 and IPv6). */
+    private isPrivateIp(ip: string): boolean {
+        // IPv4 ranges
+        if (/^127\.\d+\.\d+\.\d+$/.test(ip)) return true;
+        if (ip === '0.0.0.0' || ip === '::1' || /^::$/.test(ip)) return true;
+        if (/^10\.\d+\.\d+\.\d+$/.test(ip)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(ip)) return true;
+        if (/^192\.168\.\d+\.\d+$/.test(ip)) return true;
+        if (/^169\.254\.\d+\.\d+$/.test(ip) && ip !== '169.254.169.254') return true;
+        // AWS metadata endpoint — still private
+        if (ip === '169.254.169.254') return true;
+        // IPv6 unique-local / link-local
+        if (/^f[cd][0-9a-f]{0,3}:/i.test(ip)) return true;
+        if (/^fe[89a-b][0-9a-f]:/i.test(ip)) return true;
+        // IPv6-mapped IPv4 — handle both dot-decimal and hex forms
+        if (/^::ffff:/i.test(ip)) {
+            const embedded = ip.replace(/^::ffff:/i, '');
+            // Dot-decimal: ::ffff:127.0.0.1
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(embedded) && this.isPrivateIp(embedded)) return true;
+            // Hex form: ::ffff:7f00:1 — parse and recurse
+            const parts = embedded.split(':');
+            if (parts.length === 2) {
+                const hexStr = parts.map(p => p.padStart(4, '0')).join('');
+                const val = parseInt(hexStr, 16);
+                if (!isNaN(val)) {
+                    const decoded = [
+                        (val >>> 24) & 0xff,
+                        (val >>> 16) & 0xff,
+                        (val >>> 8) & 0xff,
+                        val & 0xff,
+                    ].join('.');
+                    if (this.isPrivateIp(decoded)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Resolve a hostname via DNS and validate none of the resolved addresses
+     * are private. Returns true when all resolved IPs are external.
+     * Skips DNS for literal IP addresses (already validated by isPrivateHost).
+     */
+    private async resolveIsExternal(hostname: string): Promise<boolean> {
+        if (/^[\d.]+$/.test(hostname) || (/^[0-9a-f:]+$/i.test(hostname) && hostname.includes(':')) || hostname.startsWith('[')) {
+            return true;
+        }
+        let safe = true;
+        try {
+            const v4 = await resolve4(hostname);
+            if (v4.some(ip => this.isPrivateIp(ip))) safe = false;
+        } catch { /* no A record — not a problem */ }
+        try {
+            const v6 = await resolve6(hostname);
+            if (v6.some(ip => this.isPrivateIp(ip))) safe = false;
+        } catch { /* no AAAA record — not a problem */ }
+        return safe;
+    }
+
+    /** Follow HTTP redirects with SSRF validation on each hop (max 5 hops). */
+    private async fetchWithRedirectFollow(
+        url: string,
+        init: RequestInit & { signal: AbortSignal },
+        redirectCount = 0,
+    ): Promise<Response> {
+        if (redirectCount > 5) {
+            throw new Error(`[BotClient] Too many redirects fetching: ${url}`);
+        }
+
+        // Validate each hop's hostname
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            throw new Error(`[BotClient] Invalid redirect URL: ${url}`);
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            throw new Error(`[BotClient] Unsupported redirect scheme: ${parsedUrl.protocol}`);
+        }
+        if (this.isPrivateHost(parsedUrl.hostname)) {
+            throw new Error(`[BotClient] Redirect target is a private or reserved address: ${parsedUrl.hostname}`);
+        }
+        // DNS-level SSRF guard: resolve hostname and verify resolved IPs are not private
+        const hostnameSafe = await this.resolveIsExternal(parsedUrl.hostname);
+        if (!hostnameSafe) {
+            throw new Error(`[BotClient] URL hostname '${parsedUrl.hostname}' resolves to a private/internal IP address`);
+        }
+
+        const response = await fetch(url, { ...init, redirect: 'manual' });
+
+        // 3xx — manually follow with SSRF check on the redirect target
+        if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get('location');
+            if (!location) {
+                throw new Error(`[BotClient] Redirect ${response.status} with no Location header: ${url}`);
+            }
+            // Resolve relative redirects against the current URL
+            const redirectTarget = new URL(location, url).href;
+            return this.fetchWithRedirectFollow(redirectTarget, init, redirectCount + 1);
+        }
+
+        return response;
+    }
+
+    /** Fetch a URL's body as a buffer with SSRF-safe redirect following, timeout, and size cap. */
+    private async fetchMediaBuffer(url: string, mimeType?: string): Promise<{ buffer: Buffer; contentType: string }> {
+        // Validate URL before fetching — SSRF prevention
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            throw new Error(`[BotClient] Invalid URL: ${url}`);
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            throw new Error(`[BotClient] Unsupported URL scheme: ${parsedUrl.protocol}`);
+        }
+        const hostname = parsedUrl.hostname;
+        if (this.isPrivateHost(hostname)) {
+            throw new Error(`[BotClient] URL points to a private or reserved address: ${hostname}`);
+        }
+
+        // Fetch with timeout, size limit, and SSRF-safe redirect following
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30_000); // 30s timeout
+
+        const MAX_SIZE = 25 * 1024 * 1024;
+
+        try {
+            const response = await this.fetchWithRedirectFollow(url, { signal: controller.signal });
+            if (!response.ok) {
+                throw new Error(`[BotClient] Failed to fetch media from ${url}: ${response.status} ${response.statusText}`);
+            }
+
+            // Stream the response body with a size cap (25 MB)
+            // Timeout remains active throughout streaming to prevent hung connections
+            const contentType = mimeType || response.headers.get('content-type') || 'application/octet-stream';
+            const chunks: Buffer[] = [];
+            let totalSize = 0;
+
+            if (!response.body) {
+                throw new Error('[BotClient] Response has no body stream');
+            }
+            const reader = response.body.getReader();
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    totalSize += value.length;
+                    if (totalSize > MAX_SIZE) {
+                        reader.cancel();
+                        throw new Error(`[BotClient] Media exceeds maximum size of ${MAX_SIZE / 1024 / 1024} MB`);
+                    }
+                    chunks.push(Buffer.from(value));
+                }
+            } finally {
+                reader.cancel().catch(() => {}); // Release the stream reader
+            }
+            const buffer = Buffer.concat(chunks);
+
+            return { buffer, contentType };
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    /**
+     * Upload a file from a URL to the uploader service using bot service auth.
+     * Fetches the content from the provided URL (e.g. MCP tool output) and POSTs it
+     * to the uploader's /upload-file endpoint with the BOT_SERVICE_TOKEN header.
+     * Returns the CDN location and inferred media type.
+     */
+    private async uploadMedia(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
+        const uploaderUrl = this.config.uploaderUrl || process.env.UPLOADER_URL;
+        if (!uploaderUrl) {
+            throw new Error('[BotClient] UPLOADER_URL not configured — cannot upload media');
+        }
+
+        // If the URL is already on our uploader/CDN, no need to re-upload
+        if (url.startsWith(uploaderUrl) || url.includes('/upload-file/')) {
+            // Infer media type from URL or mimeType
+            const mediaType = this.inferMediaTypeFromUrl(url, mimeType);
+            return { location: url, mediaType, mimeType: mimeType || 'application/octet-stream' };
+        }
+        // Fetch media content with SSRF-safe redirect following, timeout, and size limit
+        const { buffer, contentType } = await this.fetchMediaBuffer(url, mimeType);
+
+        // Extract filename from URL for the upload
+        const urlPath = new URL(url).pathname;
+        const filename = urlPath.split('/').pop() || `bot-media-${Date.now()}`;
+
+        // Build multipart form data
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: contentType });
+        formData.append('file', blob, filename);
+
+        // Upload to uploader with bot service token
+        const uploadController = new AbortController();
+        const uploadTimeoutId = setTimeout(() => uploadController.abort(), 30_000);
+        let uploadResponse: Response | undefined;
+        try {
+            uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
+                method: 'POST',
+                headers: {
+                    'x-bot-service-token': process.env.BOT_SERVICE_TOKEN || '',
+                },
+                body: formData,
+                signal: uploadController.signal,
+            });
+
+            if (!uploadResponse.ok) {
+                const errorText = await uploadResponse.text();
+                throw new Error(`[BotClient] Upload failed: ${uploadResponse.status} — ${errorText}`);
+            }
+        } finally {
+            clearTimeout(uploadTimeoutId);
+        }
+
+        const result = await uploadResponse!.json();
+        if (!Array.isArray(result) || result.length === 0) {
+            throw new Error('[BotClient] Upload response missing file data');
+        }
+
+        const uploadedFile = result[0];
+        const location = uploadedFile.location || uploadedFile.url;
+        const mediaType = this.inferMediaTypeFromUrl(location, contentType);
+
+        return { location, mediaType, mimeType: contentType };
+    }
+
+    /**
+     * Infer media type from URL extension or mime type
+     */
+    private inferMediaTypeFromUrl(url: string, mimeType?: string): string {
+        const ext = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
+        const mime = mimeType?.toLowerCase() || '';
+
+        // Check mime type first
+        if (mime.startsWith('image/')) return 'image';
+        if (mime.startsWith('audio/')) return 'audio';
+        if (mime.startsWith('video/')) return 'video';
+        if (mime.startsWith('text/') || mime === 'application/pdf') return 'file';
+
+        // Fallback to extension
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+        const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma'];
+        const videoExts = ['mp4', 'webm', 'avi', 'mov', 'mkv', 'flv', 'wmv'];
+
+        if (imageExts.includes(ext)) return 'image';
+        if (audioExts.includes(ext)) return 'audio';
+        if (videoExts.includes(ext)) return 'video';
+        return 'file';
+    }
+
+    /**
+     * Send an image to a space.
+     * Uploads the image from the provided URL to the CDN (if needed) and sends it to the chat.
+     */
+    async sendImage(spaceName: string, url: string, alt?: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, alt || '')) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send image`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent image to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Send a file to a space.
+     */
+    async sendFile(spaceName: string, url: string, filename?: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '')) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent file to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Send audio to a space.
+     */
+    async sendAudio(spaceName: string, url: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send audio`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent audio to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Send video to a space.
+     */
+    async sendVideo(spaceName: string, url: string): Promise<string> {
+        const mimeHint = this.inferMimeFromExt(url);
+        try {
+            const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType)) {
+                const err = new Error(`Bot is not in space ${spaceName} — cannot send video`);
+                (err as any)._cdnUrl = location;
+                (err as any)._mediaType = mediaType;
+                (err as any)._mimeType = mimeType;
+                throw err;
+            }
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] Sent video to ${spaceName}: ${location}`);
+            }
+            return location;
+        } catch (err: any) {
+            if (!err._mimeType) {
+                (err as any)._mimeType = mimeHint;
+            }
+            throw err;
+        }
+    }
+
+    /**
+     * Upload a media file to the CDN and return the CDN URL.
+     * Public wrapper around the private uploadMedia method.
+     * Useful for callers that need the CDN URL before deciding to send.
+     */
+    async uploadToCDN(url: string, mimeType?: string): Promise<{ location: string; mediaType: string; mimeType: string }> {
+        return this.uploadMedia(url, mimeType);
+    }
+
+    /**
+     * Check if a hostname resolves to a private or link-local address.
+     * Prevents SSRF attacks by rejecting internal network targets.
+     */
+    private isPrivateHost(hostname: string): boolean {
+        // Strip brackets from IPv6 literals (Node.js URL normalizes [::ffff:127.0.0.1] to [::ffff:7f00:1])
+        const raw = hostname.replace(/^\[|\]$/g, '');
+
+        // Localhost / loopback (entire 127.0.0.0/8 range)
+        if (raw === 'localhost' || raw === '::1' || /^127\.\d+\.\d+\.\d+$/.test(raw)) {
+            return true;
+        }
+        // IPv6-mapped IPv4 (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1) — SSRF bypass vector
+        if (/^::ffff:/i.test(raw)) {
+            const embedded = raw.replace(/^::ffff:/i, '');
+            // Dot-decimal form (unusual with brackets stripped, but handle it)
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(embedded)) {
+                if (this.isPrivateIp(embedded)) return true;
+            } else {
+                // Hex form: "7f00:1", "a00:1", "c0a8:101" — normalize to dotted decimal
+                const parts = embedded.split(':');
+                if (parts.length === 2) {
+                    const hexStr = parts.map(p => p.padStart(4, '0')).join('');
+                    const val = parseInt(hexStr, 16);
+                    if (!isNaN(val)) {
+                        const ip = [
+                            (val >>> 24) & 0xff,
+                            (val >>> 16) & 0xff,
+                            (val >>> 8) & 0xff,
+                            val & 0xff,
+                        ].join('.');
+                        if (this.isPrivateIp(ip)) return true;
+                    }
+                }
+            }
+        }
+        // IPv4 private ranges
+        if (/^10\./.test(raw)) return true;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(raw)) return true;
+        if (/^192\.168\./.test(raw)) return true;
+        // IPv4 link-local
+        if (/^169\.254\./.test(raw)) return true;
+        // Reserved / zero address
+        if (raw === '0.0.0.0') return true;
+        // IPv6 documentation / private / unique-local
+        if (raw === '::') return true;
+        if (/^fc00:/i.test(raw) || /^fd00:/i.test(raw)) return true;
+        if (/^fe80:/i.test(raw)) return true;
+        // host.docker.internal or similar Docker/Kubernetes internal names
+        if (raw.endsWith('.internal') || raw === 'host.docker.internal') return true;
+        // Cloud metadata services
+        if (raw === 'metadata.google.internal' || raw === 'metadata.internal') return true;
+        // mDNS / link-local hostnames
+        if (raw.endsWith('.local')) return true;
+        return false;
+    }
+
+    /**
+     * Send a media message to a space via publicEvent spaceMessage.
+     */
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): boolean {
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName} — cannot send media`);
+            }
+            return false;
+        }
+
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceMessage',
+                            spaceMessage: {
+                                message: caption || '',
+                                characterTextures: [],
+                                name: this.config.name,
+                                url,
+                                mediaType,
+                                mimeType,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        return true;
+    }
+
+    /**
+     * Infer mime type from file extension
+     */
+    private inferMimeFromExt(url: string): string {
+        const ext = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
+        const mimeMap: Record<string, string> = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+            gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+            mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg',
+            mp4: 'video/mp4', webm: 'video/webm',
+            pdf: 'application/pdf', txt: 'text/plain',
+            json: 'application/json', csv: 'text/csv',
+        };
+        return mimeMap[ext] || '';
+    }
+
     /**
      * Send a streaming response chunk to the space.
      * Used by bot behaviors to stream AI-generated text token-by-token
@@ -1675,7 +2153,7 @@ export class BotClient {
     /**
      * Handle incoming WebSocket message
      */
-    private handleMessage(data: ArrayBuffer): void {
+    private async handleMessage(data: ArrayBuffer): Promise<void> {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] 📨 Received message, size: ${data.byteLength} bytes`);
         }
@@ -1700,18 +2178,18 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📦 Batch message with ${msg.batchMessage.payload.length} sub-messages`);
                     }
                     for (const subMessage of msg.batchMessage.payload) {
-                        this.handleSubMessage(subMessage.message);
+                        await this.handleSubMessage(subMessage.message);
                     }
                     break;
                 default:
-                    this.handleSubMessage(msg);
+                    await this.handleSubMessage(msg);
             }
         } catch (error) {
             console.error(`[Bot ${this.config.botId}] ❌ Error handling message:`, error);
         }
     }
 
-    private handleSubMessage(message: ServerToClientMessage['message']): void {
+    private async handleSubMessage(message: any): Promise<void> {
         if (!message) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[Bot ${this.config.botId}] ⚠️ handleSubMessage called with null/undefined message`);
@@ -1917,7 +2395,7 @@ export class BotClient {
                             }
                             
                             // Call onSpaceUserJoined to track UUIDs and auth status
-                            this.behavior.onSpaceUserJoined(spaceName, userWithId);
+                            await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                         } else {
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[Bot ${this.config.botId}] Could not extract numeric userId from SpaceUser "${spaceUser.name}" (spaceUserId: ${spaceUser.spaceUserId || 'unknown'}, UUID: ${spaceUser.uuid || 'unknown'})`);
@@ -1968,7 +2446,7 @@ export class BotClient {
                         console.log(`[Bot ${this.config.botId}] 📝 Tracking UUID from addSpaceUserMessage for user ${numericUserId} (${spaceUser.name}): ${spaceUser.uuid || 'NO UUID'}, isLogged: ${spaceUser.isLogged || false}`);
                     }
                     
-                    this.behavior.onSpaceUserJoined(spaceName, userWithId);
+                    await this.behavior.onSpaceUserJoined(spaceName, userWithId);
                 }
                 break;
 
@@ -2067,7 +2545,10 @@ export class BotClient {
                         this.behavior.onChatMessage(
                             spaceName,
                             spaceMessage.message,
-                            senderId
+                            senderId,
+                            spaceMessage.url,
+                            spaceMessage.mediaType,
+                            spaceMessage.mimeType
                         );
                     } else {
                         if (senderId === 0) {
@@ -2100,6 +2581,12 @@ export class BotClient {
             case 'pingMessage':
                 // Respond to server ping to keep connection alive
                 this.sendPong();
+                break;
+            default:
+                // Unhandled message types — bots only process what they need
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[Bot ${this.config.botId}] Unhandled message type: ${message.$case}`);
+                }
                 break;
         }
     }
@@ -2135,8 +2622,8 @@ export class BotClient {
         }
 
         try {
-            // Default filterType to ALL_USERS (0) if not provided
-            const filterType = request.filterType ?? FilterType.ALL_USERS;
+            // Default filterType to ALL_USERS (0) — field removed from protobuf
+            const filterType = FilterType.ALL_USERS;
             const propertiesToSync = request.propertiesToSync || [];
             
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2373,7 +2860,7 @@ export class BotClient {
         }
     }
 
-    private sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
+    public sendPosition(position: PositionInterface, direction: PositionMessage_Direction, moving: boolean): void {
         // Safety checks for undefined values
         const x = position?.x ?? 0;
         const y = position?.y ?? 0;
