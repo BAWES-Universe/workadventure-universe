@@ -2103,8 +2103,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory?.pendingMedia?.length) return;
 
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000; // Don't retry the same item more than once per 10s
         const remaining: typeof memory.pendingMedia = [];
-        let sentCount = 0;
 
         for (const item of memory.pendingMedia) {
             if (item.retryCount >= 3) {
@@ -2113,14 +2114,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
                 continue;
             }
+            // Don't retry if the last attempt was too recent — prevents rapid
+            // re-entry from burning through the retry limit within seconds.
+            if (item.lastRetryAt && (now - item.lastRetryAt) < MIN_RETRY_INTERVAL_MS) {
+                remaining.push(item);
+                continue;
+            }
             if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '')) {
-                sentCount++;
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }
             } else {
                 // Send failed — increment retryCount and keep for next attempt
                 item.retryCount++;
+                item.lastRetryAt = now;
                 remaining.push(item);
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry ${item.retryCount}: ${item.url.substring(0, 60)}`);

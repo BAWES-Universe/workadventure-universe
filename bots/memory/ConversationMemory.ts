@@ -76,6 +76,8 @@ export interface PendingMedia {
     caption?: string;
     createdAt: number;
     retryCount: number;
+    /** Timestamp of the last send attempt, used to enforce MIN_RETRY_INTERVAL */
+    lastRetryAt?: number;
 }
 
 export interface BotPlayerMemory {
