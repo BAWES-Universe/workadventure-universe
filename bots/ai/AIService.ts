@@ -2180,7 +2180,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (lastError.includes('not in space') || lastError.includes('cannot send')) {
                     tr.result = {
                         success: true,
-                        message: `Generated and saved for delivery — ${urls.length} file(s) will appear when the user returns.`
+                        message: `${urls.length} file(s) queued for delivery — will appear when the user returns.`
                     };
                 } else {
                     tr.result = { error: `Failed to auto-send media: ${lastError}` };
