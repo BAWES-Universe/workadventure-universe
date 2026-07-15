@@ -961,7 +961,9 @@ export abstract class BaseBehavior {
         const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
         if (!memory?.pendingMedia?.length) return;
 
-        let deliveredCount = 0;
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000; // Must match AIService.ts
+        let deliverableCount = 0;
 
         for (const pending of memory.pendingMedia) {
             if (pending.retryCount >= 3) {
@@ -970,10 +972,15 @@ export abstract class BaseBehavior {
                 }
                 continue;
             }
+            // Don't count items that flushPendingMedia will skip due to the
+            // minimum retry window — the AI would falsely promise delivery.
+            if (pending.lastRetryAt && (now - pending.lastRetryAt) < MIN_RETRY_INTERVAL_MS) {
+                continue;
+            }
             // Don't increment retryCount here — the actual send attempt happens
             // during the conversation turn (flushPendingMedia). Counting retries on
             // re-entry alone would burn through the limit without any send attempt.
-            deliveredCount++;
+            deliverableCount++;
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Behavior] Queued pending ${pending.mediaType} for conversation-turn delivery to user ${user.id}`);
             }
@@ -986,10 +993,10 @@ export abstract class BaseBehavior {
         // during the conversation turn (after "New discussion with..." appears).
 
         // Set the fact optimistically so the AI knows media will appear alongside
-        // its greeting. The prompt text ("will appear") is intentionally not
-        // claiming delivery — the actual send happens in flushPendingMedia.
-        if (deliveredCount > 0) {
-            memory.personalInfo.facts.set('autoDeliveredMedia', String(deliveredCount));
+        // its greeting. The count only includes deliverable items (retryCount < 3
+        // AND not within the MIN_RETRY_INTERVAL window).
+        if (deliverableCount > 0) {
+            memory.personalInfo.facts.set('autoDeliveredMedia', String(deliverableCount));
         }
     }
 
