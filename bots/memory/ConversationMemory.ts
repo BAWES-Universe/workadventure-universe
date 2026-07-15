@@ -725,6 +725,21 @@ export class ConversationMemory {
             personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
         }
 
+        // Auto-delivered media notification — tells the bot that images it
+        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent.
+        // MUST run BEFORE the personal-details fact iteration below, so it's
+        // consumed (set to '') before that loop includes it as a raw key-value.
+        // Otherwise the bot sees both 'You remember: autoDeliveredMedia: 1' AND
+        // the system note, which undermines the directive.
+        const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
+        if (autoDelivered) {
+            context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
+            // Mark as consumed instead of deleting — if the downstream AI call fails,
+            // the fact survives for the retry. Empty string is falsy so the guard
+            // above naturally skips it on subsequent reads, preventing duplicate mentions.
+            personalInfo.facts.set('autoDeliveredMedia', '');
+        }
+
         // Natural facts recall (especially current state)
         const currentState = personalInfo.facts.get('current_state');
         if (currentState) {
@@ -744,21 +759,6 @@ export class ConversationMemory {
 
         if (personalDetails.length > 0) {
             context.push(`\nWhat you know about them: ${personalDetails.join('. ')}.`);
-        }
-
-        // Auto-delivered media notification — tells the bot that images it
-        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent.
-        // Must explicitly state the generation itself succeeded, because the
-        // conversation history may contain the bot saying "the generation
-        // failed" (from the interrupted session), and the bot trusts history
-        // more than a bare note.
-        const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
-        if (autoDelivered) {
-            context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
-            // Mark as consumed instead of deleting — if the downstream AI call fails,
-            // the fact survives for the retry. Empty string is falsy so the guard
-            // above naturally skips it on subsequent reads, preventing duplicate mentions.
-            personalInfo.facts.set('autoDeliveredMedia', '');
         }
 
         // Natural emotion expression
