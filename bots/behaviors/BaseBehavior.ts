@@ -978,6 +978,10 @@ export abstract class BaseBehavior {
                 console.log(`[Behavior] Queued pending ${pending.mediaType} for conversation-turn delivery to user ${user.id}`);
             }
         }
+        // Remove exhausted items (retryCount >= 3) so they don't accumulate
+        // indefinitely, generating log spam on every re-join and consuming
+        // limited slots in the pendingMedia array.
+        memory.pendingMedia = memory.pendingMedia.filter(p => p.retryCount < 3);
         // Keep ready items in pendingMedia — flushPendingMedia will send them
         // during the conversation turn (after "New discussion with..." appears).
 

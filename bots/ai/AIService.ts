@@ -1215,6 +1215,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     sentrySetSpan?.(sentryScope, previousSpan);
                 }
 
+                // Flush any pendingMedia queued by retryPendingMedia on re-join.
+                // This covers the plain-text greeting path (no tool calls) where
+                // the flush inside the tool-call conditional never runs.
+                this.flushPendingMedia(botClient, spaceName, botId, playerId);
+
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
