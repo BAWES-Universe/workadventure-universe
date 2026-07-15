@@ -2127,9 +2127,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
         memory.pendingMedia = remaining;
 
-        if (sentCount > 0) {
-            memory.personalInfo.facts.set('autoDeliveredMedia', String(sentCount));
-        }
+        // Note: do NOT re-set autoDeliveredMedia here — it was already set by
+        // retryPendingMedia and consumed by getConversationContext before the
+        // conversation turn started. Re-setting it causes a stale value to leak
+        // to the next turn, where getConversationContext reads it again and
+        // injects a misleading "[Note: N media item(s)...]" into the AI prompt.
     }
 
     /**
