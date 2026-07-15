@@ -710,6 +710,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                 }
                             }
 
+                            // Pre-queue media URLs to pendingMedia as a safety net.
+                            // If the generator is cancelled before autoSendMedia runs
+                            // (user leaves mid-turn), the URLs are already persisted
+                            // and will be delivered by flushPendingMedia on re-entry.
+                            this.preQueueToolResults(toolResults, alreadySentUrls, botId, playerId);
+
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
                             await this.autoSendMedia(toolResults, botClient, spaceName, alreadySentUrls, botId, playerId);
@@ -1978,6 +1984,72 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Pre-queue media URLs from tool results to pendingMedia as a safety net.
+     *
+     * Runs immediately after executeToolCalls returns and BEFORE autoSendMedia
+     * processes the results. If the generator is cancelled mid-turn (user leaves),
+     * the URLs are already persisted in pendingMedia and will be delivered by
+     * flushPendingMedia on re-entry. autoSendMedia removes successfully sent
+     * URLs from pendingMedia, so in the normal flow this is a no-op pass-through.
+     *
+     * Tool-agnostic — reuses extractUrlsFromResult which works with any MCP tool.
+     */
+    private preQueueToolResults(
+        toolResults: Array<{ id: string; name: string; result: any }>,
+        alreadySentUrls: Set<string>,
+        botId?: string,
+        playerId?: number
+    ): void {
+        if (!botId || playerId === undefined) return;
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return;
+        if (!memory.pendingMedia) memory.pendingMedia = [];
+        if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+
+        const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
+        const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
+        const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
+
+        for (const tr of toolResults) {
+            // Skip results from media tools and built-in tools — they don't produce URLs to extract
+            if (['send_image', 'send_file', 'send_audio', 'send_video', 'get_people_on_map',
+                 'get_bot_position', 'get_areas_on_map', 'navigate_to'].includes(tr.name)) {
+                continue;
+            }
+
+            const urls = this.extractUrlsFromResult(tr.result);
+            if (urls.length === 0) continue;
+
+            for (const url of urls) {
+                // Skip URLs already sent by explicit send_* tool calls
+                if (alreadySentUrls.has(url)) continue;
+                // Skip internal/local URLs
+                try {
+                    const hostname = new URL(url).hostname;
+                    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) continue;
+                } catch { continue; }
+
+                if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
+
+                const ext = this.getExtension(url);
+                const mediaType: 'image' | 'file' | 'audio' | 'video' =
+                    IMAGE_EXT_SET.has(ext) ? 'image' :
+                    VIDEO_EXT_SET.has(ext) ? 'video' :
+                    AUDIO_EXT_SET.has(ext) ? 'audio' : 'file';
+
+                memory.pendingMedia.push({
+                    url,
+                    mediaType,
+                    mimeType: '',
+                    caption: '',
+                    createdAt: Date.now(),
+                    retryCount: 0,
+                });
+            }
+        }
+    }
+
+    /**
      * Auto-send media URLs from MCP tool results to the conversation.
      * This is a code-level interceptor (Layer 3): after any tool returns a result
      * containing an image/audio/video URL, automatically call send_image/send_file
@@ -1997,6 +2069,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
         const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
         const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
+        // Track successfully sent URLs so pre-queued pendingMedia items are cleaned up
+        const sentUrls = new Set<string>();
 
         for (const tr of toolResults) {
             // Skip results from our own media tools (they already handled sending)
@@ -2034,16 +2108,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (IMAGE_EXT_SET.has(ext)) {
                         await botClient.sendImage(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     } else if (VIDEO_EXT_SET.has(ext)) {
                         await botClient.sendVideo(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     } else if (AUDIO_EXT_SET.has(ext)) {
                         await botClient.sendAudio(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     } else {
                         // File with other extension — attempt as file
                         await botClient.sendFile(spaceName, url);
                         sentCount++;
+                        sentUrls.add(url);
                     }
                 } catch (err: any) {
                     lastError = err.message;
@@ -2101,6 +2179,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     success: true,
                     message: `All ${skippedCount} ${label} already sent to the conversation.`,
                 };
+            }
+        }
+
+        // Clean up pendingMedia — remove URLs that were successfully delivered.
+        // These were pre-queued by preQueueToolResults as a safety net; now that
+        // autoSendMedia succeeded, they don't need retry.
+        if (botId && playerId !== undefined && sentUrls.size > 0) {
+            const memory = this.conversationMemory?.getMemory(botId, playerId);
+            if (memory?.pendingMedia) {
+                memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
             }
         }
 
