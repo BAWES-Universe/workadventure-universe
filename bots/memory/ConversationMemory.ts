@@ -754,7 +754,7 @@ export class ConversationMemory {
         // more than a bare note.
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
-            context.push(`\n[System: ${autoDelivered} visual(s) you already GENERATED SUCCESSFULLY in the previous conversation but couldn't deliver at that moment are being re-sent NOW alongside this message. They exist. Do NOT generate or request them again — they are on their way to the user.]`);
+            context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
             // Mark as consumed instead of deleting — if the downstream AI call fails,
             // the fact survives for the retry. Empty string is falsy so the guard
             // above naturally skips it on subsequent reads, preventing duplicate mentions.

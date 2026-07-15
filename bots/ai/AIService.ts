@@ -2011,6 +2011,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     skippedCount++;
                     continue;
                 }
+                // Skip internal/local URLs that can't be accessed by the frontend.
+                // Tools like list_generations may return local filesystem paths that
+                // match the media URL pattern but aren't real CDN URLs.
+                try {
+                    const hostname = new URL(url).hostname;
+                    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) {
+                        continue;
+                    }
+                } catch {
+                    continue; // Invalid URL — skip
+                }
                 const ext = this.getExtension(url);
                 try {
                     if (IMAGE_EXT_SET.has(ext)) {
