@@ -2136,7 +2136,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
-                            if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                            // Avoid duplicate — preQueueToolResults may have already pushed this URL
+                            if (!memory.pendingMedia.some(p => p.url === cdnUrl) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                 memory.pendingMedia.push({
                                     url: cdnUrl,
                                     mediaType: mType,

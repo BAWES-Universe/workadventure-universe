@@ -734,10 +734,12 @@ export class ConversationMemory {
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
             context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
-            // Mark as consumed instead of deleting — if the downstream AI call fails,
-            // the fact survives for the retry. Empty string is falsy so the guard
-            // above naturally skips it on subsequent reads, preventing duplicate mentions.
-            personalInfo.facts.set('autoDeliveredMedia', '');
+            // Delete the fact so the facts iteration below doesn't include
+            // "autoDeliveredMedia: " in the AI's context. On the same-turn retry
+            // (AI call fails), getConversationContext runs again — the guard above
+            // skips a missing key the same way it skips an empty string, and
+            // retryPendingMedia re-sets the fact from scratch on next re-entry.
+            personalInfo.facts.delete('autoDeliveredMedia');
         }
 
         // Natural facts recall (especially current state)
