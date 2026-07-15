@@ -970,17 +970,20 @@ export abstract class BaseBehavior {
                 }
                 continue;
             }
-            pending.retryCount++;
+            // Don't increment retryCount here — the actual send attempt happens
+            // during the conversation turn (flushPendingMedia). Counting retries on
+            // re-entry alone would burn through the limit without any send attempt.
             deliveredCount++;
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Behavior] Queued pending ${pending.mediaType} for conversation-turn delivery to user ${user.id}`);
             }
         }
-        // Keep ready items in pendingMedia — autoSendMedia will flush them
+        // Keep ready items in pendingMedia — flushPendingMedia will send them
         // during the conversation turn (after "New discussion with..." appears).
 
-        // If any items are ready, inject a fact so the greeting AI knows
-        // not to re-announce. Sent during the conversation turn as the user rejoined.
+        // Set the fact optimistically so the AI knows media will appear alongside
+        // its greeting. The prompt text ("will appear") is intentionally not
+        // claiming delivery — the actual send happens in flushPendingMedia.
         if (deliveredCount > 0) {
             memory.personalInfo.facts.set('autoDeliveredMedia', String(deliveredCount));
         }

@@ -681,6 +681,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         let previousRoundStartTime = 0;
                         let previousRoundInput = '';
 
+                        // Flush any pendingMedia queued by retryPendingMedia on re-join.
+                        // Runs unconditionally (not just in tool-call loops) so the media
+                        // appears after the greeting stream and "New discussion with...".
+                        this.flushPendingMedia(botClient, spaceName, botId, playerId);
+
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
 
@@ -1975,27 +1980,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
-        // Flush any pendingMedia items queued by retryPendingMedia on user re-join.
-        // These are sent here (during the conversation turn) rather than during
-        // onSpaceUserJoined so they appear after "New discussion with..." and
-        // alongside the greeting, not before it.
-        if (botId && playerId !== undefined) {
-            const memory = this.conversationMemory?.getMemory(botId, playerId);
-            if (memory?.pendingMedia?.length) {
-                const toSend = [...memory.pendingMedia];
-                memory.pendingMedia = [];
-                for (const item of toSend) {
-                    if (!botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '')) {
-                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                            console.log(`[AIService] Failed to flush pendingMedia: not in space ${spaceName}`);
-                        }
-                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
-                    }
-                }
-            }
-        }
-
         const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
         const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
         const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
@@ -2096,6 +2080,51 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
 
         return toolResults;
+    }
+
+    /**
+     * Flush pendingMedia items queued by retryPendingMedia on user re-join.
+     * Runs unconditionally after the greeting stream so media appears after
+     * "New discussion with..." and alongside the AI response.
+     */
+    private flushPendingMedia(
+        botClient: BotClient,
+        spaceName: string,
+        botId: string,
+        playerId: number
+    ): void {
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory?.pendingMedia?.length) return;
+
+        const remaining: typeof memory.pendingMedia = [];
+        let sentCount = 0;
+
+        for (const item of memory.pendingMedia) {
+            if (item.retryCount >= 3) {
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] Dropping pending ${item.mediaType} after ${item.retryCount} retries: ${item.url.substring(0, 60)}`);
+                }
+                continue;
+            }
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '')) {
+                sentCount++;
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
+                }
+            } else {
+                // Send failed — increment retryCount and keep for next attempt
+                item.retryCount++;
+                remaining.push(item);
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry ${item.retryCount}: ${item.url.substring(0, 60)}`);
+                }
+            }
+        }
+        memory.pendingMedia = remaining;
+
+        if (sentCount > 0) {
+            memory.personalInfo.facts.set('autoDeliveredMedia', String(sentCount));
+        }
     }
 
     /**
