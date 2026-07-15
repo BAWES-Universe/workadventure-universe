@@ -2173,7 +2173,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                 }
             } else if (lastError) {
-                tr.result = { error: `Failed to auto-send media: ${lastError}` };
+                // "Not in space" means the user left mid-turn — the URL was already
+                // queued to pendingMedia by the catch block and will be delivered
+                // on re-entry. Return a non-error result so the AI's follow-up loop
+                // doesn't waste credits trying to regenerate the same images.
+                if (lastError.includes('not in space') || lastError.includes('cannot send')) {
+                    tr.result = {
+                        success: true,
+                        message: `Generated and saved for delivery — ${urls.length} file(s) will appear when the user returns.`
+                    };
+                } else {
+                    tr.result = { error: `Failed to auto-send media: ${lastError}` };
+                }
             } else if (skippedCount > 0) {
                 const label = skippedCount === 1 ? 'media file was' : 'media files were';
                 tr.result = {
