@@ -681,10 +681,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         let previousRoundStartTime = 0;
                         let previousRoundInput = '';
 
-                        // Flush any pendingMedia queued by retryPendingMedia on re-join.
-                        // Runs unconditionally (not just in tool-call loops) so the media
-                        // appears after the greeting stream and "New discussion with...".
-                        this.flushPendingMedia(botClient, spaceName, botId, playerId);
+                        // FlushPendingMedia runs AFTER the for-await loop (below),
+                        // unconditionally, to cover both tool-call and no-tool-call paths.
+                        // Do NOT call it here — doing so would double-process the same
+                        // items on tool-call turns, burning through the retry limit.
 
                         while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
                             followUpIterations++;
@@ -1216,8 +1216,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
 
                 // Flush any pendingMedia queued by retryPendingMedia on re-join.
-                // This covers the plain-text greeting path (no tool calls) where
-                // the flush inside the tool-call conditional never runs.
+                // This is the SOLE flush call — it runs unconditionally after the
+                // stream ends, covering both tool-call and no-tool-call paths.
+                // The in-tool-call-block flush was removed to prevent the same items
+                // from being double-processed (retryCount burned through twice as fast).
                 this.flushPendingMedia(botClient, spaceName, botId, playerId);
 
                 // Always track usage, even if stream doesn't complete normally
