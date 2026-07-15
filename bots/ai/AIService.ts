@@ -2136,8 +2136,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
-                            // Avoid duplicate — preQueueToolResults may have already pushed this URL
-                            if (!memory.pendingMedia.some(p => p.url === cdnUrl) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                            // Avoid duplicate — preQueueToolResults may have already pushed the
+                            // original URL, while _cdnUrl on the error gives us the CDN URL.
+                            if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                 memory.pendingMedia.push({
                                     url: cdnUrl,
                                     mediaType: mType,
@@ -2173,7 +2174,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     }
                 }
             } else if (lastError) {
-                tr.result = { error: `Failed to auto-send media: ${lastError}` };
+                // "Not in space" means the user left mid-turn — the URL was already
+                // queued to pendingMedia by the catch block and will be delivered
+                // on re-entry. Return a non-error result so the AI's follow-up loop
+                // doesn't waste credits trying to regenerate the same images.
+                if (lastError.includes('not in space') || lastError.includes('cannot send')) {
+                    tr.result = {
+                        success: true,
+                        message: `${urls.length} file(s) queued for delivery. Will appear when the user returns.`
+                    };
+                } else {
+                    tr.result = { error: `Failed to auto-send media: ${lastError}` };
+                }
             } else if (skippedCount > 0) {
                 const label = skippedCount === 1 ? 'media file was' : 'media files were';
                 tr.result = {
@@ -2429,7 +2441,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
             if (memory) {
                 if (!memory.pendingMedia) memory.pendingMedia = [];
-                if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                // Avoid duplicate — preQueueToolResults or earlier catch may have already pushed
+                if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                     memory.pendingMedia.push({
                         url: cdnUrl,
                         mediaType: mediaTypeDefault,
