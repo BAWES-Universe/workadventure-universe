@@ -961,27 +961,7 @@ export abstract class BaseBehavior {
         const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
         if (!memory?.pendingMedia?.length) return;
 
-        const remaining: any[] = [];
         let deliveredCount = 0;
-
-        async function sendMedia(
-            botClient: BotClient,
-            spaceName: string,
-            mediaType: string,
-            url: string,
-            mimeType: string,
-            caption?: string
-        ): Promise<void> {
-            // Use sendMediaMessage directly — pending.url is already a CDN URL
-            // from the cached upload, so there's no need to re-upload via sendImage/etc.
-            if (!botClient.sendMediaMessage(spaceName, url, mediaType, mimeType || 'application/octet-stream', caption || '')) {
-                // sendMediaMessage already logs 'not in space'
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Behavior] Retry failed: not in space ${spaceName}`);
-                }
-                throw new Error(`Not in space ${spaceName}`);
-            }
-        }
 
         for (const pending of memory.pendingMedia) {
             if (pending.retryCount >= 3) {
@@ -991,28 +971,16 @@ export abstract class BaseBehavior {
                 continue;
             }
             pending.retryCount++;
-            let success = false;
-            try {
-                await sendMedia(botClient, spaceName, pending.mediaType, pending.url, pending.mimeType, pending.caption);
-                success = true;
-            } catch (err) {
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Behavior] Retry failed for ${pending.mediaType}: ${(err as Error).message}`);
-                }
-            }
-            if (success) {
-                deliveredCount++;
-                if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[Behavior] ✅ Auto-delivered pending ${pending.mediaType} to user ${user.id}`);
-                }
-            } else {
-                remaining.push(pending);
+            deliveredCount++;
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Behavior] Queued pending ${pending.mediaType} for conversation-turn delivery to user ${user.id}`);
             }
         }
-        memory.pendingMedia = remaining;
+        // Keep ready items in pendingMedia — autoSendMedia will flush them
+        // during the conversation turn (after "New discussion with..." appears).
 
-        // If any items were delivered, inject a fact so the greeting AI knows
-        // not to re-announce. Delivered just now as the user rejoined.
+        // If any items are ready, inject a fact so the greeting AI knows
+        // not to re-announce. Sent during the conversation turn as the user rejoined.
         if (deliveredCount > 0) {
             memory.personalInfo.facts.set('autoDeliveredMedia', String(deliveredCount));
         }

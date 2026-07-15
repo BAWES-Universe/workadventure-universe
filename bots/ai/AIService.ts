@@ -1975,6 +1975,27 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
+        // Flush any pendingMedia items queued by retryPendingMedia on user re-join.
+        // These are sent here (during the conversation turn) rather than during
+        // onSpaceUserJoined so they appear after "New discussion with..." and
+        // alongside the greeting, not before it.
+        if (botId && playerId !== undefined) {
+            const memory = this.conversationMemory?.getMemory(botId, playerId);
+            if (memory?.pendingMedia?.length) {
+                const toSend = [...memory.pendingMedia];
+                memory.pendingMedia = [];
+                for (const item of toSend) {
+                    if (!botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '')) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[AIService] Failed to flush pendingMedia: not in space ${spaceName}`);
+                        }
+                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
+                    }
+                }
+            }
+        }
+
         const IMAGE_EXT_SET = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
         const VIDEO_EXT_SET = new Set(['mp4', 'webm']);
         const AUDIO_EXT_SET = new Set(['mp3', 'wav', 'ogg']);
