@@ -1220,7 +1220,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // stream ends, covering both tool-call and no-tool-call paths.
                 // The in-tool-call-block flush was removed to prevent the same items
                 // from being double-processed (retryCount burned through twice as fast).
-                this.flushPendingMedia(botClient, spaceName, botId, playerId);
+                //
+                // Guard with streamCompleted: if the stream threw (API/network error),
+                // the bot produced no message and the user would get media without
+                // context. Preserve the items for the next re-entry instead.
+                if (streamCompleted) {
+                    this.flushPendingMedia(botClient, spaceName, botId, playerId);
+                }
 
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
