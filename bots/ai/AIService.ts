@@ -643,6 +643,7 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             toolCallAccumulator.clear();
                             // Yield the accumulated pre-tool content (already streamed) as final
                             yield {content: '', done: true, metadata: chunk.metadata};
+                            streamCompleted = true;
                             break;
                         }
                         
