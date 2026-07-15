@@ -2136,8 +2136,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
-                            // Avoid duplicate — preQueueToolResults may have already pushed this URL
-                            if (!memory.pendingMedia.some(p => p.url === cdnUrl) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                            // Avoid duplicate — preQueueToolResults may have already pushed the
+                            // original URL, while _cdnUrl on the error gives us the CDN URL.
+                            if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                 memory.pendingMedia.push({
                                     url: cdnUrl,
                                     mediaType: mType,
@@ -2441,7 +2442,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (memory) {
                 if (!memory.pendingMedia) memory.pendingMedia = [];
                 // Avoid duplicate — preQueueToolResults or earlier catch may have already pushed
-                if (!memory.pendingMedia.some(p => p.url === cdnUrl) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                     memory.pendingMedia.push({
                         url: cdnUrl,
                         mediaType: mediaTypeDefault,
