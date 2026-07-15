@@ -2100,6 +2100,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botId: string,
         playerId: number
     ): void {
+        // generateBotResponseStream can be called without botClient or spaceName
+        // (both are optional/undefined in its signature). Guard here prevents
+        // a runtime TypeError on botClient.sendMediaMessage() below.
+        if (!botClient || !spaceName) return;
+
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory?.pendingMedia?.length) return;
 
