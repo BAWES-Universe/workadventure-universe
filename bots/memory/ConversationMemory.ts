@@ -745,10 +745,11 @@ export class ConversationMemory {
         }
 
         // Auto-delivered media notification — tells the bot something it
-        // previously failed to send will appear alongside the greeting
+        // previously failed to send is being re-sent alongside the greeting.
+        // Uses directive language to prevent the bot from regenerating the same items.
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
-            context.push(`\n[Note: ${autoDelivered} media item(s) you prepared earlier will appear alongside this message.]`);
+            context.push(`\n[System: ${autoDelivered} media item(s) you failed to send previously are being re-sent NOW alongside this message. Do NOT generate or request these items again — they are already on their way to the user.]`);
             // Mark as consumed instead of deleting — if the downstream AI call fails,
             // the fact survives for the retry. Empty string is falsy so the guard
             // above naturally skips it on subsequent reads, preventing duplicate mentions.
