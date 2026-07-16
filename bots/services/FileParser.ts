@@ -455,6 +455,15 @@ export class FileParser {
         if (/^192\.168\.\d+\.\d+$/.test(ip)) return true;
         if (/^169\.254\.\d+\.\d+$/.test(ip)) return true;
         if (ip === '169.254.169.254') return true;
+        // Carrier-grade NAT (RFC 6598)
+        if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/.test(ip)) return true;
+        // Multicast (224.0.0.0/4)
+        if (/^22[4-9]\./.test(ip) || /^23[0-9]\./.test(ip)) return true;
+        // Reserved (240.0.0.0/4) including limited broadcast
+        if (/^24[0-9]\./.test(ip) || /^25[0-5]\./.test(ip)) return true;
+        // Benchmarking (198.18.0.0/15, RFC 2544)
+        if (/^198\.(1[8-9])\.\d+\.\d+$/.test(ip)) return true;
+        // IPv6 unique-local and link-local
         if (/^f[cd][0-9a-f]{0,3}:/i.test(ip)) return true;
         if (/^fe[89a-b][0-9a-f]:/i.test(ip)) return true;
         return false;
