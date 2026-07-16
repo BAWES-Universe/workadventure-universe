@@ -39,7 +39,6 @@ export class AIService {
     private conversationMemory: ConversationMemory;
     private adminApiUrl: string;
     private credentialCache: Map<string, CachedCredentials> = new Map();
-    private _iterationSentUrls: Set<string> = new Set();
     private readonly CREDENTIAL_TTL = 60 * 60 * 1000; // 1 hour
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
@@ -669,6 +668,9 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         
                         // Execute tool calls and continue conversation in a loop for multi-round tool calling
                         let followUpIterations = 0;
+                        // Track URLs sent by autoSendMedia across tool call iterations.
+                        // Local variable prevents cross-conversation contamination (AIService is shared).
+                        let iterationSentUrls = new Set<string>();
                         const MAX_FOLLOW_UP_ITERATIONS = 30;
                         // Accumulate all tool results across rounds for synthesis on max iterations
                         let allToolResults = '';
@@ -713,18 +715,18 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                         if (typeof orig === 'string') alreadySentUrls.add(orig);
                                     }
                                 }
-                                this._iterationSentUrls = alreadySentUrls;
+                                iterationSentUrls = alreadySentUrls;
                             }
 
                             // Pre-queue media URLs to pendingMedia as a safety net.
                             // If the generator is cancelled before autoSendMedia runs
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, this._iterationSentUrls, botId, playerId);
+                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
-                            await this.autoSendMedia(toolResults, botClient, spaceName, this._iterationSentUrls, botId, playerId);
+                            await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId);
 
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
@@ -2220,6 +2222,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             if (memory?.pendingMedia) {
                 memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
+            }
+        }
+
+        // Merge auto-sent URLs into the caller's dedup set so subsequent
+        // tool call iterations (e.g. a second list_generations) don't
+        // re-send the same images. The set was passed as alreadySentUrls.
+        if (alreadySentUrls && sentUrls.size > 0) {
+            for (const url of sentUrls) {
+                alreadySentUrls.add(url);
             }
         }
 
