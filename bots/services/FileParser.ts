@@ -20,7 +20,6 @@
  *  - video/*: note type only
  *  - unknown: note filename and type
  */
-import axios from 'axios';
 import { resolve4, resolve6 } from 'dns/promises';
 import { extractWebContent } from './WebPageExtractor';
 
@@ -137,14 +136,11 @@ export class FileParser {
         try {
             await FileParser.validateUrl(url);
 
-            const response = await axios.get(url, {
-                responseType: 'arraybuffer',
-                timeout: FILE_PARSER_TIMEOUT_MS,
-            });
+            const buffer = await FileParser.fetchBuffer(url);
 
             // Dynamic import — pdf-parse v2 uses class-based API (PDFParse)
             const { PDFParse } = await import('pdf-parse');
-            const parser = new PDFParse({ data: new Uint8Array(Buffer.from(response.data)) });
+            const parser = new PDFParse({ data: new Uint8Array(buffer) });
             let pageCount = 0;
 
             try {
@@ -199,14 +195,11 @@ export class FileParser {
         try {
             await FileParser.validateUrl(url);
 
-            const response = await axios.get(url, {
-                responseType: 'arraybuffer',
-                timeout: FILE_PARSER_TIMEOUT_MS,
-            });
+            const buffer = await FileParser.fetchBuffer(url);
 
             const mammoth = await import('mammoth');
             const result = await mammoth.extractRawText({
-                buffer: Buffer.from(response.data),
+                buffer: Buffer.from(buffer),
             });
 
             const text = result.value.trim();
@@ -247,13 +240,10 @@ export class FileParser {
         try {
             await FileParser.validateUrl(url);
 
-            const response = await axios.get(url, {
-                responseType: 'arraybuffer',
-                timeout: FILE_PARSER_TIMEOUT_MS,
-            });
+            const buffer = await FileParser.fetchBuffer(url);
 
             const XLSX = await import('xlsx');
-            const workbook = XLSX.read(Buffer.from(response.data), {
+            const workbook = XLSX.read(new Uint8Array(buffer), {
                 type: 'buffer',
                 cellDates: true,
             });
@@ -335,17 +325,8 @@ export class FileParser {
         try {
             await FileParser.validateUrl(url);
 
-            const response = await axios.get(url, {
-                responseType: 'text',
-                timeout: FILE_PARSER_TIMEOUT_MS,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; BAWESBot/1.0; +https://bawes.net)',
-                    'Accept': 'text/html,application/xhtml+xml',
-                },
-                maxRedirects: 5,
-            });
-
-            const html = response.data as string;
+            const buffer = await FileParser.fetchBuffer(url);
+            const html = new TextDecoder().decode(buffer);
             if (!html || html.length < 50) {
                 return {
                     ...base,
@@ -400,6 +381,68 @@ export class FileParser {
                 metadata: { title: null, excerpt: null, byline: null },
             };
         }
+    }
+
+    /**
+     * Fetch a file buffer from a URL with SSRF-safe redirect validation.
+     * Uses redirect: 'manual' and validates each hop to prevent redirect
+     * chains from pivoting to internal or private addresses.
+     */
+    private static async fetchBuffer(url: string): Promise<ArrayBuffer> {
+        const MAX_REDIRECTS = 5;
+        const MAX_BYTES = 25 * 1024 * 1024; // 25MB cap (same as BotClient)
+        let currentUrl = url;
+        for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+            await FileParser.validateUrl(currentUrl);
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), FILE_PARSER_TIMEOUT_MS);
+            try {
+                const response = await fetch(currentUrl, {
+                    redirect: 'manual',
+                    signal: controller.signal,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (compatible; BAWESBot/1.0; +https://bawes.net)',
+                    },
+                });
+                if (response.status >= 300 && response.status < 400) {
+                    const location = response.headers.get('location');
+                    if (!location) {
+                        throw new Error(`Redirect ${response.status} with no Location header`);
+                    }
+                    currentUrl = new URL(location, currentUrl).href;
+                    continue; // validate next hop
+                }
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} fetching ${currentUrl}`);
+                }
+                // Stream body with size cap — prevents OOM on large files
+                const reader = response.body?.getReader();
+                if (!reader) throw new Error('No response body');
+                const chunks: Uint8Array[] = [];
+                let total = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    total += value.byteLength;
+                    if (total > MAX_BYTES) {
+                        await reader.cancel();
+                        throw new Error(`File too large (over ${MAX_BYTES / 1024 / 1024}MB)`);
+                    }
+                    chunks.push(value);
+                }
+                // Combine chunks into a single ArrayBuffer
+                const combined = new Uint8Array(total);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    combined.set(chunk, offset);
+                    offset += chunk.byteLength;
+                }
+                return combined.buffer as ArrayBuffer;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+        throw new Error(`Too many redirects (${MAX_REDIRECTS}) fetching ${url}`);
     }
 
     /**
@@ -496,11 +539,8 @@ export class FileParser {
         try {
             await FileParser.validateUrl(url);
 
-            const response = await axios.get(url, {
-                responseType: 'arraybuffer',
-                timeout: FILE_PARSER_TIMEOUT_MS,
-            });
-            const text = Buffer.from(response.data).toString('utf-8');
+            const buffer = await FileParser.fetchBuffer(url);
+            const text = new TextDecoder().decode(buffer);
             if (text.length > MAX_FILE_CHARS) {
                 return {
                     ...base,

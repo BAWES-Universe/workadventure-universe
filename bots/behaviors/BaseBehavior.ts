@@ -1240,5 +1240,66 @@ export abstract class BaseBehavior {
     updateConfig(config: Partial<BehaviorConfig>): void {
         this.config = { ...this.config, ...config };
     }
+
+    /**
+     * Parse a file attachment using FileParser and format the result into
+     * the message for AI context. Handles sanitization, undefined guards,
+     * and error logging — shared by all behaviors to avoid duplication.
+     *
+     * @param message The original user message
+     * @param url The attachment URL
+     * @param mimeType The attachment MIME type
+     * @param mediaType Optional media type label for fallback messaging
+     * @returns Augmented message with parsed content (or fallback on error)
+     */
+    protected async formatParsedAttachment(
+        message: string,
+        url: string,
+        mimeType: string,
+        mediaType?: string
+    ): Promise<string> {
+        const mType = mimeType || 'application/octet-stream';
+        try {
+            const { FileParser } = await import('../services/FileParser');
+            const parsed = await FileParser.parseFile(url, mType);
+
+            // Sanitize extracted text to neutralize embedded boundary markers
+            // that an attacker could use for prompt injection
+            const sanitize = (text: string) =>
+                text.replace(/---\s*(BEGIN|END)\s+(FILE|DOCUMENT|WEB PAGE)\s+CONTENT\s*---/gi,
+                    match => match.replace(/-/g, '−')); // replace hyphens with minus signs
+
+            switch (parsed.type) {
+                case 'text':
+                    message = `${message}\n[User also sent a file]\n--- BEGIN FILE CONTENT ---\n${parsed.text ? sanitize(parsed.text) : '[No text content]'}\n--- END FILE CONTENT ---`;
+                    break;
+                case 'image':
+                    message = `${message}\n[User also sent an image: ${url}]`;
+                    break;
+                case 'document':
+                    message = `${message}\n[User sent a document]${parsed.text ? `\n--- BEGIN DOCUMENT CONTENT ---\n${sanitize(parsed.text)}\n--- END DOCUMENT CONTENT ---\n(Summary: ${parsed.summary})` : `\n(Summary: ${parsed.summary})`}`;
+                    break;
+                case 'webpage':
+                    message = `${message}\n[User shared a web page]${parsed.text ? `\n--- BEGIN WEB PAGE CONTENT ---\n${sanitize(parsed.text)}\n--- END WEB PAGE CONTENT ---\n(Summary: ${parsed.summary})` : `\n(Summary: ${parsed.summary})`}`;
+                    break;
+                case 'audio':
+                    message = `${message}\n[User sent an audio file — can't be played inline]`;
+                    break;
+                case 'video':
+                    message = `${message}\n[User sent a video file — can't be played inline]`;
+                    break;
+                default:
+                    message = `${message}\n[User sent a file (${mType}) — content not extracted]`;
+                    break;
+            }
+        } catch (err: any) {
+            const mediaLabel = mediaType || 'file';
+            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[BaseBehavior] FileParser failed: ${err.message}, falling back to URL text`);
+            }
+        }
+        return message;
+    }
 }
 

@@ -32,13 +32,16 @@ turndownService.addRule('preserveTables', {
         const rows = node.querySelectorAll('tr');
         if (!rows || rows.length === 0) return content;
 
+        const cellText = (c: any) =>
+            (c.textContent?.trim() || '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+
         const headerCells = rows[0]?.querySelectorAll?.('th, td') || [];
-        const headerRow = '| ' + Array.from(headerCells).map((c: any) => c.textContent?.trim() || '').join(' | ') + ' |';
+        const headerRow = '| ' + Array.from(headerCells).map(cellText).join(' | ') + ' |';
         const separatorRow = '| ' + Array.from(headerCells).map(() => '---').join(' | ') + ' |';
 
         const dataRows = Array.from(rows).slice(1).map((row: any) => {
             const cells = row.querySelectorAll('td');
-            return '| ' + Array.from(cells).map((c: any) => c.textContent?.trim() || '').join(' | ') + ' |';
+            return '| ' + Array.from(cells).map(cellText).join(' | ') + ' |';
         });
 
         return '\n\n' + [headerRow, separatorRow, ...dataRows].join('\n') + '\n\n';
