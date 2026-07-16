@@ -516,6 +516,13 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 parentSpan?.setAttribute("bot.model", config.model);
                 parentSpan?.setAttribute("bot.space", spaceName || '');
 
+                // Flush any pendingMedia from a previous interrupted turn BEFORE
+                // the AI generates anything. Items were queued by preQueueToolResults
+                // and counted by retryPendingMedia (which also set the autoDeliveredMedia
+                // fact). Sending them now means they arrive alongside the greeting,
+                // not after the entire stream completes.
+                this.flushPendingMedia(botClient, spaceName, botId, playerId);
+
                 firstCallStartTime = Date.now();
 
                 for await (const chunk of this.providerRegistry.generateStream(
