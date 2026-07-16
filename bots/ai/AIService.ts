@@ -2204,10 +2204,26 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             } else if (skippedCount > 0) {
                 const label = skippedCount === 1 ? 'media file was' : 'media files were';
-                tr.result = {
-                    success: true,
-                    message: `All ${skippedCount} ${label} already sent to the conversation.`,
-                };
+                const original = tr.result;
+                if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
+                    tr.result = {
+                        ...original,
+                        _skipped: skippedCount,
+                        _skippedMessage: `All ${skippedCount} ${label} already sent to the conversation.`,
+                    };
+                } else if (Array.isArray(original)) {
+                    tr.result = {
+                        success: true,
+                        data: original,
+                        _skipped: skippedCount,
+                        _skippedMessage: `All ${skippedCount} ${label} already sent to the conversation.`,
+                    };
+                } else {
+                    tr.result = {
+                        success: true,
+                        message: `All ${skippedCount} ${label} already sent to the conversation.`,
+                    };
+                }
             }
         }
 
