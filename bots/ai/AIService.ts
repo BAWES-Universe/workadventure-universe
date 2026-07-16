@@ -521,7 +521,14 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 // and counted by retryPendingMedia (which also set the autoDeliveredMedia
                 // fact). Sending them now means they arrive alongside the greeting,
                 // not after the entire stream completes.
-                this.flushPendingMedia(botClient, spaceName, botId, playerId);
+                // Uses early=true so failed items don't increment retryCount — the
+                // non-early flush in the finally block handles retries properly.
+                if (botId && playerId !== undefined) {
+                    const pendingMem = this.conversationMemory?.getMemory(botId, playerId);
+                    if (pendingMem?.pendingMedia?.length) {
+                        this.flushPendingMedia(botClient, spaceName, botId, playerId, true);
+                    }
+                }
 
                 firstCallStartTime = Date.now();
 
@@ -716,8 +723,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             // where send_* calls happen in iteration 2 or later.
                             for (const tr of toolResults) {
                                 if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
-                                    const orig = tr.result?.originalUrl;
-                                    if (typeof orig === 'string') iterationSentUrls.add(orig);
+                                    if (tr.result?.success === true) {
+                                        const orig = tr.result?.originalUrl;
+                                        if (typeof orig === 'string') iterationSentUrls.add(orig);
+                                    }
                                 }
                             }
 
@@ -2194,6 +2203,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     tr.result = {
                         success: true,
                         message,
+                        _originalResult: original,
                     };
                 }
             } else if (lastError) {
@@ -2229,6 +2239,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     tr.result = {
                         success: true,
                         message: `All ${skippedCount} ${label} already sent to the conversation.`,
+                        _originalResult: original,
                     };
                 }
             }
@@ -2265,7 +2276,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         botClient: BotClient,
         spaceName: string,
         botId: string,
-        playerId: number
+        playerId: number,
+        early: boolean = false
     ): void {
         // generateBotResponseStream can be called without botClient or spaceName
         // (both are optional/undefined in its signature). Guard here prevents
@@ -2297,12 +2309,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }
             } else {
-                // Send failed — increment retryCount and keep for next attempt
-                item.retryCount++;
-                item.lastRetryAt = now;
+                // Send failed — keep for the non-early flush which will
+                // handle retry counting properly.
+                if (!early) {
+                    item.retryCount++;
+                    item.lastRetryAt = now;
+                }
                 remaining.push(item);
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry ${item.retryCount}: ${item.url.substring(0, 60)}`);
+                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry${early ? ' (early, no count)' : ` ${item.retryCount}`}: ${item.url.substring(0, 60)}`);
                 }
             }
         }
