@@ -39,6 +39,7 @@ export class AIService {
     private conversationMemory: ConversationMemory;
     private adminApiUrl: string;
     private credentialCache: Map<string, CachedCredentials> = new Map();
+    private _iterationSentUrls: Set<string> = new Set();
     private readonly CREDENTIAL_TTL = 60 * 60 * 1000; // 1 hour
     private providerRegistry: AIProviderRegistry;
     private mapDataService?: MapDataService;
@@ -701,24 +702,29 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId);
 
                             // Collect URLs that were already sent by explicit send_* tool calls
-                            // so autoSendMedia doesn't re-send them via parent tool results
-                            const alreadySentUrls = new Set<string>();
-                            for (const tr of toolResults) {
-                                if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
-                                    const orig = tr.result?.originalUrl;
-                                    if (typeof orig === 'string') alreadySentUrls.add(orig);
+                            // so autoSendMedia doesn't re-send them via parent tool results.
+                            // Persisted across tool call iterations to prevent re-sending the
+                            // same URLs when the AI calls query/listing tools multiple times.
+                            if (followUpIterations === 1) {
+                                const alreadySentUrls = new Set<string>();
+                                for (const tr of toolResults) {
+                                    if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
+                                        const orig = tr.result?.originalUrl;
+                                        if (typeof orig === 'string') alreadySentUrls.add(orig);
+                                    }
                                 }
+                                this._iterationSentUrls = alreadySentUrls;
                             }
 
                             // Pre-queue media URLs to pendingMedia as a safety net.
                             // If the generator is cancelled before autoSendMedia runs
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, alreadySentUrls, botId, playerId);
+                            this.preQueueToolResults(toolResults, this._iterationSentUrls, botId, playerId);
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
-                            await this.autoSendMedia(toolResults, botClient, spaceName, alreadySentUrls, botId, playerId);
+                            await this.autoSendMedia(toolResults, botClient, spaceName, this._iterationSentUrls, botId, playerId);
 
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
@@ -2155,23 +2161,35 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
             if (sentCount > 0) {
                 const label = sentCount === 1 ? 'media file' : 'media files';
-                const original = tr.result;
                 let message = `Auto-sent ${sentCount} ${label} to the conversation.`;
                 if (lastError) {
                     message += ` ${urls.length - sentCount - skippedCount} file(s) queued for retry.`;
                 }
-                tr.result = {
-                    success: true,
-                    message
-                };
-                // Preserve non-URL metadata from the original result
-                // so the AI retains context (e.g., model name, seed, parameters)
+                // Preserve the ENTIRE original tool result and add auto-send metadata.
+                // The AI needs the original data (image_url, prompt, generation_id, etc.)
+                // to make decisions. Masking it with a summary causes the AI to loop
+                // calling query tools trying to recover the information.
+                const original = tr.result;
                 if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
-                    for (const [key, val] of Object.entries(original)) {
-                        if (typeof val !== 'string' || !/^https?:\/\//.test(val)) {
-                            tr.result[key] = val;
-                        }
-                    }
+                    tr.result = {
+                        ...original,
+                        _autoSent: sentCount,
+                        _autoSentMessage: message,
+                    };
+                } else if (Array.isArray(original)) {
+                    // For array results (e.g., list_generations that returns [...]),
+                    // wrap with a summary so the AI knows what happened
+                    tr.result = {
+                        success: true,
+                        data: original,
+                        _autoSent: sentCount,
+                        _autoSentMessage: message,
+                    };
+                } else {
+                    tr.result = {
+                        success: true,
+                        message,
+                    };
                 }
             } else if (lastError) {
                 // "Not in space" means the user left mid-turn — the URL was already
