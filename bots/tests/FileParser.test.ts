@@ -97,6 +97,36 @@ describe('FileParser', () => {
             expect(result.text).toContain('Failed to fetch');
         });
 
+        it('rejects private IP hostname for SSRF safety', async () => {
+            const url = 'http://192.168.1.1/config.txt';
+
+            const result = await FileParser.parseFile(url, 'text/plain');
+
+            expect(result.type).toBe('text');
+            expect(result.text).toContain('private');
+            expect(mockedAxios.get).not.toHaveBeenCalled();
+        });
+
+        it('rejects localhost URL for SSRF safety', async () => {
+            const url = 'http://localhost:8080/secrets';
+
+            const result = await FileParser.parseFile(url, 'text/plain');
+
+            expect(result.type).toBe('text');
+            expect(result.text).toContain('private');
+            expect(mockedAxios.get).not.toHaveBeenCalled();
+        });
+
+        it('rejects metadata service URL for SSRF safety', async () => {
+            const url = 'http://169.254.169.254/latest/meta-data/';
+
+            const result = await FileParser.parseFile(url, 'text/plain');
+
+            expect(result.type).toBe('text');
+            expect(result.text).toContain('private');
+            expect(mockedAxios.get).not.toHaveBeenCalled();
+        });
+
         it('returns unknown for PDF when pdf-parse is not available', async () => {
             const url = 'https://cdn.example.com/report.pdf';
 
