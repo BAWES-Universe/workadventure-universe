@@ -136,7 +136,8 @@ function extractFallback(document: Document, sourceUrl: string): ExtractedWebPag
     }
 
     let content = parts.join('\n\n');
-    if (content.length > MAX_WEBPAGE_CHARS) {
+    const wasTruncated = content.length > MAX_WEBPAGE_CHARS;
+    if (wasTruncated) {
         content = content.slice(0, MAX_WEBPAGE_CHARS);
     }
 
@@ -146,7 +147,7 @@ function extractFallback(document: Document, sourceUrl: string): ExtractedWebPag
         excerpt: content.length > 150 ? content.slice(0, 150) + '...' : content,
         byline: null,
         length: content.length,
-        truncated: content.length > MAX_WEBPAGE_CHARS,
+        truncated: wasTruncated,
     };
 }
 
