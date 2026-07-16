@@ -1676,17 +1676,40 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Handle chat messages from players
      */
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): Promise<void> {
         if (!this.bot) return;
 
         const botId = this.bot.getBotId();
         const config = this.config as PatrolBehaviorConfig;
 
-        // If the user sent a file/image/audio/video along with their message,
-        // augment the message text with the URL so the AI knows about it.
+        // If the user sent a file, use FileParser to extract content
         if (url) {
-            const mediaLabel = mediaType || 'file';
-            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+            const mType = mimeType || 'application/octet-stream';
+            try {
+                const { FileParser } = await import('../services/FileParser');
+                const parsed = await FileParser.parseFile(url, mType);
+
+                switch (parsed.type) {
+                    case 'text':
+                        message = `${message}\n[User also sent a file]\n--- BEGIN FILE CONTENT ---\n${parsed.text}\n--- END FILE CONTENT ---`;
+                        break;
+                    case 'image':
+                        message = `${message}\n[User also sent an image: ${url}]`;
+                        break;
+                    case 'audio':
+                        message = `${message}\n[User sent an audio file — can't be played inline]`;
+                        break;
+                    case 'video':
+                        message = `${message}\n[User sent a video file — can't be played inline]`;
+                        break;
+                    default:
+                        message = `${message}\n[User sent a file (${mType}) — content not extracted]`;
+                        break;
+                }
+            } catch {
+                const mediaLabel = mediaType || 'file';
+                message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+            }
         }
 
         // Only respond if respondToPlayers is enabled (default true)

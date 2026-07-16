@@ -13,6 +13,12 @@ export interface ConversationMessage {
     sender: 'bot' | 'person';
     timestamp: number;
     spaceName?: string;
+    /** URL of an attached file/image/audio/video */
+    url?: string;
+    /** Media type of the attached file: 'image' | 'audio' | 'video' | 'file' */
+    mediaType?: string;
+    /** MIME type of the attached file */
+    mimeType?: string;
 }
 
 export interface EmotionalWound {

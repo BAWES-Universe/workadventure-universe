@@ -660,7 +660,7 @@ export class SocialBehavior extends BaseBehavior {
         this.targetPlayerId = null;
     }
 
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): Promise<void> {
         if (!this.bot) {
             console.warn(`[SocialBehavior] onChatMessage: bot is null`);
             return;
@@ -672,13 +672,37 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // If the user sent a file/image/audio/video along with their message,
-        // augment the message text with the URL so the AI knows about it.
-        // The filename alone (e.g. "artist-full-trans.png") isn't actionable.
+        // use FileParser to extract content and augment the message.
         if (url) {
-            const mediaLabel = mediaType || 'file';
-            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[SocialBehavior] Augmented message with URL: ${message}`);
+            const mType = mimeType || 'application/octet-stream';
+            try {
+                const { FileParser } = await import('../services/FileParser');
+                const parsed = await FileParser.parseFile(url, mType);
+
+                switch (parsed.type) {
+                    case 'text':
+                        message = `${message}\n[User also sent a file]\n--- BEGIN FILE CONTENT ---\n${parsed.text}\n--- END FILE CONTENT ---`;
+                        break;
+                    case 'image':
+                        message = `${message}\n[User also sent an image: ${url}]`;
+                        break;
+                    case 'audio':
+                        message = `${message}\n[User sent an audio file — can't be played inline]`;
+                        break;
+                    case 'video':
+                        message = `${message}\n[User sent a video file — can't be played inline]`;
+                        break;
+                    default:
+                        message = `${message}\n[User sent a file (${mType}) — content not extracted]`;
+                        break;
+                }
+            } catch (err: any) {
+                // Fallback: append URL as text if FileParser fails
+                const mediaLabel = mediaType || 'file';
+                message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[SocialBehavior] FileParser failed: ${err.message}, falling back to URL text`);
+                }
             }
         }
         

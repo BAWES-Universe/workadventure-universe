@@ -1,0 +1,146 @@
+/**
+ * FileParser — fetches URLs and extracts content by mimeType.
+ *
+ * Extracted text is injected into AI context so the bot can reason
+ * about uploaded files. Works with every model type — no vision or
+ * STT dependency.
+ *
+ * Currently handles:
+ *  - text/* files: fetch and return inline content (10K char cap)
+ *  - image/*: note URL, no content extraction
+ *  - audio/*: note type only
+ *  - video/*: note type only
+ *  - unknown: note filename and type
+ *
+ * PDF, Word, XLSX extraction requires additional dependencies
+ * (pdf-parse, mammoth, xlsx) — not loaded by default.
+ */
+
+import axios from 'axios';
+
+const MAX_FILE_CHARS = 10_000;
+const FILE_PARSER_TIMEOUT_MS = 10_000;
+
+export interface ParsedFile {
+    type: 'text' | 'image' | 'audio' | 'video' | 'unknown';
+    text?: string;
+    url?: string;
+    summary: string;
+    mimeType: string;
+    truncated?: boolean;
+}
+
+export class FileParser {
+    static readonly MAX_FILE_CHARS = MAX_FILE_CHARS;
+
+    /**
+     * Parse a file from a URL by its mime type.
+     * Text files are fetched and returned inline; images/audio/video/unknown
+     * are noted without content extraction.
+     */
+    static async parseFile(url: string, mimeType: string): Promise<ParsedFile> {
+        const base = { url, mimeType };
+
+        // Image files — no fetch, just note the URL
+        if (mimeType.startsWith('image/')) {
+            return {
+                ...base,
+                type: 'image',
+                summary: `Image at ${url}`,
+            };
+        }
+
+        // Audio files — note type only (STT not implemented)
+        if (mimeType.startsWith('audio/')) {
+            return {
+                ...base,
+                type: 'audio',
+                summary: 'Audio file — content not extracted',
+            };
+        }
+
+        // Video files — note type only
+        if (mimeType.startsWith('video/')) {
+            return {
+                ...base,
+                type: 'video',
+                summary: 'Video file — content not extracted',
+            };
+        }
+
+        // Text-like files — fetch and return inline content
+        if (
+            mimeType.startsWith('text/') ||
+            mimeType === 'application/json' ||
+            mimeType === 'application/xml' ||
+            mimeType === 'application/javascript' ||
+            mimeType.endsWith('+xml') ||
+            mimeType.endsWith('+json')
+        ) {
+            return FileParser.fetchTextFile(url, mimeType, base);
+        }
+
+        // Everything else (PDF, Word, ZIP, etc.) — not supported yet
+        return {
+            ...base,
+            type: 'unknown',
+            summary: `File type ${mimeType} — content not extracted`,
+        };
+    }
+
+    /**
+     * Fetch a text file from a URL and return its content.
+     */
+    private static async fetchTextFile(
+        url: string,
+        mimeType: string,
+        base: { url: string; mimeType: string }
+    ): Promise<ParsedFile> {
+        try {
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: FILE_PARSER_TIMEOUT_MS,
+            });
+            const text = Buffer.from(response.data).toString('utf-8');
+            if (text.length > MAX_FILE_CHARS) {
+                return {
+                    ...base,
+                    type: 'text',
+                    text: text.slice(0, MAX_FILE_CHARS),
+                    summary: `Text file (${text.length} chars, truncated to ${MAX_FILE_CHARS})`,
+                    truncated: true,
+                };
+            }
+            return {
+                ...base,
+                type: 'text',
+                text,
+                summary: `Text file (${text.length} chars)`,
+            };
+        } catch (error: any) {
+            return {
+                ...base,
+                type: 'text',
+                text: `[Failed to fetch file content: ${error.message || 'Unknown error'}]`,
+                summary: 'Failed to fetch file',
+            };
+        }
+    }
+
+    /**
+     * Extract file extension from a URL.
+     */
+    static getExtension(url: string): string {
+        try {
+            const pathname = new URL(url).pathname;
+            const dotIndex = pathname.lastIndexOf('.');
+            if (dotIndex === -1) return '';
+            return pathname.slice(dotIndex + 1).toLowerCase();
+        } catch {
+            const queryStripped = url.split('?')[0];
+            const dotIndex = queryStripped.lastIndexOf('.');
+            if (dotIndex === -1) return '';
+            return queryStripped.slice(dotIndex + 1).toLowerCase();
+        }
+    }
+}
