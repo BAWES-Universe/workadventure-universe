@@ -11,28 +11,37 @@
  *
  * Currently handles:
  *  - text/* files: fetch and return inline content (10K char cap)
+ *  - application/pdf: extract text via pdf-parse
+ *  - Word documents (.docx/.doc): extract text via mammoth
+ *  - Spreadsheets (.xlsx/.xls): parse cells via xlsx
+ *  - text/html: extract clean markdown via Readability + Turndown
  *  - image/*: note URL, no content extraction
  *  - audio/*: note type only
  *  - video/*: note type only
  *  - unknown: note filename and type
- *
- * PDF, Word, XLSX extraction requires additional dependencies
- * (pdf-parse, mammoth, xlsx) — not loaded by default.
  */
-
 import axios from 'axios';
 import { resolve4, resolve6 } from 'dns/promises';
+import { extractWebContent } from './WebPageExtractor';
 
 const MAX_FILE_CHARS = 10_000;
 const FILE_PARSER_TIMEOUT_MS = 10_000;
 
 export interface ParsedFile {
-    type: 'text' | 'image' | 'audio' | 'video' | 'unknown';
+    type: 'text' | 'image' | 'audio' | 'video' | 'document' | 'webpage' | 'unknown';
     text?: string;
     url?: string;
     summary: string;
     mimeType: string;
     truncated?: boolean;
+    metadata?: {
+        title?: string | null;
+        excerpt?: string | null;
+        byline?: string | null;
+        pageCount?: number;
+        rowCount?: number;
+        sheetCount?: number;
+    };
 }
 
 export class FileParser {
@@ -40,14 +49,13 @@ export class FileParser {
 
     /**
      * Parse a file from a URL by its mime type.
-     * Text files are fetched and returned inline; images/audio/video/unknown
-     * are noted without content extraction.
      */
     static async parseFile(url: string, mimeType: string): Promise<ParsedFile> {
         const base = { url, mimeType };
+        const mt = mimeType.toLowerCase();
 
         // Image files — no fetch, just note the URL
-        if (mimeType.startsWith('image/')) {
+        if (mt.startsWith('image/')) {
             return {
                 ...base,
                 type: 'image',
@@ -56,7 +64,7 @@ export class FileParser {
         }
 
         // Audio files — note type only (STT not implemented)
-        if (mimeType.startsWith('audio/')) {
+        if (mt.startsWith('audio/')) {
             return {
                 ...base,
                 type: 'audio',
@@ -65,7 +73,7 @@ export class FileParser {
         }
 
         // Video files — note type only
-        if (mimeType.startsWith('video/')) {
+        if (mt.startsWith('video/')) {
             return {
                 ...base,
                 type: 'video',
@@ -73,19 +81,45 @@ export class FileParser {
             };
         }
 
+        // PDF documents
+        if (mt === 'application/pdf') {
+            return FileParser.parsePdf(url, base);
+        }
+
+        // Word documents (.docx and .doc)
+        if (
+            mt === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+            mt === 'application/msword'
+        ) {
+            return FileParser.parseWordDocument(url, base);
+        }
+
+        // Spreadsheets (.xlsx and .xls)
+        if (
+            mt === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+            mt === 'application/vnd.ms-excel'
+        ) {
+            return FileParser.parseSpreadsheet(url, base);
+        }
+
+        // Web pages (HTML) — extract with Readability + Turndown
+        if (mt === 'text/html' || mt === 'application/xhtml+xml') {
+            return FileParser.parseWebPage(url, base);
+        }
+
         // Text-like files — fetch and return inline content
         if (
-            mimeType.startsWith('text/') ||
-            mimeType === 'application/json' ||
-            mimeType === 'application/xml' ||
-            mimeType === 'application/javascript' ||
-            mimeType.endsWith('+xml') ||
-            mimeType.endsWith('+json')
+            mt.startsWith('text/') ||
+            mt === 'application/json' ||
+            mt === 'application/xml' ||
+            mt === 'application/javascript' ||
+            mt.endsWith('+xml') ||
+            mt.endsWith('+json')
         ) {
             return FileParser.fetchTextFile(url, mimeType, base);
         }
 
-        // Everything else (PDF, Word, ZIP, etc.) — not supported yet
+        // Everything else — not supported
         return {
             ...base,
             type: 'unknown',
@@ -94,9 +128,282 @@ export class FileParser {
     }
 
     /**
+     * Parse a PDF document and extract its text content.
+     */
+    private static async parsePdf(
+        url: string,
+        base: { url: string; mimeType: string }
+    ): Promise<ParsedFile> {
+        try {
+            await FileParser.validateUrl(url);
+
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: FILE_PARSER_TIMEOUT_MS,
+            });
+
+            // Dynamic import — pdf-parse v2 uses class-based API (PDFParse)
+            const { PDFParse } = await import('pdf-parse');
+            const parser = new PDFParse({ data: new Uint8Array(Buffer.from(response.data)) });
+            let pageCount = 0;
+
+            try {
+                // Get page count from info
+                const info = await parser.getInfo();
+                pageCount = info.total || 0;
+
+                // Extract text content
+                const textResult = await parser.getText();
+                const text = textResult.text?.trim() || '';
+
+                if (!text) {
+                    return {
+                        ...base,
+                        type: 'document',
+                        text: '[PDF document — no extractable text content]',
+                        summary: `PDF (${pageCount} pages, no extractable text)`,
+                        metadata: { pageCount },
+                    };
+                }
+
+                const truncated = text.length > MAX_FILE_CHARS;
+                return {
+                    ...base,
+                    type: 'document',
+                    text: truncated ? text.slice(0, MAX_FILE_CHARS) : text,
+                    summary: `PDF document (${pageCount} pages, ${text.length} chars${truncated ? ', truncated' : ''})`,
+                    truncated,
+                    metadata: { pageCount },
+                };
+            } finally {
+                await parser.destroy();
+            }
+        } catch (error: any) {
+            return {
+                ...base,
+                type: 'document',
+                text: `[Failed to extract PDF content: ${error.message || 'Unknown error'}]`,
+                summary: 'Failed to parse PDF',
+                metadata: { pageCount: undefined },
+            };
+        }
+    }
+
+    /**
+     * Parse a Word document (.docx/.doc) and extract its text content.
+     */
+    private static async parseWordDocument(
+        url: string,
+        base: { url: string; mimeType: string }
+    ): Promise<ParsedFile> {
+        try {
+            await FileParser.validateUrl(url);
+
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: FILE_PARSER_TIMEOUT_MS,
+            });
+
+            const mammoth = await import('mammoth');
+            const result = await mammoth.extractRawText({
+                buffer: Buffer.from(response.data),
+            });
+
+            const text = result.value.trim();
+            if (!text) {
+                return {
+                    ...base,
+                    type: 'document',
+                    text: '[Word document — no extractable text content]',
+                    summary: 'Word document (no extractable text)',
+                };
+            }
+
+            const truncated = text.length > MAX_FILE_CHARS;
+            return {
+                ...base,
+                type: 'document',
+                text: truncated ? text.slice(0, MAX_FILE_CHARS) : text,
+                summary: `Word document (${text.length} chars${truncated ? ', truncated' : ''})`,
+                truncated,
+            };
+        } catch (error: any) {
+            return {
+                ...base,
+                type: 'document',
+                text: `[Failed to extract Word document content: ${error.message || 'Unknown error'}]`,
+                summary: 'Failed to parse Word document',
+            };
+        }
+    }
+
+    /**
+     * Parse a spreadsheet (.xlsx/.xls) and convert rows to readable text.
+     */
+    private static async parseSpreadsheet(
+        url: string,
+        base: { url: string; mimeType: string }
+    ): Promise<ParsedFile> {
+        try {
+            await FileParser.validateUrl(url);
+
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: FILE_PARSER_TIMEOUT_MS,
+            });
+
+            const XLSX = await import('xlsx');
+            const workbook = XLSX.read(Buffer.from(response.data), {
+                type: 'buffer',
+                cellDates: true,
+            });
+
+            const sheetCount = workbook.SheetNames.length;
+            const parts: string[] = [];
+
+            for (const sheetName of workbook.SheetNames) {
+                const sheet = workbook.Sheets[sheetName];
+                const json = XLSX.utils.sheet_to_json(sheet, {
+                    defval: '',
+                    header: 1,
+                }) as any[][];
+
+                if (json.length === 0) continue;
+
+                parts.push(`=== Sheet: ${sheetName} ===`);
+                parts.push('');
+
+                for (const row of json.slice(0, 200)) {
+                    const cells = row
+                        .map((c: any) => (c != null ? String(c).trim() : ''))
+                        .join(' | ');
+                    if (cells) parts.push(cells);
+                }
+
+                if (json.length > 200) {
+                    parts.push(`[... ${json.length - 200} more rows truncated]`);
+                }
+                parts.push('');
+            }
+
+            let text = parts.join('\n').trim();
+            if (!text) {
+                return {
+                    ...base,
+                    type: 'document',
+                    text: '[Spreadsheet — no extractable data]',
+                    summary: `Spreadsheet (${sheetCount} sheets, no data)`,
+                    metadata: { sheetCount, rowCount: 0 },
+                };
+            }
+
+            const totalRows = workbook.SheetNames.reduce((sum, name) => {
+                const sheet = workbook.Sheets[name];
+                const ref = sheet['!ref'];
+                if (!ref) return sum;
+                const range = XLSX.utils.decode_range(ref);
+                return sum + range.e.r - range.s.r + 1;
+            }, 0);
+
+            const truncated = text.length > MAX_FILE_CHARS;
+            return {
+                ...base,
+                type: 'document',
+                text: truncated ? text.slice(0, MAX_FILE_CHARS) : text,
+                summary: `Spreadsheet (${sheetCount} sheets, ~${totalRows} rows, ${text.length} chars${truncated ? ', truncated' : ''})`,
+                truncated,
+                metadata: { sheetCount, rowCount: totalRows },
+            };
+        } catch (error: any) {
+            return {
+                ...base,
+                type: 'document',
+                text: `[Failed to extract spreadsheet content: ${error.message || 'Unknown error'}]`,
+                summary: 'Failed to parse spreadsheet',
+                metadata: { sheetCount: undefined, rowCount: undefined },
+            };
+        }
+    }
+
+    /**
+     * Parse a web page HTML, extracting clean markdown via Readability + Turndown.
+     */
+    private static async parseWebPage(
+        url: string,
+        base: { url: string; mimeType: string }
+    ): Promise<ParsedFile> {
+        try {
+            await FileParser.validateUrl(url);
+
+            const response = await axios.get(url, {
+                responseType: 'text',
+                timeout: FILE_PARSER_TIMEOUT_MS,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (compatible; BAWESBot/1.0; +https://bawes.net)',
+                    'Accept': 'text/html,application/xhtml+xml',
+                },
+                maxRedirects: 5,
+            });
+
+            const html = response.data as string;
+            if (!html || html.length < 50) {
+                return {
+                    ...base,
+                    type: 'webpage',
+                    text: '[Web page — empty or minimal content]',
+                    summary: 'Web page returned no meaningful content',
+                };
+            }
+
+            const extracted = extractWebContent(html, url);
+            if (!extracted.content || extracted.content.trim().length < 20) {
+                return {
+                    ...base,
+                    type: 'webpage',
+                    text: `[Web page at ${url} — no extractable article content]`,
+                    summary: 'Web page without extractable content',
+                    metadata: {
+                        title: extracted.title,
+                    },
+                };
+            }
+
+            const headerParts: string[] = [];
+            if (extracted.title) headerParts.push(`# ${extracted.title}`);
+            if (extracted.byline) headerParts.push(`*By ${extracted.byline}*`);
+            if (extracted.excerpt && !extracted.content.startsWith(extracted.excerpt)) {
+                headerParts.push(`> ${extracted.excerpt}`);
+            }
+            if (headerParts.length > 0) headerParts.push('');
+
+            const fullContent = headerParts.join('\n') + extracted.content;
+            const truncated = fullContent.length > MAX_FILE_CHARS;
+
+            return {
+                ...base,
+                type: 'webpage',
+                text: truncated ? fullContent.slice(0, MAX_FILE_CHARS) : fullContent,
+                summary: `Web page: ${extracted.title || 'Untitled'} (${fullContent.length} chars${truncated ? ', truncated' : ''})`,
+                truncated,
+                metadata: {
+                    title: extracted.title,
+                    excerpt: extracted.excerpt,
+                    byline: extracted.byline,
+                },
+            };
+        } catch (error: any) {
+            return {
+                ...base,
+                type: 'webpage',
+                text: `[Failed to fetch web page content: ${error.message || 'Unknown error'}]`,
+                summary: 'Failed to fetch web page',
+                metadata: { title: null, excerpt: null, byline: null },
+            };
+        }
+    }
+
+    /**
      * SSRF guard: validate a URL before fetching.
-     * Checks scheme, hostname patterns, and DNS resolution.
-     * Throws if the URL points to a private/internal address.
      */
     private static async validateUrl(url: string): Promise<void> {
         let parsedUrl: URL;
@@ -106,60 +413,40 @@ export class FileParser {
             throw new Error(`Invalid URL: ${url}`);
         }
 
-        // Only allow http/https
         if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
             throw new Error(`Unsupported URL scheme: ${parsedUrl.protocol}`);
         }
 
         const hostname = parsedUrl.hostname;
 
-        // Layer 1: Hostname string checks (fast path — catches known patterns)
         if (FileParser.isPrivateHost(hostname)) {
             throw new Error(`URL hostname '${hostname}' is a private or reserved address`);
         }
 
-        // Layer 2: DNS resolution check (catches hostnames that resolve to private IPs)
         const hostnameSafe = await FileParser.resolveIsExternal(hostname);
         if (!hostnameSafe) {
             throw new Error(`URL hostname '${hostname}' resolves to a private/internal IP address`);
         }
     }
 
-    /**
-     * Check if a hostname is a private or reserved address.
-     * Matches the pattern from BotClient.isPrivateHost.
-     */
     private static isPrivateHost(hostname: string): boolean {
         const raw = hostname.replace(/^\[|\]$/g, '');
 
-        // Localhost and loopback (entire 127.0.0.0/8)
-        if (raw === 'localhost' || raw === '::1' || /^127\.\d+\.\d+\.\d+$/.test(raw)) {
-            return true;
-        }
-        // IPv4 private ranges
+        if (raw === 'localhost' || raw === '::1' || /^127\.\d+\.\d+\.\d+$/.test(raw)) return true;
         if (/^10\./.test(raw)) return true;
         if (/^172\.(1[6-9]|2\d|3[01])\./.test(raw)) return true;
         if (/^192\.168\./.test(raw)) return true;
-        // IPv4 link-local
         if (/^169\.254\./.test(raw)) return true;
-        // Reserved / zero address
         if (raw === '0.0.0.0') return true;
-        // IPv6 documentation / private / unique-local / link-local
         if (raw === '::') return true;
         if (/^fc00:/i.test(raw) || /^fd00:/i.test(raw)) return true;
         if (/^fe80:/i.test(raw)) return true;
-        // Docker/Kubernetes internal names
         if (raw.endsWith('.internal') || raw === 'host.docker.internal') return true;
-        // Cloud metadata services
         if (raw === 'metadata.google.internal' || raw === 'metadata.internal') return true;
-        // mDNS / link-local hostnames
         if (raw.endsWith('.local')) return true;
         return false;
     }
 
-    /**
-     * Check if an IP address is in a private/reserved range.
-     */
     private static isPrivateIp(ip: string): boolean {
         if (/^127\.\d+\.\d+\.\d+$/.test(ip)) return true;
         if (ip === '0.0.0.0' || ip === '::1' || /^::$/.test(ip)) return true;
@@ -167,20 +454,13 @@ export class FileParser {
         if (/^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(ip)) return true;
         if (/^192\.168\.\d+\.\d+$/.test(ip)) return true;
         if (/^169\.254\.\d+\.\d+$/.test(ip)) return true;
-        // AWS metadata endpoint (169.254.169.254) is private too
         if (ip === '169.254.169.254') return true;
-        // IPv6 unique-local / link-local
         if (/^f[cd][0-9a-f]{0,3}:/i.test(ip)) return true;
         if (/^fe[89a-b][0-9a-f]:/i.test(ip)) return true;
         return false;
     }
 
-    /**
-     * Resolve a hostname via DNS and validate none of the resolved
-     * addresses are private. Returns true when all resolved IPs are external.
-     */
     private static async resolveIsExternal(hostname: string): Promise<boolean> {
-        // Literal IP addresses — already validated by isPrivateHost
         if (/^[\d.]+$/.test(hostname) || (/^[0-9a-f:]+$/i.test(hostname) && hostname.includes(':')) || hostname.startsWith('[')) {
             return true;
         }
@@ -188,17 +468,16 @@ export class FileParser {
         try {
             const v4 = await resolve4(hostname);
             if (v4.some(ip => FileParser.isPrivateIp(ip))) safe = false;
-        } catch { /* no A record — not a problem */ }
+        } catch { /* no A record */ }
         try {
             const v6 = await resolve6(hostname);
             if (v6.some(ip => FileParser.isPrivateIp(ip))) safe = false;
-        } catch { /* no AAAA record — not a problem */ }
+        } catch { /* no AAAA record */ }
         return safe;
     }
 
     /**
      * Fetch a text file from a URL and return its content.
-     * Validates the URL for SSRF safety before fetching.
      */
     private static async fetchTextFile(
         url: string,
@@ -206,7 +485,6 @@ export class FileParser {
         base: { url: string; mimeType: string }
     ): Promise<ParsedFile> {
         try {
-            // SSRF validation — reject private/internal URLs before fetching
             await FileParser.validateUrl(url);
 
             const response = await axios.get(url, {
