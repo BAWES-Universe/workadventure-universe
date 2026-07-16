@@ -705,17 +705,13 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
 
                             // Collect URLs that were already sent by explicit send_* tool calls
                             // so autoSendMedia doesn't re-send them via parent tool results.
-                            // Persisted across tool call iterations to prevent re-sending the
-                            // same URLs when the AI calls query/listing tools multiple times.
-                            if (followUpIterations === 1) {
-                                const alreadySentUrls = new Set<string>();
-                                for (const tr of toolResults) {
-                                    if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
-                                        const orig = tr.result?.originalUrl;
-                                        if (typeof orig === 'string') alreadySentUrls.add(orig);
-                                    }
+                            // Accumulate across ALL iterations to handle multi-turn scenarios
+                            // where send_* calls happen in iteration 2 or later.
+                            for (const tr of toolResults) {
+                                if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
+                                    const orig = tr.result?.originalUrl;
+                                    if (typeof orig === 'string') iterationSentUrls.add(orig);
                                 }
-                                iterationSentUrls = alreadySentUrls;
                             }
 
                             // Pre-queue media URLs to pendingMedia as a safety net.
