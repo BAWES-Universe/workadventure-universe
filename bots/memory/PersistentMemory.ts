@@ -629,4 +629,19 @@ export class PersistentMemory extends ConversationMemory {
             },
         };
     }
+
+    /**
+     * Sync the loaded-memories snapshot with the current in-memory state.
+     * Called after retryPendingMedia modifies pendingMedia so the snapshot
+     * reflects up-to-date items and survives setUserUuid restoration on re-entry.
+     * The snapshot is keyed by UUID (matching loadMemories and setUserUuid).
+     */
+    syncSnapshot(botId: string, playerId: number, memory: BotPlayerMemory): void {
+        const key = `${botId}_${playerId}`;
+        const uuidInfo = this.uuidTracking.get(key);
+        if (uuidInfo) {
+            const loadedMemoryKey = `${botId}_${uuidInfo.userUuid}`;
+            this.loadedMemoriesByUuid.set(loadedMemoryKey, this.cloneMemory(memory));
+        }
+    }
 }

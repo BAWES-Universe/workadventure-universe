@@ -998,6 +998,14 @@ export abstract class BaseBehavior {
         if (deliverableCount > 0) {
             memory.personalInfo.facts.set('autoDeliveredMedia', String(deliverableCount));
         }
+
+        // Sync the snapshot so pendingMedia changes survive setUserUuid restoration
+        // on the next re-entry. Without this, the stale snapshot (captured before
+        // tool results queued items to pendingMedia) would overwrite the in-memory
+        // state with empty pendingMedia.
+        if (typeof (this.conversationMemory as any)?.syncSnapshot === 'function') {
+            (this.conversationMemory as any).syncSnapshot(botId, user.id, memory);
+        }
     }
 
     /**
