@@ -2182,14 +2182,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (lastError) {
                     message += ` ${urls.length - sentCount - skippedCount} file(s) queued for retry.`;
                 }
-                // Preserve the ENTIRE original tool result and add auto-send metadata.
-                // The AI needs the original data (image_url, prompt, generation_id, etc.)
-                // to make decisions. Masking it with a summary causes the AI to loop
-                // calling query tools trying to recover the information.
+                // Preserve the original tool result EXCEPT URL fields, which would
+                // trigger the AI to call send_image/send_file on already-sent media.
+                // The AI still has prompt, generation_id, metadata, etc. to reference.
                 const original = tr.result;
                 if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
+                    const { image_url, url, file_url, video_url, audio_url, ...cleanOriginal } = original;
                     tr.result = {
-                        ...original,
+                        ...cleanOriginal,
                         _autoSent: sentCount,
                         _autoSentMessage: message,
                     };
