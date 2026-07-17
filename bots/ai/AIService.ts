@@ -2226,8 +2226,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 const label = skippedCount === 1 ? 'media file was' : 'media files were';
                 const original = tr.result;
                 if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
+                    const { image_url, url, file_url, video_url, audio_url, ...cleanOriginal } = original;
                     tr.result = {
-                        ...original,
+                        ...cleanOriginal,
                         _skipped: skippedCount,
                         _skippedMessage: `All ${skippedCount} ${label} already sent to the conversation.`,
                     };
@@ -2299,7 +2300,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Deduplicate by URL — preQueueToolResults and autoSendMedia's catch block
             // can each push entries for the same URL (e.g. suffixed vs unsuffixed variants),
             // causing duplicates that persist through snapshot restoration.
-            if (seen.has(item.url)) {
+            const isDuplicate = Array.from(seen).some(
+                seenUrl => seenUrl === item.url || seenUrl.startsWith(item.url) || item.url.startsWith(seenUrl),
+            );
+            if (isDuplicate) {
                 continue;
             }
             seen.add(item.url);

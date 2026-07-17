@@ -627,6 +627,7 @@ export class PersistentMemory extends ConversationMemory {
                 ...memory.relationship,
                 importantEvents: memory.relationship.importantEvents.map(e => ({ ...e })),
             },
+            pendingMedia: memory.pendingMedia ? memory.pendingMedia.map(item => ({ ...item })) : undefined,
         };
     }
 
