@@ -2182,33 +2182,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (lastError) {
                     message += ` ${urls.length - sentCount - skippedCount} file(s) queued for retry.`;
                 }
-                // Preserve the original tool result EXCEPT URL fields, which would
-                // trigger the AI to call send_image/send_file on already-sent media.
-                // The AI still has prompt, generation_id, metadata, etc. to reference.
-                const original = tr.result;
-                if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
-                    const { image_url, url, file_url, video_url, audio_url, ...cleanOriginal } = original;
-                    tr.result = {
-                        ...cleanOriginal,
-                        _autoSent: sentCount,
-                        _autoSentMessage: message,
-                    };
-                } else if (Array.isArray(original)) {
-                    // For array results (e.g., list_generations that returns [...]),
-                    // wrap with a summary so the AI knows what happened
-                    tr.result = {
-                        success: true,
-                        data: original,
-                        _autoSent: sentCount,
-                        _autoSentMessage: message,
-                    };
-                } else {
-                    tr.result = {
-                        success: true,
-                        message,
-                        _originalResult: original,
-                    };
-                }
+                // Replace the entire tool result with a summary message.
+                // The AI wrote the prompt and knows what it asked for. Giving it
+                // the raw result (with URLs nested inside data[].text as stringified
+                // JSON) causes it to call send_image on already-delivered media.
+                // MCP-agnostic: only relies on our own _autoSent signal.
+                tr.result = {
+                    success: true,
+                    message,
+                    _autoSent: sentCount,
+                };
             } else if (lastError) {
                 // "Not in space" means the user left mid-turn — the URL was already
                 // queued to pendingMedia by the catch block and will be delivered
@@ -2224,28 +2207,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             } else if (skippedCount > 0) {
                 const label = skippedCount === 1 ? 'media file was' : 'media files were';
-                const original = tr.result;
-                if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
-                    const { image_url, url, file_url, video_url, audio_url, ...cleanOriginal } = original;
-                    tr.result = {
-                        ...cleanOriginal,
-                        _skipped: skippedCount,
-                        _skippedMessage: `All ${skippedCount} ${label} already sent to the conversation.`,
-                    };
-                } else if (Array.isArray(original)) {
-                    tr.result = {
-                        success: true,
-                        data: original,
-                        _skipped: skippedCount,
-                        _skippedMessage: `All ${skippedCount} ${label} already sent to the conversation.`,
-                    };
-                } else {
-                    tr.result = {
-                        success: true,
-                        message: `All ${skippedCount} ${label} already sent to the conversation.`,
-                        _originalResult: original,
-                    };
-                }
+                tr.result = {
+                    success: true,
+                    message: `All ${skippedCount} ${label} already sent to the conversation.`,
+                    _skipped: skippedCount,
+                };
             }
         }
 
