@@ -2051,6 +2051,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) continue;
                 } catch { continue; }
 
+                // Skip URLs already queued for delivery — prevents duplicates from
+                // read-only tools (e.g., list_imagines) returning past results
+                if (memory.pendingMedia.some(p => p.url === url || p.originalUrl === url)) continue;
+
                 if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
 
                 const ext = this.getExtension(url);
@@ -2061,6 +2065,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                 memory.pendingMedia.push({
                     url,
+                    originalUrl: url,
                     mediaType,
                     mimeType: '',
                     caption: '',
@@ -2125,6 +2130,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 } catch {
                     continue; // Invalid URL — skip
                 }
+                // Skip URLs already queued for delivery — prevents re-sending from
+                // read-only tools (e.g., list_imagines) returning past results
+                if (botId && playerId !== undefined) {
+                    const mem = this.conversationMemory?.getMemory(botId, playerId);
+                    if (mem?.pendingMedia?.some(p => p.url === url || p.originalUrl === url)) {
+                        skippedCount++;
+                        continue;
+                    }
+                }
                 const ext = this.getExtension(url);
                 try {
                     if (IMAGE_EXT_SET.has(ext)) {
@@ -2158,12 +2172,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
-                            // Avoid duplicate — preQueueToolResults may have already pushed the
-                            // original URL, while _cdnUrl on the error gives us the CDN URL.
-                            // Compare with startsWith to catch suffix differences (e.g. _00001_)
-                            if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url || p.url.startsWith(cdnUrl) || cdnUrl.startsWith(p.url)) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                            // Replace existing entry with CDN URL — the original URL was
+                            // queued by preQueueToolResults, but the CDN URL is the
+                            // reliable delivery URL. originalUrl is preserved for dedup.
+                            const existingIdx = memory.pendingMedia.findIndex(
+                                p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                            );
+                            if (existingIdx >= 0) {
+                                memory.pendingMedia[existingIdx] = {
+                                    ...memory.pendingMedia[existingIdx],
+                                    url: cdnUrl,
+                                    mediaType: mType,
+                                    mimeType: mMime,
+                                };
+                            } else if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                 memory.pendingMedia.push({
                                     url: cdnUrl,
+                                    originalUrl: url,
                                     mediaType: mType,
                                     mimeType: mMime,
                                     caption: '',
@@ -2263,16 +2288,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const seen = new Set<string>();
 
         for (const item of memory.pendingMedia) {
-            // Deduplicate by URL — preQueueToolResults and autoSendMedia's catch block
-            // can each push entries for the same URL (e.g. suffixed vs unsuffixed variants),
-            // causing duplicates that persist through snapshot restoration.
+            // Deduplicate by originalUrl — the same media may exist at both the
+            // original URL and the CDN URL. originalUrl is the stable identity.
             const isDuplicate = Array.from(seen).some(
-                seenUrl => seenUrl === item.url || seenUrl.startsWith(item.url) || item.url.startsWith(seenUrl),
+                seenUrl => seenUrl === item.url || seenUrl === item.originalUrl,
             );
             if (isDuplicate) {
                 continue;
             }
-            seen.add(item.url);
+            seen.add(item.originalUrl || item.url);
 
             if (item.retryCount >= 3) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2486,10 +2510,21 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
             if (memory) {
                 if (!memory.pendingMedia) memory.pendingMedia = [];
-                // Avoid duplicate — preQueueToolResults or earlier catch may have already pushed
-                if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                // Replace existing entry with CDN URL — preserves originalUrl for dedup
+                const existingIdx = memory.pendingMedia.findIndex(
+                    p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                );
+                if (existingIdx >= 0) {
+                    memory.pendingMedia[existingIdx] = {
+                        ...memory.pendingMedia[existingIdx],
+                        url: cdnUrl,
+                        mediaType: mediaTypeDefault,
+                        mimeType,
+                    };
+                } else if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                     memory.pendingMedia.push({
                         url: cdnUrl,
+                        originalUrl: url,
                         mediaType: mediaTypeDefault,
                         mimeType,
                         caption: caption || undefined,

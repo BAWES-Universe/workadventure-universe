@@ -71,6 +71,9 @@ export interface RelationshipContext {
  */
 export interface PendingMedia {
     url: string;
+    /** The original URL from the tool result, before CDN upload. Used for dedup —
+     *  the same media may exist at both the original URL and the CDN URL. */
+    originalUrl?: string;
     mediaType: 'image' | 'file' | 'audio' | 'video';
     mimeType: string;
     caption?: string;
