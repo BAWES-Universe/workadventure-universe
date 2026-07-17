@@ -2160,7 +2160,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             if (!memory.pendingMedia) memory.pendingMedia = [];
                             // Avoid duplicate — preQueueToolResults may have already pushed the
                             // original URL, while _cdnUrl on the error gives us the CDN URL.
-                            if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                            // Compare with startsWith to catch suffix differences (e.g. _00001_)
+                            if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url || p.url.startsWith(cdnUrl) || cdnUrl.startsWith(p.url)) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                 memory.pendingMedia.push({
                                     url: cdnUrl,
                                     mediaType: mType,
@@ -2292,8 +2293,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const now = Date.now();
         const MIN_RETRY_INTERVAL_MS = 10_000; // Don't retry the same item more than once per 10s
         const remaining: typeof memory.pendingMedia = [];
+        const seen = new Set<string>();
 
         for (const item of memory.pendingMedia) {
+            // Deduplicate by URL — preQueueToolResults and autoSendMedia's catch block
+            // can each push entries for the same URL (e.g. suffixed vs unsuffixed variants),
+            // causing duplicates that persist through snapshot restoration.
+            if (seen.has(item.url)) {
+                continue;
+            }
+            seen.add(item.url);
+
             if (item.retryCount >= 3) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] Dropping pending ${item.mediaType} after ${item.retryCount} retries: ${item.url.substring(0, 60)}`);
