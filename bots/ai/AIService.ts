@@ -527,6 +527,8 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                     const pendingMem = this.conversationMemory?.getMemory(botId, playerId);
                     if (pendingMem?.pendingMedia?.length) {
                         this.flushPendingMedia(botClient, spaceName, botId, playerId, true);
+                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.log(`[AIService] Pre-AI flush skipped: botId=${botId}, playerId=${playerId}, getMemory=${!!pendingMem}, pendingMediaLength=${pendingMem?.pendingMedia?.length ?? 'N/A'}`);
                     }
                 }
 
