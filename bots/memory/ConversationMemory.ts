@@ -730,7 +730,7 @@ export class ConversationMemory {
         // the greeting. Media-agnostic — works for images, files, audio, video.
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
-            context.push(`\n[System: ${autoDelivered} media item(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
+            context.push(`\n[System: ${autoDelivered} media item(s) from the previous session have been delivered alongside this message. That work is complete.]`);
             // Delete the fact so the facts iteration below doesn't include
             // "autoDeliveredMedia: " in the AI's context. On the same-turn retry
             // (AI call fails), getConversationContext runs again — the guard above
