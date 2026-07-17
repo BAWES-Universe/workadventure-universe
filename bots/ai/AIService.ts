@@ -2014,6 +2014,88 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      *
      * Tool-agnostic — reuses extractUrlsFromResult which works with any MCP tool.
      */
+    /**
+     * Extract URL + description pairs from a tool result.
+     * Returns an array of {url, description} entries, deduplicated by URL.
+     * The description is the text nearest the URL in the result structure
+     * (e.g. `description`, `prompt`, `alt`, `label`, or `title` from the
+     * same object as the URL, or a sibling property).
+     */
+    private extractUrlEntriesFromResult(result: any): Array<{ url: string; description: string }> {
+        if (!result) return [];
+
+        const MEDIA_URL_PATTERN = /https?:\/\/[^\s"']+\.(png|jpg|jpeg|gif|webp|svg|mp4|webm|mp3|wav|ogg)(\?[^\s"']*)?/gi;
+        const seen = new Set<string>();
+        const entries: Array<{ url: string; description: string }> = [];
+
+        const addEntry = (url: string, description: string) => {
+            const clean = url.replace(/[.,;:!?)"'\]]}>]+$/, '');
+            MEDIA_URL_PATTERN.lastIndex = 0;
+            if (MEDIA_URL_PATTERN.test(clean) && !seen.has(clean)) {
+                seen.add(clean);
+                entries.push({ url: clean, description: description || '' });
+            }
+        };
+
+        // Collect text properties from a single object (excluding URLs, IDs, etc.)
+        const collectTextSibling = (obj: any, urlStr: string): string => {
+            if (!obj || typeof obj !== 'object') return '';
+            for (const key of ['description', 'prompt', 'alt', 'label', 'title', 'caption']) {
+                const val = obj[key];
+                if (val && typeof val === 'string' && val.length > 3 && val.length < 500) {
+                    // Only use if it actually reads like a description (not a raw URL, ID, or status)
+                    if (!val.startsWith('http') && !/^[a-f0-9-]{20,}$/i.test(val)) {
+                        return val;
+                    }
+                }
+            }
+            return '';
+        };
+
+        // Case 1: string result
+        if (typeof result === 'string') {
+            const matches = result.match(MEDIA_URL_PATTERN);
+            if (matches) matches.forEach(u => addEntry(u, ''));
+            return entries;
+        }
+
+        // Case 2: object or array — walk with context tracking
+        if (typeof result === 'object') {
+            // For each object in an array, try to find URL + description pairs
+            const extractFromItem = (item: any, depth: number) => {
+                if (depth > 4 || item === null || item === undefined) return;
+                if (typeof item === 'string') {
+                    const matches = item.match(MEDIA_URL_PATTERN);
+                    if (matches) matches.forEach(u => addEntry(u, ''));
+                } else if (Array.isArray(item)) {
+                    item.forEach(sub => extractFromItem(sub, depth + 1));
+                } else if (typeof item === 'object') {
+                    // Check if this object has a URL property directly
+                    const urlVal = item.url || item.image_url || item.imageUrl || item.src;
+                    if (urlVal && typeof urlVal === 'string' && MEDIA_URL_PATTERN.test(urlVal)) {
+                        const desc = collectTextSibling(item, urlVal);
+                        addEntry(urlVal, desc);
+                    } else {
+                        // Walk all values for URLs
+                        for (const [key, val] of Object.entries(item)) {
+                            if (typeof val === 'string' && MEDIA_URL_PATTERN.test(val)) {
+                                // Check if this value was already caught by urlVal above
+                                if (!seen.has(val.replace(/[.,;:!?)"'\]]}>]+$/, ''))) {
+                                    addEntry(val, '');
+                                }
+                            } else {
+                                extractFromItem(val, depth + 1);
+                            }
+                        }
+                    }
+                }
+            };
+            extractFromItem(result, 0);
+        }
+
+        return entries;
+    }
+
     private preQueueToolResults(
         toolResults: Array<{ id: string; name: string; result: any }>,
         alreadySentUrls: Set<string>,
@@ -2037,10 +2119,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 continue;
             }
 
-            const urls = this.extractUrlsFromResult(tr.result);
-            if (urls.length === 0) continue;
+            const entries = this.extractUrlEntriesFromResult(tr.result);
+            if (entries.length === 0) continue;
 
-            for (const url of urls) {
+            for (const { url, description } of entries) {
                 // Skip URLs already sent by explicit send_* tool calls
                 if (alreadySentUrls.has(url)) continue;
                 // Skip internal/local URLs
@@ -2061,7 +2143,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     url,
                     mediaType,
                     mimeType: '',
-                    caption: '',
+                    caption: description || '',
                     createdAt: Date.now(),
                     retryCount: 0,
                 });

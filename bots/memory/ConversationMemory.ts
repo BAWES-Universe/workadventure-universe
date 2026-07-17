@@ -734,12 +734,25 @@ export class ConversationMemory {
         // Auto-delivered media notification — tells the bot that images it
         // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent.
         // MUST run BEFORE the personal-details fact iteration below, so it's
-        // consumed (set to '') before that loop includes it as a raw key-value.
+        // consumed before that loop includes it as a raw key-value.
         // Otherwise the bot sees both 'You remember: autoDeliveredMedia: 1' AND
         // the system note, which undermines the directive.
         const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
         if (autoDelivered) {
-            context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
+            // Include descriptions from pendingMedia so the AI knows what was generated
+            const memoryKey = `${botId}_${playerId}`;
+            const memory = this.memories.get(memoryKey);
+            let descriptions = '';
+            if (memory?.pendingMedia?.length) {
+                const descs = memory.pendingMedia
+                    .filter(p => p.retryCount < 3)
+                    .map(p => p.caption || '')
+                    .filter(Boolean);
+                if (descs.length > 0) {
+                    descriptions = ` They show: ${descs.join('; ')}.`;
+                }
+            }
+            context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]${descriptions}`);
             // Delete the fact so the facts iteration below doesn't include
             // "autoDeliveredMedia: " in the AI's context. On the same-turn retry
             // (AI call fails), getConversationContext runs again — the guard above
