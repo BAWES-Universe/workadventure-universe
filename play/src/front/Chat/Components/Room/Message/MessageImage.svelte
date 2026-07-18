@@ -40,4 +40,11 @@
     <img class="w-full object-cover max-h-52 rounded" src={$content.url} alt={$content.body} draggable="false" />
 </a>
 
-<Lightbox src={$content.url} alt={$content.body} show={showLightbox} on:close={() => (showLightbox = false)} />
+<Lightbox
+    src={$content.url}
+    alt={$content.body}
+    show={showLightbox}
+    hasPrev={false}
+    hasNext={false}
+    on:close={() => (showLightbox = false)}
+/>

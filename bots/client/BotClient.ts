@@ -1240,6 +1240,7 @@ export class BotClient {
                                 message,
                                 characterTextures: [],
                                 name: this.config.name,
+                                galleryUrls: [],
                             },
                         },
                     },
@@ -1699,6 +1700,52 @@ export class BotClient {
                                 url,
                                 mediaType,
                                 mimeType,
+                                galleryUrls: [],
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        return true;
+    }
+
+    /**
+     * Send a gallery of images as a single message with a grid layout.
+     * The first image goes in the `url` field (backwards compatible), and
+     * additional images go in `galleryUrls`. The caption appears below the grid.
+     */
+    public sendMediaGallery(spaceName: string, urls: string[], caption?: string): boolean {
+        if (urls.length === 0) return false;
+
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName} — cannot send gallery`);
+            }
+            return false;
+        }
+
+        const firstUrl = urls[0];
+        const extraUrls = urls.slice(1);
+        const mimeType = this.inferMimeFromExt(firstUrl);
+
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceMessage',
+                            spaceMessage: {
+                                message: caption || '',
+                                characterTextures: [],
+                                name: this.config.name,
+                                url: firstUrl,
+                                mediaType: 'gallery',
+                                mimeType,
+                                galleryUrls: extraUrls,
                             },
                         },
                     },
@@ -2569,7 +2616,8 @@ export class BotClient {
                             senderId,
                             detectedUrl,
                             spaceMessage.mediaType,
-                            detectedMime
+                            detectedMime,
+                            spaceMessage.galleryUrls
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                         });

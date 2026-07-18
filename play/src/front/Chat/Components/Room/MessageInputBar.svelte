@@ -209,16 +209,60 @@
                         files = [];
                         filesPreview = [];
                     }
-                    // Send messages for all successful uploads
+                    // Send files + text as a SINGLE message to prevent multiple bot responses.
+                    // First file goes in the url field (backwards compatible), additional files
+                    // go in galleryUrls. User's typed text becomes the message body.
                     const proximityRoom = room;
-                    for (const result of succeeded) {
+                    const messageText = messageToSend.trim();
+                    if (succeeded.length === 1 && messageText) {
+                        // 1 file + text: merge into one message
+                        const first = succeeded[0];
                         proximityRoom.sendMessage(
-                            result.name || "",
+                            messageText,
                             "proximity",
                             true,
-                            result.location,
-                            result.type.startsWith("image/") ? "image" : "file",
-                            result.type
+                            first.location,
+                            first.type.startsWith("image/") ? "image" : "file",
+                            first.type
+                        );
+                        messageToSend = "";
+                    } else if (succeeded.length === 1) {
+                        // 1 file, no text: send file with filename as body
+                        const first = succeeded[0];
+                        proximityRoom.sendMessage(
+                            first.name || "",
+                            "proximity",
+                            true,
+                            first.location,
+                            first.type.startsWith("image/") ? "image" : "file",
+                            first.type
+                        );
+                    } else if (succeeded.length > 1 && messageText) {
+                        // Multiple files + text: first file in url, rest in galleryUrls
+                        const first = succeeded[0];
+                        const extraUrls = succeeded.slice(1).map((f) => f.location);
+                        proximityRoom.sendMessage(
+                            messageText,
+                            "proximity",
+                            true,
+                            first.location,
+                            first.type.startsWith("image/") ? "image" : "file",
+                            first.type,
+                            extraUrls
+                        );
+                        messageToSend = "";
+                    } else if (succeeded.length > 1) {
+                        // Multiple files, no text: gallery message with filenames
+                        const first = succeeded[0];
+                        const extraUrls = succeeded.slice(1).map((f) => f.location);
+                        proximityRoom.sendMessage(
+                            first.name || "",
+                            "proximity",
+                            true,
+                            first.location,
+                            first.type.startsWith("image/") ? "image" : "file",
+                            first.type,
+                            extraUrls
                         );
                     }
                 } catch (error: unknown) {

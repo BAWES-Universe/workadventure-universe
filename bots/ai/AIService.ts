@@ -2124,6 +2124,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             let skippedCount = 0;
             let lastError: string | null = null;
 
+            // Collect image URLs for gallery batching — 2+ images from the same
+            // tool result are sent as a single gallery message instead of N
+            // individual image messages (matches Discord/Telegram UX).
+            const imageUrlsToSend: string[] = [];
+            const otherUrlsToSend: { url: string; ext: string }[] = [];
+
             for (const url of urls) {
                 // Skip URLs that were already sent by the AI's explicit send_* tool call
                 if (alreadySentUrls?.has(url)) {
@@ -2150,12 +2156,85 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     continue;
                 }
                 const ext = this.getExtension(url);
+                if (IMAGE_EXT_SET.has(ext)) {
+                    imageUrlsToSend.push(url);
+                } else {
+                    otherUrlsToSend.push({ url, ext });
+                }
+            }
+
+            // Send images: batch 2+ as a gallery, single image as individual send
+            if (imageUrlsToSend.length >= 2) {
                 try {
-                    if (IMAGE_EXT_SET.has(ext)) {
-                        await botClient.sendImage(spaceName, url);
-                        sentCount++;
-                        sentUrls.add(url);
-                    } else if (VIDEO_EXT_SET.has(ext)) {
+                    botClient.sendMediaGallery(spaceName, imageUrlsToSend);
+                    sentCount += imageUrlsToSend.length;
+                    for (const url of imageUrlsToSend) sentUrls.add(url);
+                } catch (err: any) {
+                    lastError = err.message;
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error(`[AIService] autoSendMedia gallery failed: ${err.message}`);
+                    }
+                    // Fallback: send individually on gallery failure
+                    for (const url of imageUrlsToSend) {
+                        try {
+                            await botClient.sendImage(spaceName, url);
+                            sentCount++;
+                            sentUrls.add(url);
+                        } catch (err2: any) {
+                            lastError = err2.message;
+                        }
+                    }
+                }
+            } else if (imageUrlsToSend.length === 1) {
+                try {
+                    await botClient.sendImage(spaceName, imageUrlsToSend[0]);
+                    sentCount++;
+                    sentUrls.add(imageUrlsToSend[0]);
+                } catch (err: any) {
+                    lastError = err.message;
+                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error(`[AIService] autoSendMedia failed for ${imageUrlsToSend[0]}: ${err.message}`);
+                    }
+                    // Queue CDN URL for retry (avoids storing presigned/temporary URLs)
+                    const cdnUrl = err._cdnUrl || imageUrlsToSend[0];
+                    const mMime = err._mimeType || '';
+                    if (botId && playerId !== undefined) {
+                        const memory = this.conversationMemory?.getMemory(botId, playerId);
+                        if (memory) {
+                            if (!memory.pendingMedia) memory.pendingMedia = [];
+                            const existingIdx = memory.pendingMedia.findIndex(
+                                p => p.url === imageUrlsToSend[0] || p.originalUrl === imageUrlsToSend[0] || p.url === cdnUrl
+                            );
+                            if (existingIdx >= 0) {
+                                memory.pendingMedia[existingIdx] = {
+                                    ...memory.pendingMedia[existingIdx],
+                                    url: cdnUrl,
+                                    mediaType: 'image',
+                                    mimeType: mMime,
+                                };
+                            } else if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                                memory.pendingMedia.push({
+                                    url: cdnUrl,
+                                    originalUrl: imageUrlsToSend[0],
+                                    mediaType: 'image',
+                                    mimeType: mMime,
+                                    caption: '',
+                                    createdAt: Date.now(),
+                                    retryCount: 0,
+                                });
+                            }
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[PM-TRACE] autoSendMedia catch queued: cdnUrl=${cdnUrl.substring(0, 60)} originalUrl=${imageUrlsToSend[0].substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Send non-image URLs (video, audio, files) individually
+            for (const { url, ext } of otherUrlsToSend) {
+                try {
+                    if (VIDEO_EXT_SET.has(ext)) {
                         await botClient.sendVideo(spaceName, url);
                         sentCount++;
                         sentUrls.add(url);
@@ -2164,7 +2243,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         sentCount++;
                         sentUrls.add(url);
                     } else {
-                        // File with other extension — attempt as file
                         await botClient.sendFile(spaceName, url);
                         sentCount++;
                         sentUrls.add(url);
@@ -2174,17 +2252,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                         console.error(`[AIService] autoSendMedia failed for ${url}: ${err.message}`);
                     }
-                    // Queue CDN URL for retry (avoids storing presigned/temporary URLs)
                     const cdnUrl = err._cdnUrl || url;
-                    const mType: 'image' | 'file' | 'audio' | 'video' = err._mediaType || (IMAGE_EXT_SET.has(ext) ? 'image' : VIDEO_EXT_SET.has(ext) ? 'video' : AUDIO_EXT_SET.has(ext) ? 'audio' : 'file');
+                    const mType: 'image' | 'file' | 'audio' | 'video' = err._mediaType || (VIDEO_EXT_SET.has(ext) ? 'video' : AUDIO_EXT_SET.has(ext) ? 'audio' : 'file');
                     const mMime = err._mimeType || '';
                     if (botId && playerId !== undefined) {
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
-                            // Replace existing entry with CDN URL — the original URL was
-                            // queued by preQueueToolResults, but the CDN URL is the
-                            // reliable delivery URL. originalUrl is preserved for dedup.
                             const existingIdx = memory.pendingMedia.findIndex(
                                 p => p.url === url || p.originalUrl === url || p.url === cdnUrl
                             );
@@ -2205,9 +2279,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     createdAt: Date.now(),
                                     retryCount: 0,
                                 });
-                            }
-                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.log(`[PM-TRACE] autoSendMedia catch queued: cdnUrl=${cdnUrl.substring(0, 60)} originalUrl=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
                             }
                         }
                     }

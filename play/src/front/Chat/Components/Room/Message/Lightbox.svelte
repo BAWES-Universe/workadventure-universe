@@ -5,8 +5,14 @@
     export let src: string | undefined;
     export let alt: string | undefined;
     export let show: boolean;
+    export let hasPrev: boolean = false;
+    export let hasNext: boolean = false;
 
-    const dispatch = createEventDispatcher<{ close: void }>();
+    const dispatch = createEventDispatcher<{
+        close: void;
+        prev: void;
+        next: void;
+    }>();
 
     const MIN_SCALE = 1;
     const MAX_SCALE = 5;
@@ -30,14 +36,21 @@
     let tapX = 0;
     let tapY = 0;
 
-    // Swipe-to-dismiss
+    // Swipe-to-dismiss (vertical) and swipe-to-navigate (horizontal)
     let swipeDy = 0;
+    let swipeDx = 0;
+    let swipeStartX = 0;
 
     // Portal: move lightbox DOM to body so position:fixed escapes chat sidebar transforms
     let lightboxEl: HTMLElement | undefined;
 
-    // Reset transform state whenever the lightbox opens (handles switching between images)
+    // Reset transform state whenever the lightbox opens or src changes
     $: if (show) {
+        scale = 1;
+        tx = 0;
+        ty = 0;
+    }
+    $: if (show && src) {
         scale = 1;
         tx = 0;
         ty = 0;
@@ -47,8 +60,18 @@
         dispatch("close");
     }
 
+    function prev(): void {
+        if (hasPrev) dispatch("prev");
+    }
+
+    function next(): void {
+        if (hasNext) dispatch("next");
+    }
+
     function onKeyDown(e: KeyboardEvent): void {
         if (e.key === "Escape") close();
+        if (e.key === "ArrowLeft") prev();
+        if (e.key === "ArrowRight") next();
     }
 
     // Svelte portal action — teleports element to document.body
@@ -101,6 +124,8 @@
         lastY = e.clientY;
         startY = e.clientY;
         swipeDy = 0;
+        swipeDx = 0;
+        swipeStartX = e.clientX;
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
     }
 
@@ -115,7 +140,9 @@
             tx += dx;
             ty += dy;
         } else {
+            // Track both vertical (dismiss) and horizontal (navigate) swipe
             swipeDy = e.clientY - startY;
+            swipeDx = e.clientX - swipeStartX;
             ty = swipeDy * 0.4;
             const backdrop = lightboxEl;
             if (backdrop) {
@@ -125,12 +152,22 @@
         }
     }
 
-    function onPointerUp(_e: PointerEvent): void {
+    function onPointerUp(e: PointerEvent): void {
         isDragging = false;
 
         if (scale <= 1) {
+            // Vertical swipe to dismiss
             if (Math.abs(swipeDy) > window.innerHeight * 0.15) {
                 close();
+                return;
+            }
+            // Horizontal swipe to navigate (must be more horizontal than vertical)
+            if (Math.abs(swipeDx) > 80 && Math.abs(swipeDx) > Math.abs(swipeDy) * 1.5) {
+                if (swipeDx > 0) {
+                    prev();
+                } else {
+                    next();
+                }
                 return;
             }
             tx = 0;
@@ -140,12 +177,12 @@
 
         // Double-tap detection (toggle zoom at any scale)
         const now = Date.now();
-        const dx = _e.clientX - tapX;
-        const dy = _e.clientY - tapY;
+        const dx = e.clientX - tapX;
+        const dy = e.clientY - tapY;
         if (now - lastTapTime < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
             if (scale <= 1.1) {
                 // Zoom in toward cursor
-                const { cx, cy } = imageLocalCoords(_e);
+                const { cx, cy } = imageLocalCoords(e);
                 setScale(ZOOM_STEP, cx, cy);
             } else {
                 // Zoom out to 1x and re-center
@@ -157,10 +194,11 @@
             return;
         }
         lastTapTime = now;
-        tapX = _e.clientX;
-        tapY = _e.clientY;
+        tapX = e.clientX;
+        tapY = e.clientY;
 
         swipeDy = 0;
+        swipeDx = 0;
     }
 
     function onTouchStart(e: TouchEvent): void {
@@ -234,6 +272,52 @@
                 </svg>
             </button>
 
+            <!-- Previous button (only if multiple images) -->
+            {#if hasPrev}
+                <button
+                    class="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
+                    on:click={prev}
+                    aria-label="Previous image"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="28"
+                        height="28"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        fill="none"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M15 18l-6 -6l6 -6" />
+                    </svg>
+                </button>
+            {/if}
+
+            <!-- Next button (only if multiple images) -->
+            {#if hasNext}
+                <button
+                    class="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
+                    on:click={next}
+                    aria-label="Next image"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="28"
+                        height="28"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        fill="none"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M9 18l6 -6l-6 -6" />
+                    </svg>
+                </button>
+            {/if}
+
             <!-- Image with zoom/pan -->
             <div
                 class="flex items-center justify-center w-full h-full select-none touch-none"
@@ -248,14 +332,17 @@
                 role="presentation"
                 tabindex="-1"
             >
-                <img
-                    {src}
-                    {alt}
-                    draggable="false"
-                    class="max-h-[90vh] max-w-[90vw] object-contain rounded-sm"
-                    class:shadow-2xl={scale === 1}
-                    style="transform: translate({tx}px, {ty}px) scale({scale});"
-                />
+                {#key src}
+                    <img
+                        {src}
+                        {alt}
+                        draggable="false"
+                        class="max-h-[90vh] max-w-[90vw] object-contain rounded-sm"
+                        class:shadow-2xl={scale === 1}
+                        style="transform: translate({tx}px, {ty}px) scale({scale});"
+                        transition:fade={{ duration: 150 }}
+                    />
+                {/key}
             </div>
 
             <!-- Zoom indicator -->

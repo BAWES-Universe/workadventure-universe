@@ -87,11 +87,15 @@ export class MatrixChatMessage implements ChatMessage {
         const unsigned = this.event.getUnsigned();
         const relation = unsigned["m.relations"];
         if (this.event.isDecryptionFailure()) {
-            return { body: "🔐 Failed to decrypt", url: undefined };
+            return { body: "🔐 Failed to decrypt", url: undefined, urls: undefined };
         }
         if (relation) {
             if (relation["m.replace"]) {
-                return { body: relation["m.replace"].content?.["m.new_content"]?.body, url: undefined };
+                return {
+                    body: relation["m.replace"].content?.["m.new_content"]?.body,
+                    url: undefined,
+                    urls: undefined,
+                };
             }
         }
 
@@ -103,6 +107,7 @@ export class MatrixChatMessage implements ChatMessage {
             return {
                 body: content.formatted_body.replace(/^(<mx-reply>).*(<\/mx-reply>)/, ""),
                 url: undefined,
+                urls: undefined,
             };
         }
 
@@ -110,10 +115,11 @@ export class MatrixChatMessage implements ChatMessage {
             return {
                 body: content.body,
                 url: this.room.client.mxcUrlToHttp(this.event.getOriginalContent().url) ?? undefined,
+                urls: undefined,
             };
         }
 
-        return { body: content.body, url: undefined };
+        return { body: content.body, url: undefined, urls: undefined };
     }
 
     public initReactions() {
@@ -196,7 +202,7 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     public modifyContent(newContent: string) {
-        this.content.set({ body: newContent, url: undefined });
+        this.content.set({ body: newContent, url: undefined, urls: undefined });
         this.isModified.set(true);
     }
 

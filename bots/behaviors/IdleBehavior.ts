@@ -353,7 +353,7 @@ export class IdleBehavior extends BaseBehavior {
         super.onSpaceLeft(spaceName);
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
         if (!this.bot) {
             return;
         }
@@ -365,7 +365,7 @@ export class IdleBehavior extends BaseBehavior {
 
         // If the user sent a file, use FileParser to extract content
         if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType);
+            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
 
         // Get user info from bot's player map

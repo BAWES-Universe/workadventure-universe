@@ -72,7 +72,8 @@ export interface ChatRoom {
         broadcast?: boolean,
         url?: string,
         mediaType?: string,
-        mimeType?: string
+        mimeType?: string,
+        galleryUrls?: string[]
     ) => void;
     readonly sendFiles: (files: FileList) => Promise<void>;
     readonly setTimelineAsRead: () => void;
@@ -139,13 +140,23 @@ export interface ChatMessageReaction {
     reacted: Readable<boolean>;
 }
 
-export type ChatMessageType = "proximity" | "text" | "incoming" | "outcoming" | "image" | "file" | "audio" | "video";
+export type ChatMessageType =
+    | "proximity"
+    | "text"
+    | "incoming"
+    | "outcoming"
+    | "image"
+    | "file"
+    | "audio"
+    | "video"
+    | "gallery";
 export type ChatMessageContent = {
     /**
      * The body can contain HTML. It will be run against DOMPurify before being outputted to the user.
      */
     body: string;
     url: string | undefined;
+    urls: string[] | undefined;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];

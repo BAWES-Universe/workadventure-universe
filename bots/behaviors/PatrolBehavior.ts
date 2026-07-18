@@ -1676,7 +1676,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Handle chat messages from players
      */
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
         if (!this.bot) return;
 
         const botId = this.bot.getBotId();
@@ -1684,7 +1684,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // If the user sent a file, use FileParser to extract content
         if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType);
+            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
 
         // Only respond if respondToPlayers is enabled (default true)

@@ -660,7 +660,7 @@ export class SocialBehavior extends BaseBehavior {
         this.targetPlayerId = null;
     }
 
-    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): Promise<void> {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
         if (!this.bot) {
             console.warn(`[SocialBehavior] onChatMessage: bot is null`);
             return;
@@ -677,7 +677,7 @@ export class SocialBehavior extends BaseBehavior {
         // is for the AI request only.
         const originalUserMessage = message;
         if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType);
+            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
 
         let conversation = this.activeConversations.get(senderId);

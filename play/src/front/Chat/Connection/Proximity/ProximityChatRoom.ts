@@ -227,10 +227,12 @@ export class ProximityChatRoom implements ChatRoom {
         broadcast = true,
         url?: string,
         mediaType?: string,
-        mimeType?: string
+        mimeType?: string,
+        galleryUrls?: string[]
     ): void {
         // Determine message type from media
         let messageType = action;
+        const hasGallery = galleryUrls && galleryUrls.length > 0;
         if (url) {
             // Check URL extension first (always authoritative — the file UUID preserves the extension)
             const urlType = this.inferTypeFromUrl(url);
@@ -246,11 +248,16 @@ export class ProximityChatRoom implements ChatRoom {
                 messageType = "file";
             }
         }
+        // If gallery URLs are present, override to gallery type
+        if (hasGallery) {
+            messageType = "gallery";
+        }
 
         // Create content message
         const newChatMessageContent = {
             body: message,
             url: url,
+            urls: galleryUrls,
         };
 
         const spaceUser = this.users?.get(this._spaceUserId);
@@ -285,6 +292,7 @@ export class ProximityChatRoom implements ChatRoom {
                     url: url,
                     mediaType: mediaType,
                     mimeType: mimeType,
+                    galleryUrls: galleryUrls ?? [],
                 },
             });
         }
@@ -344,7 +352,8 @@ export class ProximityChatRoom implements ChatRoom {
         name: string,
         url?: string | null,
         mediaType?: string | null,
-        mimeType?: string | null
+        mimeType?: string | null,
+        galleryUrls?: string[] | null
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
@@ -353,6 +362,7 @@ export class ProximityChatRoom implements ChatRoom {
 
         // Determine message type from media
         let messageType: ChatMessageType = "proximity";
+        const hasGallery = galleryUrls && galleryUrls.length > 0;
         if (url) {
             // Check URL extension first (always authoritative — the file UUID preserves the extension)
             const urlType = this.inferTypeFromUrl(url);
@@ -368,11 +378,16 @@ export class ProximityChatRoom implements ChatRoom {
                 messageType = "file";
             }
         }
+        // If gallery URLs are present, override to gallery type
+        if (hasGallery) {
+            messageType = "gallery";
+        }
 
         // Create content message
         const newChatMessageContent = {
             body: message,
             url: url ?? undefined,
+            urls: galleryUrls ?? undefined,
         };
 
         const spaceUser = this.users?.get(senderUserId);
@@ -445,6 +460,7 @@ export class ProximityChatRoom implements ChatRoom {
         const newChatMessageContent = {
             body: message,
             url: undefined,
+            urls: undefined,
         };
 
         // Create message
@@ -470,6 +486,7 @@ export class ProximityChatRoom implements ChatRoom {
                 spaceMessage: {
                     message: message,
                     characterTextures: [],
+                    galleryUrls: [],
                 },
             });
         }
@@ -637,7 +654,8 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.name ?? "",
                 event.spaceMessage.url,
                 event.spaceMessage.mediaType,
-                event.spaceMessage.mimeType
+                event.spaceMessage.mimeType,
+                event.spaceMessage.galleryUrls
             );
             // if the proximity chat is not open, open it to see the message
             chatVisibilityStore.set(true);
@@ -669,7 +687,11 @@ export class ProximityChatRoom implements ChatRoom {
 
                 if (stream.reset && existing) {
                     // Regeneration: clear old content so new tokens don't concatenate
-                    (existing.content as Writable<ChatMessageContent>).set({ body: "", url: undefined });
+                    (existing.content as Writable<ChatMessageContent>).set({
+                        body: "",
+                        url: undefined,
+                        urls: undefined,
+                    });
                     return;
                 }
 
@@ -681,6 +703,7 @@ export class ProximityChatRoom implements ChatRoom {
                         (existing.content as Writable<ChatMessageContent>).set({
                             body: stream.errorMessage || get(LL).chat.timeLine.streamError(),
                             url: undefined,
+                            urls: undefined,
                         });
                         this.streamMessages.delete(stream.responseId);
                         return;
@@ -693,6 +716,7 @@ export class ProximityChatRoom implements ChatRoom {
                         (existing.content as Writable<ChatMessageContent>).set({
                             body: stream.finalContent ?? currentBody ?? "",
                             url: undefined,
+                            urls: undefined,
                         });
                         // Remove from active streams
                         this.streamMessages.delete(stream.responseId);
@@ -701,6 +725,7 @@ export class ProximityChatRoom implements ChatRoom {
                         (existing.content as Writable<ChatMessageContent>).set({
                             body: currentBody + stream.token,
                             url: undefined,
+                            urls: undefined,
                         });
                     }
                     return;
@@ -721,7 +746,11 @@ export class ProximityChatRoom implements ChatRoom {
                     const errorMessage = new ProximityChatMessage(
                         uuidv4(),
                         chatUser,
-                        writable({ body: stream.errorMessage || get(LL).chat.timeLine.streamError(), url: undefined }),
+                        writable({
+                            body: stream.errorMessage || get(LL).chat.timeLine.streamError(),
+                            url: undefined,
+                            urls: undefined,
+                        }),
                         new Date(),
                         false,
                         "proximity"
@@ -747,7 +776,7 @@ export class ProximityChatRoom implements ChatRoom {
                 const newMessage = new ProximityChatMessage(
                     uuidv4(),
                     chatUser,
-                    writable({ body: initialBody, url: undefined }),
+                    writable({ body: initialBody, url: undefined, urls: undefined }),
                     new Date(),
                     false,
                     "proximity"
