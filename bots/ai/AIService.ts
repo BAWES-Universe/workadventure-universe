@@ -516,6 +516,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 parentSpan?.setAttribute("bot.model", config.model);
                 parentSpan?.setAttribute("bot.space", spaceName || '');
 
+                // NOTE: Pre-AI flush removed. It caused images to appear BEFORE
+                // the "New discussion with..." header. The post-stream flush
+                // (in the finally block below) is the single delivery point.
+                // getConversationContext reads pendingMedia directly (no fact)
+                // so the AI always knows about pending items at turn start.
+
                 firstCallStartTime = Date.now();
 
                 for await (const chunk of this.providerRegistry.generateStream(
@@ -668,6 +674,9 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                         
                         // Execute tool calls and continue conversation in a loop for multi-round tool calling
                         let followUpIterations = 0;
+                        // Track URLs sent by autoSendMedia across tool call iterations.
+                        // Local variable prevents cross-conversation contamination (AIService is shared).
+                        let iterationSentUrls = new Set<string>();
                         const MAX_FOLLOW_UP_ITERATIONS = 30;
                         // Accumulate all tool results across rounds for synthesis on max iterations
                         let allToolResults = '';
@@ -701,12 +710,30 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId);
 
                             // Collect URLs that were already sent by explicit send_* tool calls
-                            // so autoSendMedia doesn't re-send them via parent tool results
-                            const alreadySentUrls = new Set<string>();
+                            // so autoSendMedia doesn't re-send them via parent tool results.
+                            // Accumulate across ALL iterations to handle multi-turn scenarios
+                            // where send_* calls happen in iteration 2 or later.
                             for (const tr of toolResults) {
                                 if (['send_image', 'send_file', 'send_audio', 'send_video'].includes(tr.name)) {
-                                    const orig = tr.result?.originalUrl;
-                                    if (typeof orig === 'string') alreadySentUrls.add(orig);
+                                    if (tr.result?.success === true) {
+                                        const orig = tr.result?.originalUrl;
+                                        if (typeof orig === 'string') iterationSentUrls.add(orig);
+                                    }
+                                }
+                            }
+
+                            // Snapshot pendingMedia URLs that existed BEFORE this call,
+                            // so autoSendMedia can distinguish "queued from a previous
+                            // iteration" from "just queued by preQueueToolResults now."
+                            // Must be captured BEFORE preQueueToolResults runs.
+                            const priorPendingKeys = new Set<string>();
+                            const priorMem = botId && playerId !== undefined
+                                ? this.conversationMemory?.getMemory(botId, playerId)
+                                : undefined;
+                            if (priorMem?.pendingMedia) {
+                                for (const item of priorMem.pendingMedia) {
+                                    priorPendingKeys.add(item.url);
+                                    if (item.originalUrl) priorPendingKeys.add(item.originalUrl);
                                 }
                             }
 
@@ -714,11 +741,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             // If the generator is cancelled before autoSendMedia runs
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, alreadySentUrls, botId, playerId);
+                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
-                            await this.autoSendMedia(toolResults, botClient, spaceName, alreadySentUrls, botId, playerId);
+                            await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId, priorPendingKeys);
 
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
@@ -1234,7 +1261,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (streamCompleted) {
                     this.flushPendingMedia(botClient, spaceName, botId, playerId);
                 }
-
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2029,6 +2055,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) continue;
                 } catch { continue; }
 
+                // Skip URLs already queued for delivery — prevents duplicates from
+                // read-only tools (e.g., list_imagines) returning past results
+                if (memory.pendingMedia.some(p => p.url === url || p.originalUrl === url)) continue;
+
                 if (memory.pendingMedia.length >= (memory.maxPendingMedia || 5)) return;
 
                 const ext = this.getExtension(url);
@@ -2039,12 +2069,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                 memory.pendingMedia.push({
                     url,
+                    originalUrl: url,
                     mediaType,
                     mimeType: '',
                     caption: '',
                     createdAt: Date.now(),
                     retryCount: 0,
                 });
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PM-TRACE] preQueueToolResults queued: url=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
+                }
             }
         }
     }
@@ -2062,7 +2096,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName?: string,
         alreadySentUrls?: Set<string>,
         botId?: string,
-        playerId?: number
+        playerId?: number,
+        /** URLs that were in pendingMedia before the current tool call iteration.
+         *  Only skip these — URLs queued by preQueueToolResults in this same
+         *  iteration should still be sent by autoSendMedia. */
+        priorPendingKeys?: Set<string>
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
@@ -2103,6 +2141,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 } catch {
                     continue; // Invalid URL — skip
                 }
+                // Skip URLs already queued in a PREVIOUS iteration — prevents
+                // read-only tools (e.g., list_imagines) from re-sending URLs
+                // that were already queued for delivery. Does NOT skip URLs
+                // queued this iteration by preQueueToolResults.
+                if (priorPendingKeys?.has(url)) {
+                    skippedCount++;
+                    continue;
+                }
                 const ext = this.getExtension(url);
                 try {
                     if (IMAGE_EXT_SET.has(ext)) {
@@ -2136,17 +2182,32 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
-                            // Avoid duplicate — preQueueToolResults may have already pushed the
-                            // original URL, while _cdnUrl on the error gives us the CDN URL.
-                            if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                            // Replace existing entry with CDN URL — the original URL was
+                            // queued by preQueueToolResults, but the CDN URL is the
+                            // reliable delivery URL. originalUrl is preserved for dedup.
+                            const existingIdx = memory.pendingMedia.findIndex(
+                                p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                            );
+                            if (existingIdx >= 0) {
+                                memory.pendingMedia[existingIdx] = {
+                                    ...memory.pendingMedia[existingIdx],
+                                    url: cdnUrl,
+                                    mediaType: mType,
+                                    mimeType: mMime,
+                                };
+                            } else if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                                 memory.pendingMedia.push({
                                     url: cdnUrl,
+                                    originalUrl: url,
                                     mediaType: mType,
                                     mimeType: mMime,
                                     caption: '',
                                     createdAt: Date.now(),
                                     retryCount: 0,
                                 });
+                            }
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[PM-TRACE] autoSendMedia catch queued: cdnUrl=${cdnUrl.substring(0, 60)} originalUrl=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
                             }
                         }
                     }
@@ -2155,24 +2216,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
             if (sentCount > 0) {
                 const label = sentCount === 1 ? 'media file' : 'media files';
-                const original = tr.result;
                 let message = `Auto-sent ${sentCount} ${label} to the conversation.`;
                 if (lastError) {
                     message += ` ${urls.length - sentCount - skippedCount} file(s) queued for retry.`;
                 }
+                // Replace the entire tool result with a summary message.
+                // The AI wrote the prompt and knows what it asked for. Giving it
+                // the raw result (with URLs nested inside data[].text as stringified
+                // JSON) causes it to call send_image on already-delivered media.
+                // MCP-agnostic: only relies on our own _autoSent signal.
                 tr.result = {
                     success: true,
-                    message
+                    message,
+                    _autoSent: sentCount,
                 };
-                // Preserve non-URL metadata from the original result
-                // so the AI retains context (e.g., model name, seed, parameters)
-                if (typeof original === 'object' && original !== null && !Array.isArray(original)) {
-                    for (const [key, val] of Object.entries(original)) {
-                        if (typeof val !== 'string' || !/^https?:\/\//.test(val)) {
-                            tr.result[key] = val;
-                        }
-                    }
-                }
             } else if (lastError) {
                 // "Not in space" means the user left mid-turn — the URL was already
                 // queued to pendingMedia by the catch block and will be delivered
@@ -2191,6 +2248,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 tr.result = {
                     success: true,
                     message: `All ${skippedCount} ${label} already sent to the conversation.`,
+                    _skipped: skippedCount,
                 };
             }
         }
@@ -2202,6 +2260,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             if (memory?.pendingMedia) {
                 memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
+                if (process.env.ENABLE_BOT_DEBUG === 'true' && sentUrls.size > 0) {
+                    console.log(`[PM-TRACE] autoSendMedia cleanup: removed ${sentUrls.size} sent URLs, remaining=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
+                }
+            }
+        }
+
+        // Merge auto-sent URLs into the caller's dedup set so subsequent
+        // tool call iterations (e.g. a second list_generations) don't
+        // re-send the same images. The set was passed as alreadySentUrls.
+        if (alreadySentUrls && sentUrls.size > 0) {
+            for (const url of sentUrls) {
+                alreadySentUrls.add(url);
             }
         }
 
@@ -2209,15 +2279,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Flush pendingMedia items queued by retryPendingMedia on user re-join.
-     * Runs unconditionally after the greeting stream so media appears after
-     * "New discussion with..." and alongside the AI response.
+     * Flush pendingMedia items after the greeting stream completes.
+     * Single delivery point — runs in the finally block of
+     * generateBotResponseStream, guarded by streamCompleted.
+     *
+     * "Not in space" failures are transient (bot left during tool execution).
+     * They do NOT increment retryCount or set lastRetryAt — the items survive
+     * for the next re-entry without being penalized.
      */
     private flushPendingMedia(
         botClient: BotClient,
         spaceName: string,
         botId: string,
-        playerId: number
+        playerId: number,
     ): void {
         // generateBotResponseStream can be called without botClient or spaceName
         // (both are optional/undefined in its signature). Guard here prevents
@@ -2227,11 +2301,26 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory?.pendingMedia?.length) return;
 
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[PM-TRACE] flushPendingMedia entry: space=${spaceName?.substring(spaceName.lastIndexOf('#'))} count=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
+        }
+
         const now = Date.now();
         const MIN_RETRY_INTERVAL_MS = 10_000; // Don't retry the same item more than once per 10s
         const remaining: typeof memory.pendingMedia = [];
+        const seen = new Set<string>();
 
         for (const item of memory.pendingMedia) {
+            // Deduplicate by originalUrl — the same media may exist at both the
+            // original URL and the CDN URL. originalUrl is the stable identity.
+            const isDuplicate = Array.from(seen).some(
+                seenUrl => seenUrl === item.url || seenUrl === item.originalUrl,
+            );
+            if (isDuplicate) {
+                continue;
+            }
+            seen.add(item.originalUrl || item.url);
+
             if (item.retryCount >= 3) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] Dropping pending ${item.mediaType} after ${item.retryCount} retries: ${item.url.substring(0, 60)}`);
@@ -2249,22 +2338,27 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }
             } else {
-                // Send failed — increment retryCount and keep for next attempt
-                item.retryCount++;
-                item.lastRetryAt = now;
+                // Distinguish "not in space" (transient) from real send failures.
+                // Transient failures don't penalize the item — conditions will be
+                // different on the next re-entry (new space hash, bot registered).
+                const botInSpace = botClient.isInSpace?.(spaceName) ?? true;
+                if (botInSpace) {
+                    // Bot is in the space but send failed — real failure, penalize.
+                    item.retryCount++;
+                    item.lastRetryAt = now;
+                }
                 remaining.push(item);
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry ${item.retryCount}: ${item.url.substring(0, 60)}`);
+                    const reason = botInSpace ? `retry ${item.retryCount}` : 'transient (not in space)';
+                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued (${reason}): ${item.url.substring(0, 60)}`);
                 }
             }
         }
         memory.pendingMedia = remaining;
 
-        // Note: do NOT re-set autoDeliveredMedia here — it was already set by
-        // retryPendingMedia and consumed by getConversationContext before the
-        // conversation turn started. Re-setting it causes a stale value to leak
-        // to the next turn, where getConversationContext reads it again and
-        // injects a misleading "[Note: N media item(s)...]" into the AI prompt.
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[PM-TRACE] flushPendingMedia exit: remaining=${remaining.length} urls=[${remaining.map(p => p.url.substring(0, 60)).join(', ')}]`);
+        }
     }
 
     /**
@@ -2441,10 +2535,21 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const memory = botId && playerId !== undefined ? this.conversationMemory.getMemory(botId, playerId) : undefined;
             if (memory) {
                 if (!memory.pendingMedia) memory.pendingMedia = [];
-                // Avoid duplicate — preQueueToolResults or earlier catch may have already pushed
-                if (!memory.pendingMedia.some(p => p.url === cdnUrl || p.url === url) && memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
+                // Replace existing entry with CDN URL — preserves originalUrl for dedup
+                const existingIdx = memory.pendingMedia.findIndex(
+                    p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                );
+                if (existingIdx >= 0) {
+                    memory.pendingMedia[existingIdx] = {
+                        ...memory.pendingMedia[existingIdx],
+                        url: cdnUrl,
+                        mediaType: mediaTypeDefault,
+                        mimeType,
+                    };
+                } else if (memory.pendingMedia.length < (memory.maxPendingMedia || 5)) {
                     memory.pendingMedia.push({
                         url: cdnUrl,
+                        originalUrl: url,
                         mediaType: mediaTypeDefault,
                         mimeType,
                         caption: caption || undefined,
