@@ -7,11 +7,15 @@
     export let show: boolean;
     export let hasPrev: boolean = false;
     export let hasNext: boolean = false;
+    export let thumbnails: string[] = [];
+    export let currentIndex: number = 0;
+    export let isVideo: boolean = false;
 
     const dispatch = createEventDispatcher<{
         close: void;
         prev: void;
         next: void;
+        jump: number;
     }>();
 
     const MIN_SCALE = 1;
@@ -44,6 +48,10 @@
     // Portal: move lightbox DOM to body so position:fixed escapes chat sidebar transforms
     let lightboxEl: HTMLElement | undefined;
 
+    let thumbnailEls: HTMLElement[] = [];
+
+    $: showThumbnails = thumbnails.length >= 2;
+
     // Reset transform state whenever the lightbox opens or src changes
     $: if (show) {
         scale = 1;
@@ -56,6 +64,11 @@
         ty = 0;
     }
 
+    // Scroll active thumbnail into view
+    $: if (show && showThumbnails && currentIndex >= 0 && thumbnailEls[currentIndex]) {
+        thumbnailEls[currentIndex].scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    }
+
     function close(): void {
         dispatch("close");
     }
@@ -66,6 +79,10 @@
 
     function next(): void {
         if (hasNext) dispatch("next");
+    }
+
+    function jumpTo(index: number): void {
+        dispatch("jump", index);
     }
 
     function onKeyDown(e: KeyboardEvent): void {
@@ -94,7 +111,7 @@
 
     /** Get cursor position relative to the image element's top-left (in image-local coords) */
     function imageLocalCoords(e: { clientX: number; clientY: number }): { cx: number; cy: number } {
-        const container = document.querySelector("[data-lightbox] img");
+        const container = document.querySelector("[data-lightbox] img, [data-lightbox] video");
         if (!container) return { cx: 0, cy: 0 };
         const rect = container.getBoundingClientRect();
         return {
@@ -103,8 +120,9 @@
         };
     }
 
-    // --- Zoom (scroll wheel) ---
+    // --- Zoom (scroll wheel) — images only ---
     function onWheel(e: WheelEvent): void {
+        if (isVideo) return;
         e.preventDefault();
         const delta = -e.deltaY * 0.002;
         if (delta === 0) return;
@@ -136,7 +154,7 @@
         lastX = e.clientX;
         lastY = e.clientY;
 
-        if (scale > 1) {
+        if (scale > 1 && !isVideo) {
             tx += dx;
             ty += dy;
         } else {
@@ -155,7 +173,7 @@
     function onPointerUp(e: PointerEvent): void {
         isDragging = false;
 
-        if (scale <= 1) {
+        if (scale <= 1 || isVideo) {
             // Vertical swipe to dismiss
             if (Math.abs(swipeDy) > window.innerHeight * 0.15) {
                 close();
@@ -175,25 +193,28 @@
             if (lightboxEl) lightboxEl.style.opacity = "";
         }
 
-        // Double-tap detection (toggle zoom at any scale)
-        const now = Date.now();
-        const dx = e.clientX - tapX;
-        const dy = e.clientY - tapY;
-        if (now - lastTapTime < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
-            if (scale <= 1.1) {
-                // Zoom in toward cursor
-                const { cx, cy } = imageLocalCoords(e);
-                setScale(ZOOM_STEP, cx, cy);
-            } else {
-                // Zoom out to 1x and re-center
-                scale = 1;
-                tx = 0;
-                ty = 0;
+        // Double-tap detection (toggle zoom — images only)
+        if (!isVideo) {
+            const now = Date.now();
+            const dx = e.clientX - tapX;
+            const dy = e.clientY - tapY;
+            if (now - lastTapTime < 300 && Math.abs(dx) < 30 && Math.abs(dy) < 30) {
+                if (scale <= 1.1) {
+                    // Zoom in toward cursor
+                    const { cx, cy } = imageLocalCoords(e);
+                    setScale(ZOOM_STEP, cx, cy);
+                } else {
+                    // Zoom out to 1x and re-center
+                    scale = 1;
+                    tx = 0;
+                    ty = 0;
+                }
+                lastTapTime = 0;
+                return;
             }
-            lastTapTime = 0;
-            return;
+            lastTapTime = now;
         }
-        lastTapTime = now;
+
         tapX = e.clientX;
         tapY = e.clientY;
 
@@ -202,7 +223,7 @@
     }
 
     function onTouchStart(e: TouchEvent): void {
-        if (e.touches.length === 2) {
+        if (e.touches.length === 2 && !isVideo) {
             initialPinchDist = Math.hypot(
                 e.touches[0].clientX - e.touches[1].clientX,
                 e.touches[0].clientY - e.touches[1].clientY
@@ -212,7 +233,7 @@
     }
 
     function onTouchMove(e: TouchEvent): void {
-        if (e.touches.length === 2) {
+        if (e.touches.length === 2 && !isVideo) {
             const dist = Math.hypot(
                 e.touches[0].clientX - e.touches[1].clientX,
                 e.touches[0].clientY - e.touches[1].clientY
@@ -224,9 +245,9 @@
     }
 
     function onBackdropClick(e: MouseEvent): void {
-        // Close when clicking on the backdrop but NOT on the image or its controls
+        // Close when clicking on the backdrop but NOT on the image/video, controls, or thumbnail strip
         const target = e.target as HTMLElement;
-        if (!target.closest("[data-lightbox-content]")) {
+        if (!target.closest("[data-lightbox-content]") && !target.closest("[data-thumbnail-strip]")) {
             close();
         }
     }
@@ -318,10 +339,10 @@
                 </button>
             {/if}
 
-            <!-- Image with zoom/pan -->
+            <!-- Image or Video with zoom/pan -->
             <div
                 class="flex items-center justify-center w-full h-full select-none touch-none"
-                style="cursor: {scale > 1 ? 'grab' : isDragging ? 'grabbing' : 'zoom-in'};"
+                style="cursor: {isVideo ? 'default' : scale > 1 ? 'grab' : isDragging ? 'grabbing' : 'zoom-in'};"
                 on:wheel|preventDefault={onWheel}
                 on:pointerdown={onPointerDown}
                 on:pointermove={onPointerMove}
@@ -333,24 +354,70 @@
                 tabindex="-1"
             >
                 {#key src}
-                    <img
-                        {src}
-                        {alt}
-                        draggable="false"
-                        class="max-h-[90vh] max-w-[90vw] object-contain rounded-sm"
-                        class:shadow-2xl={scale === 1}
-                        style="transform: translate({tx}px, {ty}px) scale({scale});"
-                        transition:fade={{ duration: 150 }}
-                    />
+                    {#if isVideo}
+                        <!-- svelte-ignore a11y-media-has-caption -->
+                        <video
+                            {src}
+                            controls
+                            autoplay
+                            draggable="false"
+                            class="max-h-[90vh] max-w-[90vw] rounded-sm shadow-2xl"
+                            transition:fade={{ duration: 150 }}
+                        />
+                    {:else}
+                        <img
+                            {src}
+                            {alt}
+                            draggable="false"
+                            class="max-h-[90vh] max-w-[90vw] object-contain rounded-sm"
+                            class:shadow-2xl={scale === 1}
+                            style="transform: translate({tx}px, {ty}px) scale({scale});"
+                            transition:fade={{ duration: 150 }}
+                        />
+                    {/if}
                 {/key}
             </div>
 
+            <!-- Image counter (top center) -->
+            {#if showThumbnails}
+                <div
+                    class="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/50 text-white text-xs font-medium"
+                >
+                    {currentIndex + 1} / {thumbnails.length}
+                </div>
+            {/if}
+
             <!-- Zoom indicator -->
-            {#if scale > 1}
+            {#if scale > 1 && !isVideo}
                 <div
                     class="absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/60 text-white text-xs"
                 >
                     {scale.toFixed(1)}×
+                </div>
+            {/if}
+
+            <!-- Thumbnail strip (bottom) — only for 2+ items -->
+            {#if showThumbnails}
+                <div
+                    data-thumbnail-strip
+                    class="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 p-2 rounded-xl bg-black/40 max-w-[90vw] overflow-x-auto thumbnail-strip"
+                >
+                    {#each thumbnails as thumb, i (thumb)}
+                        <button
+                            class="relative flex-shrink-0 rounded-md overflow-hidden transition-all duration-200 {i ===
+                            currentIndex
+                                ? 'ring-2 ring-white scale-105 z-10'
+                                : 'ring-1 ring-white/20 opacity-50 hover:opacity-80'}"
+                            on:click={(e) => {
+                                e.stopPropagation();
+                                jumpTo(i);
+                            }}
+                            aria-label="Go to image {i + 1}"
+                            bind:this={thumbnailEls[i]}
+                        >
+                            <img src={thumb} alt="" class="w-12 h-12 object-cover" draggable="false" />
+                        </button>
+                    {/each}
                 </div>
             {/if}
         </div>
@@ -362,5 +429,27 @@
         touch-action: none;
         transition: transform 0.05s linear, box-shadow 0.2s ease;
         transform-origin: 0 0;
+    }
+
+    [data-lightbox] video {
+        touch-action: none;
+    }
+
+    .thumbnail-strip {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+    }
+
+    .thumbnail-strip::-webkit-scrollbar {
+        height: 4px;
+    }
+
+    .thumbnail-strip::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .thumbnail-strip::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 2px;
     }
 </style>
