@@ -738,9 +738,23 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                             // and will be delivered by flushPendingMedia on re-entry.
                             this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
 
+                            // Snapshot pendingMedia URLs that existed BEFORE this call,
+                            // so autoSendMedia can distinguish "queued from a previous
+                            // iteration" from "just queued by preQueueToolResults now."
+                            const priorPendingKeys = new Set<string>();
+                            const priorMem = botId && playerId !== undefined
+                                ? this.conversationMemory?.getMemory(botId, playerId)
+                                : undefined;
+                            if (priorMem?.pendingMedia) {
+                                for (const item of priorMem.pendingMedia) {
+                                    priorPendingKeys.add(item.url);
+                                    if (item.originalUrl) priorPendingKeys.add(item.originalUrl);
+                                }
+                            }
+
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
-                            await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId);
+                            await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId, priorPendingKeys);
 
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
@@ -2089,7 +2103,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName?: string,
         alreadySentUrls?: Set<string>,
         botId?: string,
-        playerId?: number
+        playerId?: number,
+        /** URLs that were in pendingMedia before the current tool call iteration.
+         *  Only skip these — URLs queued by preQueueToolResults in this same
+         *  iteration should still be sent by autoSendMedia. */
+        priorPendingKeys?: Set<string>
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         if (!botClient || !spaceName) return toolResults;
 
@@ -2130,14 +2148,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 } catch {
                     continue; // Invalid URL — skip
                 }
-                // Skip URLs already queued for delivery — prevents re-sending from
-                // read-only tools (e.g., list_imagines) returning past results
-                if (botId && playerId !== undefined) {
-                    const mem = this.conversationMemory?.getMemory(botId, playerId);
-                    if (mem?.pendingMedia?.some(p => p.url === url || p.originalUrl === url)) {
-                        skippedCount++;
-                        continue;
-                    }
+                // Skip URLs already queued in a PREVIOUS iteration — prevents
+                // read-only tools (e.g., list_imagines) from re-sending URLs
+                // that were already queued for delivery. Does NOT skip URLs
+                // queued this iteration by preQueueToolResults.
+                if (priorPendingKeys?.has(url)) {
+                    skippedCount++;
+                    continue;
                 }
                 const ext = this.getExtension(url);
                 try {
