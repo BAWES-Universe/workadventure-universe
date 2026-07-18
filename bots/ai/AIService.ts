@@ -732,15 +732,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                 }
                             }
 
-                            // Pre-queue media URLs to pendingMedia as a safety net.
-                            // If the generator is cancelled before autoSendMedia runs
-                            // (user leaves mid-turn), the URLs are already persisted
-                            // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
-
                             // Snapshot pendingMedia URLs that existed BEFORE this call,
                             // so autoSendMedia can distinguish "queued from a previous
                             // iteration" from "just queued by preQueueToolResults now."
+                            // Must be captured BEFORE preQueueToolResults runs.
                             const priorPendingKeys = new Set<string>();
                             const priorMem = botId && playerId !== undefined
                                 ? this.conversationMemory?.getMemory(botId, playerId)
@@ -751,6 +746,12 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                                     if (item.originalUrl) priorPendingKeys.add(item.originalUrl);
                                 }
                             }
+
+                            // Pre-queue media URLs to pendingMedia as a safety net.
+                            // If the generator is cancelled before autoSendMedia runs
+                            // (user leaves mid-turn), the URLs are already persisted
+                            // and will be delivered by flushPendingMedia on re-entry.
+                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
