@@ -1683,6 +1683,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const config = this.config as PatrolBehaviorConfig;
 
         // If the user sent a file, use FileParser to extract content
+        // Save the original message for persistence — augmented version
+        // is for the AI request only.
+        const originalUserMessage = message;
         if (url) {
             message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
@@ -1719,20 +1722,20 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             });
         }
         
-        // Store player's message in memory
-        this.conversationMemory?.addMessage(botId, senderId, message, 'person', spaceName);
+        // Store player's message in memory (original, without augmented file content)
+        this.conversationMemory?.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
         
-        // Store player's message in conversation storage
+        // Store player's message in conversation storage (original, without augmented file content)
         if (this.conversationStorage) {
-            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+            this.conversationStorage.addMessage(botId, userUuid, originalUserMessage, 'person').catch(error => {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.error('[PatrolBehavior] Error adding person message to conversation storage:', error);
                 }
             });
         }
         
-        // Extract personal information from message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, message);
+        // Extract personal information from original user message
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);

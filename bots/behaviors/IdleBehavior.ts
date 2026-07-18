@@ -363,7 +363,9 @@ export class IdleBehavior extends BaseBehavior {
             console.log(`[IdleBehavior] onChatMessage: botId=${botId}, senderId=${senderId}, message="${message}", spaceName=${spaceName}`);
         }
 
-        // If the user sent a file, use FileParser to extract content
+        // Save the original message for persistence — augmented version
+        // is for the AI request only.
+        const originalUserMessage = message;
         if (url) {
             message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
@@ -393,8 +395,8 @@ export class IdleBehavior extends BaseBehavior {
         // Start conversation in memory if needed
         if (this.conversationMemory) {
             this.conversationMemory.startConversation(botId, senderId);
-            this.conversationMemory.addMessage(botId, senderId, message, 'person', spaceName);
-            this.conversationMemory.extractPersonalInfo(botId, senderId, message);
+            this.conversationMemory.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
+            this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage);
         }
         
         // Start conversation in storage (if available and UUID is known)
@@ -407,7 +409,7 @@ export class IdleBehavior extends BaseBehavior {
                 uuid: userUuid,
                 isLogged: isLogged,
             });
-            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+            this.conversationStorage.addMessage(botId, userUuid, originalUserMessage, 'person').catch(error => {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.error('[IdleBehavior] Error adding person message to conversation storage:', error);
                 }
