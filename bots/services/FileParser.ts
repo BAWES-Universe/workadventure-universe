@@ -243,8 +243,10 @@ export class FileParser {
             const buffer = await FileParser.fetchBuffer(url);
 
             const XLSX = await import('xlsx');
+            // Use type: 'array' for Uint8Array/ArrayBuffer inputs per SheetJS docs.
+            // type: 'buffer' (Node.js Buffer) works accidentally but is incorrect.
             const workbook = XLSX.read(new Uint8Array(buffer), {
-                type: 'buffer',
+                type: 'array',
                 cellDates: true,
             });
 

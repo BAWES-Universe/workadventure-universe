@@ -51,40 +51,40 @@ vi.mock('mammoth', () => ({
 }));
 
 // Mock xlsx (CJS module — mock exports directly, not wrapped in default)
-vi.mock('xlsx', () => {
-    const mockSheetToJson = vi.fn().mockReturnValue([
-        ['Name', 'Age', 'City'],
-        ['Alice', '30', 'New York'],
-        ['Bob', '25', 'London'],
-    ]);
+// Keep the real xlsx module so tests validate actual parsing behavior.
+// A mock would hide incorrect API usage like type: 'buffer' vs type: 'array'.
+vi.mock('xlsx', async () => await vi.importActual('xlsx'));
 
-    const mockDecodeRange = vi.fn().mockReturnValue({ s: { r: 0, c: 0 }, e: { r: 2, c: 2 } });
-
-    return {
-        read: vi.fn().mockReturnValue({
-            SheetNames: ['Sheet1', 'Sheet2'],
-            Sheets: {
-                Sheet1: { '!ref': 'A1:C3' },
-                Sheet2: { '!ref': 'A1:B1' },
-            },
-        }),
-        utils: {
-            sheet_to_json: mockSheetToJson,
-            decode_range: mockDecodeRange,
-        },
-        write: vi.fn(),
-        writeFile: vi.fn(),
-    };
-});
-
-import axios from 'axios';
 import { FileParser } from '../services/FileParser';
 
-const mockedAxios = vi.mocked(axios, true);
+/**
+ * Helper to mock global fetch with a single-chunk body stream.
+ * Returns a mock response with streaming body compatible with FileParser.fetchBuffer.
+ */
+function mockFetchOnce(data: string | Uint8Array | ArrayBuffer, status = 200) {
+    const body = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
+    let done = false;
+    const reader = {
+        read: async () => {
+            if (done) return { done: true, value: undefined as Uint8Array | undefined };
+            done = true;
+            return { done: false, value: body };
+        },
+        cancel: async () => {},
+    };
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        ok: status >= 200 && status < 300,
+        status,
+        body: { getReader: () => reader },
+        headers: new Map(),
+    });
+}
 
 describe('FileParser', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // Default mock for fetch — returns 404 for any un-mocked request
+        globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
     });
 
     describe('parseFile', () => {
@@ -92,10 +92,7 @@ describe('FileParser', () => {
             const url = 'https://cdn.example.com/code.ts';
             const content = 'const x = 1;\nconsole.log(x);';
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: Buffer.from(content),
-                headers: { 'content-type': 'text/typescript' },
-            });
+            mockFetchOnce(content);
 
             const result = await FileParser.parseFile(url, 'text/typescript');
 
@@ -113,15 +110,13 @@ describe('FileParser', () => {
             expect(result.type).toBe('image');
             expect(result.url).toBe(url);
             expect(result.text).toBeUndefined();
-            expect(mockedAxios.get).not.toHaveBeenCalled();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
         });
 
         it('extracts PDF content via pdf-parse', async () => {
             const url = 'https://cdn.example.com/report.pdf';
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: Buffer.from('%PDF-1.4 fake pdf data'),
-            });
+            mockFetchOnce('%PDF-1.4 fake pdf data');
 
             const result = await FileParser.parseFile(url, 'application/pdf');
 
@@ -134,9 +129,7 @@ describe('FileParser', () => {
         it('extracts Word document content via mammoth', async () => {
             const url = 'https://cdn.example.com/report.docx';
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: Buffer.from('fake docx data'),
-            });
+            mockFetchOnce('fake docx data');
 
             const result = await FileParser.parseFile(
                 url,
@@ -148,11 +141,43 @@ describe('FileParser', () => {
             expect(result.truncated).toBeFalsy();
         });
 
-        it('extracts spreadsheet content via xlsx', async () => {
+        it('extracts spreadsheet content via real xlsx parsing', async () => {
             const url = 'https://cdn.example.com/data.xlsx';
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: Buffer.from('fake xlsx data'),
+            // Create a real xlsx buffer using the actual xlsx library
+            const XLSX = await import('xlsx');
+            const realWb = XLSX.utils.book_new();
+            const realWs = XLSX.utils.aoa_to_sheet([
+                ['Name', 'Age', 'City'],
+                ['Alice', '30', 'New York'],
+                ['Bob', '25', 'London'],
+            ]);
+            XLSX.utils.book_append_sheet(realWb, realWs, 'Sheet1');
+            const secondWs = XLSX.utils.aoa_to_sheet([['Date', 'Event']]);
+            XLSX.utils.book_append_sheet(realWb, secondWs, 'Sheet2');
+            const xlsxBuffer: ArrayBuffer = XLSX.write(realWb, { type: 'array', bookType: 'xlsx' });
+
+            // Mock the global fetch API that FileParser.fetchBuffer uses
+            const originalFetch = globalThis.fetch;
+            globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+                if (url.startsWith('https://cdn.example.com/data.xlsx')) {
+                    let streamDone = false;
+                    const reader = {
+                        read: async () => {
+                            if (streamDone) return { done: true, value: undefined };
+                            streamDone = true;
+                            return { done: false, value: new Uint8Array(xlsxBuffer) };
+                        },
+                        cancel: async () => {},
+                    };
+                    return {
+                        ok: true,
+                        status: 200,
+                        body: { getReader: () => reader },
+                        headers: new Map([['content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']]),
+                    };
+                }
+                return new Response(null, { status: 404 });
             });
 
             const result = await FileParser.parseFile(
@@ -160,10 +185,16 @@ describe('FileParser', () => {
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             );
 
+            // Restore original fetch
+            globalThis.fetch = originalFetch;
+
             expect(result.type).toBe('document');
             expect(result.text).toContain('Sheet1');
             expect(result.text).toContain('Alice');
             expect(result.text).toContain('New York');
+            expect(result.text).toContain('Sheet2');
+            expect(result.text).toContain('Date');
+            expect(result.text).toContain('Event');
             expect(result.metadata?.sheetCount).toBe(2);
             expect(result.truncated).toBeFalsy();
         });
@@ -171,10 +202,7 @@ describe('FileParser', () => {
         it('extracts web page HTML content', async () => {
             const url = 'https://example.com/blog/post';
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: '<!DOCTYPE html><html><head><title>Blog Post</title></head><body><article><h1>Blog Post</h1><p>This is the article content.</p></article></body></html>',
-                headers: { 'content-type': 'text/html' },
-            });
+            mockFetchOnce('<!DOCTYPE html><html><head><title>Blog Post</title></head><body><article><h1>Blog Post</h1><p>This is the article content.</p></article></body></html>');
 
             const result = await FileParser.parseFile(url, 'text/html');
 
@@ -192,7 +220,7 @@ describe('FileParser', () => {
             expect(result.type).toBe('unknown');
             expect(result.url).toBe(url);
             expect(result.text).toBeUndefined();
-            expect(mockedAxios.get).not.toHaveBeenCalled();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
         });
 
         it('truncates text content exceeding MAX_FILE_CHARS', async () => {
@@ -200,10 +228,7 @@ describe('FileParser', () => {
             const line = 'a'.repeat(100);
             const content = Array.from({ length: 110 }, () => line).join('\n');
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: Buffer.from(content),
-                headers: { 'content-type': 'text/plain' },
-            });
+            mockFetchOnce(content);
 
             const result = await FileParser.parseFile(url, 'text/plain');
 
@@ -215,7 +240,8 @@ describe('FileParser', () => {
         it('returns error summary when text fetch fails', async () => {
             const url = 'https://cdn.example.com/missing.txt';
 
-            mockedAxios.get.mockRejectedValueOnce(new Error('Network error'));
+            // fetch rejects = network error
+            (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Network error'));
 
             const result = await FileParser.parseFile(url, 'text/plain');
 
@@ -226,7 +252,7 @@ describe('FileParser', () => {
         it('returns error summary when PDF fetch fails', async () => {
             const url = 'https://cdn.example.com/broken.pdf';
 
-            mockedAxios.get.mockRejectedValueOnce(new Error('PDF download failed'));
+            (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('PDF download failed'));
 
             const result = await FileParser.parseFile(url, 'application/pdf');
 
@@ -237,7 +263,7 @@ describe('FileParser', () => {
         it('returns error summary when web page fetch fails', async () => {
             const url = 'https://example.com/broken';
 
-            mockedAxios.get.mockRejectedValueOnce(new Error('Connection refused'));
+            (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Connection refused'));
 
             const result = await FileParser.parseFile(url, 'text/html');
 
@@ -248,9 +274,7 @@ describe('FileParser', () => {
         it('handles .doc files as Word documents', async () => {
             const url = 'https://cdn.example.com/old.doc';
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: Buffer.from('fake doc data'),
-            });
+            mockFetchOnce('fake doc data');
 
             const result = await FileParser.parseFile(url, 'application/msword');
 
@@ -261,9 +285,7 @@ describe('FileParser', () => {
         it('handles .xls files as spreadsheets', async () => {
             const url = 'https://cdn.example.com/data.xls';
 
-            mockedAxios.get.mockResolvedValueOnce({
-                data: Buffer.from('fake xls data'),
-            });
+            mockFetchOnce('fake xls data');
 
             const result = await FileParser.parseFile(url, 'application/vnd.ms-excel');
 
@@ -278,7 +300,7 @@ describe('FileParser', () => {
 
             expect(result.type).toBe('text');
             expect(result.text).toContain('private');
-            expect(mockedAxios.get).not.toHaveBeenCalled();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
         });
 
         it('rejects localhost URL for SSRF safety', async () => {
@@ -288,7 +310,7 @@ describe('FileParser', () => {
 
             expect(result.type).toBe('text');
             expect(result.text).toContain('private');
-            expect(mockedAxios.get).not.toHaveBeenCalled();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
         });
 
         it('rejects metadata service URL for SSRF safety', async () => {
@@ -298,7 +320,7 @@ describe('FileParser', () => {
 
             expect(result.type).toBe('text');
             expect(result.text).toContain('private');
-            expect(mockedAxios.get).not.toHaveBeenCalled();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
         });
 
         it('rejects private URL for PDF fetch', async () => {
@@ -308,7 +330,7 @@ describe('FileParser', () => {
 
             expect(result.type).toBe('document');
             expect(result.text).toContain('private');
-            expect(mockedAxios.get).not.toHaveBeenCalled();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
         });
 
         it('rejects private URL for web page fetch', async () => {
@@ -318,7 +340,7 @@ describe('FileParser', () => {
 
             expect(result.type).toBe('webpage');
             expect(result.text).toContain('private');
-            expect(mockedAxios.get).not.toHaveBeenCalled();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
         });
     });
 
