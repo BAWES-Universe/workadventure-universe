@@ -103,10 +103,18 @@ export class PersistentMemory extends ConversationMemory {
 
             // Restore memory to current playerId
             const existingOrNew = this.getMemory(botId, playerId);
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                const livePM = existingOrNew?.pendingMedia ?? [];
+                const snapPM = loadedMemory.pendingMedia ?? [];
+                console.log(`[PM-TRACE] before restore: liveLen=${livePM.length} liveUrls=[${livePM.map(p => p.url.substring(0, 60)).join(', ')}] snapLen=${snapPM.length} snapUrls=[${snapPM.map(p => p.url.substring(0, 60)).join(', ')}] histLen=${existingOrNew?.conversationHistory?.length ?? 0} existingUuid=${existingOrNew?.userUuid ?? 'none'}`);
+            }
             if (existingOrNew) {
                 // Merge: keep current memory but restore loaded data (preserve any new messages)
                 // Only restore if existing memory is empty (just joined, no conversation yet)
                 const existingIsNew = existingOrNew.conversationHistory.length === 0;
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PM-TRACE] restore branch: existingIsNew=${existingIsNew} histLen=${existingOrNew.conversationHistory.length} livePendingMedia=${existingOrNew.pendingMedia?.length ?? 0}`);
+                }
                 
                 if (existingIsNew) {
                     // Replace with loaded memory (user just joined, no conversation yet)
@@ -175,6 +183,11 @@ export class PersistentMemory extends ConversationMemory {
             const restoredMemory = this.getMemory(botId, playerId);
             if (restoredMemory) {
                 this.loadedMemoriesByUuid.set(loadedMemoryKey, this.cloneMemory(restoredMemory));
+            }
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                const afterRestore = this.getMemory(botId, playerId);
+                const afterPM = afterRestore?.pendingMedia ?? [];
+                console.log(`[PM-TRACE] after restore: pendingMediaLen=${afterPM.length} urls=[${afterPM.map(p => p.url.substring(0, 60)).join(', ')}] existingIsNew=${afterRestore?.conversationHistory?.length === 0} snapshotStored=${!!restoredMemory}`);
             }
             
             // Keep cache bounded — prevent unbounded growth from orphaned entries
@@ -627,6 +640,22 @@ export class PersistentMemory extends ConversationMemory {
                 ...memory.relationship,
                 importantEvents: memory.relationship.importantEvents.map(e => ({ ...e })),
             },
+            pendingMedia: memory.pendingMedia ? memory.pendingMedia.map(item => ({ ...item })) : undefined,
         };
+    }
+
+    /**
+     * Sync the loaded-memories snapshot with the current in-memory state.
+     * Called after retryPendingMedia modifies pendingMedia so the snapshot
+     * reflects up-to-date items and survives setUserUuid restoration on re-entry.
+     * The snapshot is keyed by UUID (matching loadMemories and setUserUuid).
+     */
+    syncSnapshot(botId: string, playerId: number, memory: BotPlayerMemory): void {
+        const key = `${botId}_${playerId}`;
+        const uuidInfo = this.uuidTracking.get(key);
+        if (uuidInfo) {
+            const loadedMemoryKey = `${botId}_${uuidInfo.userUuid}`;
+            this.loadedMemoriesByUuid.set(loadedMemoryKey, this.cloneMemory(memory));
+        }
     }
 }

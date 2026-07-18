@@ -1168,6 +1168,15 @@ export class BotClient {
     }
 
     /**
+     * Check if the bot is currently registered in the given space.
+     * Used by flushPendingMedia to distinguish "not in space" (transient —
+     * bot left or hasn't joined yet) from real send failures.
+     */
+    isInSpace(spaceName: string): boolean {
+        return this.spaces.has(spaceName);
+    }
+
+    /**
      * Leave a conversation space
      */
     async leaveSpace(spaceName: string): Promise<void> {

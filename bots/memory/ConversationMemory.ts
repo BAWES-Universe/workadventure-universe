@@ -71,6 +71,9 @@ export interface RelationshipContext {
  */
 export interface PendingMedia {
     url: string;
+    /** The original URL from the tool result, before CDN upload. Used for dedup —
+     *  the same media may exist at both the original URL and the CDN URL. */
+    originalUrl?: string;
     mediaType: 'image' | 'file' | 'audio' | 'video';
     mimeType: string;
     caption?: string;
@@ -725,21 +728,21 @@ export class ConversationMemory {
             personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
         }
 
-        // Auto-delivered media notification — tells the bot that images it
-        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent.
-        // MUST run BEFORE the personal-details fact iteration below, so it's
-        // consumed (set to '') before that loop includes it as a raw key-value.
-        // Otherwise the bot sees both 'You remember: autoDeliveredMedia: 1' AND
-        // the system note, which undermines the directive.
-        const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
-        if (autoDelivered) {
-            context.push(`\n[System: ${autoDelivered} visual(s) have been sent to the user alongside this message. They are arriving now. You already generated them — they just went through. Do NOT generate or request them again — they are already delivered.]`);
-            // Delete the fact so the facts iteration below doesn't include
-            // "autoDeliveredMedia: " in the AI's context. On the same-turn retry
-            // (AI call fails), getConversationContext runs again — the guard above
-            // skips a missing key the same way it skips an empty string, and
-            // retryPendingMedia re-sets the fact from scratch on next re-entry.
-            personalInfo.facts.delete('autoDeliveredMedia');
+        // Auto-delivered media notification — tells the bot that media items it
+        // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent alongside
+        // the greeting. Media-agnostic — works for images, files, audio, video.
+        // Reads pendingMedia directly (no fact) so the AI always knows about
+        // pending items at turn start, whether from re-entry or orphaned tool
+        // results from a previous turn. Items in retry cooldown (lastRetryAt
+        // within 10s) are excluded — they won't be delivered this turn.
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000;
+        const deliverableCount = memory.pendingMedia?.filter(p =>
+            p.retryCount < 3 &&
+            (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
+        ).length || 0;
+        if (deliverableCount > 0) {
+            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session have been delivered alongside this message. That work is complete.]`);
         }
 
         // Natural facts recall (especially current state)

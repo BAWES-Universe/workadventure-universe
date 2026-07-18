@@ -165,7 +165,7 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
             /* drain */
         }
 
-        const [[callOptions]] = mockStartSpanManual.mock.calls;
+        const [[callOptions]] = mockStartSpanManual.mock.calls as unknown as [[Record<string, unknown>]];
         expect(callOptions.name).toBe("Bot TestBot");
     });
 
@@ -191,7 +191,7 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
             /* drain */
         }
 
-        const [[callOptions]] = mockStartSpanManual.mock.calls;
+        const [[callOptions]] = mockStartSpanManual.mock.calls as unknown as [[Record<string, unknown>]];
         expect(callOptions.name).toBe("Bot fallback-bot-id");
     });
 
@@ -203,7 +203,7 @@ describe("AIService – Sentry startSpanManual (PR #140 fix)", () => {
             /* drain */
         }
 
-        const [[callOptions]] = mockStartSpanManual.mock.calls;
+        const [[callOptions]] = mockStartSpanManual.mock.calls as unknown as [[Record<string, unknown>]];
         expect(callOptions.attributes).toEqual({ span_type: "gen_ai" });
     });
 

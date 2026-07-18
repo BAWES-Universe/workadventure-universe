@@ -959,11 +959,14 @@ export abstract class BaseBehavior {
         if (!botId || !botClient || !this.conversationMemory) return;
 
         const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            const pm = memory?.pendingMedia ?? [];
+            console.log(`[PM-TRACE] retryPendingMedia entry: pendingMediaLen=${pm.length} urls=[${pm.map(p => p.url.substring(0, 60)).join(', ')}]`);
+        }
         if (!memory?.pendingMedia?.length) return;
 
         const now = Date.now();
         const MIN_RETRY_INTERVAL_MS = 10_000; // Must match AIService.ts
-        let deliverableCount = 0;
 
         for (const pending of memory.pendingMedia) {
             if (pending.retryCount >= 3) {
@@ -972,15 +975,9 @@ export abstract class BaseBehavior {
                 }
                 continue;
             }
-            // Don't count items that flushPendingMedia will skip due to the
-            // minimum retry window — the AI would falsely promise delivery.
             if (pending.lastRetryAt && (now - pending.lastRetryAt) < MIN_RETRY_INTERVAL_MS) {
                 continue;
             }
-            // Don't increment retryCount here — the actual send attempt happens
-            // during the conversation turn (flushPendingMedia). Counting retries on
-            // re-entry alone would burn through the limit without any send attempt.
-            deliverableCount++;
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[Behavior] Queued pending ${pending.mediaType} for conversation-turn delivery to user ${user.id}`);
             }
@@ -992,11 +989,20 @@ export abstract class BaseBehavior {
         // Keep ready items in pendingMedia — flushPendingMedia will send them
         // during the conversation turn (after "New discussion with..." appears).
 
-        // Set the fact optimistically so the AI knows media will appear alongside
-        // its greeting. The count only includes deliverable items (retryCount < 3
-        // AND not within the MIN_RETRY_INTERVAL window).
-        if (deliverableCount > 0) {
-            memory.personalInfo.facts.set('autoDeliveredMedia', String(deliverableCount));
+        // Note: autoDeliveredMedia fact removed — getConversationContext now
+        // reads pendingMedia directly, so the AI always knows about pending
+        // items without needing a fact to be set beforehand.
+
+        // Sync the snapshot so pendingMedia changes survive setUserUuid restoration
+        // on the next re-entry. Without this, the stale snapshot (captured before
+        // tool results queued items to pendingMedia) would overwrite the in-memory
+        // state with empty pendingMedia.
+        if (typeof (this.conversationMemory as any)?.syncSnapshot === 'function') {
+            (this.conversationMemory as any).syncSnapshot(botId, user.id, memory);
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                const pm = memory.pendingMedia ?? [];
+                console.log(`[PM-TRACE] syncSnapshot called: pendingMediaLen=${pm.length} urls=[${pm.map(p => p.url.substring(0, 60)).join(', ')}]`);
+            }
         }
     }
 

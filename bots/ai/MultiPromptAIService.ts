@@ -124,8 +124,8 @@ export class MultiPromptAIService {
             content: '',
             done: true,
             metadata: {
-                analysis: analysisResult,
-                summarization: summarizationResult,
+                analysis: analysisResult as any,
+                summarization: summarizationResult as any,
                 analysisTokens,
                 summarizationTokens,
                 responseTokens: responseTokens,
