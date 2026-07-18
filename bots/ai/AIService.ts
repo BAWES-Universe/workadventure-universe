@@ -516,25 +516,11 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 parentSpan?.setAttribute("bot.model", config.model);
                 parentSpan?.setAttribute("bot.space", spaceName || '');
 
-                // Flush any pendingMedia from a previous interrupted turn BEFORE
-                // the AI generates anything. Items were queued by preQueueToolResults
-                // and counted by retryPendingMedia (which also set the autoDeliveredMedia
-                // fact). Sending them now means they arrive alongside the greeting,
-                // not after the entire stream completes.
-                // Uses early=true so failed items don't increment retryCount — the
-                // non-early flush in the finally block handles retries properly.
-                if (botId && playerId !== undefined) {
-                    const pendingMem = this.conversationMemory?.getMemory(botId, playerId);
-                    if (process.env.ENABLE_BOT_DEBUG === 'true' && pendingMem) {
-                        const pm = pendingMem.pendingMedia ?? [];
-                        console.log(`[PM-TRACE] pre-AI flush check: space=${spaceName?.substring(spaceName.lastIndexOf('#'))} pendingMediaLen=${pm.length} urls=[${pm.map(p => p.url.substring(0, 60)).join(', ')}]`);
-                    }
-                    if (pendingMem?.pendingMedia?.length) {
-                        this.flushPendingMedia(botClient, spaceName, botId, playerId, true);
-                    } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[AIService] Pre-AI flush skipped: botId=${botId}, playerId=${playerId}, getMemory=${!!pendingMem}, pendingMediaLength=${pendingMem?.pendingMedia?.length ?? 'N/A'}`);
-                    }
-                }
+                // NOTE: Pre-AI flush removed. It caused images to appear BEFORE
+                // the "New discussion with..." header. The post-stream flush
+                // (in the finally block below) is the single delivery point.
+                // getConversationContext reads pendingMedia directly (no fact)
+                // so the AI always knows about pending items at turn start.
 
                 firstCallStartTime = Date.now();
 
@@ -1275,7 +1261,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 if (streamCompleted) {
                     this.flushPendingMedia(botClient, spaceName, botId, playerId);
                 }
-
                 // Always track usage, even if stream doesn't complete normally
                 const latency = Date.now() - startTime;
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2294,16 +2279,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Flush pendingMedia items queued by retryPendingMedia on user re-join.
-     * Runs unconditionally after the greeting stream so media appears after
-     * "New discussion with..." and alongside the AI response.
+     * Flush pendingMedia items after the greeting stream completes.
+     * Single delivery point — runs in the finally block of
+     * generateBotResponseStream, guarded by streamCompleted.
+     *
+     * "Not in space" failures are transient (bot left during tool execution).
+     * They do NOT increment retryCount or set lastRetryAt — the items survive
+     * for the next re-entry without being penalized.
      */
     private flushPendingMedia(
         botClient: BotClient,
         spaceName: string,
         botId: string,
         playerId: number,
-        early: boolean = false
     ): void {
         // generateBotResponseStream can be called without botClient or spaceName
         // (both are optional/undefined in its signature). Guard here prevents
@@ -2314,7 +2302,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (!memory?.pendingMedia?.length) return;
 
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
-            console.log(`[PM-TRACE] flushPendingMedia entry: early=${early} space=${spaceName?.substring(spaceName.lastIndexOf('#'))} count=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
+            console.log(`[PM-TRACE] flushPendingMedia entry: space=${spaceName?.substring(spaceName.lastIndexOf('#'))} count=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
         }
 
         const now = Date.now();
@@ -2350,15 +2338,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }
             } else {
-                // Send failed — keep for the non-early flush which will
-                // handle retry counting properly.
-                if (!early) {
+                // Distinguish "not in space" (transient) from real send failures.
+                // Transient failures don't penalize the item — conditions will be
+                // different on the next re-entry (new space hash, bot registered).
+                const botInSpace = botClient.isInSpace?.(spaceName) ?? true;
+                if (botInSpace) {
+                    // Bot is in the space but send failed — real failure, penalize.
                     item.retryCount++;
                     item.lastRetryAt = now;
                 }
                 remaining.push(item);
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued for retry${early ? ' (early, no count)' : ` ${item.retryCount}`}: ${item.url.substring(0, 60)}`);
+                    const reason = botInSpace ? `retry ${item.retryCount}` : 'transient (not in space)';
+                    console.log(`[AIService] Failed to flush pending ${item.mediaType}, re-queued (${reason}): ${item.url.substring(0, 60)}`);
                 }
             }
         }
@@ -2367,12 +2359,6 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[PM-TRACE] flushPendingMedia exit: remaining=${remaining.length} urls=[${remaining.map(p => p.url.substring(0, 60)).join(', ')}]`);
         }
-
-        // Note: do NOT re-set autoDeliveredMedia here — it was already set by
-        // retryPendingMedia and consumed by getConversationContext before the
-        // conversation turn started. Re-setting it causes a stale value to leak
-        // to the next turn, where getConversationContext reads it again and
-        // injects a misleading "[Note: N media item(s)...]" into the AI prompt.
     }
 
     /**

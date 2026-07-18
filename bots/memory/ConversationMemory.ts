@@ -737,15 +737,18 @@ export class ConversationMemory {
         // Auto-delivered media notification — tells the bot that media items it
         // GENERATED SUCCESSFULLY (but couldn't deliver) are being re-sent alongside
         // the greeting. Media-agnostic — works for images, files, audio, video.
-        const autoDelivered = personalInfo.facts.get('autoDeliveredMedia');
-        if (autoDelivered) {
-            context.push(`\n[System: ${autoDelivered} media item(s) from the previous session have been delivered alongside this message. That work is complete.]`);
-            // Delete the fact so the facts iteration below doesn't include
-            // "autoDeliveredMedia: " in the AI's context. On the same-turn retry
-            // (AI call fails), getConversationContext runs again — the guard above
-            // skips a missing key the same way it skips an empty string, and
-            // retryPendingMedia re-sets the fact from scratch on next re-entry.
-            personalInfo.facts.delete('autoDeliveredMedia');
+        // Reads pendingMedia directly (no fact) so the AI always knows about
+        // pending items at turn start, whether from re-entry or orphaned tool
+        // results from a previous turn. Items in retry cooldown (lastRetryAt
+        // within 10s) are excluded — they won't be delivered this turn.
+        const now = Date.now();
+        const MIN_RETRY_INTERVAL_MS = 10_000;
+        const deliverableCount = memory.pendingMedia?.filter(p =>
+            p.retryCount < 3 &&
+            (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
+        ).length || 0;
+        if (deliverableCount > 0) {
+            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session have been delivered alongside this message. That work is complete.]`);
         }
 
         // Natural facts recall (especially current state)
