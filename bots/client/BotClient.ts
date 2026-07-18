@@ -2468,7 +2468,9 @@ export class BotClient {
                             message.updateSpaceUserMessage.spaceName,
                             chatMessage,
                             message.updateSpaceUserMessage.userId ?? 0
-                        );
+                        ).catch(error => {
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
+                        });
                     }
                 }
                 break;
@@ -2558,7 +2560,9 @@ export class BotClient {
                             spaceMessage.url,
                             spaceMessage.mediaType,
                             spaceMessage.mimeType
-                        );
+                        ).catch(error => {
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
+                        });
                     } else {
                         if (senderId === 0) {
                             console.warn(`[Bot ${this.config.botId}] Skipping chat message: senderId is 0`);
