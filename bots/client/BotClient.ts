@@ -2464,10 +2464,15 @@ export class BotClient {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        const detectedUrl = this.extractUrlFromText(chatMessage) || undefined;
+                        const detectedMime = detectedUrl ? this.inferMimeTypeFromUrl(detectedUrl) : undefined;
                         this.behavior.onChatMessage(
                             message.updateSpaceUserMessage.spaceName,
                             chatMessage,
-                            message.updateSpaceUserMessage.userId ?? 0
+                            message.updateSpaceUserMessage.userId ?? 0,
+                            detectedUrl,
+                            undefined,
+                            detectedMime
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                         });
@@ -2553,13 +2558,18 @@ export class BotClient {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
                         }
+                        // Detect URL from message text if not already a file upload
+                        const detectedUrl = spaceMessage.url || this.extractUrlFromText(spaceMessage.message) || undefined;
+                        const detectedMime: string | null | undefined = detectedUrl && !spaceMessage.mimeType
+                            ? this.inferMimeTypeFromUrl(detectedUrl)
+                            : spaceMessage.mimeType;
                         this.behavior.onChatMessage(
                             spaceName,
                             spaceMessage.message,
                             senderId,
-                            spaceMessage.url,
+                            detectedUrl,
                             spaceMessage.mediaType,
-                            spaceMessage.mimeType
+                            detectedMime
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                         });
@@ -2913,6 +2923,61 @@ export class BotClient {
                 },
             },
         });
+    }
+
+    /**
+     * Extract the first URL from plain text content.
+     * Returns the URL string or null if no URL is found.
+     */
+    private extractUrlFromText(text: string): string | null {
+        const match = text.match(/https?:\/\/[^\s)]+/);
+        return match ? match[0] : null;
+    }
+
+    /**
+     * Infer a MIME type from a URL's file extension.
+     * Defaults to 'text/html' for URLs without a recognized extension (i.e., web pages).
+     */
+    private inferMimeTypeFromUrl(url: string): string {
+        let ext: string;
+        try {
+            const pathname = new URL(url).pathname;
+            ext = pathname.split('.').pop()?.toLowerCase() || '';
+        } catch {
+            return 'text/html';
+        }
+
+        const mimeMap: Record<string, string> = {
+            'pdf': 'application/pdf',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'doc': 'application/msword',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'xls': 'application/vnd.ms-excel',
+            'html': 'text/html',
+            'htm': 'text/html',
+            'txt': 'text/plain',
+            'json': 'application/json',
+            'xml': 'application/xml',
+            'csv': 'text/csv',
+            'md': 'text/markdown',
+            'ts': 'text/plain',
+            'js': 'text/javascript',
+            'py': 'text/plain',
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'svg': 'image/svg+xml',
+            'ico': 'image/x-icon',
+            'mp3': 'audio/mpeg',
+            'wav': 'audio/wav',
+            'mp4': 'video/mp4',
+            'webm': 'video/webm',
+            'mov': 'video/quicktime',
+        };
+
+        return mimeMap[ext] || 'text/html';
     }
 
     private send(message: ClientToServerMessage): void {
