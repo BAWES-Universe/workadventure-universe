@@ -959,6 +959,10 @@ export abstract class BaseBehavior {
         if (!botId || !botClient || !this.conversationMemory) return;
 
         const memory = this.conversationMemory?.getMemory(botId, user.id) ?? null;
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            const pm = memory?.pendingMedia ?? [];
+            console.log(`[PM-TRACE] retryPendingMedia entry: pendingMediaLen=${pm.length} urls=[${pm.map(p => p.url.substring(0, 60)).join(', ')}]`);
+        }
         if (!memory?.pendingMedia?.length) return;
 
         const now = Date.now();
@@ -1005,6 +1009,10 @@ export abstract class BaseBehavior {
         // state with empty pendingMedia.
         if (typeof (this.conversationMemory as any)?.syncSnapshot === 'function') {
             (this.conversationMemory as any).syncSnapshot(botId, user.id, memory);
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                const pm = memory.pendingMedia ?? [];
+                console.log(`[PM-TRACE] syncSnapshot called: pendingMediaLen=${pm.length} urls=[${pm.map(p => p.url.substring(0, 60)).join(', ')}]`);
+            }
         }
     }
 

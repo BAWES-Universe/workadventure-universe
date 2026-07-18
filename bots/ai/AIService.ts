@@ -525,6 +525,10 @@ Everything above is technical guidance. But YOUR PERSONALITY (from the very firs
                 // non-early flush in the finally block handles retries properly.
                 if (botId && playerId !== undefined) {
                     const pendingMem = this.conversationMemory?.getMemory(botId, playerId);
+                    if (process.env.ENABLE_BOT_DEBUG === 'true' && pendingMem) {
+                        const pm = pendingMem.pendingMedia ?? [];
+                        console.log(`[PM-TRACE] pre-AI flush check: space=${spaceName?.substring(spaceName.lastIndexOf('#'))} pendingMediaLen=${pm.length} urls=[${pm.map(p => p.url.substring(0, 60)).join(', ')}]`);
+                    }
                     if (pendingMem?.pendingMedia?.length) {
                         this.flushPendingMedia(botClient, spaceName, botId, playerId, true);
                     } else if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -2087,6 +2091,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     createdAt: Date.now(),
                     retryCount: 0,
                 });
+                if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.log(`[PM-TRACE] preQueueToolResults queued: url=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
+                }
             }
         }
     }
@@ -2214,6 +2221,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     retryCount: 0,
                                 });
                             }
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[PM-TRACE] autoSendMedia catch queued: cdnUrl=${cdnUrl.substring(0, 60)} originalUrl=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
+                            }
                         }
                     }
                 }
@@ -2265,6 +2275,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             if (memory?.pendingMedia) {
                 memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
+                if (process.env.ENABLE_BOT_DEBUG === 'true' && sentUrls.size > 0) {
+                    console.log(`[PM-TRACE] autoSendMedia cleanup: removed ${sentUrls.size} sent URLs, remaining=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
+                }
             }
         }
 
@@ -2299,6 +2312,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory?.pendingMedia?.length) return;
+
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[PM-TRACE] flushPendingMedia entry: early=${early} space=${spaceName?.substring(spaceName.lastIndexOf('#'))} count=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
+        }
 
         const now = Date.now();
         const MIN_RETRY_INTERVAL_MS = 10_000; // Don't retry the same item more than once per 10s
@@ -2346,6 +2363,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         }
         memory.pendingMedia = remaining;
+
+        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[PM-TRACE] flushPendingMedia exit: remaining=${remaining.length} urls=[${remaining.map(p => p.url.substring(0, 60)).join(', ')}]`);
+        }
 
         // Note: do NOT re-set autoDeliveredMedia here — it was already set by
         // retryPendingMedia and consumed by getConversationContext before the
