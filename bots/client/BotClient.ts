@@ -1297,15 +1297,19 @@ export class BotClient {
             return true;
         }
         let safe = true;
+        let resolved = false;
         try {
             const v4 = await resolve4(hostname);
+            resolved = true;
             if (v4.some(ip => this.isPrivateIp(ip))) safe = false;
         } catch { /* no A record — not a problem */ }
         try {
             const v6 = await resolve6(hostname);
+            resolved = true;
             if (v6.some(ip => this.isPrivateIp(ip))) safe = false;
         } catch { /* no AAAA record — not a problem */ }
-        return safe;
+        // Fail-closed: if neither A nor AAAA resolved, we can't verify safety
+        return resolved ? safe : false;
     }
 
     /** Follow HTTP redirects with SSRF validation on each hop (max 5 hops). */
