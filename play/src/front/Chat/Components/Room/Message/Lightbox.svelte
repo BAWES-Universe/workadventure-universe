@@ -1,6 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher } from "svelte";
     import { fade } from "svelte/transition";
+    import { lightboxOpenStore } from "../../../../Stores/UserInputStore";
 
     export let src: string | undefined;
     export let alt: string | undefined;
@@ -58,6 +59,7 @@
         tx = 0;
         ty = 0;
     }
+    $: lightboxOpenStore.set(show);
     $: if (show && src) {
         scale = 1;
         tx = 0;

@@ -9,6 +9,8 @@ export const inputFormFocusStore = writable(false);
 
 export const mapExplorerSearchinputFocusStore = writable(false);
 
+export const lightboxOpenStore = writable(false);
+
 //derived from the focus on Menu, ConsoleGlobal, Chat and ...
 export const enableUserInputsStore = derived(
     [
@@ -19,6 +21,7 @@ export const enableUserInputsStore = derived(
         mapExplorerSearchinputFocusStore,
         emoteMenuStore,
         refreshPromptStore,
+        lightboxOpenStore,
     ],
     ([
         $menuInputFocusStore,
@@ -28,6 +31,7 @@ export const enableUserInputsStore = derived(
         $mapExplorerSearchinputFocusStore,
         $emoteMenuStore,
         $refreshPromptStore,
+        $lightboxOpenStore,
     ]) => {
         return (
             !$menuInputFocusStore &&
@@ -36,7 +40,8 @@ export const enableUserInputsStore = derived(
             !$inputFormFocusStore &&
             !$mapExplorerSearchinputFocusStore &&
             !$emoteMenuStore &&
-            !$refreshPromptStore
+            !$refreshPromptStore &&
+            !$lightboxOpenStore
         );
     }
 );
