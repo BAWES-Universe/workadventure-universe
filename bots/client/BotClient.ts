@@ -1240,6 +1240,7 @@ export class BotClient {
                                 message,
                                 characterTextures: [],
                                 name: this.config.name,
+                                galleryUrls: [],
                             },
                         },
                     },
@@ -1296,15 +1297,19 @@ export class BotClient {
             return true;
         }
         let safe = true;
+        let resolved = false;
         try {
             const v4 = await resolve4(hostname);
+            resolved = true;
             if (v4.some(ip => this.isPrivateIp(ip))) safe = false;
         } catch { /* no A record — not a problem */ }
         try {
             const v6 = await resolve6(hostname);
+            resolved = true;
             if (v6.some(ip => this.isPrivateIp(ip))) safe = false;
         } catch { /* no AAAA record — not a problem */ }
-        return safe;
+        // Fail-closed: if neither A nor AAAA resolved, we can't verify safety
+        return resolved ? safe : false;
     }
 
     /** Follow HTTP redirects with SSRF validation on each hop (max 5 hops). */
@@ -1699,6 +1704,52 @@ export class BotClient {
                                 url,
                                 mediaType,
                                 mimeType,
+                                galleryUrls: [],
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        return true;
+    }
+
+    /**
+     * Send a gallery of images as a single message with a grid layout.
+     * The first image goes in the `url` field (backwards compatible), and
+     * additional images go in `galleryUrls`. The caption appears below the grid.
+     */
+    public sendMediaGallery(spaceName: string, urls: string[], caption?: string): boolean {
+        if (urls.length === 0) return false;
+
+        const spaceUserId = this.spaces.get(spaceName);
+        if (!spaceUserId) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[Bot ${this.config.botId}] Not in space ${spaceName} — cannot send gallery`);
+            }
+            return false;
+        }
+
+        const firstUrl = urls[0];
+        const extraUrls = urls.slice(1);
+        const mimeType = this.inferMimeFromExt(firstUrl);
+
+        this.send({
+            message: {
+                $case: 'publicEvent',
+                publicEvent: {
+                    spaceName,
+                    spaceEvent: {
+                        event: {
+                            $case: 'spaceMessage',
+                            spaceMessage: {
+                                message: caption || '',
+                                characterTextures: [],
+                                name: this.config.name,
+                                url: firstUrl,
+                                mediaType: 'gallery',
+                                mimeType,
+                                galleryUrls: extraUrls,
                             },
                         },
                     },
@@ -2464,11 +2515,18 @@ export class BotClient {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
+                        const detectedUrl = this.extractUrlFromText(chatMessage) || undefined;
+                        const detectedMime = detectedUrl ? this.inferMimeTypeFromUrl(detectedUrl) : undefined;
                         this.behavior.onChatMessage(
                             message.updateSpaceUserMessage.spaceName,
                             chatMessage,
-                            message.updateSpaceUserMessage.userId ?? 0
-                        );
+                            message.updateSpaceUserMessage.userId ?? 0,
+                            detectedUrl,
+                            undefined,
+                            detectedMime
+                        ).catch(error => {
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
+                        });
                     }
                 }
                 break;
@@ -2551,14 +2609,22 @@ export class BotClient {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
                         }
+                        // Detect URL from message text if not already a file upload
+                        const detectedUrl = spaceMessage.url || this.extractUrlFromText(spaceMessage.message) || undefined;
+                        const detectedMime: string | null | undefined = detectedUrl && !spaceMessage.mimeType
+                            ? this.inferMimeTypeFromUrl(detectedUrl)
+                            : spaceMessage.mimeType;
                         this.behavior.onChatMessage(
                             spaceName,
                             spaceMessage.message,
                             senderId,
-                            spaceMessage.url,
+                            detectedUrl,
                             spaceMessage.mediaType,
-                            spaceMessage.mimeType
-                        );
+                            detectedMime,
+                            spaceMessage.galleryUrls
+                        ).catch(error => {
+                            console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
+                        });
                     } else {
                         if (senderId === 0) {
                             console.warn(`[Bot ${this.config.botId}] Skipping chat message: senderId is 0`);
@@ -2909,6 +2975,65 @@ export class BotClient {
                 },
             },
         });
+    }
+
+    /**
+     * Extract the first URL from plain text content.
+     * Returns the URL string or null if no URL is found.
+     */
+    private extractUrlFromText(text: string): string | null {
+        const match = text.match(/https?:\/\/[^\s)]+/);
+        if (match) {
+            // Strip trailing sentence punctuation
+            return match[0].replace(/[.,!?;:]+$/, '');
+        }
+        return null;
+    }
+
+    /**
+     * Infer a MIME type from a URL's file extension.
+     * Defaults to 'text/html' for URLs without a recognized extension (i.e., web pages).
+     */
+    private inferMimeTypeFromUrl(url: string): string {
+        let ext: string;
+        try {
+            const pathname = new URL(url).pathname;
+            ext = pathname.split('.').pop()?.toLowerCase() || '';
+        } catch {
+            return 'text/html';
+        }
+
+        const mimeMap: Record<string, string> = {
+            'pdf': 'application/pdf',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'doc': 'application/msword',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'xls': 'application/vnd.ms-excel',
+            'html': 'text/html',
+            'htm': 'text/html',
+            'txt': 'text/plain',
+            'json': 'application/json',
+            'xml': 'application/xml',
+            'csv': 'text/csv',
+            'md': 'text/markdown',
+            'ts': 'text/plain',
+            'js': 'text/javascript',
+            'py': 'text/plain',
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'gif': 'image/gif',
+            'webp': 'image/webp',
+            'svg': 'image/svg+xml',
+            'ico': 'image/x-icon',
+            'mp3': 'audio/mpeg',
+            'wav': 'audio/wav',
+            'mp4': 'video/mp4',
+            'webm': 'video/webm',
+            'mov': 'video/quicktime',
+        };
+
+        return mimeMap[ext] || 'text/html';
     }
 
     private send(message: ClientToServerMessage): void {

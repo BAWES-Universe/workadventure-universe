@@ -12,6 +12,7 @@
     import MessageFile from "./Message/MessageFile.svelte";
     import MessageAudioFile from "./Message/MessageAudioFile.svelte";
     import MessageVideoFile from "./Message/MessageVideoFile.svelte";
+    import MessageGallery from "./Message/MessageGallery.svelte";
     import MessageEdition from "./MessageEdition.svelte";
     import MessageReactions from "./MessageReactions.svelte";
     import MessageIncoming from "./Message/MessageIncoming.svelte";
@@ -55,6 +56,7 @@
         file: MessageFile as ComponentType,
         audio: MessageAudioFile as ComponentType,
         video: MessageVideoFile as ComponentType,
+        gallery: MessageGallery as ComponentType,
         incoming: MessageIncoming as ComponentType,
         outcoming: MessageOutcoming as ComponentType,
         proximity: MessageText as ComponentType,

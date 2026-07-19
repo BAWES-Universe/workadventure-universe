@@ -660,7 +660,7 @@ export class SocialBehavior extends BaseBehavior {
         this.targetPlayerId = null;
     }
 
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
         if (!this.bot) {
             console.warn(`[SocialBehavior] onChatMessage: bot is null`);
             return;
@@ -672,16 +672,14 @@ export class SocialBehavior extends BaseBehavior {
         }
 
         // If the user sent a file/image/audio/video along with their message,
-        // augment the message text with the URL so the AI knows about it.
-        // The filename alone (e.g. "artist-full-trans.png") isn't actionable.
+        // use FileParser to extract content and augment the message.
+        // Save the original message for persistence — augmented version
+        // is for the AI request only.
+        const originalUserMessage = message;
         if (url) {
-            const mediaLabel = mediaType || 'file';
-            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.log(`[SocialBehavior] Augmented message with URL: ${message}`);
-            }
+            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
-        
+
         let conversation = this.activeConversations.get(senderId);
         
         // Start typing indicator
@@ -732,20 +730,20 @@ export class SocialBehavior extends BaseBehavior {
             });
         }
         
-        // Store player's message in memory
-        this.conversationMemory?.addMessage(botId, senderId, message, 'person', spaceName);
-        
-        // Store player's message in conversation storage
+        // Store player's message in memory (original, without augmented file content)
+        this.conversationMemory?.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
+
+        // Store player's message in conversation storage (original, without augmented file content)
         if (this.conversationStorage) {
-            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+            this.conversationStorage.addMessage(botId, userUuid, originalUserMessage, 'person').catch(error => {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.error('[SocialBehavior] Error adding person message to conversation storage:', error);
                 }
             });
         }
-        
-        // Extract personal information from message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, message);
+
+        // Extract personal information from original user message
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
         
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);

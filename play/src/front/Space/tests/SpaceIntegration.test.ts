@@ -475,6 +475,7 @@ describe("", () => {
                     spaceMessage: {
                         message: "Hello",
                         characterTextures: [],
+                        galleryUrls: [],
                     },
                 },
             },
@@ -490,6 +491,7 @@ describe("", () => {
             spaceMessage: {
                 message: "Hello",
                 characterTextures: [],
+                galleryUrls: [],
             },
         });
 

@@ -1220,8 +1220,9 @@ export abstract class BaseBehavior {
      * @param message Chat message
      * @param senderId Sender's user ID
      */
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
+    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
         // Default: do nothing
+        return Promise.resolve();
     }
 
     /**
@@ -1245,5 +1246,105 @@ export abstract class BaseBehavior {
     updateConfig(config: Partial<BehaviorConfig>): void {
         this.config = { ...this.config, ...config };
     }
+
+    /**
+     * Parse a file attachment using FileParser and format the result into
+     * the message for AI context. Handles sanitization, undefined guards,
+     * and error logging — shared by all behaviors to avoid duplication.
+     *
+     * @param message The original user message
+     * @param url The attachment URL
+     * @param mimeType The attachment MIME type
+     * @param mediaType Optional media type label for fallback messaging
+     * @returns Augmented message with parsed content (or fallback on error)
+     */
+    /**
+     * Infer a MIME type from a URL's file extension.
+     * Used to give each gallery file its own MIME type instead of using the
+     * primary file's MIME type for all files.
+     */
+    private inferMimeFromUrl(url: string): string | undefined {
+        const pathPart = url.split('?')[0];
+        const ext = pathPart.split('.').pop()?.toLowerCase();
+        if (!ext) return undefined;
+        const mimeMap: Record<string, string> = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+            webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
+            pdf: 'application/pdf',
+            doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            csv: 'text/csv',
+            ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac', flac: 'audio/flac', m4a: 'audio/mp4',
+            mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+            txt: 'text/plain', md: 'text/markdown', html: 'text/html', htm: 'text/html',
+            zip: 'application/zip', rar: 'application/vnd.rar', '7z': 'application/x-7z-compressed',
+        };
+        return mimeMap[ext];
+    }
+
+    protected async formatParsedAttachment(
+        message: string,
+        url: string,
+        mimeType: string,
+        mediaType?: string,
+        galleryUrls?: string[]
+    ): Promise<string> {
+        const allUrls = [url, ...(galleryUrls || [])];
+        let augmentedMessage = message;
+
+        // Hoist dynamic import and load all files in parallel
+        const { FileParser } = await import('../services/FileParser');
+        const results = await Promise.allSettled(allUrls.map(async (fileUrl) => {
+            const fileMime = this.inferMimeFromUrl(fileUrl) || mimeType || 'application/octet-stream';
+            return FileParser.parseFile(fileUrl, fileMime);
+        }));
+
+        // Sanitize extracted text to neutralize embedded boundary markers
+        // that an attacker could use for prompt injection
+        const sanitize = (text: string) =>
+            text.replace(/---\s*(BEGIN|END)\s+(FILE|DOCUMENT|WEB PAGE)\s+CONTENT\s*---/gi,
+                match => match.replace(/-/g, '−')); // replace hyphens with minus signs
+
+        for (let i = 0; i < allUrls.length; i++) {
+            const fileUrl = allUrls[i];
+            const settled = results[i];
+            if (settled.status === 'rejected') {
+                const mediaLabel = mediaType || 'file';
+                augmentedMessage = `${augmentedMessage}\n[User also sent a ${mediaLabel}: ${fileUrl}]`;
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[BaseBehavior] FileParser failed for ${fileUrl}: ${settled.reason?.message || 'Unknown error'}, falling back to URL text`);
+                }
+                continue;
+            }
+            const parsed = settled.value;
+
+            switch (parsed.type) {
+                case 'text':
+                    augmentedMessage = `${augmentedMessage}\n[User also sent a file]\n--- BEGIN FILE CONTENT ---\n${parsed.text ? sanitize(parsed.text) : '[No text content]'}\n--- END FILE CONTENT ---`;
+                    break;
+                case 'image':
+                    augmentedMessage = `${augmentedMessage}\n[User also sent an image: ${fileUrl}]`;
+                    break;
+                case 'document':
+                    augmentedMessage = `${augmentedMessage}\n[User sent a document]${parsed.text ? `\n--- BEGIN DOCUMENT CONTENT ---\n${sanitize(parsed.text)}\n--- END DOCUMENT CONTENT ---\n(Summary: ${parsed.summary})` : `\n(Summary: ${parsed.summary})`}`;
+                    break;
+                case 'webpage':
+                    augmentedMessage = `${augmentedMessage}\n[User shared a web page]${parsed.text ? `\n--- BEGIN WEB PAGE CONTENT ---\n${sanitize(parsed.text)}\n--- END WEB PAGE CONTENT ---\n(Summary: ${parsed.summary})` : `\n(Summary: ${parsed.summary})`}`;
+                    break;
+                case 'audio':
+                    augmentedMessage = `${augmentedMessage}\n[User sent an audio file — can't be played inline]`;
+                    break;
+                case 'video':
+                    augmentedMessage = `${augmentedMessage}\n[User sent a video file — can't be played inline]`;
+                    break;
+                default:
+                    augmentedMessage = `${augmentedMessage}\n[User sent a file (${parsed.mimeType || 'unknown'}) — content not extracted]`;
+                    break;
+            }
+        }
+        return augmentedMessage;
+    }
 }
+
 

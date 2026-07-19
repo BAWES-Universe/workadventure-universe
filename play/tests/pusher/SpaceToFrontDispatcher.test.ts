@@ -576,6 +576,7 @@ describe("SpaceToFrontDispatcher", () => {
                                     spaceMessage: {
                                         message: "test",
                                         characterTextures: [],
+                                        galleryUrls: [],
                                     },
                                 },
                             },
@@ -655,6 +656,7 @@ describe("SpaceToFrontDispatcher", () => {
                                     spaceMessage: {
                                         message: "test",
                                         characterTextures: [],
+                                        galleryUrls: [],
                                     },
                                 },
                             },
@@ -674,6 +676,7 @@ describe("SpaceToFrontDispatcher", () => {
                                     spaceMessage: {
                                         message: "test",
                                         characterTextures: [],
+                                        galleryUrls: [],
                                     },
                                 },
                             },
@@ -1046,6 +1049,7 @@ describe("SpaceToFrontDispatcher", () => {
                                 spaceMessage: {
                                     message: "test",
                                     characterTextures: [],
+                                    galleryUrls: [],
                                 },
                             },
                         },
@@ -1065,6 +1069,7 @@ describe("SpaceToFrontDispatcher", () => {
                                 spaceMessage: {
                                     message: "test",
                                     characterTextures: [],
+                                    galleryUrls: [],
                                 },
                             },
                         },

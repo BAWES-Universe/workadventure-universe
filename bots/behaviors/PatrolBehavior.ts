@@ -1676,22 +1676,27 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Handle chat messages from players
      */
-    onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string): void {
+    async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
         if (!this.bot) return;
 
         const botId = this.bot.getBotId();
         const config = this.config as PatrolBehaviorConfig;
 
-        // If the user sent a file/image/audio/video along with their message,
-        // augment the message text with the URL so the AI knows about it.
-        if (url) {
-            const mediaLabel = mediaType || 'file';
-            message = `${message}\n[User also sent a ${mediaLabel}: ${url}]`;
-        }
+        // If the user sent a file, use FileParser to extract content
+        // Save the original message for persistence — augmented version
+        // is for the AI request only.
+        const originalUserMessage = message;
 
         // Only respond if respondToPlayers is enabled (default true)
         if (config.respondToPlayers === false) {
             return;
+        }
+
+        // If the user sent a file, use FileParser to extract content
+        // (after the early-return guard so we don't waste fetch work
+        // when the bot won't respond anyway)
+        if (url) {
+            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
 
         // Start conversation in memory if needed
@@ -1721,20 +1726,20 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             });
         }
         
-        // Store player's message in memory
-        this.conversationMemory?.addMessage(botId, senderId, message, 'person', spaceName);
+        // Store player's message in memory (original, without augmented file content)
+        this.conversationMemory?.addMessage(botId, senderId, originalUserMessage, 'person', spaceName);
         
-        // Store player's message in conversation storage
+        // Store player's message in conversation storage (original, without augmented file content)
         if (this.conversationStorage) {
-            this.conversationStorage.addMessage(botId, userUuid, message, 'person').catch(error => {
+            this.conversationStorage.addMessage(botId, userUuid, originalUserMessage, 'person').catch(error => {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.error('[PatrolBehavior] Error adding person message to conversation storage:', error);
                 }
             });
         }
         
-        // Extract personal information from message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, message);
+        // Extract personal information from original user message
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);

@@ -13,6 +13,12 @@ export interface ConversationMessage {
     sender: 'bot' | 'person';
     timestamp: number;
     spaceName?: string;
+    /** URL of an attached file/image/audio/video */
+    url?: string;
+    /** Media type of the attached file: 'image' | 'audio' | 'video' | 'file' */
+    mediaType?: string;
+    /** MIME type of the attached file */
+    mimeType?: string;
 }
 
 export interface EmotionalWound {
@@ -742,7 +748,7 @@ export class ConversationMemory {
             (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
         ).length || 0;
         if (deliverableCount > 0) {
-            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session have been delivered alongside this message. That work is complete.]`);
+            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]`);
         }
 
         // Natural facts recall (especially current state)
