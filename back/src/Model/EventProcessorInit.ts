@@ -23,6 +23,7 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             url: event.spaceMessage.url,
             mediaType: event.spaceMessage.mediaType,
             mimeType: event.spaceMessage.mimeType,
+            galleryUrls: event.spaceMessage.galleryUrls,
         },
     };
 });
