@@ -61,6 +61,13 @@
     }
     $: lightboxOpenStore.set(show);
 
+    // Reset transform on image navigation so zoom/pan doesn't persist between images
+    $: if (show && src) {
+        scale = 1;
+        tx = 0;
+        ty = 0;
+    }
+
     // Clean up store on destroy so input doesn't stay blocked after unmount
     onDestroy(() => {
         lightboxOpenStore.set(false);
