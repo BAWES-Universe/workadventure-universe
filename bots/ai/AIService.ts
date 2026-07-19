@@ -2202,9 +2202,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 try {
                     const hostname = new URL(url).hostname;
                     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname.endsWith('.local') || hostname.endsWith('.localhost')) {
+                        skippedCount++;
                         continue;
                     }
                 } catch {
+                    skippedCount++;
                     continue; // Invalid URL — skip
                 }
                 // Skip URLs already queued in a PREVIOUS iteration — prevents
