@@ -515,8 +515,21 @@ export class FileParser {
     }
 
     private static async resolveIsExternal(hostname: string): Promise<boolean> {
-        if (/^[\d.]+$/.test(hostname) || (/^[0-9a-f:]+$/i.test(hostname) && hostname.includes(':')) || hostname.startsWith('[')) {
-            return true;
+        // Numeric and bracketed literals — parse and pass through isPrivateIp
+        if (/^[\d.]+$/.test(hostname)) {
+            return !FileParser.isPrivateIp(hostname);
+        }
+        if (/^[0-9a-f:]+$/i.test(hostname) && hostname.includes(':')) {
+            // Strip IPv4-mapped prefix (::ffff:x.x.x.x) for isPrivateIp check
+            const stripped = hostname.replace(/^::ffff:/i, '');
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(stripped)) {
+                return !FileParser.isPrivateIp(stripped);
+            }
+            return !FileParser.isPrivateIp(hostname);
+        }
+        if (hostname.startsWith('[')) {
+            const inner = hostname.slice(1, -1);
+            return !FileParser.isPrivateIp(inner);
         }
         let safe = true;
         try {

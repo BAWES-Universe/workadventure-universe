@@ -110,28 +110,19 @@
         filename: string;
     }
 
-    const allItems: GalleryItem[] = [];
+    let allItems: GalleryItem[] = [];
     $: {
-        allItems.length = 0;
-        if ($content.url) {
-            const url = $content.url;
-            allItems.push({
-                url,
-                type: inferMediaType(url),
-                filename: getFilename(url),
-            });
-        }
-        if ($content.urls) {
-            for (const u of $content.urls) {
-                if (u && !allItems.some((item) => item.url === u)) {
-                    allItems.push({
-                        url: u,
-                        type: inferMediaType(u),
-                        filename: getFilename(u),
-                    });
-                }
+        const next: GalleryItem[] = [];
+        const seen = new Set<string>();
+        const add = (u: string) => {
+            if (u && !seen.has(u)) {
+                seen.add(u);
+                next.push({ url: u, type: inferMediaType(u), filename: getFilename(u) });
             }
-        }
+        };
+        if ($content.url) add($content.url);
+        if ($content.urls) for (const u of $content.urls) add(u);
+        allItems = next;
     }
 
     // Items that go in the lightbox: images + videos

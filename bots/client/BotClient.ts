@@ -2979,7 +2979,11 @@ export class BotClient {
      */
     private extractUrlFromText(text: string): string | null {
         const match = text.match(/https?:\/\/[^\s)]+/);
-        return match ? match[0] : null;
+        if (match) {
+            // Strip trailing sentence punctuation
+            return match[0].replace(/[.,!?;:]+$/, '');
+        }
+        return null;
     }
 
     /**

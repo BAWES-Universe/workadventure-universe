@@ -1740,8 +1740,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // Parse JSON arguments string
                             let parsedArgs: any = {};
                             try {
-                                parsedArgs = typeof toolCall.arguments === 'string' 
-                                    ? JSON.parse(toolCall.arguments) 
+                                parsedArgs = typeof toolCall.arguments === 'string'
+                                    ? this.safeParseToolArgs(toolCall.arguments)
                                     : toolCall.arguments || {};
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.log(`[AIService] 📋 Parsed navigate_to arguments:`, parsedArgs);
@@ -1867,7 +1867,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case 'send_image':
                         if (botClient) {
                             const parsedArgs = typeof toolCall.arguments === 'string'
-                                ? JSON.parse(toolCall.arguments)
+                                ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
                             const imageUrl = parsedArgs.url;
                             const alt = parsedArgs.alt || '';
@@ -1892,7 +1892,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case 'send_file':
                         if (botClient) {
                             const parsedArgs = typeof toolCall.arguments === 'string'
-                                ? JSON.parse(toolCall.arguments)
+                                ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
                             const fileUrl = parsedArgs.url;
                             const filename = parsedArgs.filename || '';
@@ -1917,7 +1917,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case 'send_audio':
                         if (botClient) {
                             const parsedArgs = typeof toolCall.arguments === 'string'
-                                ? JSON.parse(toolCall.arguments)
+                                ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
                             const audioUrl = parsedArgs.url;
                             if (!audioUrl) {
@@ -1941,7 +1941,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case 'send_video':
                         if (botClient) {
                             const parsedArgs = typeof toolCall.arguments === 'string'
-                                ? JSON.parse(toolCall.arguments)
+                                ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
                             const videoUrl = parsedArgs.url;
                             if (!videoUrl) {
