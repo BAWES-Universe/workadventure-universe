@@ -1293,20 +1293,31 @@ export abstract class BaseBehavior {
         const allUrls = [url, ...(galleryUrls || [])];
         let augmentedMessage = message;
 
+        // Hoist dynamic import and load all files in parallel
+        const { FileParser } = await import('../services/FileParser');
+        const results = await Promise.allSettled(allUrls.map(async (fileUrl) => {
+            const fileMime = this.inferMimeFromUrl(fileUrl) || mimeType || 'application/octet-stream';
+            return FileParser.parseFile(fileUrl, fileMime);
+        }));
+
+        // Sanitize extracted text to neutralize embedded boundary markers
+        // that an attacker could use for prompt injection
+        const sanitize = (text: string) =>
+            text.replace(/---\s*(BEGIN|END)\s+(FILE|DOCUMENT|WEB PAGE)\s+CONTENT\s*---/gi,
+                match => match.replace(/-/g, '−')); // replace hyphens with minus signs
+
         for (let i = 0; i < allUrls.length; i++) {
             const fileUrl = allUrls[i];
-            // Infer the correct MIME type for each file from its URL extension
-            // rather than using the primary file's MIME type for all files
-            const fileMime = this.inferMimeFromUrl(fileUrl) || mimeType || 'application/octet-stream';
-            try {
-            const { FileParser } = await import('../services/FileParser');
-            const parsed = await FileParser.parseFile(fileUrl, fileMime);
-
-            // Sanitize extracted text to neutralize embedded boundary markers
-            // that an attacker could use for prompt injection
-            const sanitize = (text: string) =>
-                text.replace(/---\s*(BEGIN|END)\s+(FILE|DOCUMENT|WEB PAGE)\s+CONTENT\s*---/gi,
-                    match => match.replace(/-/g, '−')); // replace hyphens with minus signs
+            const settled = results[i];
+            if (settled.status === 'rejected') {
+                const mediaLabel = mediaType || 'file';
+                augmentedMessage = `${augmentedMessage}\n[User also sent a ${mediaLabel}: ${fileUrl}]`;
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[BaseBehavior] FileParser failed for ${fileUrl}: ${settled.reason?.message || 'Unknown error'}, falling back to URL text`);
+                }
+                continue;
+            }
+            const parsed = settled.value;
 
             switch (parsed.type) {
                 case 'text':
@@ -1328,18 +1339,12 @@ export abstract class BaseBehavior {
                     augmentedMessage = `${augmentedMessage}\n[User sent a video file — can't be played inline]`;
                     break;
                 default:
-                    augmentedMessage = `${augmentedMessage}\n[User sent a file (${fileMime}) — content not extracted]`;
+                    augmentedMessage = `${augmentedMessage}\n[User sent a file (${parsed.mimeType || 'unknown'}) — content not extracted]`;
                     break;
-            }
-            } catch (err: any) {
-                const mediaLabel = mediaType || 'file';
-                augmentedMessage = `${augmentedMessage}\n[User also sent a ${mediaLabel}: ${fileUrl}]`;
-                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                    console.warn(`[BaseBehavior] FileParser failed for ${fileUrl}: ${err.message}, falling back to URL text`);
-                }
             }
         }
         return augmentedMessage;
     }
 }
+
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, onDestroy } from "svelte";
     import { fade } from "svelte/transition";
     import { lightboxOpenStore } from "../../../../Stores/UserInputStore";
 
@@ -60,11 +60,11 @@
         ty = 0;
     }
     $: lightboxOpenStore.set(show);
-    $: if (show && src) {
-        scale = 1;
-        tx = 0;
-        ty = 0;
-    }
+
+    // Clean up store on destroy so input doesn't stay blocked after unmount
+    onDestroy(() => {
+        lightboxOpenStore.set(false);
+    });
 
     // Scroll active thumbnail into view
     $: if (show && showThumbnails && currentIndex >= 0 && thumbnailEls[currentIndex]) {
