@@ -2016,7 +2016,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * (e.g. a prompt like 'a card with "Dragon" on it' becomes invalid JSON).
      * This function rescues those by scanning char-by-char and escaping any
      * quote that appears inside a string value but is NOT a structural closing quote
-     * (determined by lookahead: if the next non-space char is , } or ], it's structural).
+     * (determined by lookahead: if the next non-space char is , } ] or :, it's structural).
      */
     private safeParseToolArgs(raw: string): Record<string, unknown> {
         // Fast path — most calls are valid JSON
@@ -2042,7 +2042,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // Look ahead: if next non-space is a JSON delimiter, this is structural
                         let j = i + 1;
                         while (j < raw.length && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\n' || raw[j] === '\r')) j++;
-                        if (raw[j] === ',' || raw[j] === '}' || raw[j] === ']') {
+                        if (raw[j] === ',' || raw[j] === '}' || raw[j] === ']' || raw[j] === ':') {
                             result += ch;
                             inStr = false;
                         } else {
