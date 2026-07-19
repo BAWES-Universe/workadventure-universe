@@ -1258,6 +1258,31 @@ export abstract class BaseBehavior {
      * @param mediaType Optional media type label for fallback messaging
      * @returns Augmented message with parsed content (or fallback on error)
      */
+    /**
+     * Infer a MIME type from a URL's file extension.
+     * Used to give each gallery file its own MIME type instead of using the
+     * primary file's MIME type for all files.
+     */
+    private inferMimeFromUrl(url: string): string | undefined {
+        const pathPart = url.split('?')[0];
+        const ext = pathPart.split('.').pop()?.toLowerCase();
+        if (!ext) return undefined;
+        const mimeMap: Record<string, string> = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+            webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml',
+            pdf: 'application/pdf',
+            doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            csv: 'text/csv',
+            ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac', flac: 'audio/flac', m4a: 'audio/mp4',
+            mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+            txt: 'text/plain', md: 'text/markdown', html: 'text/html', htm: 'text/html',
+            zip: 'application/zip', rar: 'application/vnd.rar', '7z': 'application/x-7z-compressed',
+        };
+        return mimeMap[ext];
+    }
+
     protected async formatParsedAttachment(
         message: string,
         url: string,
@@ -1265,15 +1290,17 @@ export abstract class BaseBehavior {
         mediaType?: string,
         galleryUrls?: string[]
     ): Promise<string> {
-        const mType = mimeType || 'application/octet-stream';
         const allUrls = [url, ...(galleryUrls || [])];
         let augmentedMessage = message;
 
         for (let i = 0; i < allUrls.length; i++) {
             const fileUrl = allUrls[i];
+            // Infer the correct MIME type for each file from its URL extension
+            // rather than using the primary file's MIME type for all files
+            const fileMime = this.inferMimeFromUrl(fileUrl) || mimeType || 'application/octet-stream';
             try {
             const { FileParser } = await import('../services/FileParser');
-            const parsed = await FileParser.parseFile(fileUrl, mType);
+            const parsed = await FileParser.parseFile(fileUrl, fileMime);
 
             // Sanitize extracted text to neutralize embedded boundary markers
             // that an attacker could use for prompt injection
@@ -1301,7 +1328,7 @@ export abstract class BaseBehavior {
                     augmentedMessage = `${augmentedMessage}\n[User sent a video file — can't be played inline]`;
                     break;
                 default:
-                    augmentedMessage = `${augmentedMessage}\n[User sent a file (${mType}) — content not extracted]`;
+                    augmentedMessage = `${augmentedMessage}\n[User sent a file (${fileMime}) — content not extracted]`;
                     break;
             }
             } catch (err: any) {

@@ -226,6 +226,8 @@
                             first.type
                         );
                         messageToSend = "";
+                        messageInput.innerText = "";
+                        message = "";
                     } else if (succeeded.length === 1) {
                         // 1 file, no text: send file with filename as body
                         const first = succeeded[0];
@@ -251,6 +253,8 @@
                             extraUrls
                         );
                         messageToSend = "";
+                        messageInput.innerText = "";
+                        message = "";
                     } else if (succeeded.length > 1) {
                         // Multiple files, no text: gallery message with filenames
                         const first = succeeded[0];

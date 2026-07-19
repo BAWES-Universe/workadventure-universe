@@ -2166,9 +2166,22 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Send images: batch 2+ as a gallery, single image as individual send
             if (imageUrlsToSend.length >= 2) {
                 try {
-                    botClient.sendMediaGallery(spaceName, imageUrlsToSend);
-                    sentCount += imageUrlsToSend.length;
-                    for (const url of imageUrlsToSend) sentUrls.add(url);
+                    const success = botClient.sendMediaGallery(spaceName, imageUrlsToSend);
+                    if (success) {
+                        sentCount += imageUrlsToSend.length;
+                        for (const url of imageUrlsToSend) sentUrls.add(url);
+                    } else {
+                        // Gallery send returned false (e.g. not in space) — fall back to individual sends
+                        for (const url of imageUrlsToSend) {
+                            try {
+                                await botClient.sendImage(spaceName, url);
+                                sentCount++;
+                                sentUrls.add(url);
+                            } catch (err2: any) {
+                                lastError = err2.message;
+                            }
+                        }
+                    }
                 } catch (err: any) {
                     lastError = err.message;
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

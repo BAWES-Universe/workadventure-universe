@@ -748,7 +748,7 @@ export class ConversationMemory {
             (!p.lastRetryAt || (now - p.lastRetryAt) >= MIN_RETRY_INTERVAL_MS)
         ).length || 0;
         if (deliverableCount > 0) {
-            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session have been delivered alongside this message. That work is complete.]`);
+            context.push(`\n[System: ${deliverableCount} media item(s) from the previous session are being delivered alongside this message. Do NOT generate or request them again.]`);
         }
 
         // Natural facts recall (especially current state)

@@ -1686,13 +1686,17 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // Save the original message for persistence — augmented version
         // is for the AI request only.
         const originalUserMessage = message;
-        if (url) {
-            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
-        }
 
         // Only respond if respondToPlayers is enabled (default true)
         if (config.respondToPlayers === false) {
             return;
+        }
+
+        // If the user sent a file, use FileParser to extract content
+        // (after the early-return guard so we don't waste fetch work
+        // when the bot won't respond anyway)
+        if (url) {
+            message = await this.formatParsedAttachment(message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls);
         }
 
         // Start conversation in memory if needed
