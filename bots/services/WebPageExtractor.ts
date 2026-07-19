@@ -65,11 +65,13 @@ export interface ExtractedWebPage {
  * @returns Extracted content or fallback
  */
 export function extractWebContent(html: string, sourceUrl: string): ExtractedWebPage {
-    const { document } = parseHTML(html);
-    // Note: linkedom doesn't require a url option for relative link resolution
-    // as Readability handles relative URLs via the document.baseURI or
-    // the document's URL property. We rely on Readability's built-in
-    // relative URL resolution.
+    // Inject <base> tag so Readability and Turndown can resolve relative URLs
+    // (e.g. /images/photo.jpg → https://example.com/images/photo.jpg).
+    // linkedom's parseHTML doesn't accept a url option like JSDOM did,
+    // but a <base> element in <head> achieves the same result.
+    const baseUrl = sourceUrl.replace(/\/?$/, '/');
+    const enhancedHtml = html.replace('<head>', `<head><base href="${baseUrl}">`);
+    const { document } = parseHTML(enhancedHtml);
 
     // Try Readability first
     const reader = new Readability(document);
