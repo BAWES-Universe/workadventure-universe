@@ -321,9 +321,7 @@
         <div class="grid grid-cols-3 gap-0.5 p-1">
             {#each lightboxItems.slice(0, 6) as item, i (item.url)}
                 <button
-                    class="relative group overflow-hidden rounded cursor-pointer {lightboxItems.length > 6 && i === 5
-                        ? 'brightness-50'
-                        : ''}"
+                    class="relative group overflow-hidden rounded cursor-pointer"
                     on:click={() => openLightbox(i)}
                     aria-label="Open media {i + 1}"
                 >
@@ -348,8 +346,8 @@
                     {/if}
                     <div class="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
                     {#if lightboxItems.length > 6 && i === 5}
-                        <div class="absolute inset-0 flex items-center justify-center text-white font-bold text-lg">
-                            +{lightboxItems.length - 6}
+                        <div class="absolute inset-0 flex items-center justify-center bg-black/50">
+                            <span class="text-white font-bold text-xl">+{lightboxItems.length - 6}</span>
                         </div>
                     {/if}
                 </button>
