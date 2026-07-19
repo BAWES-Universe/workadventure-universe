@@ -2042,7 +2042,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // Look ahead: if next non-space is a JSON delimiter, this is structural
                         let j = i + 1;
                         while (j < raw.length && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\n' || raw[j] === '\r')) j++;
-                        if (raw[j] === ',' || raw[j] === '}' || raw[j] === ']' || raw[j] === ':') {
+                        if (j >= raw.length || raw[j] === ',' || raw[j] === '}' || raw[j] === ']' || raw[j] === ':') {
                             result += ch;
                             inStr = false;
                         } else {
