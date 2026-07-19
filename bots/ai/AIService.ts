@@ -2065,6 +2065,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 result += ch;
             }
 
+            // Close unterminated string if the input was truncated
+            if (inStr) {
+                result += '"';
+            }
+
             return JSON.parse(result);
         }
     }
