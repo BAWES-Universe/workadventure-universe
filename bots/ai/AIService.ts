@@ -2332,6 +2332,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
+                            // Replace existing entry with CDN URL — the original URL was
+                            // queued by preQueueToolResults, but the CDN URL is the
+                            // reliable delivery URL. originalUrl is preserved for dedup.
                             const existingIdx = memory.pendingMedia.findIndex(
                                 p => p.url === url || p.originalUrl === url || p.url === cdnUrl
                             );
@@ -2352,6 +2355,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     createdAt: Date.now(),
                                     retryCount: 0,
                                 });
+                            }
+                            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.log(`[PM-TRACE] autoSendMedia catch queued: cdnUrl=${cdnUrl.substring(0, 60)} originalUrl=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
                             }
                         }
                     }
