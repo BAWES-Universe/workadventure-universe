@@ -69,9 +69,19 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
     // (e.g. /images/photo.jpg → https://example.com/images/photo.jpg).
     // linkedom's parseHTML doesn't accept a url option like JSDOM did,
     // but a <base> element in <head> achieves the same result.
+    // Use DOM manipulation (not string replacement) to handle variations
+    // in <head> casing/attributes, and remove any existing <base> first
+    // since the first <base> in document order is authoritative.
     const baseUrl = sourceUrl.replace(/\/?$/, '/');
-    const enhancedHtml = html.replace('<head>', `<head><base href="${baseUrl}">`);
-    const { document } = parseHTML(enhancedHtml);
+    const { document } = parseHTML(html);
+    const head = document.head;
+    if (head) {
+        const existingBase = head.querySelector('base');
+        if (existingBase) existingBase.remove();
+        const base = document.createElement('base');
+        base.setAttribute('href', baseUrl);
+        head.insertBefore(base, head.firstChild);
+    }
 
     // Try Readability first
     const reader = new Readability(document);
