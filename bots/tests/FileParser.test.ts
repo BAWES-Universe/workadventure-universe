@@ -55,6 +55,16 @@ vi.mock('mammoth', () => ({
 // A mock would hide incorrect API usage like type: 'buffer' vs type: 'array'.
 vi.mock('xlsx', async () => await vi.importActual('xlsx'));
 
+// Mock DNS so test hostnames resolve to a public IP (our fail-closed fix rejects unresolvable)
+const { mockResolve4, mockResolve6 } = vi.hoisted(() => ({
+   mockResolve4: vi.fn().mockResolvedValue(['1.2.3.4']),
+   mockResolve6: vi.fn().mockResolvedValue(['2001:db8::1']),
+}));
+vi.mock('dns/promises', () => ({
+   resolve4: mockResolve4,
+   resolve6: mockResolve6,
+}));
+
 import { FileParser } from '../services/FileParser';
 
 /**
