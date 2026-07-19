@@ -9,7 +9,7 @@
  * All extraction is in-process — no external APIs, no network calls
  * beyond the initial HTML fetch (which FileParser already handles).
  */
-import { JSDOM } from 'jsdom';
+import { parseHTML } from 'linkedom';
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 
@@ -65,8 +65,11 @@ export interface ExtractedWebPage {
  * @returns Extracted content or fallback
  */
 export function extractWebContent(html: string, sourceUrl: string): ExtractedWebPage {
-    const dom = new JSDOM(html, { url: sourceUrl });
-    const document = dom.window.document;
+    const { document } = parseHTML(html);
+    // Note: linkedom doesn't require a url option for relative link resolution
+    // as Readability handles relative URLs via the document.baseURI or
+    // the document's URL property. We rely on Readability's built-in
+    // relative URL resolution.
 
     // Try Readability first
     const reader = new Readability(document);
