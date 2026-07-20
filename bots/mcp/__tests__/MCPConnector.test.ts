@@ -426,6 +426,15 @@ describe('MCPConnector', () => {
     // --- executeToolCall --------------------------------------------------
 
     describe('executeToolCall', () => {
+        beforeEach(() => {
+            // Reset mock to prevent stale implementations from leaking between tests.
+            // vi.clearAllMocks() in the outer beforeEach clears call history but
+            // preserves .mockImplementation() — we need a full reset here so each
+            // test's .mockResolvedValueOnce/.mockRejectedValueOnce chain works
+            // without a stale fallback disrupting the call sequence.
+            mockedAxios.post.mockReset();
+        });
+
         it('sends correct JSON-RPC and returns content array', async () => {
             mockedAxios.post.mockImplementation(async (url: string, body: any, config?: any) => {
                 if (body?.method === 'initialize') {
@@ -655,6 +664,8 @@ describe('MCPConnector', () => {
             mockedAxios.isCancel.mockImplementation(
                 (err: any) => err?.code === 'ERR_CANCELED'
             );
+            // Reset post mock to prevent stale implementations from prior tests
+            mockedAxios.post.mockReset();
         });
 
         it(`enforces ${REQUEST_TIMEOUT / 1000}s REQUEST_TIMEOUT and cancels on timeout`, async () => {

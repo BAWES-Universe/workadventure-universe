@@ -296,8 +296,20 @@ async function jsonRpcRequest(
                     clearTimeout(initTimeoutId);
                 }
             } catch {
-                // Some servers don't require initialize — continue without session.
-                // The actual method request will fail naturally if init is required.
+                // Init timed out. Set a cache marker that EXISTS (so executeToolCall
+                // sees it and skips the retry) but is INSTANTLY EXPIRED (so on the
+                // next call, jsonRpcRequest's TTL check falls through and retries
+                // init). Without this marker, executeToolCall would see an empty
+                // cache and retry — re-exposing the double-execution risk.
+                // initializedAt is set to Date.now() - SESSION_INIT_TTL so the
+                // check `Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL`
+                // evaluates to false on the very next call.
+                if (!skipSessionCache) {
+                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
+                        sessionId: undefined,
+                        initializedAt: Date.now() - SESSION_INIT_TTL,
+                    });
+                }
             }
         }
     }
@@ -586,7 +598,7 @@ export class MCPConnector {
         extraHeaders?: Record<string, string>,
         playerUuid?: string
     ): Promise<any> {
-        const response = await jsonRpcRequest(
+        let response = await jsonRpcRequest(
             serverUrl,
             'tools/call',
             { name: toolName, arguments: args },
@@ -595,6 +607,29 @@ export class MCPConnector {
             extraHeaders,
             playerUuid
         );
+
+        if (!response) {
+            // jsonRpcRequest deletes the session cache on HTTP/network errors
+            // (server unreachable, ECONNREFUSED, DNS failure, 4xx/5xx) but NOT
+            // on timeouts (axios.isCancel branch — just a warning, no cache
+            // mutation). We use this to distinguish:
+            //   - Cache MISSING → request was NOT delivered → safe to retry
+            //     (transport error, server restart, stale session)
+            //   - Cache PRESENT → timeout → request MAY have been delivered
+            //     → DON'T retry (avoids double-executing non-idempotent tools)
+            const cacheKey = sessionCacheKey(serverUrl, authType, authConfig, playerUuid);
+            if (!mcpSessionInitCache.has(cacheKey)) {
+                response = await jsonRpcRequest(
+                serverUrl,
+                'tools/call',
+                { name: toolName, arguments: args },
+                authType,
+                authConfig,
+                extraHeaders,
+                playerUuid
+                );
+            }
+        }
 
         if (!response) {
             return { error: `Tool unavailable: ${toolName} (server not reachable)` };
