@@ -198,6 +198,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         copy: "링크 복사",
         tooBig: "{fileName} 파일이 너무 큽니다. 최대 크기: {maxFileSize}.",
         notLogged: "파일을 업로드하려면 로그인해야 합니다.",
+        clickToOpen: "클릭하여 열기",
     },
     needRefresh: "연결이 만료되었습니다. 채팅에 다시 연결하려면 페이지를 새로고침해야 합니다.",
     refresh: "새로고침",

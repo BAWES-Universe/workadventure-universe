@@ -178,6 +178,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     copied: "تم النسخ!",
     file: {
         fileContentNoEmbed: "المحتوى غير متاح للعرض. يرجى تنزيله",
+        clickToOpen: "انقر للفتح",
         download: "تنزيل",
         openCoWebsite: "فتح في الموقع المشترك",
         copy: "نسخ الرابط",

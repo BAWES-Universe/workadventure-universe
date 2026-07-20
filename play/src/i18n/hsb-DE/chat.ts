@@ -154,6 +154,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         copy: "link kopěrować",
         tooBig: "{fileName} je pře wulki {maxFileSize}.",
         notLogged: "Dyrbiće přizjewjeni być, zo byšće dataju nakładowali.",
+        clickToOpen: "Kliknyć, wočinić",
     },
     needRefresh: "Waš zwisk je wotběžał. Prošu aktualizujće stronu, zo byšće zwisk k chatej zaso nawjazał.",
     refresh: "aktualizować",
