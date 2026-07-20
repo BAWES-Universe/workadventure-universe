@@ -1242,6 +1242,7 @@ export class BotClient {
                                 characterTextures: [],
                                 name: this.config.name,
                                 galleryUrls: [],
+                                fileNames: [],
                             },
                         },
                     },
@@ -1541,7 +1542,7 @@ export class BotClient {
         const mimeHint = this.inferMimeFromExt(url);
         try {
             const { location, mediaType, mimeType } = await this.uploadMedia(url, mimeHint);
-            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, filename || '')) {
+            if (!this.sendMediaMessage(spaceName, location, mediaType, mimeType, '', filename)) {
                 const err = new Error(`Bot is not in space ${spaceName} — cannot send file`);
                 (err as any)._cdnUrl = location;
                 (err as any)._mediaType = mediaType;
@@ -1681,7 +1682,7 @@ export class BotClient {
     /**
      * Send a media message to a space via publicEvent spaceMessage.
      */
-    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string): boolean {
+    public sendMediaMessage(spaceName: string, url: string, mediaType: string, mimeType: string, caption?: string, fileName?: string): boolean {
         const spaceUserId = this.spaces.get(spaceName);
         if (!spaceUserId) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1706,6 +1707,8 @@ export class BotClient {
                                 mediaType,
                                 mimeType,
                                 galleryUrls: [],
+                                fileNames: [],
+                                fileName,
                             },
                         },
                     },
@@ -1720,7 +1723,7 @@ export class BotClient {
      * The first image goes in the `url` field (backwards compatible), and
      * additional images go in `galleryUrls`. The caption appears below the grid.
      */
-    public sendMediaGallery(spaceName: string, urls: string[], caption?: string): boolean {
+    public sendMediaGallery(spaceName: string, urls: string[], caption?: string, fileNames?: string[]): boolean {
         if (urls.length === 0) return false;
 
         const spaceUserId = this.spaces.get(spaceName);
@@ -1751,6 +1754,7 @@ export class BotClient {
                                 mediaType: 'gallery',
                                 mimeType,
                                 galleryUrls: extraUrls,
+                                fileNames: fileNames ?? [],
                             },
                         },
                     },
