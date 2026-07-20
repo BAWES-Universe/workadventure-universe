@@ -41,7 +41,10 @@ COPY --from=proto-builder /usr/libs/messages/src/JsonMessages/ApiVersion.ts ./li
 # Install all workspace dependencies (this resolves workspace:* protocol)
 # We install with dev dependencies to get ts-node for running TypeScript
 # Also install @sentry/node at root level since bots is NOT in root workspace
-RUN npm ci && npm install @sentry/node@^10.56.0 posthog-node@^4.0.0
+# linkedom's CJS build requires('css-select'), but npm nests ESM-only
+# css-select@7 under its node_modules. Remove it so resolution falls back
+# to the root-hoisted CJS build (css-select@5 via cheerio's dep tree).
+RUN npm ci && npm install @sentry/node@^10.56.0 posthog-node@^4.0.0 && rm -rf node_modules/linkedom/node_modules/css-select
 
 # Copy bots source
 COPY bots ./bots
