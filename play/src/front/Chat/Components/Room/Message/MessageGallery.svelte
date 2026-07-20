@@ -114,10 +114,13 @@
     $: {
         const next: GalleryItem[] = [];
         const seen = new Set<string>();
+        const names = $content.fileNames ?? [];
+        let nameIdx = 0;
         const add = (u: string) => {
             if (u && !seen.has(u)) {
                 seen.add(u);
-                next.push({ url: u, type: inferMediaType(u), filename: getFilename(u) });
+                next.push({ url: u, type: inferMediaType(u), filename: names[nameIdx] ?? getFilename(u) });
+                nameIdx++;
             }
         };
         if ($content.url) add($content.url);
