@@ -9,7 +9,7 @@
  * All extraction is in-process — no external APIs, no network calls
  * beyond the initial HTML fetch (which FileParser already handles).
  */
-import { JSDOM } from 'jsdom';
+import { parseHTML } from 'linkedom';
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 
@@ -65,8 +65,37 @@ export interface ExtractedWebPage {
  * @returns Extracted content or fallback
  */
 export function extractWebContent(html: string, sourceUrl: string): ExtractedWebPage {
-    const dom = new JSDOM(html, { url: sourceUrl });
-    const document = dom.window.document;
+    // Inject <base> tag so Readability and Turndown can resolve relative URLs
+    // (e.g. /images/photo.jpg → https://example.com/images/photo.jpg).
+    // linkedom's parseHTML doesn't accept a url option like JSDOM did,
+    // but a <base> element in <head> achieves the same result.
+    // Use DOM manipulation (not string replacement) to handle variations
+    // in <head> casing/attributes, and remove any existing <base> first
+    // since the first <base> in document order is authoritative.
+    const { document } = parseHTML(html);
+    const head = document.head;
+    if (head) {
+        const existingBase = head.querySelector('base');
+        if (existingBase) {
+            // Resolve the page's <base href> against our source URL so relative
+            // bases (e.g. <base href="/app/">) stay correct.
+            // Use sourceUrl directly (not a trailing-slash variant) because
+            // new URL() correctly strips the filename when resolving relative
+            // paths (image.jpg → /to/image.jpg), while appending '/' would
+            // incorrectly turn file paths into directories.
+            try {
+                const resolved = new URL(existingBase.getAttribute('href') || '', sourceUrl).href;
+                existingBase.setAttribute('href', resolved);
+            } catch {
+                // Malformed <base href> — fall back to sourceUrl
+                existingBase.setAttribute('href', sourceUrl);
+            }
+        } else {
+            const base = document.createElement('base');
+            base.setAttribute('href', sourceUrl);
+            head.insertBefore(base, head.firstChild);
+        }
+    }
 
     // Try Readability first
     const reader = new Readability(document);

@@ -18,6 +18,7 @@ import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
+import { jsonrepair } from 'jsonrepair';
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -2023,49 +2024,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         try {
             return JSON.parse(raw);
         } catch {
-            // Repair: escape unescaped quotes inside string values
-            let result = '';
-            let inStr = false;
-
-            for (let i = 0; i < raw.length; i++) {
-                const ch = raw[i];
-
-                // Handle escape sequences
-                if (ch === '\\' && inStr) {
-                    result += ch + (raw[i + 1] || '');
-                    i++;
-                    continue;
-                }
-
-                if (ch === '"') {
-                    if (inStr) {
-                        // Look ahead: if next non-space is a JSON delimiter, this is structural
-                        let j = i + 1;
-                        while (j < raw.length && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\n' || raw[j] === '\r')) j++;
-                        if (j >= raw.length || raw[j] === ',' || raw[j] === '}' || raw[j] === ']' || raw[j] === ':') {
-                            result += ch;
-                            inStr = false;
-                        } else {
-                            // Unescaped internal quote — escape it
-                            result += '\\"';
-                        }
-                    } else {
-                        result += ch;
-                        inStr = true;
-                    }
-                    continue;
-                }
-
-                // Replace literal newlines inside strings with \n
-                if ((ch === '\n' || ch === '\r') && inStr) {
-                    result += '\\n';
-                    continue;
-                }
-
-                result += ch;
-            }
-
-            return JSON.parse(result);
+            // jsonrepair handles: missing quotes, single quotes, trailing commas,
+            // truncated JSON, unescaped strings, comments, Python constants, etc.
+            return JSON.parse(jsonrepair(raw));
         }
     }
 

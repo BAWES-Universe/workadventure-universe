@@ -30,6 +30,7 @@ import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { resolve4, resolve6 } from 'dns/promises';
+import * as Sentry from '@sentry/node';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -2526,6 +2527,7 @@ export class BotClient {
                             detectedMime
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
+                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });
                     }
                 }
@@ -2624,6 +2626,7 @@ export class BotClient {
                             spaceMessage.galleryUrls
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
+                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });
                     } else {
                         if (senderId === 0) {
