@@ -296,8 +296,18 @@ async function jsonRpcRequest(
                     clearTimeout(initTimeoutId);
                 }
             } catch {
-                // Some servers don't require initialize — continue without session.
-                // The actual method request will fail naturally if init is required.
+                // Init timed out or failed. Set a cache marker so executeToolCall
+                // can distinguish this from a transport error — without it, the
+                // retry logic would see no cache entry and incorrectly retry on
+                // timeout, risking double-execution of non-idempotent tools.
+                // The cached entry has no sessionId, so subsequent method calls
+                // proceed without a session (same as before).
+                if (!skipSessionCache) {
+                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
+                        sessionId: undefined,
+                        initializedAt: Date.now(),
+                    });
+                }
             }
         }
     }
