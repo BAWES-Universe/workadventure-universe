@@ -602,16 +602,22 @@ export class MCPConnector {
             // on HTTP/network errors inside jsonRpcRequest, but the tool call
             // itself already failed). Clear the stale session and retry once
             // with a fresh initialize handshake.
-            mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
-            response = await jsonRpcRequest(
-                serverUrl,
-                'tools/call',
-                { name: toolName, arguments: args },
-                authType,
-                authConfig,
-                extraHeaders,
-                playerUuid
-            );
+            // Only retry if there was a cached session — otherwise the failure
+            // is non-transient (invalid URL, misconfigured server) and retrying
+            // would just waste time.
+            const cacheKey = sessionCacheKey(serverUrl, authType, authConfig, playerUuid);
+            if (mcpSessionInitCache.has(cacheKey)) {
+                mcpSessionInitCache.delete(cacheKey);
+                response = await jsonRpcRequest(
+                    serverUrl,
+                    'tools/call',
+                    { name: toolName, arguments: args },
+                    authType,
+                    authConfig,
+                    extraHeaders,
+                    playerUuid
+                );
+            }
         }
 
         if (!response) {
