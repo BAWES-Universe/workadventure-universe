@@ -231,10 +231,10 @@
                         messageInput.innerText = "";
                         message = "";
                     } else if (succeeded.length === 1) {
-                        // 1 file, no text: send file with filename
+                        // 1 file, no text: send file with filename only (no duplicate caption)
                         const first = succeeded[0];
                         proximityRoom.sendMessage(
-                            first.name || "",
+                            "",
                             "proximity",
                             true,
                             first.location,
