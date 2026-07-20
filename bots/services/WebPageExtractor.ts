@@ -77,10 +77,16 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
     const head = document.head;
     if (head) {
         const existingBase = head.querySelector('base');
-        if (existingBase) existingBase.remove();
-        const base = document.createElement('base');
-        base.setAttribute('href', baseUrl);
-        head.insertBefore(base, head.firstChild);
+        if (existingBase) {
+            // Resolve the page's <base href> against our source URL so relative
+            // bases (e.g. <base href="/app/">) stay correct.
+            const resolved = new URL(existingBase.getAttribute('href') || '', baseUrl).href;
+            existingBase.setAttribute('href', resolved);
+        } else {
+            const base = document.createElement('base');
+            base.setAttribute('href', baseUrl);
+            head.insertBefore(base, head.firstChild);
+        }
     }
 
     // Try Readability first
