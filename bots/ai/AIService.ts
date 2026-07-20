@@ -2076,6 +2076,26 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 result += '"';
             }
 
+            // Balance unclosed JSON structures (truncated objects/arrays)
+            // Count structural braces/brackets only — skip ones inside string values
+            let structBraces = 0;
+            let structBrackets = 0;
+            let inStr2 = false;
+            for (let i = 0; i < result.length; i++) {
+                const ch = result[i];
+                if (ch === '"' && (i === 0 || result[i - 1] !== '\\')) {
+                    inStr2 = !inStr2;
+                    continue;
+                }
+                if (inStr2) continue;
+                if (ch === '{') structBraces++;
+                else if (ch === '}') structBraces = Math.max(0, structBraces - 1);
+                else if (ch === '[') structBrackets++;
+                else if (ch === ']') structBrackets = Math.max(0, structBrackets - 1);
+            }
+            result += '}'.repeat(structBraces);
+            result += ']'.repeat(structBrackets);
+
             return JSON.parse(result);
         }
     }
