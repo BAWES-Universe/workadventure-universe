@@ -295,6 +295,7 @@ export class ProximityChatRoom implements ChatRoom {
                     mediaType: mediaType,
                     mimeType: mimeType,
                     galleryUrls: galleryUrls ?? [],
+                    fileName: fileName,
                 },
             });
         }
@@ -355,7 +356,8 @@ export class ProximityChatRoom implements ChatRoom {
         url?: string | null,
         mediaType?: string | null,
         mimeType?: string | null,
-        galleryUrls?: string[] | null
+        galleryUrls?: string[] | null,
+        fileName?: string | null
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
@@ -390,7 +392,7 @@ export class ProximityChatRoom implements ChatRoom {
             body: message,
             url: url ?? undefined,
             urls: galleryUrls ?? undefined,
-            filename: undefined,
+            filename: fileName ?? undefined,
         };
 
         const spaceUser = this.users?.get(senderUserId);
@@ -659,7 +661,8 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.url,
                 event.spaceMessage.mediaType,
                 event.spaceMessage.mimeType,
-                event.spaceMessage.galleryUrls
+                event.spaceMessage.galleryUrls,
+                event.spaceMessage.fileName
             );
             // if the proximity chat is not open, open it to see the message
             chatVisibilityStore.set(true);
