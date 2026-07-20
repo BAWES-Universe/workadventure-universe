@@ -597,17 +597,17 @@ export class MCPConnector {
         );
 
         if (!response) {
-            // Transport failure — the session cache may hold a stale session
-            // from a server restart or network blip (the cache is invalidated
-            // on HTTP/network errors inside jsonRpcRequest, but the tool call
-            // itself already failed). Clear the stale session and retry once
-            // with a fresh initialize handshake.
-            // We retry unconditionally: jsonRpcRequest already cleared the cache
-            // for HTTP/network errors, but timeouts don't. The retry cost is
-            // trivial for invalid URLs (sync parse) and the risk of missing a
-            // recoverable blip is worse than a wasted retry.
-            mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
-            response = await jsonRpcRequest(
+            // jsonRpcRequest deletes the session cache on HTTP/network errors
+            // (server unreachable, ECONNREFUSED, DNS failure, 4xx/5xx) but NOT
+            // on timeouts (axios.isCancel branch — just a warning, no cache
+            // mutation). We use this to distinguish:
+            //   - Cache MISSING → request was NOT delivered → safe to retry
+            //     (transport error, server restart, stale session)
+            //   - Cache PRESENT → timeout → request MAY have been delivered
+            //     → DON'T retry (avoids double-executing non-idempotent tools)
+            const cacheKey = sessionCacheKey(serverUrl, authType, authConfig, playerUuid);
+            if (!mcpSessionInitCache.has(cacheKey)) {
+                response = await jsonRpcRequest(
                 serverUrl,
                 'tools/call',
                 { name: toolName, arguments: args },
@@ -615,7 +615,8 @@ export class MCPConnector {
                 authConfig,
                 extraHeaders,
                 playerUuid
-            );
+                );
+            }
         }
 
         if (!response) {
