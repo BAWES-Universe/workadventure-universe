@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
+    import LL from "../../../../../i18n/i18n-svelte";
 
     export let content: Readable<ChatMessageContent>;
 
@@ -71,7 +72,7 @@
     <!-- Filename + open link -->
     <div class="flex-1 min-w-0">
         <div class="text-sm text-white/90 truncate">{displayName}</div>
-        <div class="text-[10px] text-white/40">Click to open</div>
+        <div class="text-[10px] text-white/40">{$LL.chat.file.clickToOpen()}</div>
     </div>
     <!-- Download/open icon -->
     <div class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">

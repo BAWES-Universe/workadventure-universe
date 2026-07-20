@@ -185,6 +185,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         copy: "copiar o link",
         tooBig: "{fileName} é muito grande {maxFileSize}.",
         notLogged: "Você precisa estar logado para enviar um arquivo.",
+        clickToOpen: "Clique para abrir",
     },
     needRefresh: "Sua conexão expirou, você precisa atualizar a página para reconectar ao chat.",
     refresh: "Atualizar",
