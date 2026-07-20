@@ -586,7 +586,7 @@ export class MCPConnector {
         extraHeaders?: Record<string, string>,
         playerUuid?: string
     ): Promise<any> {
-        const response = await jsonRpcRequest(
+        let response = await jsonRpcRequest(
             serverUrl,
             'tools/call',
             { name: toolName, arguments: args },
@@ -595,6 +595,28 @@ export class MCPConnector {
             extraHeaders,
             playerUuid
         );
+
+        if (!response) {
+            // Transport failure — the session cache may hold a stale session
+            // from a server restart or network blip (the cache is invalidated
+            // on HTTP/network errors inside jsonRpcRequest, but the tool call
+            // itself already failed). Clear the stale session and retry once
+            // with a fresh initialize handshake.
+            // We retry unconditionally: jsonRpcRequest already cleared the cache
+            // for HTTP/network errors, but timeouts don't. The retry cost is
+            // trivial for invalid URLs (sync parse) and the risk of missing a
+            // recoverable blip is worse than a wasted retry.
+            mcpSessionInitCache.delete(sessionCacheKey(serverUrl, authType, authConfig, playerUuid));
+            response = await jsonRpcRequest(
+                serverUrl,
+                'tools/call',
+                { name: toolName, arguments: args },
+                authType,
+                authConfig,
+                extraHeaders,
+                playerUuid
+            );
+        }
 
         if (!response) {
             return { error: `Tool unavailable: ${toolName} (server not reachable)` };
