@@ -12,7 +12,7 @@
     }
 
     function getFileTypeInfo(url: string | undefined): FileTypeInfo {
-        const ext = url?.split("?")[0].split(".").pop()?.toLowerCase();
+        const ext = url?.split("?")[0]?.split(".").pop()?.toLowerCase();
         switch (ext) {
             case "pdf":
                 return { color: "#E53935", label: "PDF" };
