@@ -228,7 +228,8 @@ export class ProximityChatRoom implements ChatRoom {
         url?: string,
         mediaType?: string,
         mimeType?: string,
-        galleryUrls?: string[]
+        galleryUrls?: string[],
+        fileName?: string
     ): void {
         // Determine message type from media
         let messageType = action;
@@ -258,6 +259,7 @@ export class ProximityChatRoom implements ChatRoom {
             body: message,
             url: url,
             urls: galleryUrls,
+            filename: fileName,
         };
 
         const spaceUser = this.users?.get(this._spaceUserId);
@@ -388,6 +390,7 @@ export class ProximityChatRoom implements ChatRoom {
             body: message,
             url: url ?? undefined,
             urls: galleryUrls ?? undefined,
+            filename: undefined,
         };
 
         const spaceUser = this.users?.get(senderUserId);
@@ -461,6 +464,7 @@ export class ProximityChatRoom implements ChatRoom {
             body: message,
             url: undefined,
             urls: undefined,
+            filename: undefined,
         };
 
         // Create message
@@ -691,6 +695,7 @@ export class ProximityChatRoom implements ChatRoom {
                         body: "",
                         url: undefined,
                         urls: undefined,
+                        filename: undefined,
                     });
                     return;
                 }
@@ -704,6 +709,7 @@ export class ProximityChatRoom implements ChatRoom {
                             body: stream.errorMessage || get(LL).chat.timeLine.streamError(),
                             url: undefined,
                             urls: undefined,
+                            filename: undefined,
                         });
                         this.streamMessages.delete(stream.responseId);
                         return;
@@ -717,6 +723,7 @@ export class ProximityChatRoom implements ChatRoom {
                             body: stream.finalContent ?? currentBody ?? "",
                             url: undefined,
                             urls: undefined,
+                            filename: undefined,
                         });
                         // Remove from active streams
                         this.streamMessages.delete(stream.responseId);
@@ -726,6 +733,7 @@ export class ProximityChatRoom implements ChatRoom {
                             body: currentBody + stream.token,
                             url: undefined,
                             urls: undefined,
+                            filename: undefined,
                         });
                     }
                     return;
@@ -750,6 +758,7 @@ export class ProximityChatRoom implements ChatRoom {
                             body: stream.errorMessage || get(LL).chat.timeLine.streamError(),
                             url: undefined,
                             urls: undefined,
+                            filename: undefined,
                         }),
                         new Date(),
                         false,
@@ -776,7 +785,7 @@ export class ProximityChatRoom implements ChatRoom {
                 const newMessage = new ProximityChatMessage(
                     uuidv4(),
                     chatUser,
-                    writable({ body: initialBody, url: undefined, urls: undefined }),
+                    writable({ body: initialBody, url: undefined, urls: undefined, filename: undefined }),
                     new Date(),
                     false,
                     "proximity"
