@@ -72,7 +72,6 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
     // Use DOM manipulation (not string replacement) to handle variations
     // in <head> casing/attributes, and remove any existing <base> first
     // since the first <base> in document order is authoritative.
-    const baseUrl = sourceUrl.replace(/\/?$/, '/');
     const { document } = parseHTML(html);
     const head = document.head;
     if (head) {
@@ -80,11 +79,20 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
         if (existingBase) {
             // Resolve the page's <base href> against our source URL so relative
             // bases (e.g. <base href="/app/">) stay correct.
-            const resolved = new URL(existingBase.getAttribute('href') || '', baseUrl).href;
-            existingBase.setAttribute('href', resolved);
+            // Use sourceUrl directly (not a trailing-slash variant) because
+            // new URL() correctly strips the filename when resolving relative
+            // paths (image.jpg → /to/image.jpg), while appending '/' would
+            // incorrectly turn file paths into directories.
+            try {
+                const resolved = new URL(existingBase.getAttribute('href') || '', sourceUrl).href;
+                existingBase.setAttribute('href', resolved);
+            } catch {
+                // Malformed <base href> — fall back to sourceUrl
+                existingBase.setAttribute('href', sourceUrl);
+            }
         } else {
             const base = document.createElement('base');
-            base.setAttribute('href', baseUrl);
+            base.setAttribute('href', sourceUrl);
             head.insertBefore(base, head.firstChild);
         }
     }
