@@ -414,7 +414,7 @@ export class BotManager {
                 } catch (error) {
                     console.warn(`[BotManager] Failed to load memories for bot ${botId} (attempt ${attempt}/${MAX_LOAD_RETRIES}):`, error);
                     if (attempt === MAX_LOAD_RETRIES) {
-                        Sentry.captureException(error);
+                        Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                     } else {
                         await new Promise(r => setTimeout(r, 2000));
                     }

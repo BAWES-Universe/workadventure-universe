@@ -2527,9 +2527,7 @@ export class BotClient {
                             detectedMime
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error
-                                : typeof error === 'object' && error !== null ? error
-                                : new Error(String(error)));
+                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });
                     }
                 }
@@ -2628,9 +2626,7 @@ export class BotClient {
                             spaceMessage.galleryUrls
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
-                            Sentry.captureException(error instanceof Error ? error
-                                : typeof error === 'object' && error !== null ? error
-                                : new Error(String(error)));
+                            Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
                         });
                     } else {
                         if (senderId === 0) {
