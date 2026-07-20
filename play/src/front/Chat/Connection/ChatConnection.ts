@@ -158,6 +158,7 @@ export type ChatMessageContent = {
     url: string | undefined;
     urls: string[] | undefined;
     filename: string | undefined;
+    fileNames: string[] | undefined;
 };
 export const historyVisibilityOptions = ["joined", "invited", "world_readable"] as const;
 export type historyVisibility = (typeof historyVisibilityOptions)[number];

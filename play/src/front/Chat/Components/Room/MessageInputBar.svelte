@@ -247,6 +247,7 @@
                         // Multiple files + text: first file in url, rest in galleryUrls
                         const first = succeeded[0];
                         const extraUrls = succeeded.slice(1).map((f) => f.location);
+                        const allNames = succeeded.map((f) => f.name);
                         proximityRoom.sendMessage(
                             messageText,
                             "proximity",
@@ -255,7 +256,8 @@
                             first.type.startsWith("image/") ? "image" : "file",
                             first.type,
                             extraUrls,
-                            first.name
+                            first.name,
+                            allNames
                         );
                         messageToSend = "";
                         messageInput.innerText = "";
@@ -264,6 +266,7 @@
                         // Multiple files, no text: gallery message with empty body
                         const first = succeeded[0];
                         const extraUrls = succeeded.slice(1).map((f) => f.location);
+                        const allNames = succeeded.map((f) => f.name);
                         proximityRoom.sendMessage(
                             "",
                             "proximity",
@@ -272,7 +275,8 @@
                             first.type.startsWith("image/") ? "image" : "file",
                             first.type,
                             extraUrls,
-                            first.name
+                            first.name,
+                            allNames
                         );
                     }
                 } catch (error: unknown) {

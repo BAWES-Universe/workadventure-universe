@@ -87,7 +87,13 @@ export class MatrixChatMessage implements ChatMessage {
         const unsigned = this.event.getUnsigned();
         const relation = unsigned["m.relations"];
         if (this.event.isDecryptionFailure()) {
-            return { body: "🔐 Failed to decrypt", url: undefined, urls: undefined, filename: undefined };
+            return {
+                body: "🔐 Failed to decrypt",
+                url: undefined,
+                urls: undefined,
+                filename: undefined,
+                fileNames: undefined,
+            };
         }
         if (relation) {
             if (relation["m.replace"]) {
@@ -96,6 +102,7 @@ export class MatrixChatMessage implements ChatMessage {
                     url: undefined,
                     urls: undefined,
                     filename: undefined,
+                    fileNames: undefined,
                 };
             }
         }
@@ -110,6 +117,7 @@ export class MatrixChatMessage implements ChatMessage {
                 url: undefined,
                 urls: undefined,
                 filename: undefined,
+                fileNames: undefined,
             };
         }
 
@@ -119,10 +127,11 @@ export class MatrixChatMessage implements ChatMessage {
                 url: this.room.client.mxcUrlToHttp(this.event.getOriginalContent().url) ?? undefined,
                 urls: undefined,
                 filename: undefined,
+                fileNames: undefined,
             };
         }
 
-        return { body: content.body, url: undefined, urls: undefined, filename: undefined };
+        return { body: content.body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined };
     }
 
     public initReactions() {
@@ -205,7 +214,13 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     public modifyContent(newContent: string) {
-        this.content.set({ body: newContent, url: undefined, urls: undefined, filename: undefined });
+        this.content.set({
+            body: newContent,
+            url: undefined,
+            urls: undefined,
+            filename: undefined,
+            fileNames: undefined,
+        });
         this.isModified.set(true);
     }
 
