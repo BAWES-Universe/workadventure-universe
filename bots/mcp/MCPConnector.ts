@@ -296,16 +296,18 @@ async function jsonRpcRequest(
                     clearTimeout(initTimeoutId);
                 }
             } catch {
-                // Init timed out or failed. Set a cache marker so executeToolCall
-                // can distinguish this from a transport error — without it, the
-                // retry logic would see no cache entry and incorrectly retry on
-                // timeout, risking double-execution of non-idempotent tools.
-                // The cached entry has no sessionId, so subsequent method calls
-                // proceed without a session (same as before).
+                // Init timed out. Set a cache marker that EXISTS (so executeToolCall
+                // sees it and skips the retry) but is INSTANTLY EXPIRED (so on the
+                // next call, jsonRpcRequest's TTL check falls through and retries
+                // init). Without this marker, executeToolCall would see an empty
+                // cache and retry — re-exposing the double-execution risk.
+                // initializedAt is set to Date.now() - SESSION_INIT_TTL so the
+                // check `Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL`
+                // evaluates to false on the very next call.
                 if (!skipSessionCache) {
                     mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
                         sessionId: undefined,
-                        initializedAt: Date.now(),
+                        initializedAt: Date.now() - SESSION_INIT_TTL,
                     });
                 }
             }
