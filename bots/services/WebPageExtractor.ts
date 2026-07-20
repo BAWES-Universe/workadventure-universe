@@ -80,7 +80,7 @@ export function extractWebContent(html: string, sourceUrl: string): ExtractedWeb
         if (existingBase) {
             // Resolve the page's <base href> against our source URL so relative
             // bases (e.g. <base href="/app/">) stay correct.
-            const resolved = new URL(existingBase.getAttribute('href') || '', sourceUrl).href;
+            const resolved = new URL(existingBase.getAttribute('href') || '', baseUrl).href;
             existingBase.setAttribute('href', resolved);
         } else {
             const base = document.createElement('base');
