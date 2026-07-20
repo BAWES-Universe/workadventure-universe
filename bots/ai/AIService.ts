@@ -2067,6 +2067,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
             // Close unterminated string if the input was truncated
             if (inStr) {
+                // If the string ends with an odd number of backslashes, a bare closing
+                // quote would be escaped (\") and the string stays open. Add a second
+                // backslash so the quote is structural (\\").
+                let bs = 0;
+                for (let k = result.length - 1; k >= 0 && result[k] === '\\'; k--) bs++;
+                if (bs % 2 === 1) result += '\\';
                 result += '"';
             }
 
