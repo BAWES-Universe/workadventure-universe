@@ -1006,6 +1006,8 @@ message SpaceMessage {
   optional string mediaType = 5;
   optional string mimeType = 6;
   repeated string galleryUrls = 7;  // Additional file/image URLs for gallery messages
+  optional string fileName = 8;     // Original uploaded filename (not URL-derived)
+  repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
 }
 
 message SpaceIsTyping {

@@ -223,26 +223,31 @@
                             true,
                             first.location,
                             first.type.startsWith("image/") ? "image" : "file",
-                            first.type
+                            first.type,
+                            undefined,
+                            first.name
                         );
                         messageToSend = "";
                         messageInput.innerText = "";
                         message = "";
                     } else if (succeeded.length === 1) {
-                        // 1 file, no text: send file with filename as body
+                        // 1 file, no text: send file with filename only (no duplicate caption)
                         const first = succeeded[0];
                         proximityRoom.sendMessage(
-                            first.name || "",
+                            "",
                             "proximity",
                             true,
                             first.location,
                             first.type.startsWith("image/") ? "image" : "file",
-                            first.type
+                            first.type,
+                            undefined,
+                            first.name
                         );
                     } else if (succeeded.length > 1 && messageText) {
                         // Multiple files + text: first file in url, rest in galleryUrls
                         const first = succeeded[0];
                         const extraUrls = succeeded.slice(1).map((f) => f.location);
+                        const allNames = succeeded.map((f) => f.name);
                         proximityRoom.sendMessage(
                             messageText,
                             "proximity",
@@ -250,23 +255,28 @@
                             first.location,
                             first.type.startsWith("image/") ? "image" : "file",
                             first.type,
-                            extraUrls
+                            extraUrls,
+                            first.name,
+                            allNames
                         );
                         messageToSend = "";
                         messageInput.innerText = "";
                         message = "";
                     } else if (succeeded.length > 1) {
-                        // Multiple files, no text: gallery message with filenames
+                        // Multiple files, no text: gallery message with empty body
                         const first = succeeded[0];
                         const extraUrls = succeeded.slice(1).map((f) => f.location);
+                        const allNames = succeeded.map((f) => f.name);
                         proximityRoom.sendMessage(
-                            first.name || "",
+                            "",
                             "proximity",
                             true,
                             first.location,
                             first.type.startsWith("image/") ? "image" : "file",
                             first.type,
-                            extraUrls
+                            extraUrls,
+                            first.name,
+                            allNames
                         );
                     }
                 } catch (error: unknown) {

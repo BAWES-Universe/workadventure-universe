@@ -24,6 +24,8 @@ eventProcessor.registerPublicEventProcessor("spaceMessage", (event, senderId, us
             mediaType: event.spaceMessage.mediaType,
             mimeType: event.spaceMessage.mimeType,
             galleryUrls: event.spaceMessage.galleryUrls,
+            fileName: event.spaceMessage.fileName,
+            fileNames: event.spaceMessage.fileNames,
         },
     };
 });
