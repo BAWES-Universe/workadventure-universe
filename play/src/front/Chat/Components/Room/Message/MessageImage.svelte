@@ -11,6 +11,8 @@
         e.preventDefault();
         showLightbox = true;
     }
+
+    $: hasCaption = $content.body && $content.body.trim();
 </script>
 
 <a href={$content.url} target="_blank" class="cursor-pointer relative group block p-1 pb-0" on:click={openLightbox}>
@@ -39,6 +41,10 @@
     </div>
     <img class="w-full object-cover max-h-52 rounded" src={$content.url} alt={$content.body} draggable="false" />
 </a>
+
+{#if hasCaption}
+    <div class="px-2 py-1 text-sm text-white/90">{$content.body}</div>
+{/if}
 
 <Lightbox
     src={$content.url}
