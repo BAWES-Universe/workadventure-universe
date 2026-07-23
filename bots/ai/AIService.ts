@@ -1959,7 +1959,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 const parsedArgs = typeof toolCall.arguments === 'string'
                                     ? this.safeParseToolArgs(toolCall.arguments)
                                     : toolCall.arguments || {};
-                                result = await MCPConnector.executeToolCall(
+                                const rawResult = await MCPConnector.executeToolCall(
                                     mcpServerConfig.serverId,
                                     mcpServerConfig.serverUrl,
                                     toolCall.name,
@@ -1969,6 +1969,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     mcpServerConfig.headers,
                                     playerUuid
                                 );
+                                // Process MCP resource blobs (base64 binary data) by uploading to CDN
+                                // and returning CDN URLs so the AI can use send_image/send_audio/etc.
+                                if (Array.isArray(rawResult)) {
+                                    const processed = await this.processMcpResourceContent(rawResult);
+                                    result = processed.content;
+                                } else {
+                                    result = rawResult;
+                                }
                             } catch (mcpError: any) {
                                 console.error(`[AIService] Error executing MCP tool ${toolCall.name}:`, mcpError);
                                 Sentry.captureException(mcpError instanceof Error ? mcpError : new Error(String(mcpError)));
@@ -2604,6 +2612,27 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (r.result === null || r.result === undefined) {
                 return `${r.name}: The tool returned no result.`;
             }
+            // MCP tool results: if the result is an array of content items, extract
+            // the meaningful text/URL data rather than dumping raw JSON with type wrappers.
+            if (Array.isArray(r.result)) {
+                const parts: string[] = [];
+                for (const item of r.result) {
+                    if (item?.type === 'text' && item.text) {
+                        // A processed MCP resource/blob — item.text is the CDN URL.
+                        // Include it directly so the AI can use it with send_* tools.
+                        parts.push(item.text);
+                    } else if (item?.type === 'resource' && item.resource?.uri) {
+                        // Raw resource item that couldn't be uploaded (e.g. no uploader).
+                        parts.push(item.resource.uri);
+                    } else if (item?.type === 'image' && item.mimeType) {
+                        // ImageContent that couldn't be uploaded (e.g. no uploader).
+                        parts.push(`[image: ${item.mimeType}]`);
+                    }
+                }
+                if (parts.length > 0) {
+                    return `${r.name}: ${parts.join('\n')}`;
+                }
+            }
             return `${r.name}: ${JSON.stringify(r.result)}`;
         }).join('\n');
     }
@@ -2661,6 +2690,185 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
             return { success: false, originalUrl: url, note: "uploaded but couldn't reach them right now — will be delivered automatically when they next visit" };
         }
+    }
+
+    /**
+     * Process MCP tool result content items that contain binary inline data.
+     *
+     * MCP servers can return binary data (images, audio, video, documents) in two
+     * standard formats:
+     *
+     *   1. {@code EmbeddedResource} — {@code { type: "resource", resource: { blob, mimeType, uri } }}
+     *   2. {@code ImageContent} — {@code { type: "image", data, mimeType }}
+     *
+     * This method uploads the decoded binary to the CDN/uploader service and
+     * replaces both shapes with {@code type: "text"} items containing the resulting
+     * CDN URLs, so the AI can use them with send_image / send_audio / send_file /
+     * send_video tools.
+     *
+     * Text items and items without binary data are passed through unchanged.
+     *
+     * @param content - The raw MCP tool result content array.
+     * @returns The processed content array with blobs replaced by CDN URLs,
+     *          and a list of uploaded media URLs for use by the auto-send
+     *          interceptor.
+     */
+    private async processMcpResourceContent(
+        content: any[]
+    ): Promise<{ content: any[]; mediaUrls: string[] }> {
+        const uploaderUrl = process.env.UPLOADER_URL;
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!uploaderUrl || !botServiceToken) {
+            // No uploader configured — keep original content as-is (the AI will
+            // see the raw resource structure, which is better than dropping data)
+            return { content, mediaUrls: [] };
+        }
+
+        const seenUrls = new Set<string>();
+        const processed: any[] = [];
+        const mediaUrls: string[] = [];
+
+        for (const item of content) {
+            // Determine if this is a binary blob that needs CDN upload.
+            // Two MCP content shapes:
+            //   1. EmbeddedResource: { type: "resource", resource: { blob, mimeType, uri } }
+            //   2. ImageContent:     { type: "image", data: "<base64>", mimeType: "<mime>" }
+            const isResourceBlob = item?.type === 'resource' && item.resource?.blob;
+            const isImageContent = item?.type === 'image' && item.data;
+
+            if (!isResourceBlob && !isImageContent) {
+                // Pass through text items and unrecognised shapes unchanged
+                processed.push(item);
+                continue;
+            }
+
+            const mimeType: string = (isResourceBlob ? item.resource.mimeType : item.mimeType) || 'application/octet-stream';
+            const uri: string = isResourceBlob ? (item.resource.uri || '') : '';
+            const rawB64: string = isResourceBlob ? item.resource.blob : item.data;
+
+            try {
+                // Derive filename and extension from MIME type or URI
+                const ext = this._mimeToExt(mimeType) || this._uriToExt(uri) || 'bin';
+                const filename = `mcp-resource-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+                // Decode base64 → binary buffer
+                const binary = Buffer.from(rawB64, 'base64');
+                const blob = new Blob([binary], { type: mimeType });
+
+                // Upload to uploader service
+                const formData = new FormData();
+                formData.append('file', blob, filename);
+
+                const uploadController = new AbortController();
+                const uploadTimeoutId = setTimeout(() => uploadController.abort(), 30_000);
+                let uploadResponse: Response;
+                try {
+                    uploadResponse = await fetch(`${uploaderUrl}/upload-file`, {
+                        method: 'POST',
+                        headers: { 'x-bot-service-token': botServiceToken },
+                        body: formData,
+                        signal: uploadController.signal,
+                    });
+                } finally {
+                    clearTimeout(uploadTimeoutId);
+                }
+
+                if (!uploadResponse.ok) {
+                    const errorText = await uploadResponse.text();
+                    console.warn(`[AIService] MCP resource blob upload failed (${uploadResponse.status}): ${errorText}`);
+                    // Keep the original item on failure — better than silently dropping
+                    processed.push(item);
+                    continue;
+                }
+
+                const result = await uploadResponse.json();
+                const uploadedFile = Array.isArray(result) ? result[0] : result;
+                const cdnUrl: string = uploadedFile?.location || uploadedFile?.url || '';
+
+                if (!cdnUrl) {
+                    console.warn('[AIService] MCP resource blob upload succeeded but returned no URL');
+                    processed.push(item);
+                    continue;
+                }
+
+                // Deduplicate: if multiple content items resolved to the same CDN
+                // URL, only emit one text reference so the AI isn't flooded with
+                // identical entries.
+                if (!seenUrls.has(cdnUrl)) {
+                    seenUrls.add(cdnUrl);
+                    mediaUrls.push(cdnUrl);
+
+                    // Provide the CDN URL as a text item the AI can use with
+                    // send_image / send_audio / send_file / send_video tools.
+                    // Include both the raw URL and a hint about the media type.
+                    processed.push({
+                        type: 'text',
+                        text: cdnUrl,
+                        mimeType,
+                    });
+                }
+                // If duplicate, skip silently — the first occurrence already
+                // emitted the URL to the AI.
+            } catch (err: any) {
+                console.warn(`[AIService] Error processing MCP resource blob: ${err.message || err}`);
+                processed.push(item);
+            }
+        }
+
+        return { content: processed, mediaUrls };
+    }
+
+    /** Map MIME type to a file extension. */
+    private _mimeToExt(mime: string): string | null {
+        const map: Record<string, string> = {
+            'image/png': 'png',
+            'image/jpeg': 'jpg',
+            'image/jpg': 'jpg',
+            'image/gif': 'gif',
+            'image/webp': 'webp',
+            'image/svg+xml': 'svg',
+            'image/bmp': 'bmp',
+            'audio/mpeg': 'mp3',
+            'audio/mp3': 'mp3',
+            'audio/wav': 'wav',
+            'audio/wave': 'wav',
+            'audio/x-wav': 'wav',
+            'audio/ogg': 'ogg',
+            'audio/flac': 'flac',
+            'audio/aac': 'aac',
+            'audio/mp4': 'm4a',
+            'audio/x-m4a': 'm4a',
+            'audio/webm': 'webm',
+            'video/mp4': 'mp4',
+            'video/webm': 'webm',
+            'video/ogg': 'ogv',
+            'video/quicktime': 'mov',
+            'application/pdf': 'pdf',
+            'text/plain': 'txt',
+            'text/html': 'html',
+            'application/json': 'json',
+        };
+        return map[mime.toLowerCase()] || null;
+    }
+
+    /** Infer file extension from a URI path or data-URI prefix. */
+    private _uriToExt(uri: string): string | null {
+        // data:image/png;base64,...  →  png
+        const dataUriMatch = uri.match(/^data:([^;]+);/);
+        if (dataUriMatch) {
+            return this._mimeToExt(dataUriMatch[1]);
+        }
+        // http://.../file.png  →  png
+        try {
+            const pathname = new URL(uri).pathname;
+            const dot = pathname.lastIndexOf('.');
+            if (dot >= 0) {
+                return pathname.slice(dot + 1).toLowerCase() || null;
+            }
+        } catch {
+            // not a valid URL
+        }
+        return null;
     }
 }
 
