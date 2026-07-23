@@ -2618,14 +2618,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 const parts: string[] = [];
                 for (const item of r.result) {
                     if (item?.type === 'text' && item.text) {
-                        // A processed MCP resource blob — item.text is the CDN URL.
+                        // A processed MCP resource/blob — item.text is the CDN URL.
                         // Include it directly so the AI can use it with send_* tools.
                         parts.push(item.text);
                     } else if (item?.type === 'resource' && item.resource?.uri) {
                         // Raw resource item that couldn't be uploaded (e.g. no uploader).
                         parts.push(item.resource.uri);
-                    } else if (item?.type === 'text' && item.text) {
-                        parts.push(item.text);
+                    } else if (item?.type === 'image' && item.mimeType) {
+                        // ImageContent that couldn't be uploaded (e.g. no uploader).
+                        parts.push(`[image: ${item.mimeType}]`);
                     }
                 }
                 if (parts.length > 0) {
@@ -2692,15 +2693,20 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
-     * Process MCP tool result content items that contain resource blobs (base64 binary data).
+     * Process MCP tool result content items that contain binary inline data.
      *
-     * MCP servers can return binary data (images, audio, video, documents) as
-     * {@code type: "resource"} content with a base64-encoded {@code blob}. This
-     * method uploads those blobs to the CDN/uploader service and replaces them
-     * with {@code type: "text"} items containing the resulting CDN URLs, so the
-     * AI can use them with send_image / send_audio / send_file / send_video tools.
+     * MCP servers can return binary data (images, audio, video, documents) in two
+     * standard formats:
      *
-     * Text items and items without a blob are passed through unchanged.
+     *   1. {@code EmbeddedResource} — {@code { type: "resource", resource: { blob, mimeType, uri } }}
+     *   2. {@code ImageContent} — {@code { type: "image", data, mimeType }}
+     *
+     * This method uploads the decoded binary to the CDN/uploader service and
+     * replaces both shapes with {@code type: "text"} items containing the resulting
+     * CDN URLs, so the AI can use them with send_image / send_audio / send_file /
+     * send_video tools.
+     *
+     * Text items and items without binary data are passed through unchanged.
      *
      * @param content - The raw MCP tool result content array.
      * @returns The processed content array with blobs replaced by CDN URLs,
@@ -2723,16 +2729,22 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const mediaUrls: string[] = [];
 
         for (const item of content) {
-            if (item?.type !== 'resource' || !item.resource?.blob) {
-                // Pass through non-resource items unchanged
+            // Determine if this is a binary blob that needs CDN upload.
+            // Two MCP content shapes:
+            //   1. EmbeddedResource: { type: "resource", resource: { blob, mimeType, uri } }
+            //   2. ImageContent:     { type: "image", data: "<base64>", mimeType: "<mime>" }
+            const isResourceBlob = item?.type === 'resource' && item.resource?.blob;
+            const isImageContent = item?.type === 'image' && item.data;
+
+            if (!isResourceBlob && !isImageContent) {
+                // Pass through text items and unrecognised shapes unchanged
                 processed.push(item);
                 continue;
             }
 
-            const resource = item.resource;
-            const mimeType: string = resource.mimeType || 'application/octet-stream';
-            const uri: string = resource.uri || '';
-            const rawB64: string = resource.blob;
+            const mimeType: string = (isResourceBlob ? item.resource.mimeType : item.mimeType) || 'application/octet-stream';
+            const uri: string = isResourceBlob ? (item.resource.uri || '') : '';
+            const rawB64: string = isResourceBlob ? item.resource.blob : item.data;
 
             try {
                 // Derive filename and extension from MIME type or URI
