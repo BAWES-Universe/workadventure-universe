@@ -2624,9 +2624,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     } else if (item?.type === 'resource' && item.resource?.uri) {
                         // Raw resource item that couldn't be uploaded (e.g. no uploader).
                         parts.push(item.resource.uri);
-                    } else if (item?.type === 'image' && item.mimeType) {
-                        // ImageContent that couldn't be uploaded (e.g. no uploader).
-                        parts.push(`[image: ${item.mimeType}]`);
+                    } else if ((item?.type === 'image' || item?.type === 'audio') && item.mimeType) {
+                        // Inline content that couldn't be uploaded (e.g. no uploader).
+                        parts.push(`[${item.type}: ${item.mimeType}]`);
                     }
                 }
                 if (parts.length > 0) {
@@ -2730,13 +2730,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
         for (const item of content) {
             // Determine if this is a binary blob that needs CDN upload.
-            // Two MCP content shapes:
+            // Three MCP content shapes:
             //   1. EmbeddedResource: { type: "resource", resource: { blob, mimeType, uri } }
             //   2. ImageContent:     { type: "image", data: "<base64>", mimeType: "<mime>" }
+            //   3. AudioContent:     { type: "audio", data: "<base64>", mimeType: "<mime>" }
             const isResourceBlob = item?.type === 'resource' && item.resource?.blob;
-            const isImageContent = item?.type === 'image' && item.data;
+            const isInlineData = (item?.type === 'image' || item?.type === 'audio') && item.data;
 
-            if (!isResourceBlob && !isImageContent) {
+            if (!isResourceBlob && !isInlineData) {
                 // Pass through text items and unrecognised shapes unchanged
                 processed.push(item);
                 continue;
