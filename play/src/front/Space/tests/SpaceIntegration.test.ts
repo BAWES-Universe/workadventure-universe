@@ -493,6 +493,7 @@ describe("", () => {
                 message: "Hello",
                 characterTextures: [],
                 galleryUrls: [],
+                fileNames: [],
             },
         });
 

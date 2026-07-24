@@ -1,8 +1,8 @@
 <script lang="ts">
     import type { Readable } from "svelte/store";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
-    import Lightbox from "./Lightbox.svelte";
     import LL from "../../../../../i18n/i18n-svelte";
+    import Lightbox from "./Lightbox.svelte";
 
     export let content: Readable<ChatMessageContent>;
 
