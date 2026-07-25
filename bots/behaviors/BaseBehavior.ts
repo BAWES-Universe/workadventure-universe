@@ -13,6 +13,37 @@ import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { ResponseProcessor } from '../ai/ResponseProcessor';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 
+/**
+ * Per-player conversation state for mid-stream interruption handling.
+ * Active while a player is chatting with the bot — tracks generation status
+ * and queued messages received while the bot was mid-response.
+ */
+export interface ConversationState {
+    playerId: number;
+    spaceName: string;
+    startTime: number;
+    lastMessageTime: number;
+    /** True while the bot is streaming an AI response for this player */
+    isGenerating: boolean;
+    /** The last user message that started the current generation */
+    currentTask: string;
+    /** Messages received while the bot was generating, processed in FIFO order */
+    messageQueue: QueuedMessage[];
+    /** AbortController to cancel the current stream on update/cancel */
+    abortController?: AbortController;
+}
+
+/**
+ * A message received while the bot was mid-response, queued for later processing.
+ */
+export interface QueuedMessage {
+    message: string;
+    url?: string;
+    mediaType?: string;
+    mimeType?: string;
+    timestamp: number;
+}
+
 export interface BehaviorConfig {
     type: string;
     assignedSpace?: {
@@ -74,6 +105,10 @@ export abstract class BaseBehavior {
     protected leadingGreetedPlayers = new Set<number>();
     protected preparedGoodbyeMessage: string | null = null; // Message prepared in advance while still leading
     protected isPreparingGoodbye = false; // Track if we're currently preparing the goodbye message
+
+    // Conversation interruption state — per-player tracking for mid-stream routing
+    protected activeConversations: Map<number, ConversationState> = new Map();
+    private readonly MAX_QUEUED_MESSAGES = 3;
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -1245,6 +1280,208 @@ export abstract class BaseBehavior {
      */
     updateConfig(config: Partial<BehaviorConfig>): void {
         this.config = { ...this.config, ...config };
+    }
+
+    /**
+     * Mark a player as currently having an active AI generation stream.
+     * Creates conversation state if none exists and sets up an AbortController.
+     * @param senderId The player who sent the message
+     * @param spaceName The space the player is in
+     * @param currentTask The user message that triggered this generation (used for interruption classification)
+     */
+    protected startGeneration(senderId: number, spaceName: string, currentTask?: string): void {
+        let state = this.activeConversations.get(senderId);
+        if (!state) {
+            state = {
+                playerId: senderId,
+                spaceName,
+                startTime: Date.now(),
+                lastMessageTime: Date.now(),
+                isGenerating: false,
+                currentTask: currentTask || '',
+                messageQueue: [],
+            };
+            this.activeConversations.set(senderId, state);
+        }
+        state.isGenerating = true;
+        state.lastMessageTime = Date.now();
+        state.currentTask = currentTask || state.currentTask;
+        state.abortController = new AbortController();
+    }
+
+    /**
+     * Mark a player's generation as finished. Flushes the message queue
+     * after normal completion so queued messages get processed in FIFO order.
+     * @param senderId The player whose generation just finished
+     * @param aborted If true, the stream was aborted (don't flush — caller handles next steps)
+     */
+    protected finishGeneration(senderId: number, aborted = false): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state) return;
+
+        state.isGenerating = false;
+        state.abortController = undefined;
+        state.lastMessageTime = Date.now();
+
+        if (!aborted && state.messageQueue.length > 0) {
+            // Flush asynchronously — don't await it here as the caller
+            // is in the finally block of the finished stream
+            this.flushMessageQueue(senderId);
+        }
+    }
+
+    /**
+     * Abort the current stream for a player. Sends a finalize signal
+     * to close the partial bubble on the frontend.
+     */
+    protected abortCurrentStream(senderId: number, finalContent?: string): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state) return;
+
+        if (state.abortController) {
+            state.abortController.abort();
+        }
+        // Finalize any partial bubble on the frontend
+        if (this.bot && state.spaceName) {
+            const botId = this.bot.getBotId();
+            const errId = `bot-${botId}-player-${senderId}-abort-${crypto.randomUUID()}`;
+            this.bot.sendStreamMessage(state.spaceName, errId, '', true, finalContent || '');
+        }
+    }
+
+    /**
+     * Process queued messages for a player in FIFO order.
+     * Each queued message triggers a new generateAIResponseStream call
+     * via onGenerateResponse, which behaviors override.
+     */
+    protected flushMessageQueue(senderId: number): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state || state.messageQueue.length === 0) return;
+
+        // Process one message at a time
+        const queued = state.messageQueue.shift();
+        if (!queued) return;
+
+        // Pass the queued message back through the behavior's normal
+        // chat handler (which will check isGenerating again)
+        if (state.isGenerating) return; // Safety: don't start if already streaming
+
+        this.onChatMessage(
+            state.spaceName,
+            queued.message,
+            senderId,
+            queued.url,
+            queued.mediaType,
+            queued.mimeType
+        );
+    }
+
+    /**
+     * Handle a new chat message when the bot is already mid-stream for this player.
+     * Uses a lightweight LLM classification to decide the action.
+     *
+     * @returns The routing action: 'queued' | 'cancelled' | 'proceed'
+     *   - 'queued': message was queued or queued with a status ack
+     *   - 'cancelled': message was a cancel command, stream aborted
+     *   - 'proceed': no existing generation, caller should start normally
+     */
+    protected async handleInterruption(
+        senderId: number,
+        originalMessage: string,
+        augmentedMessage: string
+    ): Promise<'queued' | 'cancelled' | 'proceed'> {
+        const state = this.activeConversations.get(senderId);
+        if (!state || !state.isGenerating) {
+            return 'proceed';
+        }
+
+        // Use the stored currentTask (the message that started this generation)
+        // for classification — NOT originalMessage (which is the new interruption)
+        const currentTask = state.currentTask || originalMessage;
+
+        // Classify the interruption
+        let classification: string;
+        try {
+            classification = await this.classifyInterruption(currentTask, originalMessage);
+        } catch {
+            // Default to queue on classification failure — message is not lost
+            this.enqueueMessage(senderId, augmentedMessage);
+            return 'queued';
+        }
+
+        switch (classification) {
+            case 'cancel': {
+                this.abortCurrentStream(senderId);
+                this.finishGeneration(senderId, true);
+                state.messageQueue = []; // Clear any queued messages
+                // Send acknowledgment
+                this.sendStatusAck(state.spaceName, 'Okay, stopped.');
+                return 'cancelled';
+            }
+            case 'update': {
+                // Abort current stream and mark it finished so the orphaned
+                // .finally() doesn't race with the new stream
+                this.abortCurrentStream(senderId);
+                this.finishGeneration(senderId, true);
+                state.messageQueue = [];
+                // The caller will start a new generation with this message
+                return 'proceed';
+            }
+            case 'answer':
+            case 'queue':
+            default: {
+                this.enqueueMessage(senderId, augmentedMessage);
+                return 'queued';
+            }
+        }
+    }
+
+    /**
+     * Classify a mid-stream message to determine the routing action.
+     * Uses DeepSeek V4 Flash for a single-token 4-way classification.
+     */
+    private async classifyInterruption(
+        currentTask: string,
+        newMessage: string
+    ): Promise<string> {
+        if (!this.aiService || !('quickClassify' in this.aiService)) {
+            return 'queue';
+        }
+        return (this.aiService as any).quickClassify(currentTask, newMessage);
+    }
+
+    /**
+     * Enqueue a message for later processing. If the queue exceeds MAX_QUEUED_MESSAGES,
+     * sends a status message letting the user know.
+     */
+    private enqueueMessage(senderId: number, message: string): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state) return;
+
+        if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
+            // Don't enqueue beyond the limit — just ack
+            this.sendStatusAck(state.spaceName, 'I have a few messages from you — let me catch up.');
+            return;
+        }
+
+        state.messageQueue.push({
+            message,
+            timestamp: Date.now(),
+        });
+
+        if (state.messageQueue.length === 1) {
+            this.sendStatusAck(state.spaceName, 'Got it — let me finish this first.');
+        }
+    }
+
+    /**
+     * Send a brief non-bot user-facing status message via the stream mechanism.
+     */
+    private sendStatusAck(spaceName: string, text: string): void {
+        if (!this.bot) return;
+        const botId = this.bot.getBotId();
+        const statusId = `bot-${botId}-status-${crypto.randomUUID()}`;
+        this.bot.sendStreamMessage(spaceName, statusId, '', true, text);
     }
 
     /**

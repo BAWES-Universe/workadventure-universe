@@ -27,16 +27,8 @@ export interface SocialBehaviorConfig extends BehaviorConfig {
     approachDistance: number; // How close to get before starting conversation
 }
 
-interface ConversationState {
-    playerId: number;
-    spaceName: string;
-    startTime: number;
-    lastMessageTime: number;
-}
-
 export class SocialBehavior extends BaseBehavior {
     private conversationHistory: Map<number, number> = new Map(); // playerId -> last conversation time
-    private activeConversations: Map<number, ConversationState> = new Map(); // playerId -> conversation state
     private targetPlayerId: number | null = null;
     private wanderTarget: PositionInterface | null = null;
     private lastWanderUpdate: number = 0;
@@ -320,6 +312,9 @@ export class SocialBehavior extends BaseBehavior {
                     spaceName,
                     startTime: currentTime,
                     lastMessageTime: currentTime,
+                    isGenerating: false,
+                    currentTask: '',
+                    messageQueue: [],
                 });
                 
                 // Claim this slot — prevent onMemoryReady from also greeting this player.
@@ -348,6 +343,9 @@ export class SocialBehavior extends BaseBehavior {
                 spaceName,
                 startTime: currentTime,
                 lastMessageTime: currentTime,
+                isGenerating: false,
+                currentTask: '',
+                messageQueue: [],
             });
 
             // Clear target
@@ -541,6 +539,9 @@ export class SocialBehavior extends BaseBehavior {
             spaceName,
             startTime: currentTime,
             lastMessageTime: currentTime,
+            isGenerating: false,
+            currentTask: '',
+            messageQueue: [],
         });
         
         // Claim this slot — prevent onMemoryReady from also greeting this player
@@ -748,16 +749,24 @@ export class SocialBehavior extends BaseBehavior {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);
         }
-        
-        // Generate AI response
-        this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
-            console.error(`[SocialBehavior] Error generating AI response:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
-            // Send fallback message via stream for consistent UX
-            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
-            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
-        });
+
+        // Check for mid-stream interruption before starting generation
+        const action = await this.handleInterruption(senderId, originalUserMessage, message);
+        if (action === 'queued' || action === 'cancelled') {
+            return;
+        }
+        // 'proceed' or 'update' — start a new stream
+        this.startGeneration(senderId, spaceName, originalUserMessage);
+        this.generateAIResponseStream(spaceName, senderId, message, botId)
+            .catch(error => {
+                console.error(`[SocialBehavior] Error generating AI response:`, error);
+                this.bot?.stopTyping(spaceName);
+                const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
+                this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
+            })
+            .finally(() => {
+                this.finishGeneration(senderId);
+            });
     }
 
     /**

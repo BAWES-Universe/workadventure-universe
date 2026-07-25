@@ -423,7 +423,13 @@ export class IdleBehavior extends BaseBehavior {
         // Start typing indicator
         this.bot?.startTyping(spaceName);
 
-        // Generate AI response
+        // Check for mid-stream interruption before starting generation
+        const action = await this.handleInterruption(senderId, originalUserMessage, message);
+        if (action === 'queued' || action === 'cancelled') {
+            return;
+        }
+        // 'proceed' or 'update' — start a new stream
+        this.startGeneration(senderId, spaceName, originalUserMessage);
         this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
             console.error(`[IdleBehavior] Error generating AI response:`, error);
             // Stop typing indicator on error
@@ -431,6 +437,8 @@ export class IdleBehavior extends BaseBehavior {
             // Send fallback message via stream for consistent UX
             const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
             this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
+        }).finally(() => {
+            this.finishGeneration(senderId);
         });
     }
 
