@@ -89,9 +89,7 @@ export class MapListService {
             };
         } catch (e) {
             throw new Error(
-                `Error while trying to read WAM file "${wamFilePath}" to generate cache: ${JSON.stringify(
-                    e
-                )}. Skipping this file for cache generation.`,
+                `Error while trying to read WAM file "${wamFilePath}" to generate cache: ${e instanceof Error ? e.message : String(e)}. Skipping this file for cache generation.`,
                 { cause: e }
             );
         }
