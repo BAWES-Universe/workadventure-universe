@@ -13,6 +13,39 @@ import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { ResponseProcessor } from '../ai/ResponseProcessor';
 import type { BotMetricsCollector } from '../metrics/BotMetricsCollector';
 
+/**
+ * Per-player conversation state for mid-stream interruption handling.
+ * Active while a player is chatting with the bot — tracks generation status
+ * and queued messages received while the bot was mid-response.
+ */
+export interface ConversationState {
+    playerId: number;
+    spaceName: string;
+    startTime: number;
+    lastMessageTime: number;
+    /** True while the bot is streaming an AI response for this player */
+    isGenerating: boolean;
+    /** The last user message that started the current generation */
+    currentTask: string;
+    /** Messages received while the bot was generating, processed in FIFO order */
+    messageQueue: QueuedMessage[];
+    /** AbortController to cancel the current stream on update/cancel */
+    abortController?: AbortController;
+    /** Monotonically increasing generation counter — used by .finally() to detect stale calls */
+    generation: number;
+}
+
+/**
+ * A message received while the bot was mid-response, queued for later processing.
+ */
+export interface QueuedMessage {
+    message: string;
+    url?: string;
+    mediaType?: string;
+    mimeType?: string;
+    timestamp: number;
+}
+
 export interface BehaviorConfig {
     type: string;
     assignedSpace?: {
@@ -74,6 +107,10 @@ export abstract class BaseBehavior {
     protected leadingGreetedPlayers = new Set<number>();
     protected preparedGoodbyeMessage: string | null = null; // Message prepared in advance while still leading
     protected isPreparingGoodbye = false; // Track if we're currently preparing the goodbye message
+
+    // Conversation interruption state — per-player tracking for mid-stream routing
+    protected activeConversations: Map<number, ConversationState> = new Map();
+    private readonly MAX_QUEUED_MESSAGES = 3;
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -1245,6 +1282,194 @@ export abstract class BaseBehavior {
      */
     updateConfig(config: Partial<BehaviorConfig>): void {
         this.config = { ...this.config, ...config };
+    }
+
+    /**
+     * Mark a player as currently having an active AI generation stream.
+     * Increments the generation counter so stale .finally() calls from old
+     * aborted streams are detected and ignored by finishGeneration().
+     */
+    protected startGeneration(senderId: number, spaceName: string, currentTask?: string): void {
+        let state = this.activeConversations.get(senderId);
+        if (!state) {
+            state = {
+                playerId: senderId,
+                spaceName,
+                startTime: Date.now(),
+                lastMessageTime: Date.now(),
+                isGenerating: false,
+                currentTask: currentTask || '',
+                messageQueue: [],
+                generation: 0,
+            };
+            this.activeConversations.set(senderId, state);
+        }
+        state.isGenerating = true;
+        state.lastMessageTime = Date.now();
+        state.currentTask = currentTask || state.currentTask;
+        state.generation = (state.generation || 0) + 1;
+        state.abortController = new AbortController();
+    }
+
+    /**
+     * Mark a player's generation as finished. Only acts if the generation
+     * counter matches — stale calls from aborted streams' .finally() are ignored.
+     * Flushes the message queue after normal completion.
+     */
+    protected finishGeneration(senderId: number, aborted = false, expectedGen?: number): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state) return;
+
+        // Stale call from an aborted stream's .finally() — the generation has moved on
+        if (expectedGen !== undefined && state.generation !== expectedGen) return;
+
+        state.isGenerating = false;
+        state.abortController = undefined;
+
+        if (!aborted && state.messageQueue.length > 0) {
+            this.flushMessageQueue(senderId);
+        }
+    }
+
+    /**
+     * Single entry point for interruption-safe generation. Every behavior calls
+     * this instead of duplicating the interruption check + .catch/.finally pattern.
+     *
+     * @returns The action taken: 'generated' | 'queued' | 'cancelled'
+     */
+    protected async safeGenerateResponse(
+        spaceName: string,
+        senderId: number,
+        originalMessage: string,
+        augmentedMessage: string,
+        botId: string,
+        generator: () => Promise<void>
+    ): Promise<'generated' | 'queued' | 'cancelled'> {
+        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage);
+        if (action === 'queued' || action === 'cancelled') {
+            return action;
+        }
+
+        this.startGeneration(senderId, spaceName, originalMessage);
+        const capturedGen = this.activeConversations.get(senderId)?.generation ?? 0;
+
+        try {
+            await generator();
+        } catch (error) {
+            console.error(`[${this.constructor.name}] Error generating AI response:`, error);
+            this.bot?.stopTyping(spaceName);
+            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
+            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
+        } finally {
+            this.finishGeneration(senderId, false, capturedGen);
+        }
+        return 'generated';
+    }
+
+    /**
+     * Abort the current stream for a player.
+     */
+    protected abortCurrentStream(senderId: number, finalContent?: string): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state) return;
+
+        if (state.abortController) {
+            state.abortController.abort();
+        }
+        if (this.bot && state.spaceName) {
+            const botId = this.bot.getBotId();
+            const errId = `bot-${botId}-player-${senderId}-abort-${crypto.randomUUID()}`;
+            this.bot.sendStreamMessage(state.spaceName, errId, '', true, finalContent || '');
+        }
+    }
+
+    /**
+     * Process queued messages for a player in FIFO order.
+     */
+    protected flushMessageQueue(senderId: number): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state || state.messageQueue.length === 0) return;
+
+        const queued = state.messageQueue.shift();
+        if (!queued) return;
+        if (state.isGenerating) return;
+
+        this.onChatMessage(state.spaceName, queued.message, senderId, queued.url, queued.mediaType, queued.mimeType);
+    }
+
+    /**
+     * Handle a new chat message when the bot is already mid-stream for this player.
+     * Returns 'proceed' | 'queued' | 'cancelled'.
+     */
+    protected async handleInterruption(
+        senderId: number,
+        originalMessage: string,
+        augmentedMessage: string
+    ): Promise<'queued' | 'cancelled' | 'proceed'> {
+        const state = this.activeConversations.get(senderId);
+        if (!state || !state.isGenerating) return 'proceed';
+
+        const currentTask = state.currentTask || originalMessage;
+
+        let classification: string;
+        try {
+            classification = await this.classifyInterruption(currentTask, originalMessage);
+        } catch {
+            this.enqueueMessage(senderId, augmentedMessage);
+            return 'queued';
+        }
+
+        switch (classification) {
+            case 'cancel': {
+                this.abortCurrentStream(senderId);
+                this.finishGeneration(senderId, true);
+                state.messageQueue = [];
+                this.sendStatusAck(state.spaceName, 'Okay, stopped.');
+                return 'cancelled';
+            }
+            case 'update': {
+                this.abortCurrentStream(senderId);
+                this.finishGeneration(senderId, true);
+                state.messageQueue = [];
+                return 'proceed';
+            }
+            case 'answer':
+            case 'queue':
+            default: {
+                this.enqueueMessage(senderId, augmentedMessage);
+                return 'queued';
+            }
+        }
+    }
+
+    /**
+     * Classify a mid-stream message using AIService.quickClassify().
+     */
+    private async classifyInterruption(currentTask: string, newMessage: string): Promise<string> {
+        if (!this.aiService || !('quickClassify' in this.aiService)) return 'queue';
+        return (this.aiService as any).quickClassify(currentTask, newMessage);
+    }
+
+    private enqueueMessage(senderId: number, message: string): void {
+        const state = this.activeConversations.get(senderId);
+        if (!state) return;
+
+        if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
+            this.sendStatusAck(state.spaceName, 'I have a few messages from you — let me catch up.');
+            return;
+        }
+
+        state.messageQueue.push({ message, timestamp: Date.now() });
+        if (state.messageQueue.length === 1) {
+            this.sendStatusAck(state.spaceName, 'Got it — let me finish this first.');
+        }
+    }
+
+    private sendStatusAck(spaceName: string, text: string): void {
+        if (!this.bot) return;
+        const botId = this.bot.getBotId();
+        const statusId = `bot-${botId}-status-${crypto.randomUUID()}`;
+        this.bot.sendStreamMessage(spaceName, statusId, '', true, text);
     }
 
     /**

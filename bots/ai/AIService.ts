@@ -2871,5 +2871,44 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
         return null;
     }
+
+    /**
+     * Quick single-turn classification of a user message against the current task.
+     * Used by BaseBehavior.handleInterruption to route mid-stream messages.
+     * Returns one of: 'update', 'cancel', 'answer', 'queue'.
+     */
+    async quickClassify(currentTask: string, newMessage: string): Promise<string> {
+        const prompt = `You are a message classifier for a creative AI assistant.
+The user is currently waiting for the bot to respond to: "${currentTask}"
+The user just sent a new message: "${newMessage}"
+
+Classify this message:
+- "update": The user is correcting, refining, or changing the current request (e.g. "make it more red", "actually, darker", "no, I meant a cat not a dog")
+- "cancel": The user wants to stop the current task entirely (e.g. "stop", "never mind", "cancel", "that's enough")
+- "answer": The user is asking a quick question about the current task (e.g. "what model are you using?", "how long will this take?")
+- "queue": The user is starting a new unrelated topic (e.g. "what's the capital of France?", "tell me a joke")
+
+Respond with one word: update, cancel, answer, or queue.`;
+
+        try {
+            const config = await this.getProviderCredentials('deepseek');
+            const provider = this.providerRegistry.getProvider('deepseek');
+            if (!provider) return 'queue';
+
+            const response = await provider.generate(
+                'Classify the following user message. Respond with exactly one word: update, cancel, answer, or queue.',
+                prompt,
+                { ...config, model: 'deepseek-v4-flash' }
+            );
+
+            const classification = response.content.trim().toLowerCase();
+            if (['update', 'cancel', 'answer', 'queue'].includes(classification)) {
+                return classification;
+            }
+            return 'queue';
+        } catch {
+            return 'queue';
+        }
+    }
 }
 
