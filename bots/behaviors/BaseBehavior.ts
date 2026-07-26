@@ -1343,10 +1343,16 @@ export abstract class BaseBehavior {
         originalMessage: string,
         augmentedMessage: string,
         botId: string,
-        generator: () => Promise<void>
+        generator: () => Promise<void>,
+        url?: string,
+        mediaType?: string,
+        mimeType?: string
     ): Promise<'generated' | 'queued' | 'cancelled'> {
-        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage);
+        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType);
         if (action === 'queued' || action === 'cancelled') {
+            if (action === 'cancelled') {
+                this.bot?.stopTyping(spaceName);
+            }
             return action;
         }
 
@@ -1404,7 +1410,10 @@ export abstract class BaseBehavior {
     protected async handleInterruption(
         senderId: number,
         originalMessage: string,
-        augmentedMessage: string
+        augmentedMessage: string,
+        url?: string,
+        mediaType?: string,
+        mimeType?: string
     ): Promise<'queued' | 'cancelled' | 'proceed'> {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
@@ -1416,14 +1425,14 @@ export abstract class BaseBehavior {
         try {
             classification = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
-            this.enqueueMessage(senderId, augmentedMessage);
+            this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType);
             return 'queued';
         }
 
         // Guard against the generation advancing during the classifyInterruption await
         const currentState = this.activeConversations.get(senderId);
         if (!currentState || currentState.generation !== interruptedGen) {
-            this.enqueueMessage(senderId, augmentedMessage);
+            this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType);
             return 'queued';
         }
 
@@ -1444,7 +1453,7 @@ export abstract class BaseBehavior {
             case 'answer':
             case 'queue':
             default: {
-                this.enqueueMessage(senderId, augmentedMessage);
+                this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType);
                 return 'queued';
             }
         }
@@ -1458,7 +1467,7 @@ export abstract class BaseBehavior {
         return (this.aiService as any).quickClassify(currentTask, newMessage);
     }
 
-    private enqueueMessage(senderId: number, message: string): void {
+    private enqueueMessage(senderId: number, message: string, url?: string, mediaType?: string, mimeType?: string): void {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
 
@@ -1467,7 +1476,7 @@ export abstract class BaseBehavior {
             return;
         }
 
-        state.messageQueue.push({ message, timestamp: Date.now() });
+        state.messageQueue.push({ message, url, mediaType, mimeType, timestamp: Date.now() });
         if (state.messageQueue.length === 1) {
             this.sendStatusAck(state.spaceName, 'Got it — let me finish this first.');
         }

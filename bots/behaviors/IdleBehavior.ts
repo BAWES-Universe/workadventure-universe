@@ -425,7 +425,8 @@ export class IdleBehavior extends BaseBehavior {
 
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
-            () => this.generateAIResponseStream(spaceName, senderId, message, botId)
+            () => this.generateAIResponseStream(spaceName, senderId, message, botId),
+            url, mediaType, mimeType
         );
     }
 
