@@ -2875,39 +2875,72 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Quick single-turn classification of a user message against the current task.
      * Used by BaseBehavior.handleInterruption to route mid-stream messages.
-     * Returns one of: 'update', 'cancel', 'answer', 'queue'.
+     * Returns the action and a message to say as a followup.
      */
-    async quickClassify(currentTask: string, newMessage: string): Promise<string> {
-        const prompt = `You are a message classifier for a creative AI assistant.
-The user is currently waiting for the bot to respond to: "${currentTask}"
-The user just sent a new message: "${newMessage}"
+    async quickClassify(currentTask: string, newMessage: string): Promise<{ action: string; message: string }> {
+        const prompt = `Current task: "${currentTask}"
+New message: "${newMessage}"
 
-Classify this message:
-- "update": The user is correcting, refining, or changing the current request (e.g. "make it more red", "actually, darker", "no, I meant a cat not a dog")
-- "cancel": The user wants to stop the current task entirely (e.g. "stop", "never mind", "cancel", "that's enough")
-- "answer": The user is asking a quick question about the current task (e.g. "what model are you using?", "how long will this take?")
-- "queue": The user is starting a new unrelated topic (e.g. "what's the capital of France?", "tell me a joke")
+Classify and respond:
+- "update": They're correcting, refining, or changing the current request.
+  → The message leads into the new response.
+- "cancel": They want to stop entirely.
+  → The message confirms the stop.
+- "answer": They're asking something about the current task.
+  → The message answers it — sent after the current response finishes.
+- "queue": They're starting something unrelated.
+  → The message acknowledges it, then it's handled in order.
 
-Respond with one word: update, cancel, answer, or queue.`;
+Return JSON: { "action": "...", "message": "what to say as a followup" }`;
 
         try {
             const config = await this.getProviderCredentials('deepseek');
             const provider = this.providerRegistry.getOrCreateProvider(config);
 
             const response = await provider.generate(
-                'Classify the following user message. Respond with exactly one word: update, cancel, answer, or queue.',
+                'Classify the following message. Return JSON with action and message.',
                 prompt,
                 { ...config, model: 'deepseek-v4-flash' }
             );
 
-            const classification = response.content.trim().toLowerCase();
-            if (['update', 'cancel', 'answer', 'queue'].includes(classification)) {
-                return classification;
+            const parsed = this.parseInterruptionResult(response.content);
+            if (parsed) return parsed;
+
+            // Fallback: try to parse from raw text response
+            const trimmed = response.content.trim().toLowerCase();
+            if (['cancel', 'update', 'answer', 'queue'].includes(trimmed)) {
+                return { action: trimmed, message: '' };
             }
-            return 'queue';
+            return { action: 'queue', message: '' };
         } catch {
-            return 'queue';
+            return { action: 'queue', message: '' };
+        }
+    }
+
+    /**
+     * Parse JSON from quickClassify response, handling markdown code fences.
+     */
+    private parseInterruptionResult(content: string): { action: string; message: string } | null {
+        // Strip markdown code fences
+        let json = content.trim();
+        const fenceMatch = json.match(/```(?:json)?\s*
+?([\s\S]*?)```/);
+        if (fenceMatch) {
+            json = fenceMatch[1].trim();
+        }
+
+        try {
+            const parsed = JSON.parse(json);
+            const action = parsed.action?.toString().trim().toLowerCase();
+            if (action && ['cancel', 'update', 'answer', 'queue'].includes(action)) {
+                return {
+                    action,
+                    message: typeof parsed.message === 'string' ? parsed.message.trim() : '',
+                };
+            }
+            return null;
+        } catch {
+            return null;
         }
     }
 }
-

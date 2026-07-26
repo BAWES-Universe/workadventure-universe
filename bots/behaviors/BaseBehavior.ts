@@ -33,6 +33,10 @@ export interface ConversationState {
     abortController?: AbortController;
     /** Monotonically increasing generation counter — used by .finally() to detect stale calls */
     generation: number;
+    /** LLM-generated answers for 'answer' classifications, drained after stream finishes */
+    pendingAnswers: string[];
+    /** LLM-generated acknowledgment for 'update', sent before new generation starts */
+    pendingUpdateMessage?: string;
 }
 
 /**
@@ -44,6 +48,8 @@ export interface QueuedMessage {
     mediaType?: string;
     mimeType?: string;
     timestamp: number;
+    /** 'answer' | 'queue' — set when queued via interruption classification */
+    classification?: string;
 }
 
 export interface BehaviorConfig {
@@ -1301,6 +1307,7 @@ export abstract class BaseBehavior {
                 currentTask: currentTask || '',
                 messageQueue: [],
                 generation: 0,
+                pendingAnswers: [],
             };
             this.activeConversations.set(senderId, state);
         }
@@ -1326,8 +1333,16 @@ export abstract class BaseBehavior {
         state.isGenerating = false;
         state.abortController = undefined;
 
-        if (!aborted && state.messageQueue.length > 0) {
-            this.flushMessageQueue(senderId);
+        if (!aborted) {
+            // Drain LLM-generated answers first (one-shot, no new generation)
+            while (state.pendingAnswers.length > 0) {
+                const answer = state.pendingAnswers.shift()!;
+                const answerId = `bot-answer-${senderId}-${crypto.randomUUID()}`;
+                this.bot?.sendStreamMessage(state.spaceName, answerId, '', true, answer);
+            }
+            if (state.messageQueue.length > 0) {
+                this.flushMessageQueue(senderId);
+            }
         }
     }
 
@@ -1354,6 +1369,13 @@ export abstract class BaseBehavior {
                 this.bot?.stopTyping(spaceName);
             }
             return action;
+        }
+
+        // Send update acknowledgment before starting new generation
+        const convState = this.activeConversations.get(senderId);
+        if (convState?.pendingUpdateMessage) {
+            this.sendStatusAck(spaceName, convState.pendingUpdateMessage);
+            convState.pendingUpdateMessage = undefined;
         }
 
         this.startGeneration(senderId, spaceName, originalMessage);
@@ -1421,9 +1443,9 @@ export abstract class BaseBehavior {
         const interruptedGen = state.generation;
         const currentTask = state.currentTask || originalMessage;
 
-        let classification: string;
+        let result: { action: string; message: string };
         try {
-            classification = await this.classifyInterruption(currentTask, originalMessage);
+            result = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
             this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType);
             return 'queued';
@@ -1436,24 +1458,42 @@ export abstract class BaseBehavior {
             return 'queued';
         }
 
-        switch (classification) {
+        switch (result.action) {
             case 'cancel': {
                 this.abortCurrentStream(senderId);
                 this.finishGeneration(senderId, true);
                 currentState.messageQueue = [];
-                this.sendStatusAck(currentState.spaceName, 'Okay, stopped.');
+                currentState.pendingAnswers = [];
+                if (result.message) {
+                    this.sendStatusAck(currentState.spaceName, result.message);
+                }
                 return 'cancelled';
             }
             case 'update': {
                 this.abortCurrentStream(senderId);
                 this.finishGeneration(senderId, true);
                 currentState.messageQueue = [];
+                currentState.pendingAnswers = [];
+                // Store acknowledgment to be sent before new generation starts
+                currentState.pendingUpdateMessage = result.message;
                 return 'proceed';
             }
-            case 'answer':
+            case 'answer': {
+                // LLM generated the answer — store to send after current stream finishes
+                currentState.pendingAnswers = currentState.pendingAnswers || [];
+                if (result.message) {
+                    currentState.pendingAnswers.push(result.message);
+                }
+                this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType, 'answer');
+                return 'queued';
+            }
             case 'queue':
             default: {
-                this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType);
+                // Send the LLM-generated acknowledgment immediately
+                if (result.message) {
+                    this.sendStatusAck(currentState.spaceName, result.message);
+                }
+                this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType, 'queue');
                 return 'queued';
             }
         }
@@ -1462,12 +1502,12 @@ export abstract class BaseBehavior {
     /**
      * Classify a mid-stream message using AIService.quickClassify().
      */
-    private async classifyInterruption(currentTask: string, newMessage: string): Promise<string> {
-        if (!this.aiService || !('quickClassify' in this.aiService)) return 'queue';
+    private async classifyInterruption(currentTask: string, newMessage: string): Promise<{ action: string; message: string }> {
+        if (!this.aiService || !('quickClassify' in this.aiService)) return { action: 'queue', message: '' };
         return (this.aiService as any).quickClassify(currentTask, newMessage);
     }
 
-    private enqueueMessage(senderId: number, message: string, url?: string, mediaType?: string, mimeType?: string): void {
+    private enqueueMessage(senderId: number, message: string, url?: string, mediaType?: string, mimeType?: string, classification?: string): void {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
 
@@ -1476,10 +1516,7 @@ export abstract class BaseBehavior {
             return;
         }
 
-        state.messageQueue.push({ message, url, mediaType, mimeType, timestamp: Date.now() });
-        if (state.messageQueue.length === 1) {
-            this.sendStatusAck(state.spaceName, 'Got it — let me finish this first.');
-        }
+        state.messageQueue.push({ message, url, mediaType, mimeType, classification, timestamp: Date.now() });
     }
 
     private sendStatusAck(spaceName: string, text: string): void {

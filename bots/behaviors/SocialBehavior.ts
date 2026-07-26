@@ -316,6 +316,7 @@ export class SocialBehavior extends BaseBehavior {
                     currentTask: '',
                     messageQueue: [],
                     generation: 0,
+                    pendingAnswers: [],
                 });
                 
                 // Claim this slot — prevent onMemoryReady from also greeting this player.
@@ -348,6 +349,7 @@ export class SocialBehavior extends BaseBehavior {
                 currentTask: '',
                 messageQueue: [],
                 generation: 0,
+                pendingAnswers: [],
             });
 
             // Clear target
@@ -545,6 +547,7 @@ export class SocialBehavior extends BaseBehavior {
             currentTask: '',
             messageQueue: [],
             generation: 0,
+            pendingAnswers: [],
         });
         
         // Claim this slot — prevent onMemoryReady from also greeting this player
