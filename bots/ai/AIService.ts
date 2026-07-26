@@ -2892,8 +2892,7 @@ Respond with one word: update, cancel, answer, or queue.`;
 
         try {
             const config = await this.getProviderCredentials('deepseek');
-            const provider = this.providerRegistry.getProvider('deepseek');
-            if (!provider) return 'queue';
+            const provider = this.providerRegistry.getOrCreateProvider(config);
 
             const response = await provider.generate(
                 'Classify the following user message. Respond with exactly one word: update, cancel, answer, or queue.',
