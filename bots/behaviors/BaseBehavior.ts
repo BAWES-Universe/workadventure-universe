@@ -1409,6 +1409,7 @@ export abstract class BaseBehavior {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
 
+        const interruptedGen = state.generation;
         const currentTask = state.currentTask || originalMessage;
 
         let classification: string;
@@ -1419,18 +1420,25 @@ export abstract class BaseBehavior {
             return 'queued';
         }
 
+        // Guard against the generation advancing during the classifyInterruption await
+        const currentState = this.activeConversations.get(senderId);
+        if (!currentState || currentState.generation !== interruptedGen) {
+            this.enqueueMessage(senderId, augmentedMessage);
+            return 'queued';
+        }
+
         switch (classification) {
             case 'cancel': {
                 this.abortCurrentStream(senderId);
                 this.finishGeneration(senderId, true);
-                state.messageQueue = [];
-                this.sendStatusAck(state.spaceName, 'Okay, stopped.');
+                currentState.messageQueue = [];
+                this.sendStatusAck(currentState.spaceName, 'Okay, stopped.');
                 return 'cancelled';
             }
             case 'update': {
                 this.abortCurrentStream(senderId);
                 this.finishGeneration(senderId, true);
-                state.messageQueue = [];
+                currentState.messageQueue = [];
                 return 'proceed';
             }
             case 'answer':
