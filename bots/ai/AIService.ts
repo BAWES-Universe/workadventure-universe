@@ -2895,7 +2895,8 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
 
         try {
             const config = await this.getProviderCredentials('deepseek');
-            const provider = this.providerRegistry.getOrCreateProvider(config);
+            const provider = this.providerRegistry.getProvider('deepseek');
+            if (!provider) return 'queue';
 
             const response = await provider.generate(
                 'Classify the following message. Return JSON with action and message.',
