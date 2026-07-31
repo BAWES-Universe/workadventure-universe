@@ -423,25 +423,22 @@ export class IdleBehavior extends BaseBehavior {
         // Start typing indicator
         this.bot?.startTyping(spaceName);
 
-        // Generate AI response
-        this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
-            console.error(`[IdleBehavior] Error generating AI response:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
-            // Send fallback message via stream for consistent UX
-            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
-            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
-        });
+        // Interruption-safe generation (handles queue, abort, update, generation tracking)
+        await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
+            (signal) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal),
+            url, mediaType, mimeType
+        );
     }
 
     /**
      * Generate AI response stream and send to player
      */
-    private async generateAIResponseStream(
+    protected async generateAIResponseStream(
         spaceName: string,
         playerId: number,
         playerMessage: string,
-        botId: string
+        botId: string,
+        abortSignal?: AbortSignal
     ): Promise<void> {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[IdleBehavior] generateAIResponseStream called for bot ${botId}`);
@@ -508,7 +505,8 @@ export class IdleBehavior extends BaseBehavior {
                 spaceName,
                 context,
                 this.bot,
-                this.adminApiService
+                this.adminApiService,
+                abortSignal
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);
@@ -691,7 +689,8 @@ export class IdleBehavior extends BaseBehavior {
                                     spaceName,
                                     context,
                                     this.bot,
-                                    this.adminApiService
+                                    this.adminApiService,
+                                    abortSignal
                                 )) {
                                     if (chunk.reset) {
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);

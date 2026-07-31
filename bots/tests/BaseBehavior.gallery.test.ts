@@ -29,6 +29,7 @@ class TestableBehavior extends BaseBehavior {
     update(_deltaTime: number): void {}
     onChatMessage(): Promise<void> { return Promise.resolve(); }
     getConversationMemory(_playerId: number): any { return null; }
+    generateAIResponseStream(): Promise<void> { return Promise.resolve(); }
 
     async testFormatParsedAttachment(
         message: string,

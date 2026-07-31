@@ -27,16 +27,8 @@ export interface SocialBehaviorConfig extends BehaviorConfig {
     approachDistance: number; // How close to get before starting conversation
 }
 
-interface ConversationState {
-    playerId: number;
-    spaceName: string;
-    startTime: number;
-    lastMessageTime: number;
-}
-
 export class SocialBehavior extends BaseBehavior {
     private conversationHistory: Map<number, number> = new Map(); // playerId -> last conversation time
-    private activeConversations: Map<number, ConversationState> = new Map(); // playerId -> conversation state
     private targetPlayerId: number | null = null;
     private wanderTarget: PositionInterface | null = null;
     private lastWanderUpdate: number = 0;
@@ -320,6 +312,11 @@ export class SocialBehavior extends BaseBehavior {
                     spaceName,
                     startTime: currentTime,
                     lastMessageTime: currentTime,
+                    isGenerating: false,
+                    currentTask: '',
+                    messageQueue: [],
+                    generation: 0,
+                    pendingAnswers: [],
                 });
                 
                 // Claim this slot — prevent onMemoryReady from also greeting this player.
@@ -348,6 +345,11 @@ export class SocialBehavior extends BaseBehavior {
                 spaceName,
                 startTime: currentTime,
                 lastMessageTime: currentTime,
+                isGenerating: false,
+                currentTask: '',
+                messageQueue: [],
+                generation: 0,
+                pendingAnswers: [],
             });
 
             // Clear target
@@ -541,6 +543,11 @@ export class SocialBehavior extends BaseBehavior {
             spaceName,
             startTime: currentTime,
             lastMessageTime: currentTime,
+            isGenerating: false,
+            currentTask: '',
+            messageQueue: [],
+            generation: 0,
+            pendingAnswers: [],
         });
         
         // Claim this slot — prevent onMemoryReady from also greeting this player
@@ -748,26 +755,23 @@ export class SocialBehavior extends BaseBehavior {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[SocialBehavior] Generating AI response for player ${senderId}...`);
         }
-        
-        // Generate AI response
-        this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
-            console.error(`[SocialBehavior] Error generating AI response:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
-            // Send fallback message via stream for consistent UX
-            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
-            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
-        });
+
+        // Interruption-safe generation (handles queue, abort, update, generation tracking)
+        await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
+            (signal) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal),
+            url, mediaType, mimeType
+        );
     }
 
     /**
      * Generate AI response stream and send to player
      */
-    private async generateAIResponseStream(
+    protected async generateAIResponseStream(
         spaceName: string,
         playerId: number,
         playerMessage: string,
-        botId: string
+        botId: string,
+        abortSignal?: AbortSignal
     ): Promise<void> {
         if (!this.bot || !this.aiService) {
             console.warn(`[SocialBehavior] Missing required services for AI response`);
@@ -834,7 +838,8 @@ export class SocialBehavior extends BaseBehavior {
                 spaceName,
                 context,
                 this.bot,
-                this.adminApiService
+                this.adminApiService,
+                abortSignal
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);
@@ -1010,7 +1015,8 @@ export class SocialBehavior extends BaseBehavior {
                                     spaceName,
                                     context,
                                     this.bot,
-                                    this.adminApiService
+                                    this.adminApiService,
+                                    abortSignal
                                 )) {
                                     if (chunk.reset) {
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
