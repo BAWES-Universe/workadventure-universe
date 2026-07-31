@@ -1746,7 +1746,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
-            () => this.generateAIResponseStream(spaceName, senderId, message, botId),
+            (signal) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal),
             url, mediaType, mimeType
         );
     }
@@ -1754,11 +1754,12 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
     /**
      * Generate AI response stream and send to player
      */
-    private async generateAIResponseStream(
+    protected async generateAIResponseStream(
         spaceName: string,
         playerId: number,
         playerMessage: string,
-        botId: string
+        botId: string,
+        abortSignal?: AbortSignal
     ): Promise<void> {
         if (!this.bot || !this.aiService) {
             console.warn(`[PatrolBehavior] Missing required services for AI response`);
@@ -1808,7 +1809,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 spaceName,
                 context,
                 this.bot,
-                this.adminApiService
+                this.adminApiService,
+                abortSignal
             )) {
                 if (chunk.reset) {
                         batchFlush(batchState, sendBatch);
@@ -1982,7 +1984,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                     spaceName,
                                     context,
                                     this.bot,
-                                    this.adminApiService
+                                    this.adminApiService,
+                                    abortSignal
                                 )) {
                                     if (chunk.reset) {
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);

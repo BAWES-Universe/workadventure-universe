@@ -128,7 +128,8 @@ export class AIService {
         spaceName: string | undefined,
         conversationContext: string,
         botClient?: BotClient,
-        adminApiService?: AdminApiService
+        adminApiService?: AdminApiService,
+        abortSignal?: AbortSignal
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
@@ -520,6 +521,14 @@ Everything above is technical guidance. Follow your personality as defined in th
                     configWithParent,
                     tools.length > 0 ? tools : undefined
                 )) {
+                    // Mid-stream interruption (cancel/update): stop consuming chunks.
+                    // The behavior handles the abort via abortCurrentStream(); this
+                    // check makes the generator end early so no more content/tool
+                    // chunks reach the player.
+                    if (abortSignal?.aborted) {
+                        streamCompleted = false;
+                        break;
+                    }
                     // Collect tool calls first (before yielding content)
                     // Tool calls may be streamed with partial arguments, so we need to accumulate them by ID
                     if (chunk.toolCalls && chunk.toolCalls.length > 0) {
@@ -685,7 +694,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                         // Do NOT call it here — doing so would double-process the same
                         // items on tool-call turns, burning through the retry limit.
 
-                        while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
+                        while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS && !abortSignal?.aborted) {
                             followUpIterations++;
 
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -778,6 +787,9 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 configWithParent,
                                 tools.length > 0 ? tools : undefined
                             )) {
+                                // Mid-stream interruption: stop the follow-up tool-call
+                                // round and let the generator end early.
+                                if (abortSignal?.aborted) break;
                                 // Track tokens from follow-up call metadata
                                 if (resultChunk.metadata?.tokensUsed) {
                                     tokensUsed += resultChunk.metadata.tokensUsed;
@@ -986,6 +998,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         configWithParent,
                                         [] // No tools — force direct answer
                                     )) {
+                                        // Mid-stream interruption: stop the synthesis call.
+                                        if (abortSignal?.aborted) break;
                                         if (synthChunk.content) {
                                             accumulatedContent += synthChunk.content;
                                             synthContent += synthChunk.content;
@@ -2875,9 +2889,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /**
      * Quick single-turn classification of a user message against the current task.
      * Used by BaseBehavior.handleInterruption to route mid-stream messages.
+     * Uses the bot's OWN configured provider (not a hardcoded one), so the
+     * interruption feature works for bots on any provider.
      * Returns the action and a message to say as a followup.
      */
-    async quickClassify(currentTask: string, newMessage: string): Promise<{ action: string; message: string }> {
+    async quickClassify(providerId: string, currentTask: string, newMessage: string): Promise<{ action: string; message: string }> {
         const prompt = `Current task: "${currentTask}"
 New message: "${newMessage}"
 
@@ -2894,14 +2910,14 @@ Classify and respond:
 Return JSON: { "action": "...", "message": "what to say as a followup" }`;
 
         try {
-            const config = await this.getProviderCredentials('deepseek');
-            const provider = this.providerRegistry.getProvider('deepseek');
-            if (!provider) return 'queue';
+            const config = await this.getProviderCredentials(providerId);
+            const provider = this.providerRegistry.getOrCreateProvider(config);
+            if (!provider) return { action: 'queue', message: '' };
 
             const response = await provider.generate(
                 'Classify the following message. Return JSON with action and message.',
                 prompt,
-                { ...config, model: 'deepseek-v4-flash' }
+                config
             );
 
             const parsed = this.parseInterruptionResult(response.content);
@@ -2919,13 +2935,31 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
     }
 
     /**
+     * Quick single-turn generation of a short message (no streaming, no tools,
+     * no memory). Used by BaseBehavior for queue-overflow acknowledgments that
+     * must be LLM-generated (no hardcoded strings). Uses the bot's own provider.
+     * Returns '' on failure so callers stay silent rather than fall back to
+     * hardcoded text.
+     */
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string): Promise<string> {
+        try {
+            const config = await this.getProviderCredentials(providerId);
+            const provider = this.providerRegistry.getOrCreateProvider(config);
+            if (!provider) return '';
+            const response = await provider.generate(systemPrompt, userPrompt, config);
+            return (response.content || '').trim();
+        } catch {
+            return '';
+        }
+    }
+
+    /**
      * Parse JSON from quickClassify response, handling markdown code fences.
      */
     private parseInterruptionResult(content: string): { action: string; message: string } | null {
         // Strip markdown code fences
         let json = content.trim();
-        const fenceMatch = json.match(/```(?:json)?\s*
-?([\s\S]*?)```/);
+        const fenceMatch = json.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
         if (fenceMatch) {
             json = fenceMatch[1].trim();
         }

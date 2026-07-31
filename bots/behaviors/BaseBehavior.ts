@@ -43,6 +43,9 @@ export interface ConversationState {
  * A message received while the bot was mid-response, queued for later processing.
  */
 export interface QueuedMessage {
+    /** The original user message (before attachment augmentation) */
+    originalMessage: string;
+    /** The augmented message (with parsed attachment content), used for the AI call */
     message: string;
     url?: string;
     mediaType?: string;
@@ -70,6 +73,19 @@ export abstract class BaseBehavior {
     protected responseProcessor: ResponseProcessor | null = null;
     protected metricsCollector: BotMetricsCollector | null = null;
     protected conversationMemory: ConversationMemory | null = null;
+
+    /**
+     * Generate and send an AI response stream for a player. Implemented by each
+     * behavior (Social/Idle/Patrol). The optional abort signal is threaded into
+     * generateBotResponseStream so cancel/update can stop the in-flight stream.
+     */
+    protected abstract generateAIResponseStream(
+        spaceName: string,
+        playerId: number,
+        playerMessage: string,
+        botId: string,
+        abortSignal?: AbortSignal
+    ): Promise<void>;
     
     // Engagement tracking - when players are in conversation with the bot
     protected isEngaged = false;
@@ -117,6 +133,8 @@ export abstract class BaseBehavior {
     // Conversation interruption state — per-player tracking for mid-stream routing
     protected activeConversations: Map<number, ConversationState> = new Map();
     private readonly MAX_QUEUED_MESSAGES = 3;
+    /** Conversations idle longer than this (and not generating) are pruned to prevent the map from growing unboundedly */
+    private readonly CONVERSATION_STALE_MS = 30 * 60 * 1000; // 30 minutes
 
     constructor(config: BehaviorConfig) {
         this.config = config;
@@ -1358,11 +1376,13 @@ export abstract class BaseBehavior {
         originalMessage: string,
         augmentedMessage: string,
         botId: string,
-        generator: () => Promise<void>,
+        generator: (signal?: AbortSignal) => Promise<void>,
         url?: string,
         mediaType?: string,
         mimeType?: string
     ): Promise<'generated' | 'queued' | 'cancelled'> {
+        this.pruneStaleConversations();
+
         const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType);
         if (action === 'queued' || action === 'cancelled') {
             if (action === 'cancelled') {
@@ -1380,9 +1400,12 @@ export abstract class BaseBehavior {
 
         this.startGeneration(senderId, spaceName, originalMessage);
         const capturedGen = this.activeConversations.get(senderId)?.generation ?? 0;
+        // The AbortController for THIS generation — passed to the stream so
+        // cancel/update can actually stop the in-flight provider call.
+        const abortSignal = this.activeConversations.get(senderId)?.abortController?.signal;
 
         try {
-            await generator();
+            await generator(abortSignal);
         } catch (error) {
             console.error(`[${this.constructor.name}] Error generating AI response:`, error);
             this.bot?.stopTyping(spaceName);
@@ -1413,6 +1436,12 @@ export abstract class BaseBehavior {
 
     /**
      * Process queued messages for a player in FIFO order.
+     *
+     * Calls safeGenerateResponse directly with the ALREADY-augmented queued
+     * message instead of re-entering onChatMessage. Re-entering onChatMessage
+     * would (a) store the message in memory a second time and (b) re-augment
+     * attachment content — both are wrong since the message was already stored
+     * and augmented when it first arrived mid-stream.
      */
     protected flushMessageQueue(senderId: number): void {
         const state = this.activeConversations.get(senderId);
@@ -1422,7 +1451,19 @@ export abstract class BaseBehavior {
         if (!queued) return;
         if (state.isGenerating) return;
 
-        this.onChatMessage(state.spaceName, queued.message, senderId, queued.url, queued.mediaType, queued.mimeType);
+        const botId = this.bot?.getBotId() || '';
+        this.bot?.startTyping(state.spaceName);
+        void this.safeGenerateResponse(
+            state.spaceName,
+            senderId,
+            queued.originalMessage,
+            queued.message,
+            botId,
+            (signal) => this.generateAIResponseStream(state.spaceName, senderId, queued.message, botId, signal),
+            queued.url,
+            queued.mediaType,
+            queued.mimeType
+        );
     }
 
     /**
@@ -1447,14 +1488,14 @@ export abstract class BaseBehavior {
         try {
             result = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
-            this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType);
             return 'queued';
         }
 
         // Guard against the generation advancing during the classifyInterruption await
         const currentState = this.activeConversations.get(senderId);
         if (!currentState || currentState.generation !== interruptedGen) {
-            this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType);
             return 'queued';
         }
 
@@ -1464,6 +1505,7 @@ export abstract class BaseBehavior {
                 this.finishGeneration(senderId, true);
                 currentState.messageQueue = [];
                 currentState.pendingAnswers = [];
+                currentState.pendingUpdateMessage = undefined;
                 if (result.message) {
                     this.sendStatusAck(currentState.spaceName, result.message);
                 }
@@ -1479,12 +1521,16 @@ export abstract class BaseBehavior {
                 return 'proceed';
             }
             case 'answer': {
-                // LLM generated the answer — store to send after current stream finishes
+                // LLM generated the answer — store to send after current stream finishes.
+                // The answer IS the response; do NOT also enqueue the message, otherwise
+                // the question gets answered twice (one-shot + full regeneration).
                 currentState.pendingAnswers = currentState.pendingAnswers || [];
                 if (result.message) {
                     currentState.pendingAnswers.push(result.message);
+                } else {
+                    // No quick answer produced — fall back to queueing so it isn't lost.
+                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, 'answer');
                 }
-                this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType, 'answer');
                 return 'queued';
             }
             case 'queue':
@@ -1493,7 +1539,7 @@ export abstract class BaseBehavior {
                 if (result.message) {
                     this.sendStatusAck(currentState.spaceName, result.message);
                 }
-                this.enqueueMessage(senderId, augmentedMessage, url, mediaType, mimeType, 'queue');
+                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, 'queue');
                 return 'queued';
             }
         }
@@ -1501,22 +1547,70 @@ export abstract class BaseBehavior {
 
     /**
      * Classify a mid-stream message using AIService.quickClassify().
+     * Uses the bot's own configured provider so classification works for
+     * bots on any provider (not just DeepSeek).
      */
     private async classifyInterruption(currentTask: string, newMessage: string): Promise<{ action: string; message: string }> {
         if (!this.aiService || !('quickClassify' in this.aiService)) return { action: 'queue', message: '' };
-        return (this.aiService as any).quickClassify(currentTask, newMessage);
+        const botConfig = this.bot?.getFullConfig();
+        const providerId = botConfig?.aiProviderRef;
+        if (!providerId) return { action: 'queue', message: '' };
+        return (this.aiService as any).quickClassify(providerId, currentTask, newMessage);
     }
 
-    private enqueueMessage(senderId: number, message: string, url?: string, mediaType?: string, mimeType?: string, classification?: string): void {
+    private async enqueueMessage(
+        senderId: number,
+        originalMessage: string,
+        message: string,
+        url?: string,
+        mediaType?: string,
+        mimeType?: string,
+        classification?: string
+    ): Promise<void> {
         const state = this.activeConversations.get(senderId);
         if (!state) return;
 
         if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
-            this.sendStatusAck(state.spaceName, 'I have a few messages from you — let me catch up.');
+            // Overflow ack is LLM-generated (no hardcoded strings) — in-character
+            // acknowledgment that several messages are waiting.
+            const ack = await this.generateOverflowAck(state.spaceName, state.currentTask);
+            if (ack) {
+                this.sendStatusAck(state.spaceName, ack);
+            }
             return;
         }
 
-        state.messageQueue.push({ message, url, mediaType, mimeType, classification, timestamp: Date.now() });
+        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, classification, timestamp: Date.now() });
+    }
+
+    /**
+     * Generate an in-character acknowledgment for queue overflow via the bot's
+     * own provider. Returns '' if the LLM call fails (silent — no hardcoded text).
+     */
+    private async generateOverflowAck(spaceName: string, currentTask: string): Promise<string> {
+        if (!this.aiService || !('quickGenerate' in this.aiService)) return '';
+        const botConfig = this.bot?.getFullConfig();
+        const providerId = botConfig?.aiProviderRef;
+        if (!providerId) return '';
+        const chatInstructions = botConfig?.chatInstructions || 'You are a friendly bot.';
+        const prompt = `Current task: "${currentTask}"
+
+The person you're talking to just sent several more messages while you were still finishing a response. Acknowledge this in one short sentence, in your own voice — you've noticed and will get to them.`;
+        return (this.aiService as any).quickGenerate(providerId, chatInstructions, prompt);
+    }
+
+    /**
+     * Remove conversation state entries that have been idle (no active
+     * generation) for longer than CONVERSATION_STALE_MS. Prevents the
+     * activeConversations map from growing unboundedly over long uptimes.
+     */
+    private pruneStaleConversations(): void {
+        const now = Date.now();
+        for (const [senderId, state] of this.activeConversations) {
+            if (!state.isGenerating && now - state.lastMessageTime > this.CONVERSATION_STALE_MS) {
+                this.activeConversations.delete(senderId);
+            }
+        }
     }
 
     private sendStatusAck(spaceName: string, text: string): void {
