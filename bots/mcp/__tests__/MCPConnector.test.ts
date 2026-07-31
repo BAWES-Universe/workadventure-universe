@@ -670,7 +670,7 @@ describe('MCPConnector', () => {
 
         it(`enforces ${REQUEST_TIMEOUT / 1000}s REQUEST_TIMEOUT and cancels on timeout`, async () => {
             // Verify the timeout contract
-            expect(REQUEST_TIMEOUT).toBe(60_000);
+            expect(REQUEST_TIMEOUT).toBe(90_000);
 
             const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
