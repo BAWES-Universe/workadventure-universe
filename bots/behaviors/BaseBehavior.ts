@@ -1502,7 +1502,13 @@ export abstract class BaseBehavior {
         switch (result.action) {
             case 'cancel': {
                 this.abortCurrentStream(senderId);
-                this.finishGeneration(senderId, true);
+                // Pass expectedGen AND invalidate the aborted generation so the
+                // original stream's stale .finally() (carrying capturedGen ===
+                // interruptedGen) is dropped by the guard instead of running the
+                // normal-completion path (drain answers + flush queue). Cancel is
+                // the one path where generation would otherwise never advance.
+                this.finishGeneration(senderId, true, interruptedGen);
+                currentState.generation = interruptedGen + 1;
                 currentState.messageQueue = [];
                 currentState.pendingAnswers = [];
                 currentState.pendingUpdateMessage = undefined;
@@ -1513,7 +1519,12 @@ export abstract class BaseBehavior {
             }
             case 'update': {
                 this.abortCurrentStream(senderId);
-                this.finishGeneration(senderId, true);
+                // Same invalidation: even though startGeneration will bump the
+                // counter right after 'proceed' is returned, advancing it here
+                // closes the window where the aborted stream's stale .finally()
+                // could resolve before the new generation starts.
+                this.finishGeneration(senderId, true, interruptedGen);
+                currentState.generation = interruptedGen + 1;
                 currentState.messageQueue = [];
                 currentState.pendingAnswers = [];
                 // Store acknowledgment to be sent before new generation starts
