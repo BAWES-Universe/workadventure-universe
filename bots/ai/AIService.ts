@@ -1872,8 +1872,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const imageUrl = parsedArgs.url;
-                            const alt = parsedArgs.alt || '';
+                            const imageUrl = this.toolArgString(parsedArgs.url);
+                            const alt = this.toolArgString(parsedArgs.alt);
                             if (!imageUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -1897,8 +1897,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const fileUrl = parsedArgs.url;
-                            const filename = parsedArgs.filename || '';
+                            const fileUrl = this.toolArgString(parsedArgs.url);
+                            const filename = this.toolArgString(parsedArgs.filename);
                             if (!fileUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -1922,7 +1922,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const audioUrl = parsedArgs.url;
+                            const audioUrl = this.toolArgString(parsedArgs.url);
                             if (!audioUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -1946,7 +1946,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const videoUrl = parsedArgs.url;
+                            const videoUrl = this.toolArgString(parsedArgs.url);
                             if (!videoUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -2649,6 +2649,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
             return `${r.name}: ${JSON.stringify(r.result)}`;
         }).join('\n');
+    }
+
+    /**
+     * Narrow an unknown tool-call argument to string. Tool args come from
+     * LLM-generated JSON (Record<string, unknown>); a non-string value would
+     * otherwise flow unvalidated into media sends. Missing/non-string args
+     * become '' (falsy), preserving the existing `if (!url)` guards.
+     */
+    private toolArgString(value: unknown): string {
+        return typeof value === 'string' ? value : '';
     }
 
     /**
