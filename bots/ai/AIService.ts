@@ -12,6 +12,7 @@ import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService } from '../server/AdminApiService';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, ToolCall } from './types';
+import type { AIProvider } from './AIProvider';
 import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
@@ -756,6 +757,12 @@ Everything above is technical guidance. Follow your personality as defined in th
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
                             this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
+
+                            // Cancellation during tool execution: persist the queued
+                            // media (safety net above) but skip inline delivery and
+                            // follow-up generation — the turn is over. The generator
+                            // returns at the post-loop abort guard.
+                            if (abortSignal?.aborted) break;
 
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
@@ -2921,6 +2928,40 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Run a bounded single-turn provider call for the quick paths.
+     *
+     * Creates an AbortController that fires after QUICK_LLM_TIMEOUT_MS and
+     * threads the signal into the provider call, so a slow/hung provider is
+     * genuinely cancelled at the deadline (the abort propagates to the fetch,
+     * closing the connection instead of letting it dangle until the provider's
+     * own 30s+ timeout and leaking connections under load).
+     *
+     * Returns undefined when the provider is unavailable, the call fails, or
+     * the deadline expires — callers fall back to their queue/empty-string
+     * defaults without distinguishing between those cases.
+     */
+    private async runBoundedProviderCall<T>(
+        providerId: string,
+        call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>
+    ): Promise<T | undefined> {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
+
+        try {
+            const config = await this.getProviderCredentials(providerId);
+            const provider = this.providerRegistry.getOrCreateProvider(config);
+            if (!provider) return undefined;
+            return await call(provider, config, controller.signal);
+        } catch {
+            // Timeout abort or provider error — the caller decides the fallback.
+            // The abort already cancelled the upstream call.
+            return undefined;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    /**
      * Quick single-turn classification of a user message against the current task.
      * Used by BaseBehavior.handleInterruption to route mid-stream messages.
      * Uses the bot's OWN configured provider (not a hardcoded one), so the
@@ -2946,44 +2987,26 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
         // Bound the classification latency: a slow/hung provider must not delay
         // routing a cancel/update — the in-flight stream keeps sending content
         // until this call resolves. Fall back to queue on deadline expiry.
-        //
-        // The timeout ABORTS the underlying call (not a bare Promise.race):
-        // the signal propagates to the provider fetch, so the connection is
-        // actually closed at the deadline instead of dangling until the
-        // provider's own (30s+) timeout and leaking connections under load.
-        const CLASSIFY_TIMEOUT_MS = QUICK_LLM_TIMEOUT_MS;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), CLASSIFY_TIMEOUT_MS);
-
-        try {
-            const config = await this.getProviderCredentials(providerId);
-            const provider = this.providerRegistry.getOrCreateProvider(config);
-            if (!provider) return { action: 'queue', message: '' };
-
-            const response = await provider.generate(
+        const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
+            provider.generate(
                 'Classify the following message. Return JSON with action and message.',
                 prompt,
                 config,
                 undefined,
-                controller.signal
-            );
+                signal
+            )
+        );
+        if (!result) return { action: 'queue', message: '' };
 
-            const parsed = this.parseInterruptionResult(response.content);
-            if (parsed) return parsed;
+        const parsed = this.parseInterruptionResult(result.content);
+        if (parsed) return parsed;
 
-            // Fallback: try to parse from raw text response
-            const trimmed = response.content.trim().toLowerCase();
-            if (['cancel', 'update', 'answer', 'queue'].includes(trimmed)) {
-                return { action: trimmed as InterruptionAction, message: '' };
-            }
-            return { action: 'queue', message: '' };
-        } catch {
-            // Timeout abort or provider error — fall back to queue so the message
-            // is still handled. The abort already cancelled the upstream call.
-            return { action: 'queue', message: '' };
-        } finally {
-            clearTimeout(timeoutId);
+        // Fallback: try to parse from raw text response
+        const trimmed = result.content.trim().toLowerCase();
+        if (['cancel', 'update', 'answer', 'queue'].includes(trimmed)) {
+            return { action: trimmed as InterruptionAction, message: '' };
         }
+        return { action: 'queue', message: '' };
     }
 
     /**
@@ -2998,19 +3021,10 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
         // the interruption-routing path — a slow provider must not delay it for
         // the provider's own (30s+) timeout, and the call must actually be
         // cancelled at the deadline, not left dangling.
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
-        try {
-            const config = await this.getProviderCredentials(providerId);
-            const provider = this.providerRegistry.getOrCreateProvider(config);
-            if (!provider) return '';
-            const response = await provider.generate(systemPrompt, userPrompt, config, undefined, controller.signal);
-            return (response.content || '').trim();
-        } catch {
-            return '';
-        } finally {
-            clearTimeout(timeoutId);
-        }
+        const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
+            provider.generate(systemPrompt, userPrompt, config, undefined, signal)
+        );
+        return (result?.content || '').trim();
     }
 
     /**

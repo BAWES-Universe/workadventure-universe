@@ -7,6 +7,7 @@
 
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
+import { linkExternalAbort } from './abortUtils';
 import * as Sentry from '@sentry/node';
 
 export class LMStudioProvider implements AIProvider {
@@ -22,20 +23,6 @@ export class LMStudioProvider implements AIProvider {
 
     supportsStreaming(): boolean {
         return true;
-    }
-
-    /**
-     * Link an external AbortSignal to an internal controller so cancel/update
-     * closes the upstream stream immediately, instead of waiting for the next
-     * chunk to be pulled (which may never come if the provider stalls).
-     */
-    private linkExternalAbort(externalSignal: AbortSignal | undefined, controller: AbortController): void {
-        if (!externalSignal) return;
-        if (externalSignal.aborted) {
-            controller.abort();
-            return;
-        }
-        externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
     }
 
     async *generateStream(
@@ -59,7 +46,7 @@ export class LMStudioProvider implements AIProvider {
             const endpoint = `${config.endpoint}/v1/chat/completions`;
 
             const controller = new AbortController();
-            this.linkExternalAbort(externalSignal, controller);
+            linkExternalAbort(externalSignal, controller);
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
             const response = await fetch(endpoint, {
@@ -231,7 +218,7 @@ export class LMStudioProvider implements AIProvider {
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             const controller = new AbortController();
-            this.linkExternalAbort(externalSignal, controller);
+            linkExternalAbort(externalSignal, controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = `${config.endpoint}/v1/chat/completions`;
