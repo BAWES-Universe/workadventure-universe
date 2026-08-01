@@ -83,7 +83,7 @@ export class AIProviderRegistry {
 
         if (!provider.supportsStreaming()) {
             // Fallback to non-streaming
-            const response = await provider.generate(systemPrompt, userMessage, config, tools);
+            const response = await provider.generate(systemPrompt, userMessage, config, tools, signal);
             yield {
                 content: response.content,
                 done: false,

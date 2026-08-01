@@ -26,6 +26,14 @@ import { jsonrepair } from 'jsonrepair';
  */
 export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
 
+/**
+ * Deadline for the quick LLM calls used in interruption routing
+ * (quickClassify, quickGenerate). Bounds routing latency: a slow provider must
+ * not delay a cancel/update or the queue-overflow ack. The deadline ABORTS the
+ * upstream call rather than leaving it dangling (see the call sites).
+ */
+const QUICK_LLM_TIMEOUT_MS = 3000;
+
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -2933,7 +2941,7 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
         // the signal propagates to the provider fetch, so the connection is
         // actually closed at the deadline instead of dangling until the
         // provider's own (30s+) timeout and leaking connections under load.
-        const CLASSIFY_TIMEOUT_MS = 3000;
+        const CLASSIFY_TIMEOUT_MS = QUICK_LLM_TIMEOUT_MS;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), CLASSIFY_TIMEOUT_MS);
 
@@ -2976,14 +2984,22 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
      * hardcoded text.
      */
     async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string): Promise<string> {
+        // Same bounded-abort pattern as quickClassify: the overflow ack runs in
+        // the interruption-routing path — a slow provider must not delay it for
+        // the provider's own (30s+) timeout, and the call must actually be
+        // cancelled at the deadline, not left dangling.
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
         try {
             const config = await this.getProviderCredentials(providerId);
             const provider = this.providerRegistry.getOrCreateProvider(config);
             if (!provider) return '';
-            const response = await provider.generate(systemPrompt, userPrompt, config);
+            const response = await provider.generate(systemPrompt, userPrompt, config, undefined, controller.signal);
             return (response.content || '').trim();
         } catch {
             return '';
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
