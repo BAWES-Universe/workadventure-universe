@@ -252,9 +252,17 @@ async function jsonRpcRequest(
                 sessionId = cachedSession.sessionId;
             }
         } else {
-            try {
-                const initController = new AbortController();
-                const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+            const initController = new AbortController();
+            const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+
+            // Run initialize as a detached task. The MCP spec forbids
+            // cancelling initialize ("The initialize request MUST NOT be
+            // cancelled") and its session-cache update must land even if the
+            // caller gives up — so the request itself is never aborted by the
+            // caller's signal; we only race our wait against it so a cancelled
+            // turn returns promptly instead of blocking on a slow init (cold
+            // ComfyUI start, dead server, etc.).
+            const initPromise = (async () => {
                 try {
                     const initResponse = await axios.post(
                         serverUrl,
@@ -294,24 +302,49 @@ async function jsonRpcRequest(
                             initializedAt: Date.now(),
                         });
                     }
+                } catch {
+                    // Init timed out or failed. Set a cache marker that EXISTS (so
+                    // executeToolCall sees it and skips the retry) but is
+                    // INSTANTLY EXPIRED (so on the next call, jsonRpcRequest's TTL
+                    // check falls through and retries init). Without this marker,
+                    // executeToolCall would see an empty cache and retry —
+                    // re-exposing the double-execution risk.
+                    // initializedAt is set to Date.now() - SESSION_INIT_TTL so the
+                    // check `Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL`
+                    // evaluates to false on the very next call.
+                    if (!skipSessionCache) {
+                        mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
+                            sessionId: undefined,
+                            initializedAt: Date.now() - SESSION_INIT_TTL,
+                        });
+                    }
                 } finally {
                     clearTimeout(initTimeoutId);
                 }
-            } catch {
-                // Init timed out. Set a cache marker that EXISTS (so executeToolCall
-                // sees it and skips the retry) but is INSTANTLY EXPIRED (so on the
-                // next call, jsonRpcRequest's TTL check falls through and retries
-                // init). Without this marker, executeToolCall would see an empty
-                // cache and retry — re-exposing the double-execution risk.
-                // initializedAt is set to Date.now() - SESSION_INIT_TTL so the
-                // check `Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL`
-                // evaluates to false on the very next call.
-                if (!skipSessionCache) {
-                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
-                        sessionId: undefined,
-                        initializedAt: Date.now() - SESSION_INIT_TTL,
-                    });
+            })();
+
+            // Race the init against caller cancellation so the turn cancel is
+            // observed immediately, without aborting the initialize request.
+            if (signal) {
+                let cleanupAbortListener: (() => void) | undefined;
+                const abortPromise = new Promise<boolean>((resolve) => {
+                    if (signal.aborted) {
+                        resolve(true);
+                        return;
+                    }
+                    const onAbort = () => resolve(true);
+                    signal.addEventListener('abort', onAbort, { once: true });
+                    cleanupAbortListener = () => signal.removeEventListener('abort', onAbort);
+                });
+                const initDone = initPromise.then(() => false as const);
+                const cancelled = await Promise.race([initDone, abortPromise]);
+                cleanupAbortListener?.();
+                if (cancelled) {
+                    console.log(`[MCPConnector] Request cancelled for ${method} (during initialize)`);
+                    return null;
                 }
+            } else {
+                await initPromise;
             }
         }
     }
