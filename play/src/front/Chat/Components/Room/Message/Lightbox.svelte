@@ -208,6 +208,12 @@
                 // pointerup/pointercancel cannot re-trigger navigation.
                 swipeDx = 0;
                 swipeDy = 0;
+                // Restore the visual state the move handler applied while
+                // dragging (vertical translate + dimmed backdrop) before the
+                // image changes — otherwise the backdrop stays darkened and the
+                // next image renders offset until the next gesture.
+                ty = 0;
+                if (lightboxEl) lightboxEl.style.opacity = "";
                 if (dx > 0) {
                     prev();
                 } else {
