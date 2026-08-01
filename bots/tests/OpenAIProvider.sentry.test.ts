@@ -101,9 +101,11 @@ describe("OpenAIProvider.generate – external abort signal", () => {
 
         controller.abort();
 
-        // The provider converts the AbortError into its timeout error and the
-        // pending fetch is actually cancelled — no dangling connection.
-        await expect(pending).rejects.toThrow("OpenAI request timeout");
+        // The external abort propagates as-is (not a misleading "timeout after
+        // 30000ms" report — this was an intentional cancellation, not a provider
+        // timeout) and the pending fetch is actually cancelled — no dangling
+        // connection.
+        await expect(pending).rejects.toThrow("This operation was aborted");
         expect(fetch).toHaveBeenCalledTimes(1);
     });
 

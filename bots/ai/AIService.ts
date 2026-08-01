@@ -3029,6 +3029,9 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
 
     /**
      * Parse JSON from quickClassify response, handling markdown code fences.
+     * Falls back to jsonrepair for slightly malformed LLM JSON (unescaped
+     * quotes, trailing commas) so an 'update'/'cancel' interruption is not
+     * misrouted to 'queue' just because the classifier's JSON was dirty.
      */
     private parseInterruptionResult(content: string): { action: InterruptionAction; message: string } | null {
         // Strip markdown code fences
@@ -3038,18 +3041,24 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
             json = fenceMatch[1].trim();
         }
 
+        let parsed: any;
         try {
-            const parsed = JSON.parse(json);
-            const action = parsed.action?.toString().trim().toLowerCase();
-            if (action && ['cancel', 'update', 'answer', 'queue'].includes(action)) {
-                return {
-                    action: action as InterruptionAction,
-                    message: typeof parsed.message === 'string' ? parsed.message.trim() : '',
-                };
-            }
-            return null;
+            parsed = JSON.parse(json);
         } catch {
-            return null;
+            try {
+                parsed = JSON.parse(jsonrepair(json));
+            } catch {
+                return null;
+            }
         }
+
+        const action = parsed.action?.toString().trim().toLowerCase();
+        if (action && ['cancel', 'update', 'answer', 'queue'].includes(action)) {
+            return {
+                action: action as InterruptionAction,
+                message: typeof parsed.message === 'string' ? parsed.message.trim() : '',
+            };
+        }
+        return null;
     }
 }

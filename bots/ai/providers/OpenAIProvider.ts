@@ -152,13 +152,14 @@ export class OpenAIProvider implements AIProvider {
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const externalAbortCleanups: Array<() => void> = [];
 
         try {
             const endpoint = this.getEndpoint(config);
             const apiKey = this.getApiKey(config);
 
             const controller = new AbortController();
-            linkExternalAbort(externalSignal, controller);
+            externalAbortCleanups.push(linkExternalAbort(externalSignal, controller));
             let streamController = controller; // tracks the controller for the active stream (may be updated on retry)
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -194,7 +195,7 @@ export class OpenAIProvider implements AIProvider {
                     delete retryBody.temperature;
 
                     const retryController = new AbortController();
-                    linkExternalAbort(externalSignal, retryController);
+                    externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
                     streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
                     const retryResponse = await fetch(endpoint, {
@@ -225,7 +226,7 @@ export class OpenAIProvider implements AIProvider {
                     retryBody.max_completion_tokens = config.maxTokens;
 
                     const retryController = new AbortController();
-                    linkExternalAbort(externalSignal, retryController);
+                    externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
                     streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
                     const retryResponse = await fetch(endpoint, {
@@ -350,17 +351,21 @@ export class OpenAIProvider implements AIProvider {
 
         } catch (error: any) {
             const latency = Date.now() - startTime;
+            // An external cancellation (stop/correction or quick-call deadline)
+            // is not a provider failure — don't publish an error for it.
+            const externallyCancelled = externalSignal?.aborted === true;
             yield {
                 content: '',
                 done: true,
                 metadata: {
                     tokensUsed: 0,
                     latency,
-                    error: true,
+                    error: !externallyCancelled,
                 },
             };
         } finally {
             clearTimeout(timeoutId);
+            externalAbortCleanups.forEach(cleanup => cleanup());
             reader?.cancel().catch(() => {});
         }
     }
@@ -385,8 +390,9 @@ export class OpenAIProvider implements AIProvider {
             },
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
+            const externalAbortCleanups: Array<() => void> = [];
             const controller = new AbortController();
-            linkExternalAbort(externalSignal, controller);
+            externalAbortCleanups.push(linkExternalAbort(externalSignal, controller));
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = this.getEndpoint(config);
@@ -427,7 +433,7 @@ export class OpenAIProvider implements AIProvider {
                         delete retryBody.temperature;
 
                         const retryController = new AbortController();
-                        linkExternalAbort(externalSignal, retryController);
+                        externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {
@@ -463,7 +469,7 @@ export class OpenAIProvider implements AIProvider {
                         retryBody.max_completion_tokens = config.maxTokens;
 
                         const retryController = new AbortController();
-                        linkExternalAbort(externalSignal, retryController);
+                        externalAbortCleanups.push(linkExternalAbort(externalSignal, retryController));
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {
@@ -514,6 +520,13 @@ export class OpenAIProvider implements AIProvider {
 
                 span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
+                // External cancellation (stop/correction or quick-call deadline)
+                // is not a provider failure — propagate it so callers treat it
+                // as a clean stop instead of a misleading timeout report.
+                if (externalSignal?.aborted) {
+                    throw error;
+                }
+
                 if (error.name === 'AbortError') {
                     throw new Error(`OpenAI request timeout after ${timeout}ms`);
                 }
@@ -530,6 +543,7 @@ export class OpenAIProvider implements AIProvider {
                 };
             } finally {
                 clearTimeout(timeoutId);
+                externalAbortCleanups.forEach(cleanup => cleanup());
             }
         });
     }
