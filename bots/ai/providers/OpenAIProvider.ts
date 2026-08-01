@@ -9,6 +9,7 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { decryptApiKey } from '../encryption';
+import { linkExternalAbort } from './abortUtils';
 import * as Sentry from '@sentry/node';
 
 export class OpenAIProvider implements AIProvider {
@@ -67,20 +68,6 @@ export class OpenAIProvider implements AIProvider {
         // - Reasoning models: "o1", "o1-preview", "o1-mini", "o3", "o3-mini", etc.
         // - Newer models: "gpt-5", "gpt-5-mini", etc.
         return /^o[13]|gpt-5/.test(modelLower);
-    }
-
-    /**
-     * Link an external AbortSignal to an internal controller so cancel/update
-     * closes the upstream stream immediately, instead of waiting for the next
-     * chunk to be pulled (which may never come if the provider stalls).
-     */
-    private linkExternalAbort(externalSignal: AbortSignal | undefined, controller: AbortController): void {
-        if (!externalSignal) return;
-        if (externalSignal.aborted) {
-            controller.abort();
-            return;
-        }
-        externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
     }
 
     /**
@@ -171,7 +158,7 @@ export class OpenAIProvider implements AIProvider {
             const apiKey = this.getApiKey(config);
 
             const controller = new AbortController();
-            this.linkExternalAbort(externalSignal, controller);
+            linkExternalAbort(externalSignal, controller);
             let streamController = controller; // tracks the controller for the active stream (may be updated on retry)
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
@@ -207,7 +194,7 @@ export class OpenAIProvider implements AIProvider {
                     delete retryBody.temperature;
 
                     const retryController = new AbortController();
-                    this.linkExternalAbort(externalSignal, retryController);
+                    linkExternalAbort(externalSignal, retryController);
                     streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
                     const retryResponse = await fetch(endpoint, {
@@ -238,7 +225,7 @@ export class OpenAIProvider implements AIProvider {
                     retryBody.max_completion_tokens = config.maxTokens;
 
                     const retryController = new AbortController();
-                    this.linkExternalAbort(externalSignal, retryController);
+                    linkExternalAbort(externalSignal, retryController);
                     streamController = retryController; // update for active stream
                     timeoutId = setTimeout(() => retryController.abort(), timeout);
                     const retryResponse = await fetch(endpoint, {
@@ -399,7 +386,7 @@ export class OpenAIProvider implements AIProvider {
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             const controller = new AbortController();
-            this.linkExternalAbort(externalSignal, controller);
+            linkExternalAbort(externalSignal, controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = this.getEndpoint(config);
@@ -440,7 +427,7 @@ export class OpenAIProvider implements AIProvider {
                         delete retryBody.temperature;
 
                         const retryController = new AbortController();
-                        this.linkExternalAbort(externalSignal, retryController);
+                        linkExternalAbort(externalSignal, retryController);
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {
@@ -476,7 +463,7 @@ export class OpenAIProvider implements AIProvider {
                         retryBody.max_completion_tokens = config.maxTokens;
 
                         const retryController = new AbortController();
-                        this.linkExternalAbort(externalSignal, retryController);
+                        linkExternalAbort(externalSignal, retryController);
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {

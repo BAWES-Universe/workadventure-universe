@@ -184,20 +184,20 @@ describe('BaseBehavior interruption routing', () => {
         expect(state.abortController).toBeDefined();
     });
 
-    it('flushMessageQueue: does not drop a queued message while generating (fix C2)', () => {
+    it('flushMessageQueue: does not drop a queued message while generating (fix C2)', async () => {
         behavior.testStartGeneration(SENDER, SPACE);
         ai.quickClassify.mockResolvedValue({ action: 'queue', message: 'one moment' });
-        // Enqueue one message synchronously via the interruption path
-        void behavior.testHandleInterruption(SENDER, 'queued-msg', 'queued-msg').then(() => {
-            const state = behavior.getState(SENDER);
-            expect(state.messageQueue).toHaveLength(1);
+        // Enqueue one message via the interruption path — await completion so
+        // the queue state is settled before asserting on it.
+        await behavior.testHandleInterruption(SENDER, 'queued-msg', 'queued-msg');
+        const state = behavior.getState(SENDER);
+        expect(state.messageQueue).toHaveLength(1);
 
-            behavior.testFlushMessageQueue(SENDER); // isGenerating still true
+        behavior.testFlushMessageQueue(SENDER); // isGenerating still true
 
-            // The message must still be there — the guard runs BEFORE shift
-            expect(state.messageQueue).toHaveLength(1);
-            expect(state.messageQueue[0].originalMessage).toBe('queued-msg');
-        });
+        // The message must still be there — the guard runs BEFORE shift
+        expect(state.messageQueue).toHaveLength(1);
+        expect(state.messageQueue[0].originalMessage).toBe('queued-msg');
     });
 
     it('abortCurrentStream: finalizes the active bubble id, not a phantom (fix C1)', () => {

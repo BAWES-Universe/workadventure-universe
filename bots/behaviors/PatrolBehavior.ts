@@ -2151,6 +2151,9 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 }
             }
         } catch (error) {
+            // User cancelled/updated mid-stream: the interruption handler already
+            // sent its own acknowledgment. Do not surface a confusing error bubble.
+            if (abortSignal?.aborted) return;
             console.error(`[PatrolBehavior] AI error:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);

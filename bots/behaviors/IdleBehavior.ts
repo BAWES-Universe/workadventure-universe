@@ -864,6 +864,9 @@ export class IdleBehavior extends BaseBehavior {
                 }
             }
         } catch (error) {
+            // User cancelled/updated mid-stream: the interruption handler already
+            // sent its own acknowledgment. Do not surface a confusing error bubble.
+            if (abortSignal?.aborted) return;
             console.error(`[IdleBehavior] AI error:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);
