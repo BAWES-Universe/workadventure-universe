@@ -72,7 +72,8 @@ export class AIProviderRegistry {
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        tools?: any[]
+        tools?: any[],
+        signal?: AbortSignal
     ): AsyncGenerator<AIStreamChunk> {
         const provider = this.getOrCreateProvider(config);
 
@@ -82,7 +83,7 @@ export class AIProviderRegistry {
 
         if (!provider.supportsStreaming()) {
             // Fallback to non-streaming
-            const response = await provider.generate(systemPrompt, userMessage, config, tools);
+            const response = await provider.generate(systemPrompt, userMessage, config, tools, signal);
             yield {
                 content: response.content,
                 done: false,
@@ -105,7 +106,7 @@ export class AIProviderRegistry {
         }
 
         // Use streaming
-        yield* provider.generateStream(systemPrompt, userMessage, config, tools);
+        yield* provider.generateStream(systemPrompt, userMessage, config, tools, signal);
     }
 
     /**
