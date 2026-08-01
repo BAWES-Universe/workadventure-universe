@@ -6,7 +6,7 @@ import { BotClient } from '../client/BotClient';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
-import type { AIService } from '../ai/AIService';
+import type { AIService, InterruptionAction } from '../ai/AIService';
 import type { AdminApiService } from '../server/AdminApiService';
 import type { ConversationStorage } from '../memory/ConversationStorage';
 import type { ConversationMemory } from '../memory/ConversationMemory';
@@ -37,6 +37,32 @@ export interface ConversationState {
     pendingAnswers: string[];
     /** LLM-generated acknowledgment for 'update', sent before new generation starts */
     pendingUpdateMessage?: string;
+    /** Stream id of the bubble the current generation writes into, so an abort can close it */
+    activeResponseId?: string;
+}
+
+/**
+ * Create a fresh per-player conversation state. Shared factory so all
+ * ConversationState construction sites (SocialBehavior x3, startGeneration)
+ * stay in sync when the interface gains required fields.
+ */
+export function createConversationState(
+    playerId: number,
+    spaceName: string,
+    currentTask = ''
+): ConversationState {
+    const now = Date.now();
+    return {
+        playerId,
+        spaceName,
+        startTime: now,
+        lastMessageTime: now,
+        isGenerating: false,
+        currentTask,
+        messageQueue: [],
+        generation: 0,
+        pendingAnswers: [],
+    };
 }
 
 /**
@@ -1316,17 +1342,7 @@ export abstract class BaseBehavior {
     protected startGeneration(senderId: number, spaceName: string, currentTask?: string): void {
         let state = this.activeConversations.get(senderId);
         if (!state) {
-            state = {
-                playerId: senderId,
-                spaceName,
-                startTime: Date.now(),
-                lastMessageTime: Date.now(),
-                isGenerating: false,
-                currentTask: currentTask || '',
-                messageQueue: [],
-                generation: 0,
-                pendingAnswers: [],
-            };
+            state = createConversationState(senderId, spaceName, currentTask || '');
             this.activeConversations.set(senderId, state);
         }
         state.isGenerating = true;
@@ -1334,6 +1350,17 @@ export abstract class BaseBehavior {
         state.currentTask = currentTask || state.currentTask;
         state.generation = (state.generation || 0) + 1;
         state.abortController = new AbortController();
+    }
+
+    /**
+     * Record the stream bubble id the current generation is writing into, so an
+     * abort can finalize the in-flight bubble instead of leaving partial text
+     * stuck in the frontend's streaming map. Behaviors call this whenever they
+     * create or rotate their local responseId.
+     */
+    protected trackActiveResponseId(senderId: number, responseId: string): void {
+        const state = this.activeConversations.get(senderId);
+        if (state) state.activeResponseId = responseId;
     }
 
     /**
@@ -1407,6 +1434,12 @@ export abstract class BaseBehavior {
         try {
             await generator(abortSignal);
         } catch (error) {
+            // A stale generation means cancel/update already aborted this stream
+            // and sent its own acknowledgment. Do not add a confusing error bubble.
+            const stillCurrent = this.activeConversations.get(senderId)?.generation === capturedGen;
+            if (!stillCurrent) {
+                return 'cancelled';
+            }
             console.error(`[${this.constructor.name}] Error generating AI response:`, error);
             this.bot?.stopTyping(spaceName);
             const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
@@ -1429,8 +1462,11 @@ export abstract class BaseBehavior {
         }
         if (this.bot && state.spaceName) {
             const botId = this.bot.getBotId();
-            const errId = `bot-${botId}-player-${senderId}-abort-${crypto.randomUUID()}`;
-            this.bot.sendStreamMessage(state.spaceName, errId, '', true, finalContent || '');
+            // Finalize the bubble the in-flight stream writes into so the player
+            // doesn't get a phantom empty bubble plus a stuck partial one.
+            // Falls back to a fresh id if no stream id was tracked yet.
+            const finalizeId = state.activeResponseId || `bot-${botId}-player-${senderId}-abort-${crypto.randomUUID()}`;
+            this.bot.sendStreamMessage(state.spaceName, finalizeId, '', true, finalContent || '');
         }
     }
 
@@ -1446,10 +1482,12 @@ export abstract class BaseBehavior {
     protected flushMessageQueue(senderId: number): void {
         const state = this.activeConversations.get(senderId);
         if (!state || state.messageQueue.length === 0) return;
+        // Guard BEFORE removing the message: if a generation is somehow active,
+        // leave the message queued instead of dropping it.
+        if (state.isGenerating) return;
 
         const queued = state.messageQueue.shift();
         if (!queued) return;
-        if (state.isGenerating) return;
 
         const botId = this.bot?.getBotId() || '';
         this.bot?.startTyping(state.spaceName);
@@ -1484,7 +1522,7 @@ export abstract class BaseBehavior {
         const interruptedGen = state.generation;
         const currentTask = state.currentTask || originalMessage;
 
-        let result: { action: string; message: string };
+        let result: { action: InterruptionAction; message: string };
         try {
             result = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
@@ -1525,7 +1563,10 @@ export abstract class BaseBehavior {
                 // could resolve before the new generation starts.
                 this.finishGeneration(senderId, true, interruptedGen);
                 currentState.generation = interruptedGen + 1;
-                currentState.messageQueue = [];
+                // Keep messageQueue: those messages were acknowledged to the
+                // player and are unrelated to the correction. Drop only the
+                // pending one-shot answers, which referred to the now-abandoned
+                // response.
                 currentState.pendingAnswers = [];
                 // Store acknowledgment to be sent before new generation starts
                 currentState.pendingUpdateMessage = result.message;
@@ -1561,12 +1602,12 @@ export abstract class BaseBehavior {
      * Uses the bot's own configured provider so classification works for
      * bots on any provider (not just DeepSeek).
      */
-    private async classifyInterruption(currentTask: string, newMessage: string): Promise<{ action: string; message: string }> {
-        if (!this.aiService || !('quickClassify' in this.aiService)) return { action: 'queue', message: '' };
+    private async classifyInterruption(currentTask: string, newMessage: string): Promise<{ action: InterruptionAction; message: string }> {
+        if (!this.aiService) return { action: 'queue', message: '' };
         const botConfig = this.bot?.getFullConfig();
         const providerId = botConfig?.aiProviderRef;
         if (!providerId) return { action: 'queue', message: '' };
-        return (this.aiService as any).quickClassify(providerId, currentTask, newMessage);
+        return this.aiService.quickClassify(providerId, currentTask, newMessage);
     }
 
     private async enqueueMessage(
@@ -1584,7 +1625,7 @@ export abstract class BaseBehavior {
         if (state.messageQueue.length >= this.MAX_QUEUED_MESSAGES) {
             // Overflow ack is LLM-generated (no hardcoded strings) — in-character
             // acknowledgment that several messages are waiting.
-            const ack = await this.generateOverflowAck(state.spaceName, state.currentTask);
+            const ack = await this.generateOverflowAck(state.currentTask);
             if (ack) {
                 this.sendStatusAck(state.spaceName, ack);
             }
@@ -1598,8 +1639,8 @@ export abstract class BaseBehavior {
      * Generate an in-character acknowledgment for queue overflow via the bot's
      * own provider. Returns '' if the LLM call fails (silent — no hardcoded text).
      */
-    private async generateOverflowAck(spaceName: string, currentTask: string): Promise<string> {
-        if (!this.aiService || !('quickGenerate' in this.aiService)) return '';
+    private async generateOverflowAck(currentTask: string): Promise<string> {
+        if (!this.aiService) return '';
         const botConfig = this.bot?.getFullConfig();
         const providerId = botConfig?.aiProviderRef;
         if (!providerId) return '';
@@ -1607,7 +1648,7 @@ export abstract class BaseBehavior {
         const prompt = `Current task: "${currentTask}"
 
 The person you're talking to just sent several more messages while you were still finishing a response. Acknowledge this in one short sentence, in your own voice — you've noticed and will get to them.`;
-        return (this.aiService as any).quickGenerate(providerId, chatInstructions, prompt);
+        return this.aiService.quickGenerate(providerId, chatInstructions, prompt);
     }
 
     /**

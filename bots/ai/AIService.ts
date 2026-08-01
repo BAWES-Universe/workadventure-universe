@@ -19,6 +19,13 @@ import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
 import { jsonrepair } from 'jsonrepair';
+
+/**
+ * Validated interruption routing actions. Shared with BaseBehavior so
+ * handleInterruption's switch gets compile-time checking on case labels.
+ */
+export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
+
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -519,7 +526,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                     systemPrompt,
                     userMessageForQwen,
                     configWithParent,
-                    tools.length > 0 ? tools : undefined
+                    tools.length > 0 ? tools : undefined,
+                    abortSignal
                 )) {
                     // Mid-stream interruption (cancel/update): stop consuming chunks.
                     // The behavior handles the abort via abortCurrentStream(); this
@@ -785,7 +793,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 systemPrompt,
                                 followUpMessageWithNoThink,
                                 configWithParent,
-                                tools.length > 0 ? tools : undefined
+                                tools.length > 0 ? tools : undefined,
+                                abortSignal
                             )) {
                                 // Mid-stream interruption: stop the follow-up tool-call
                                 // round and let the generator end early.
@@ -936,6 +945,12 @@ Everything above is technical guidance. Follow your personality as defined in th
                             }
                         }
 
+                        // Mid-stream interruption (cancel/update): the turn is over.
+                        // Stop here instead of falling through to the post-loop
+                        // fallback, which would emit filler text ("Let me check on
+                        // that for you.") to a player who asked the bot to stop.
+                        if (abortSignal?.aborted) return;
+
                         // If we hit max iterations with still-pending tool calls, log and clear
                         let hadDroppedFollowUpToolCalls = false;
                         if (toolCallAccumulator.size > 0) {
@@ -996,7 +1011,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         systemPrompt,
                                         synthesisMsg,
                                         configWithParent,
-                                        [] // No tools — force direct answer
+                                        [], // No tools — force direct answer
+                                        abortSignal
                                     )) {
                                         // Mid-stream interruption: stop the synthesis call.
                                         if (abortSignal?.aborted) break;
@@ -2893,7 +2909,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * interruption feature works for bots on any provider.
      * Returns the action and a message to say as a followup.
      */
-    async quickClassify(providerId: string, currentTask: string, newMessage: string): Promise<{ action: string; message: string }> {
+    async quickClassify(providerId: string, currentTask: string, newMessage: string): Promise<{ action: InterruptionAction; message: string }> {
         const prompt = `Current task: "${currentTask}"
 New message: "${newMessage}"
 
@@ -2909,16 +2925,26 @@ Classify and respond:
 
 Return JSON: { "action": "...", "message": "what to say as a followup" }`;
 
+        // Bound the classification latency: a slow/hung provider must not delay
+        // routing a cancel/update — the in-flight stream keeps sending content
+        // until this call resolves. Fall back to queue on deadline expiry.
+        const CLASSIFY_TIMEOUT_MS = 3000;
+
         try {
             const config = await this.getProviderCredentials(providerId);
             const provider = this.providerRegistry.getOrCreateProvider(config);
             if (!provider) return { action: 'queue', message: '' };
 
-            const response = await provider.generate(
-                'Classify the following message. Return JSON with action and message.',
-                prompt,
-                config
-            );
+            const response = await Promise.race([
+                provider.generate(
+                    'Classify the following message. Return JSON with action and message.',
+                    prompt,
+                    config
+                ),
+                new Promise<never>((_, reject) => {
+                    setTimeout(() => reject(new Error('quickClassify timeout')), CLASSIFY_TIMEOUT_MS);
+                }),
+            ]);
 
             const parsed = this.parseInterruptionResult(response.content);
             if (parsed) return parsed;
@@ -2926,7 +2952,7 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
             // Fallback: try to parse from raw text response
             const trimmed = response.content.trim().toLowerCase();
             if (['cancel', 'update', 'answer', 'queue'].includes(trimmed)) {
-                return { action: trimmed, message: '' };
+                return { action: trimmed as InterruptionAction, message: '' };
             }
             return { action: 'queue', message: '' };
         } catch {
@@ -2956,7 +2982,7 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
     /**
      * Parse JSON from quickClassify response, handling markdown code fences.
      */
-    private parseInterruptionResult(content: string): { action: string; message: string } | null {
+    private parseInterruptionResult(content: string): { action: InterruptionAction; message: string } | null {
         // Strip markdown code fences
         let json = content.trim();
         const fenceMatch = json.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
@@ -2969,7 +2995,7 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
             const action = parsed.action?.toString().trim().toLowerCase();
             if (action && ['cancel', 'update', 'answer', 'queue'].includes(action)) {
                 return {
-                    action,
+                    action: action as InterruptionAction,
                     message: typeof parsed.message === 'string' ? parsed.message.trim() : '',
                 };
             }

@@ -32,13 +32,16 @@ export interface AIProvider {
      * @param userMessage - User message
      * @param config - Provider configuration
      * @param tools - Optional array of tool definitions for function calling
+     * @param signal - Optional external AbortSignal; when aborted, the active
+     *                 upstream stream/request is cancelled immediately
      * @returns Async generator yielding stream chunks
      */
     generateStream(
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        tools?: any[]
+        tools?: any[],
+        signal?: AbortSignal
     ): AsyncGenerator<AIStreamChunk>;
 
     /**

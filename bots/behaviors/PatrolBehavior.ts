@@ -1788,6 +1788,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const BATCH_MS = 100;
         // Unique ID for this streamed response — used by frontend to correlate chunks
         let responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        // Track the current bubble id so an abort can finalize it (not a phantom)
+        this.trackActiveResponseId(playerId, responseId);
         // Track whether the model has started generating the emotion block at the end
         // of the response. Once detected, stop streaming chunks to prevent raw partial
         // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
@@ -1821,6 +1823,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                             this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalContent);
                         }
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        this.trackActiveResponseId(playerId, responseId);
                         fullMessage = '';
                         emotionBlockStarted = false;
                         pendingPrefix = '';
@@ -1829,6 +1832,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                                 for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                     const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
                                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                    this.trackActiveResponseId(playerId, responseId);
                                     fullMessage = toolStatus;
                                     this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
                                     // Finalize the tool-name bubble so it doesn't linger in
@@ -1838,6 +1842,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                             }
                             // New responseId for follow-up — separate from the tool-name bubble
                             responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            this.trackActiveResponseId(playerId, responseId);
                             fullMessage = ''; // Clear so follow-up content starts fresh
                         }
                         continue;
@@ -1956,7 +1961,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         let currentRepetitionScore = processed.metrics.repetitionScore;
                         let currentMessage = fullMessage;
 
-                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
+                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts && !abortSignal?.aborted) {
                             regenerationAttempts++;
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[PatrolBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
@@ -2086,7 +2091,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         }
 
                         // If still too similar after max attempts, use a varied fallback
-                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
+                        // (skipped if the turn was aborted — the player already got an ack)
+                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts && !abortSignal?.aborted) {
                             console.warn(`[PatrolBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
                             // Use varied fallbacks to avoid repetition loop
                             const fallbacks = [

@@ -2,7 +2,7 @@
  * SocialBehavior - Bot actively seeks conversations with players
  */
 
-import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
+import { BaseBehavior, createConversationState, type BehaviorConfig } from './BaseBehavior';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { SpaceUser } from '@workadventure/messages';
@@ -307,17 +307,7 @@ export class SocialBehavior extends BaseBehavior {
                 this.conversationMemory?.startConversation(botId, targetPersonId);
                 
                 // Start conversation
-                this.activeConversations.set(targetPersonId, {
-                    playerId: targetPersonId,
-                    spaceName,
-                    startTime: currentTime,
-                    lastMessageTime: currentTime,
-                    isGenerating: false,
-                    currentTask: '',
-                    messageQueue: [],
-                    generation: 0,
-                    pendingAnswers: [],
-                });
+                this.activeConversations.set(targetPersonId, createConversationState(targetPersonId, spaceName));
                 
                 // Claim this slot — prevent onMemoryReady from also greeting this player.
                 this.leadingGreetedPlayers.add(targetPersonId);
@@ -340,17 +330,7 @@ export class SocialBehavior extends BaseBehavior {
             this.conversationMemory?.startConversation(botId, this.targetPlayerId);
 
             // Start conversation (greeting deferred to onMemoryReady)
-            this.activeConversations.set(this.targetPlayerId, {
-                playerId: this.targetPlayerId,
-                spaceName,
-                startTime: currentTime,
-                lastMessageTime: currentTime,
-                isGenerating: false,
-                currentTask: '',
-                messageQueue: [],
-                generation: 0,
-                pendingAnswers: [],
-            });
+            this.activeConversations.set(this.targetPlayerId, createConversationState(this.targetPlayerId, spaceName));
 
             // Clear target
             this.targetPlayerId = null;
@@ -538,17 +518,7 @@ export class SocialBehavior extends BaseBehavior {
         this.conversationMemory?.startConversation(botId, playerId);
         
         // Start conversation tracking
-        this.activeConversations.set(playerId, {
-            playerId: playerId,
-            spaceName,
-            startTime: currentTime,
-            lastMessageTime: currentTime,
-            isGenerating: false,
-            currentTask: '',
-            messageQueue: [],
-            generation: 0,
-            pendingAnswers: [],
-        });
+        this.activeConversations.set(playerId, createConversationState(playerId, spaceName));
         
         // Claim this slot — prevent onMemoryReady from also greeting this player
         // (e.g., when onSpaceJoined triggers this and onSpaceUserJoined fires next).
@@ -817,6 +787,8 @@ export class SocialBehavior extends BaseBehavior {
         const BATCH_MS = 100;
         // Unique ID for this streamed response — used by frontend to correlate chunks
         let responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        // Track the current bubble id so an abort can finalize it (not a phantom)
+        this.trackActiveResponseId(playerId, responseId);
         // Track whether the model has started generating the emotion block at the end
         // of the response. Once detected, stop streaming chunks to prevent raw partial
         // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
@@ -850,6 +822,7 @@ export class SocialBehavior extends BaseBehavior {
                         this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalContent);
                     }
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    this.trackActiveResponseId(playerId, responseId);
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
@@ -858,6 +831,7 @@ export class SocialBehavior extends BaseBehavior {
                             for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                 const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
                                 responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                this.trackActiveResponseId(playerId, responseId);
                                 fullMessage = toolStatus;
                                 this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
                                 // Finalize the tool-name bubble so it doesn't linger in
@@ -867,6 +841,7 @@ export class SocialBehavior extends BaseBehavior {
                         }
                         // New responseId for follow-up — separate from the tool-name bubble
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        this.trackActiveResponseId(playerId, responseId);
                         fullMessage = ''; // Clear so follow-up content starts fresh
                     }
                     continue;
@@ -987,7 +962,7 @@ export class SocialBehavior extends BaseBehavior {
                         let currentRepetitionScore = processed.metrics.repetitionScore;
                         let currentMessage = fullMessage;
                         
-                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
+                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts && !abortSignal?.aborted) {
                             regenerationAttempts++;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[SocialBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
@@ -1118,7 +1093,8 @@ export class SocialBehavior extends BaseBehavior {
                         }
                         
                         // If still too similar after max attempts, use a varied fallback
-                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
+                        // (skipped if the turn was aborted — the player already got an ack)
+                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts && !abortSignal?.aborted) {
                             console.warn(`[SocialBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
                             // Use varied fallbacks to avoid repetition loop
                             const fallbacks = [
