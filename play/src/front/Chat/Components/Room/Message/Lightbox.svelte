@@ -32,6 +32,11 @@
     let lastY = 0;
     let startY = 0;
 
+    // Some mobile browsers fire BOTH pointerup and pointercancel for a single
+    // gesture (or cancel mid-gesture and up on release). Without this guard the
+    // swipe finalizer would run twice — navigating two images per swipe.
+    let gestureConsumed = false;
+
     // Pinch zoom
     let initialPinchDist = 0;
     let initialPinchScale = 1;
@@ -147,6 +152,7 @@
 
     function onPointerDown(e: PointerEvent): void {
         isDragging = true;
+        gestureConsumed = false;
         lastX = e.clientX;
         lastY = e.clientY;
         startY = e.clientY;
@@ -180,17 +186,35 @@
     }
 
     function onPointerUp(e: PointerEvent): void {
+        // Finalize a gesture exactly once. Mobile browsers can fire pointerup
+        // and pointercancel for the same gesture (or cancel mid-swipe and up on
+        // release) — without this, the swipe below would navigate twice.
+        if (gestureConsumed) return;
+        gestureConsumed = true;
         isDragging = false;
 
         if (scale <= 1 || isVideo) {
             // Vertical swipe to dismiss
             if (Math.abs(swipeDy) > window.innerHeight * 0.15) {
+                swipeDy = 0;
+                swipeDx = 0;
                 close();
                 return;
             }
             // Horizontal swipe to navigate (must be more horizontal than vertical)
             if (Math.abs(swipeDx) > 80 && Math.abs(swipeDx) > Math.abs(swipeDy) * 1.5) {
-                if (swipeDx > 0) {
+                const dx = swipeDx;
+                // Consume the swipe state before dispatching so a duplicate
+                // pointerup/pointercancel cannot re-trigger navigation.
+                swipeDx = 0;
+                swipeDy = 0;
+                // Restore the visual state the move handler applied while
+                // dragging (vertical translate + dimmed backdrop) before the
+                // image changes — otherwise the backdrop stays darkened and the
+                // next image renders offset until the next gesture.
+                ty = 0;
+                if (lightboxEl) lightboxEl.style.opacity = "";
+                if (dx > 0) {
                     prev();
                 } else {
                     next();
