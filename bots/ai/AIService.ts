@@ -282,6 +282,27 @@ The technical rules below are guidelines for HOW to respond (formatting, tool us
             if (mapContextInfo) {
                 systemPrompt += mapContextInfo;
             }
+            // Current date context — lets the bot reason about time gaps when
+            // recalling past conversations (issue #268). Without a date anchor
+            // the bot treats a 3-day-old conversation as "just happened"
+            // ("Still riding that quiet Friday wave?" on a Monday). The memory
+            // context already carries relative deltas ("3 days ago"), but the
+            // bot needs today's date to frame them.
+            const todayLine = (() => {
+                try {
+                    const now = new Date();
+                    const dateStr = now.toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                    });
+                    return `\n\n**TODAY'S DATE:** ${dateStr}\nUse this date to judge how long ago past conversations happened. If the conversation context mentions events from days ago, acknowledge the time gap naturally instead of acting like they just occurred.`;
+                } catch {
+                    return '';
+                }
+            })();
+            systemPrompt += todayLine;
             if (conversationContext) {
                 systemPrompt += `\n\nConversation Context:\n${conversationContext}`;
                 // Natural, human-like memory and emotion instructions
