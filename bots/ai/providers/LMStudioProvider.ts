@@ -7,6 +7,7 @@
 
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
+import { linkExternalAbort } from './abortUtils';
 import * as Sentry from '@sentry/node';
 
 export class LMStudioProvider implements AIProvider {
@@ -28,7 +29,8 @@ export class LMStudioProvider implements AIProvider {
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        tools?: any[]
+        tools?: any[],
+        externalSignal?: AbortSignal
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -39,11 +41,13 @@ export class LMStudioProvider implements AIProvider {
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        let cleanupExternalAbort: (() => void) | undefined;
 
         try {
             const endpoint = `${config.endpoint}/v1/chat/completions`;
 
             const controller = new AbortController();
+            cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
             const response = await fetch(endpoint, {
@@ -180,17 +184,21 @@ export class LMStudioProvider implements AIProvider {
 
         } catch (error: any) {
             const latency = Date.now() - startTime;
+            // An external cancellation (stop/correction or quick-call deadline)
+            // is not a provider failure — don't publish an error for it.
+            const externallyCancelled = externalSignal?.aborted === true;
             yield {
                 content: '',
                 done: true,
                 metadata: {
                     tokensUsed: 0,
                     latency,
-                    error: true,
+                    error: !externallyCancelled,
                 },
             };
         } finally {
             clearTimeout(timeoutId);
+            cleanupExternalAbort?.();
             reader?.cancel().catch(() => {});
         }
     }
@@ -199,7 +207,8 @@ export class LMStudioProvider implements AIProvider {
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        tools?: any[]
+        tools?: any[],
+        externalSignal?: AbortSignal
     ): Promise<AIResponse> {
         const startTime = Date.now();
 
@@ -214,6 +223,7 @@ export class LMStudioProvider implements AIProvider {
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             const controller = new AbortController();
+            const cleanupExternalAbort = linkExternalAbort(externalSignal, controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = `${config.endpoint}/v1/chat/completions`;
@@ -269,6 +279,13 @@ export class LMStudioProvider implements AIProvider {
 
                 span.setStatus({ code: 2, message: error.message || 'Unknown error' });
 
+                // External cancellation (stop/correction or quick-call deadline)
+                // is not a provider failure — propagate it so callers treat it
+                // as a clean stop instead of a misleading timeout report.
+                if (externalSignal?.aborted) {
+                    throw error;
+                }
+
                 if (error.name === 'AbortError') {
                     throw new Error(`LMStudio request timeout after ${timeout}ms`);
                 }
@@ -285,6 +302,7 @@ export class LMStudioProvider implements AIProvider {
                 };
             } finally {
                 clearTimeout(timeoutId);
+                cleanupExternalAbort();
             }
         });
     }

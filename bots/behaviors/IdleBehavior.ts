@@ -423,25 +423,22 @@ export class IdleBehavior extends BaseBehavior {
         // Start typing indicator
         this.bot?.startTyping(spaceName);
 
-        // Generate AI response
-        this.generateAIResponseStream(spaceName, senderId, message, botId).catch(error => {
-            console.error(`[IdleBehavior] Error generating AI response:`, error);
-            // Stop typing indicator on error
-            this.bot?.stopTyping(spaceName);
-            // Send fallback message via stream for consistent UX
-            const errId = `bot-${botId}-player-${senderId}-${crypto.randomUUID()}`;
-            this.bot?.sendStreamMessage(spaceName, errId, "I'm having trouble processing that. Could you rephrase?", true, "I'm having trouble processing that. Could you rephrase?");
-        });
+        // Interruption-safe generation (handles queue, abort, update, generation tracking)
+        await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
+            (signal) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal),
+            url, mediaType, mimeType
+        );
     }
 
     /**
      * Generate AI response stream and send to player
      */
-    private async generateAIResponseStream(
+    protected async generateAIResponseStream(
         spaceName: string,
         playerId: number,
         playerMessage: string,
-        botId: string
+        botId: string,
+        abortSignal?: AbortSignal
     ): Promise<void> {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[IdleBehavior] generateAIResponseStream called for bot ${botId}`);
@@ -487,6 +484,8 @@ export class IdleBehavior extends BaseBehavior {
         const BATCH_MS = 100;
         // Unique ID for this streamed response — used by frontend to correlate chunks
         let responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        // Track the current bubble id so an abort can finalize it (not a phantom)
+        this.trackActiveResponseId(playerId, responseId);
         // Track whether the model has started generating the emotion block at the end
         // of the response. Once detected, stop streaming chunks to prevent raw partial
         // tags like "[EMOTION_UPDATE]" from displaying in the chat bubble.
@@ -508,7 +507,8 @@ export class IdleBehavior extends BaseBehavior {
                 spaceName,
                 context,
                 this.bot,
-                this.adminApiService
+                this.adminApiService,
+                abortSignal
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);
@@ -521,6 +521,7 @@ export class IdleBehavior extends BaseBehavior {
                         this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalContent);
                     }
                     responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    this.trackActiveResponseId(playerId, responseId);
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
@@ -530,6 +531,7 @@ export class IdleBehavior extends BaseBehavior {
                             for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                 const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
                                 responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                this.trackActiveResponseId(playerId, responseId);
                                 fullMessage = toolStatus;
                                 this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
                                 // Finalize the tool-name bubble so it doesn't linger in
@@ -540,6 +542,7 @@ export class IdleBehavior extends BaseBehavior {
                         // Create a new responseId for follow-up content so it appears
                         // in its own bubble instead of merging into the last tool-name bubble.
                         responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        this.trackActiveResponseId(playerId, responseId);
                         fullMessage = ''; // Clear so follow-up content starts fresh
                     }
                     continue;
@@ -663,7 +666,7 @@ export class IdleBehavior extends BaseBehavior {
                         let currentRepetitionScore = processed.metrics.repetitionScore;
                         let currentMessage = fullMessage;
 
-                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts) {
+                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts && !abortSignal?.aborted) {
                             regenerationAttempts++;
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                 console.warn(`[IdleBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
@@ -691,7 +694,8 @@ export class IdleBehavior extends BaseBehavior {
                                     spaceName,
                                     context,
                                     this.bot,
-                                    this.adminApiService
+                                    this.adminApiService,
+                                    abortSignal
                                 )) {
                                     if (chunk.reset) {
                                         this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
@@ -797,7 +801,8 @@ export class IdleBehavior extends BaseBehavior {
                         }
 
                         // If still too similar after max attempts, use a varied fallback
-                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts) {
+                        // (skipped if the turn was aborted — the player already got an ack)
+                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts && !abortSignal?.aborted) {
                             console.warn(`[IdleBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
                             // Use varied fallbacks to avoid repetition loop
                             const fallbacks = [
@@ -859,6 +864,9 @@ export class IdleBehavior extends BaseBehavior {
                 }
             }
         } catch (error) {
+            // User cancelled/updated mid-stream: the interruption handler already
+            // sent its own acknowledgment. Do not surface a confusing error bubble.
+            if (abortSignal?.aborted) return;
             console.error(`[IdleBehavior] AI error:`, error);
             // Stop typing indicator on error
             this.bot?.stopTyping(spaceName);

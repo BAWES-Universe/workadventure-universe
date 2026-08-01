@@ -12,6 +12,7 @@ import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService } from '../server/AdminApiService';
 import { BotClient } from '../client/BotClient';
 import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, ToolCall } from './types';
+import type { AIProvider } from './AIProvider';
 import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
@@ -19,6 +20,21 @@ import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
 import { jsonrepair } from 'jsonrepair';
+
+/**
+ * Validated interruption routing actions. Shared with BaseBehavior so
+ * handleInterruption's switch gets compile-time checking on case labels.
+ */
+export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
+
+/**
+ * Deadline for the quick LLM calls used in interruption routing
+ * (quickClassify, quickGenerate). Bounds routing latency: a slow provider must
+ * not delay a cancel/update or the queue-overflow ack. The deadline ABORTS the
+ * upstream call rather than leaving it dangling (see the call sites).
+ */
+const QUICK_LLM_TIMEOUT_MS = 3000;
+
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -128,7 +144,8 @@ export class AIService {
         spaceName: string | undefined,
         conversationContext: string,
         botClient?: BotClient,
-        adminApiService?: AdminApiService
+        adminApiService?: AdminApiService,
+        abortSignal?: AbortSignal
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
@@ -518,8 +535,17 @@ Everything above is technical guidance. Follow your personality as defined in th
                     systemPrompt,
                     userMessageForQwen,
                     configWithParent,
-                    tools.length > 0 ? tools : undefined
+                    tools.length > 0 ? tools : undefined,
+                    abortSignal
                 )) {
+                    // Mid-stream interruption (cancel/update): stop consuming chunks.
+                    // The behavior handles the abort via abortCurrentStream(); this
+                    // check makes the generator end early so no more content/tool
+                    // chunks reach the player.
+                    if (abortSignal?.aborted) {
+                        streamCompleted = false;
+                        break;
+                    }
                     // Collect tool calls first (before yielding content)
                     // Tool calls may be streamed with partial arguments, so we need to accumulate them by ID
                     if (chunk.toolCalls && chunk.toolCalls.length > 0) {
@@ -685,7 +711,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                         // Do NOT call it here — doing so would double-process the same
                         // items on tool-call turns, burning through the retry limit.
 
-                        while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS) {
+                        while (toolCallAccumulator.size > 0 && followUpIterations < MAX_FOLLOW_UP_ITERATIONS && !abortSignal?.aborted) {
                             followUpIterations++;
 
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -732,6 +758,12 @@ Everything above is technical guidance. Follow your personality as defined in th
                             // and will be delivered by flushPendingMedia on re-entry.
                             this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId);
 
+                            // Cancellation during tool execution: persist the queued
+                            // media (safety net above) but skip inline delivery and
+                            // follow-up generation — the turn is over. The generator
+                            // returns at the post-loop abort guard.
+                            if (abortSignal?.aborted) break;
+
                             // Auto-send interceptor: scan all tool results for media URLs
                             // and send them inline. Non-media results pass through unchanged.
                             await this.autoSendMedia(toolResults, botClient, spaceName, iterationSentUrls, botId, playerId, priorPendingKeys);
@@ -776,8 +808,12 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 systemPrompt,
                                 followUpMessageWithNoThink,
                                 configWithParent,
-                                tools.length > 0 ? tools : undefined
+                                tools.length > 0 ? tools : undefined,
+                                abortSignal
                             )) {
+                                // Mid-stream interruption: stop the follow-up tool-call
+                                // round and let the generator end early.
+                                if (abortSignal?.aborted) break;
                                 // Track tokens from follow-up call metadata
                                 if (resultChunk.metadata?.tokensUsed) {
                                     tokensUsed += resultChunk.metadata.tokensUsed;
@@ -924,6 +960,12 @@ Everything above is technical guidance. Follow your personality as defined in th
                             }
                         }
 
+                        // Mid-stream interruption (cancel/update): the turn is over.
+                        // Stop here instead of falling through to the post-loop
+                        // fallback, which would emit filler text ("Let me check on
+                        // that for you.") to a player who asked the bot to stop.
+                        if (abortSignal?.aborted) return;
+
                         // If we hit max iterations with still-pending tool calls, log and clear
                         let hadDroppedFollowUpToolCalls = false;
                         if (toolCallAccumulator.size > 0) {
@@ -984,8 +1026,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         systemPrompt,
                                         synthesisMsg,
                                         configWithParent,
-                                        [] // No tools — force direct answer
+                                        [], // No tools — force direct answer
+                                        abortSignal
                                     )) {
+                                        // Mid-stream interruption: stop the synthesis call.
+                                        if (abortSignal?.aborted) break;
                                         if (synthChunk.content) {
                                             accumulatedContent += synthChunk.content;
                                             synthContent += synthChunk.content;
@@ -1858,8 +1903,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const imageUrl = parsedArgs.url;
-                            const alt = parsedArgs.alt || '';
+                            const imageUrl = this.toolArgString(parsedArgs.url);
+                            const alt = this.toolArgString(parsedArgs.alt);
                             if (!imageUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -1883,8 +1928,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const fileUrl = parsedArgs.url;
-                            const filename = parsedArgs.filename || '';
+                            const fileUrl = this.toolArgString(parsedArgs.url);
+                            const filename = this.toolArgString(parsedArgs.filename);
                             if (!fileUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -1908,7 +1953,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const audioUrl = parsedArgs.url;
+                            const audioUrl = this.toolArgString(parsedArgs.url);
                             if (!audioUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -1932,7 +1977,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
-                            const videoUrl = parsedArgs.url;
+                            const videoUrl = this.toolArgString(parsedArgs.url);
                             if (!videoUrl) {
                                 result = { error: 'Missing required parameter: url' };
                                 break;
@@ -2638,6 +2683,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * Narrow an unknown tool-call argument to string. Tool args come from
+     * LLM-generated JSON (Record<string, unknown>); a non-string value would
+     * otherwise flow unvalidated into media sends. Missing/non-string args
+     * become '' (falsy), preserving the existing `if (!url)` guards.
+     */
+    private toolArgString(value: unknown): string {
+        return typeof value === 'string' ? value : '';
+    }
+
+    /**
      * Send media with automatic retry queuing on failure.
      * Shared by send_image, send_file, send_audio, send_video tool handlers.
      * On success returns { success, location, originalUrl, message }.
@@ -2871,5 +2926,139 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
         return null;
     }
-}
 
+    /**
+     * Run a bounded single-turn provider call for the quick paths.
+     *
+     * Creates an AbortController that fires after QUICK_LLM_TIMEOUT_MS and
+     * threads the signal into the provider call, so a slow/hung provider is
+     * genuinely cancelled at the deadline (the abort propagates to the fetch,
+     * closing the connection instead of letting it dangle until the provider's
+     * own 30s+ timeout and leaking connections under load).
+     *
+     * Returns undefined when the provider is unavailable, the call fails, or
+     * the deadline expires — callers fall back to their queue/empty-string
+     * defaults without distinguishing between those cases.
+     */
+    private async runBoundedProviderCall<T>(
+        providerId: string,
+        call: (provider: AIProvider, config: AIProviderConfig, signal: AbortSignal) => Promise<T>
+    ): Promise<T | undefined> {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), QUICK_LLM_TIMEOUT_MS);
+
+        try {
+            const config = await this.getProviderCredentials(providerId);
+            const provider = this.providerRegistry.getOrCreateProvider(config);
+            if (!provider) return undefined;
+            return await call(provider, config, controller.signal);
+        } catch {
+            // Timeout abort or provider error — the caller decides the fallback.
+            // The abort already cancelled the upstream call.
+            return undefined;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    /**
+     * Quick single-turn classification of a user message against the current task.
+     * Used by BaseBehavior.handleInterruption to route mid-stream messages.
+     * Uses the bot's OWN configured provider (not a hardcoded one), so the
+     * interruption feature works for bots on any provider.
+     * Returns the action and a message to say as a followup.
+     */
+    async quickClassify(providerId: string, currentTask: string, newMessage: string): Promise<{ action: InterruptionAction; message: string }> {
+        const prompt = `Current task: "${currentTask}"
+New message: "${newMessage}"
+
+Classify and respond:
+- "update": They're correcting, refining, or changing the current request.
+  → The message leads into the new response.
+- "cancel": They want to stop entirely.
+  → The message confirms the stop.
+- "answer": They're asking something about the current task.
+  → The message answers it — sent after the current response finishes.
+- "queue": They're starting something unrelated.
+  → The message acknowledges it, then it's handled in order.
+
+Return JSON: { "action": "...", "message": "what to say as a followup" }`;
+
+        // Bound the classification latency: a slow/hung provider must not delay
+        // routing a cancel/update — the in-flight stream keeps sending content
+        // until this call resolves. Fall back to queue on deadline expiry.
+        const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
+            provider.generate(
+                'Classify the following message. Return JSON with action and message.',
+                prompt,
+                config,
+                undefined,
+                signal
+            )
+        );
+        if (!result) return { action: 'queue', message: '' };
+
+        const parsed = this.parseInterruptionResult(result.content);
+        if (parsed) return parsed;
+
+        // Fallback: try to parse from raw text response
+        const trimmed = result.content.trim().toLowerCase();
+        if (['cancel', 'update', 'answer', 'queue'].includes(trimmed)) {
+            return { action: trimmed as InterruptionAction, message: '' };
+        }
+        return { action: 'queue', message: '' };
+    }
+
+    /**
+     * Quick single-turn generation of a short message (no streaming, no tools,
+     * no memory). Used by BaseBehavior for queue-overflow acknowledgments that
+     * must be LLM-generated (no hardcoded strings). Uses the bot's own provider.
+     * Returns '' on failure so callers stay silent rather than fall back to
+     * hardcoded text.
+     */
+    async quickGenerate(providerId: string, systemPrompt: string, userPrompt: string): Promise<string> {
+        // Same bounded-abort pattern as quickClassify: the overflow ack runs in
+        // the interruption-routing path — a slow provider must not delay it for
+        // the provider's own (30s+) timeout, and the call must actually be
+        // cancelled at the deadline, not left dangling.
+        const result = await this.runBoundedProviderCall(providerId, (provider, config, signal) =>
+            provider.generate(systemPrompt, userPrompt, config, undefined, signal)
+        );
+        return (result?.content || '').trim();
+    }
+
+    /**
+     * Parse JSON from quickClassify response, handling markdown code fences.
+     * Falls back to jsonrepair for slightly malformed LLM JSON (unescaped
+     * quotes, trailing commas) so an 'update'/'cancel' interruption is not
+     * misrouted to 'queue' just because the classifier's JSON was dirty.
+     */
+    private parseInterruptionResult(content: string): { action: InterruptionAction; message: string } | null {
+        // Strip markdown code fences
+        let json = content.trim();
+        const fenceMatch = json.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+        if (fenceMatch) {
+            json = fenceMatch[1].trim();
+        }
+
+        let parsed: any;
+        try {
+            parsed = JSON.parse(json);
+        } catch {
+            try {
+                parsed = JSON.parse(jsonrepair(json));
+            } catch {
+                return null;
+            }
+        }
+
+        const action = parsed.action?.toString().trim().toLowerCase();
+        if (action && ['cancel', 'update', 'answer', 'queue'].includes(action)) {
+            return {
+                action: action as InterruptionAction,
+                message: typeof parsed.message === 'string' ? parsed.message.trim() : '',
+            };
+        }
+        return null;
+    }
+}

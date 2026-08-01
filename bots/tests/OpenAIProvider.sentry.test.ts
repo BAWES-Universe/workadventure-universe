@@ -70,6 +70,62 @@ const SIMPLE_SSE = [
     }),
 ];
 
+describe("OpenAIProvider.generate – external abort signal", () => {
+    let provider: OpenAIProvider;
+
+    beforeEach(() => {
+        provider = new OpenAIProvider();
+        vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("cancels the in-flight request when the external signal aborts (quickClassify timeout path)", async () => {
+        // A fetch that never resolves on its own — it only settles when the
+        // request's AbortSignal fires, exactly like a hung provider.
+        vi.stubGlobal("fetch", vi.fn((_url: string, init: any) => {
+            return new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener("abort", () => {
+                    const e = new Error("This operation was aborted");
+                    e.name = "AbortError";
+                    reject(e);
+                });
+            });
+        }));
+
+        const controller = new AbortController();
+        // Simulate the quickClassify 3s deadline firing
+        const pending = provider.generate("sys", "user", buildConfig(), undefined, controller.signal);
+
+        controller.abort();
+
+        // The external abort propagates as-is (not a misleading "timeout after
+        // 30000ms" report — this was an intentional cancellation, not a provider
+        // timeout) and the pending fetch is actually cancelled — no dangling
+        // connection.
+        await expect(pending).rejects.toThrow("This operation was aborted");
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves normally when the signal is not aborted", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({
+                choices: [{ message: { content: "hello" } }],
+                usage: { total_tokens: 3, prompt_tokens: 2, completion_tokens: 1 },
+                model: "gpt-4o",
+            }),
+            text: vi.fn().mockResolvedValue(""),
+        }));
+
+        const result = await provider.generate("sys", "user", buildConfig(), undefined, new AbortController().signal);
+        expect(result.content).toBe("hello");
+        expect(result.error).toBe(false);
+    });
+});
+
 describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
     let provider: OpenAIProvider;
 
