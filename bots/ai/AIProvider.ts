@@ -51,13 +51,16 @@ export interface AIProvider {
      * @param userMessage - User message
      * @param config - Provider configuration
      * @param tools - Optional array of tool definitions for function calling
+     * @param signal - Optional external AbortSignal; when aborted, the in-flight
+     *                 request is cancelled immediately
      * @returns Complete response
      */
     generate(
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        tools?: any[]
+        tools?: any[],
+        signal?: AbortSignal
     ): Promise<AIResponse>;
 }
 

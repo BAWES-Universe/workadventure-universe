@@ -382,7 +382,8 @@ export class OpenAIProvider implements AIProvider {
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        tools?: any[]
+        tools?: any[],
+        externalSignal?: AbortSignal
     ): Promise<AIResponse> {
         const startTime = Date.now();
         let responseModel = '';
@@ -398,6 +399,7 @@ export class OpenAIProvider implements AIProvider {
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             const controller = new AbortController();
+            this.linkExternalAbort(externalSignal, controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = this.getEndpoint(config);
@@ -438,6 +440,7 @@ export class OpenAIProvider implements AIProvider {
                         delete retryBody.temperature;
 
                         const retryController = new AbortController();
+                        this.linkExternalAbort(externalSignal, retryController);
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {
@@ -473,6 +476,7 @@ export class OpenAIProvider implements AIProvider {
                         retryBody.max_completion_tokens = config.maxTokens;
 
                         const retryController = new AbortController();
+                        this.linkExternalAbort(externalSignal, retryController);
                         const retryTimeoutId = setTimeout(() => retryController.abort(), timeout);
 
                         try {

@@ -215,7 +215,8 @@ export class LMStudioProvider implements AIProvider {
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
-        tools?: any[]
+        tools?: any[],
+        externalSignal?: AbortSignal
     ): Promise<AIResponse> {
         const startTime = Date.now();
 
@@ -230,6 +231,7 @@ export class LMStudioProvider implements AIProvider {
         }, async (span) => {
             const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
             const controller = new AbortController();
+            this.linkExternalAbort(externalSignal, controller);
             const timeoutId = setTimeout(() => controller.abort(), timeout);
             try {
                 const endpoint = `${config.endpoint}/v1/chat/completions`;

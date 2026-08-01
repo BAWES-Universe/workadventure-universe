@@ -2928,23 +2928,27 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
         // Bound the classification latency: a slow/hung provider must not delay
         // routing a cancel/update — the in-flight stream keeps sending content
         // until this call resolves. Fall back to queue on deadline expiry.
+        //
+        // The timeout ABORTS the underlying call (not a bare Promise.race):
+        // the signal propagates to the provider fetch, so the connection is
+        // actually closed at the deadline instead of dangling until the
+        // provider's own (30s+) timeout and leaking connections under load.
         const CLASSIFY_TIMEOUT_MS = 3000;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), CLASSIFY_TIMEOUT_MS);
 
         try {
             const config = await this.getProviderCredentials(providerId);
             const provider = this.providerRegistry.getOrCreateProvider(config);
             if (!provider) return { action: 'queue', message: '' };
 
-            const response = await Promise.race([
-                provider.generate(
-                    'Classify the following message. Return JSON with action and message.',
-                    prompt,
-                    config
-                ),
-                new Promise<never>((_, reject) => {
-                    setTimeout(() => reject(new Error('quickClassify timeout')), CLASSIFY_TIMEOUT_MS);
-                }),
-            ]);
+            const response = await provider.generate(
+                'Classify the following message. Return JSON with action and message.',
+                prompt,
+                config,
+                undefined,
+                controller.signal
+            );
 
             const parsed = this.parseInterruptionResult(response.content);
             if (parsed) return parsed;
@@ -2956,7 +2960,11 @@ Return JSON: { "action": "...", "message": "what to say as a followup" }`;
             }
             return { action: 'queue', message: '' };
         } catch {
+            // Timeout abort or provider error — fall back to queue so the message
+            // is still handled. The abort already cancelled the upstream call.
             return { action: 'queue', message: '' };
+        } finally {
+            clearTimeout(timeoutId);
         }
     }
 
