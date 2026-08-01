@@ -700,6 +700,51 @@ describe('MCPConnector', () => {
 
             warnSpy.mockRestore();
         });
+
+        it('cancels in-flight tool call when external signal aborts (no retry, no timeout warning)', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            const controller = new AbortController();
+
+            // init resolves; the tools/call rejects because the external
+            // signal aborts mid-request (turn cancelled)
+            mockedAxios.post
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                .mockImplementationOnce(async () => {
+                    controller.abort(); // simulate turn cancellation mid-flight
+                    const err: any = new Error('canceled');
+                    err.code = 'ERR_CANCELED';
+                    throw err;
+                });
+
+            const result = await MCPConnector.executeToolCall(
+                'server-1',
+                'https://weather.example.com/mcp',
+                'get_weather',
+                { location: 'Paris' },
+                'none',
+                undefined,
+                undefined,
+                undefined,
+                controller.signal
+            );
+
+            // Distinct "cancelled" marker, NOT the unreachable-server error
+            expect(result).toEqual({ error: 'Tool call cancelled: get_weather' });
+            // Distinct "cancelled" log, NOT the timeout warning
+            expect(logSpy).toHaveBeenCalledWith(
+                expect.stringContaining('Request cancelled for tools/call')
+            );
+            expect(warnSpy).not.toHaveBeenCalledWith(
+                expect.stringContaining('timed out after')
+            );
+            // No retry on abort: exactly init + one tools/call attempt
+            expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+
+            warnSpy.mockRestore();
+            logSpy.mockRestore();
+        });
     });
 });
 
