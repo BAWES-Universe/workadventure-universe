@@ -6,12 +6,20 @@
  * Shared by all providers (LMStudioProvider, OpenAIProvider) so the
  * missing-signal, already-aborted, and one-time-listener handling stays
  * consistent in one place.
+ *
+ * Returns a cleanup function that removes the abort listener. Providers must
+ * call it in their finally block so the listener is released after normal
+ * completion, timeout, or abort — the external signal (e.g. a conversation's
+ * per-generation controller) can outlive the request, and a lingering listener
+ * would otherwise hold a closure over a dead internal controller.
  */
-export function linkExternalAbort(externalSignal: AbortSignal | undefined, controller: AbortController): void {
-    if (!externalSignal) return;
+export function linkExternalAbort(externalSignal: AbortSignal | undefined, controller: AbortController): () => void {
+    if (!externalSignal) return () => {};
     if (externalSignal.aborted) {
         controller.abort();
-        return;
+        return () => {};
     }
-    externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    const onAbort = () => controller.abort();
+    externalSignal.addEventListener('abort', onAbort, { once: true });
+    return () => externalSignal.removeEventListener('abort', onAbort);
 }
