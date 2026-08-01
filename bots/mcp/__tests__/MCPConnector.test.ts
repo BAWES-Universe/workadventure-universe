@@ -745,6 +745,76 @@ describe('MCPConnector', () => {
             warnSpy.mockRestore();
             logSpy.mockRestore();
         });
+
+        it('observes caller cancellation promptly while initialize is pending without aborting the init request', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            const controller = new AbortController();
+            let resolveInit: (value: unknown) => void;
+            let initSignal: AbortSignal | undefined;
+
+            // First post = initialize. Capture its signal and hold the
+            // promise open so the request stays "pending" while we abort.
+            mockedAxios.post.mockImplementationOnce((_url: string, _body: any, config?: any) => {
+                initSignal = config?.signal;
+                return new Promise((resolve) => {
+                    resolveInit = resolve;
+                });
+            });
+
+            const callPromise = MCPConnector.executeToolCall(
+                'server-1',
+                'https://weather.example.com/mcp',
+                'get_weather',
+                { location: 'Paris' },
+                'none',
+                undefined,
+                undefined,
+                'player-123',
+                controller.signal
+            );
+
+            // Abort while initialize is still pending
+            controller.abort();
+
+            const result = await callPromise;
+
+            // Returns the cancellation marker promptly — no waiting for init
+            expect(result).toEqual({ error: 'Tool call cancelled: get_weather' });
+            // The initialize request itself was NOT aborted (spec: MUST NOT be cancelled)
+            expect(initSignal?.aborted).toBe(false);
+            // Distinct "during initialize" cancellation log, not the timeout warning
+            expect(logSpy).toHaveBeenCalledWith(
+                expect.stringContaining('(during initialize)')
+            );
+            expect(warnSpy).not.toHaveBeenCalledWith(
+                expect.stringContaining('timed out after')
+            );
+
+            // Let initialize complete in the background; its cache update must land.
+            resolveInit(MOCK_INIT_RESPONSE);
+            await vi.advanceTimersByTimeAsync(0);
+
+            // A subsequent call reuses the cached session — no second initialize.
+            mockedAxios.post.mockResolvedValueOnce({ data: MOCK_WEATHER_CALL_RESPONSE });
+            const result2 = await MCPConnector.executeToolCall(
+                'server-1',
+                'https://weather.example.com/mcp',
+                'get_weather',
+                { location: 'Paris' },
+                'none',
+                undefined,
+                undefined,
+                'player-123'
+            );
+            expect(result2).toEqual(MOCK_WEATHER_CALL_RESPONSE.result.content);
+            // init(1) + tools/call(1) — the second call did NOT re-initialize
+            expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+
+            warnSpy.mockRestore();
+            logSpy.mockRestore();
+        });
     });
 });
 
