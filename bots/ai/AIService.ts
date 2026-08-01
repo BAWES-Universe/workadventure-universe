@@ -722,7 +722,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     argsLength: tc.arguments.length
                                 })));
                             }
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal);
 
                             // Collect URLs that were already sent by explicit send_* tool calls
                             // so autoSendMedia doesn't re-send them via parent tool results.
@@ -1694,7 +1694,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         playerUuid?: string,
         spaceName?: string,
         botId?: string,
-        playerId?: number
+        playerId?: number,
+        abortSignal?: AbortSignal
     ): Promise<Array<{ id: string; name: string; result: any }>> {
         // Filter out invalid tool calls (empty name, undefined, etc.)
         const validToolCalls = toolCalls.filter(tc => tc && tc.name && tc.name.trim() !== '');
@@ -2012,7 +2013,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     mcpServerConfig.authType,
                                     mcpServerConfig.authConfig,
                                     mcpServerConfig.headers,
-                                    playerUuid
+                                    playerUuid,
+                                    abortSignal
                                 );
                                 // Process MCP resource blobs (base64 binary data) by uploading to CDN
                                 // and returning CDN URLs so the AI can use send_image/send_audio/etc.

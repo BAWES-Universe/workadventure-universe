@@ -13,6 +13,7 @@ import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { isIP } from 'net';
 import { decryptApiKey } from '../ai/encryption';
+import { linkExternalAbort } from '../ai/providers/abortUtils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -222,7 +223,8 @@ async function jsonRpcRequest(
     authType: string,
     authConfig?: string,
     extraHeaders?: Record<string, string>,
-    playerUuid?: string
+    playerUuid?: string,
+    signal?: AbortSignal
 ): Promise<any> {
     const urlCheck = isValidMcpServerUrl(serverUrl);
     if (!urlCheck.valid) {
@@ -250,9 +252,17 @@ async function jsonRpcRequest(
                 sessionId = cachedSession.sessionId;
             }
         } else {
-            try {
-                const initController = new AbortController();
-                const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+            const initController = new AbortController();
+            const initTimeoutId = setTimeout(() => initController.abort(), REQUEST_TIMEOUT);
+
+            // Run initialize as a detached task. The MCP spec forbids
+            // cancelling initialize ("The initialize request MUST NOT be
+            // cancelled") and its session-cache update must land even if the
+            // caller gives up — so the request itself is never aborted by the
+            // caller's signal; we only race our wait against it so a cancelled
+            // turn returns promptly instead of blocking on a slow init (cold
+            // ComfyUI start, dead server, etc.).
+            const initPromise = (async () => {
                 try {
                     const initResponse = await axios.post(
                         serverUrl,
@@ -292,24 +302,49 @@ async function jsonRpcRequest(
                             initializedAt: Date.now(),
                         });
                     }
+                } catch {
+                    // Init timed out or failed. Set a cache marker that EXISTS (so
+                    // executeToolCall sees it and skips the retry) but is
+                    // INSTANTLY EXPIRED (so on the next call, jsonRpcRequest's TTL
+                    // check falls through and retries init). Without this marker,
+                    // executeToolCall would see an empty cache and retry —
+                    // re-exposing the double-execution risk.
+                    // initializedAt is set to Date.now() - SESSION_INIT_TTL so the
+                    // check `Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL`
+                    // evaluates to false on the very next call.
+                    if (!skipSessionCache) {
+                        mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
+                            sessionId: undefined,
+                            initializedAt: Date.now() - SESSION_INIT_TTL,
+                        });
+                    }
                 } finally {
                     clearTimeout(initTimeoutId);
                 }
-            } catch {
-                // Init timed out. Set a cache marker that EXISTS (so executeToolCall
-                // sees it and skips the retry) but is INSTANTLY EXPIRED (so on the
-                // next call, jsonRpcRequest's TTL check falls through and retries
-                // init). Without this marker, executeToolCall would see an empty
-                // cache and retry — re-exposing the double-execution risk.
-                // initializedAt is set to Date.now() - SESSION_INIT_TTL so the
-                // check `Date.now() < cachedSession.initializedAt + SESSION_INIT_TTL`
-                // evaluates to false on the very next call.
-                if (!skipSessionCache) {
-                    mcpSessionInitCache.set(sessionCacheKey(serverUrl, authType, authConfig, playerUuid), {
-                        sessionId: undefined,
-                        initializedAt: Date.now() - SESSION_INIT_TTL,
-                    });
+            })();
+
+            // Race the init against caller cancellation so the turn cancel is
+            // observed immediately, without aborting the initialize request.
+            if (signal) {
+                let cleanupAbortListener: (() => void) | undefined;
+                const abortPromise = new Promise<boolean>((resolve) => {
+                    if (signal.aborted) {
+                        resolve(true);
+                        return;
+                    }
+                    const onAbort = () => resolve(true);
+                    signal.addEventListener('abort', onAbort, { once: true });
+                    cleanupAbortListener = () => signal.removeEventListener('abort', onAbort);
+                });
+                const initDone = initPromise.then(() => false as const);
+                const cancelled = await Promise.race([initDone, abortPromise]);
+                cleanupAbortListener?.();
+                if (cancelled) {
+                    console.log(`[MCPConnector] Request cancelled for ${method} (during initialize)`);
+                    return null;
                 }
+            } else {
+                await initPromise;
             }
         }
     }
@@ -321,6 +356,17 @@ async function jsonRpcRequest(
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+    // Link an external abort (e.g. the conversation's per-turn AbortController
+    // from the interruption/cancel feature) to this request so cancelling the
+    // turn also cancels in-flight MCP tool calls instead of letting them hang
+    // for the full 90s timeout. Per the MCP Streamable HTTP spec, closing the
+    // HTTP response stream IS the cancellation signal for this transport, so
+    // aborting the axios request is exactly the spec-compliant behaviour.
+    // Deliberately NOT linked to the initialize request above — the spec
+    // forbids cancelling initialize ("The initialize request MUST NOT be
+    // cancelled"), and a cancelled init would leave the session in an
+    // undefined state.
+    const unlinkExternalAbort = linkExternalAbort(signal, controller);
 
     try {
         const body: Record<string, any> = {
@@ -341,7 +387,14 @@ async function jsonRpcRequest(
         return parsed.data;
     } catch (error: any) {
         if (axios.isCancel(error)) {
-            console.warn(`[MCPConnector] Request timed out after ${REQUEST_TIMEOUT}ms for ${method}`);
+            if (signal?.aborted) {
+                // Cancelled by the caller (turn aborted), not by the timeout.
+                // Distinguishable from a timeout so operators don't chase a
+                // 90s-timeout warning on every cancelled turn.
+                console.log(`[MCPConnector] Request cancelled for ${method}`);
+            } else {
+                console.warn(`[MCPConnector] Request timed out after ${REQUEST_TIMEOUT}ms for ${method}`);
+            }
         } else if (axios.isAxiosError(error)) {
             const status = error.response?.status;
             const detail = error.response?.data
@@ -375,6 +428,7 @@ async function jsonRpcRequest(
         return null;
     } finally {
         clearTimeout(timeoutId);
+        unlinkExternalAbort();
     }
 }
 
@@ -596,7 +650,8 @@ export class MCPConnector {
         authType: string,
         authConfig?: string,
         extraHeaders?: Record<string, string>,
-        playerUuid?: string
+        playerUuid?: string,
+        signal?: AbortSignal
     ): Promise<any> {
         let response = await jsonRpcRequest(
             serverUrl,
@@ -605,7 +660,8 @@ export class MCPConnector {
             authType,
             authConfig,
             extraHeaders,
-            playerUuid
+            playerUuid,
+            signal
         );
 
         if (!response) {
@@ -617,8 +673,12 @@ export class MCPConnector {
             //     (transport error, server restart, stale session)
             //   - Cache PRESENT → timeout → request MAY have been delivered
             //     → DON'T retry (avoids double-executing non-idempotent tools)
+            // An external abort (turn cancelled) is treated the same as a
+            // timeout: the request MAY have been delivered, so never retry.
+            // The abort signal also short-circuits the retry entirely — no
+            // point re-issuing a call on a cancelled turn.
             const cacheKey = sessionCacheKey(serverUrl, authType, authConfig, playerUuid);
-            if (!mcpSessionInitCache.has(cacheKey)) {
+            if (!signal?.aborted && !mcpSessionInitCache.has(cacheKey)) {
                 response = await jsonRpcRequest(
                 serverUrl,
                 'tools/call',
@@ -626,12 +686,19 @@ export class MCPConnector {
                 authType,
                 authConfig,
                 extraHeaders,
-                playerUuid
+                playerUuid,
+                signal
                 );
             }
         }
 
         if (!response) {
+            if (signal?.aborted) {
+                // Turn was cancelled while the tool call was in flight. Return
+                // a distinct marker so callers can tell a cancellation apart
+                // from a genuinely unreachable server.
+                return { error: `Tool call cancelled: ${toolName}` };
+            }
             return { error: `Tool unavailable: ${toolName} (server not reachable)` };
         }
 
