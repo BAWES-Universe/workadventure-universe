@@ -843,9 +843,16 @@ export class ConversationMemory {
                 } else if (timeAgo < 3600) {
                     const minutesAgo = Math.floor(timeAgo / 60);
                     timeDesc = ` (${minutesAgo} minute${minutesAgo > 1 ? 's' : ''} ago)`;
-                } else {
+                } else if (timeAgo < 86400) {
                     const hoursAgo = Math.floor(timeAgo / 3600);
                     timeDesc = ` (${hoursAgo} hour${hoursAgo > 1 ? 's' : ''} ago)`;
+                } else {
+                    // Multi-day gaps (issue #268): "72 hours ago" reads as if it
+                    // just happened. Render day-level deltas so the bot can
+                    // acknowledge the time gap ("It's been 3 days — let me pull
+                    // fresh data") instead of treating it as the same day.
+                    const daysAgo = Math.floor(timeAgo / 86400);
+                    timeDesc = ` (${daysAgo} day${daysAgo > 1 ? 's' : ''} ago)`;
                 }
                 context.push(`${sender}: "${msg.message}"${timeDesc}`);
             });
