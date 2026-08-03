@@ -296,6 +296,12 @@ The technical rules below are guidelines for HOW to respond (formatting, tool us
                         year: 'numeric',
                         month: 'long',
                         day: 'numeric',
+                        // Pin to UTC: memory context time deltas ("N days ago")
+                        // are computed from epoch timestamps, which are
+                        // timezone-independent. Without an explicit timeZone the
+                        // calendar date would follow the host TZ and could be
+                        // off-by-one from the epoch-based deltas near midnight.
+                        timeZone: 'UTC',
                     });
                     return `\n\n**TODAY'S DATE:** ${dateStr}\nUse this date to judge how long ago past conversations happened. If the conversation context mentions events from days ago, acknowledge the time gap naturally instead of acting like they just occurred.`;
                 } catch {
