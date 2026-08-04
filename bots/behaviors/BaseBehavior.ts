@@ -1753,7 +1753,13 @@ The person you're talking to just sent several more messages while you were stil
         // Hoist dynamic import and load all files in parallel
         const { FileParser } = await import('../services/FileParser');
         const results = await Promise.allSettled(allUrls.map(async (fileUrl) => {
-            const fileMime = this.inferMimeFromUrl(fileUrl) || mimeType || 'application/octet-stream';
+            // Extension match wins; otherwise sniff Content-Type (SSRF-validated,
+            // 5s cap) so extension-less URLs (Unsplash, signed S3) route to image
+            // handling instead of the web-page bucket or the primary's mime.
+            let fileMime = this.inferMimeFromUrl(fileUrl);
+            if (!fileMime) {
+                fileMime = (await FileParser.sniffContentType(fileUrl)) || mimeType || 'application/octet-stream';
+            }
             return FileParser.parseFile(fileUrl, fileMime);
         }));
 

@@ -29,6 +29,7 @@ import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
+import { FileParser } from '../services/FileParser';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
 
@@ -3068,23 +3069,11 @@ export class BotClient {
             return mimeMap[ext];
         }
 
-        // Extension-less URL — sniff content-type (5s cap) so image URLs like
-        // Unsplash or signed S3 links are routed to image handling, not web pages.
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-            const response = await fetch(url, {
-                method: 'HEAD',
-                redirect: 'follow',
-                signal: controller.signal,
-            });
-            clearTimeout(timeoutId);
-            const contentType = response.headers.get('content-type');
-            if (contentType) {
-                return contentType.split(';')[0].trim();
-            }
-        } catch {
-            // Sniff failed — fall through to the text/html default
+        // Extension-less URL — sniff content-type (SSRF-validated) so image URLs
+        // like Unsplash or signed S3 links are routed to image handling, not web pages.
+        const sniffed = await FileParser.sniffContentType(url);
+        if (sniffed) {
+            return sniffed;
         }
 
         return 'text/html';

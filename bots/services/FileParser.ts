@@ -548,6 +548,35 @@ export class FileParser {
     }
 
     /**
+     * Sniff a URL's Content-Type via HEAD (5s cap), behind the SSRF guard.
+     *
+     * Extension inference happens at the call site; this is the extension
+     * fallback for URLs without a recognizable extension (Unsplash, signed
+     * S3/CDN URLs, `photo?id=123`). Returns null when undetermined (validation
+     * failure, network error, missing header) so callers can fall back.
+     */
+    static async sniffContentType(url: string): Promise<string | null> {
+        try {
+            // SSRF guard: same validation as every other fetch in this class.
+            await FileParser.validateUrl(url);
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            const response = await fetch(url, {
+                method: 'HEAD',
+                redirect: 'follow',
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            const contentType = response.headers.get('content-type');
+            return contentType ? contentType.split(';')[0].trim() : null;
+        } catch {
+            // Fail soft: caller falls back to its existing mime/octet-stream default
+            return null;
+        }
+    }
+
+    /**
      * Fetch a text file from a URL and return its content.
      */
     private static async fetchTextFile(

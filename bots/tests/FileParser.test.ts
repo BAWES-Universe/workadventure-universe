@@ -361,4 +361,48 @@ describe('FileParser', () => {
             expect(FileParser.getExtension('https://example.com/file')).toBe('');
         });
     });
+
+    describe('sniffContentType — extension-less URL content-type sniffing', () => {
+        function mockHeadResponse(contentType: string | null) {
+            (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+                ok: true,
+                headers: {
+                    get: (name: string) =>
+                        name.toLowerCase() === 'content-type' ? contentType : null,
+                },
+            });
+        }
+
+        it('returns the Content-Type from a HEAD response', async () => {
+            mockHeadResponse('image/jpeg');
+            const type = await FileParser.sniffContentType('https://img.unsplash.com/photo-12345');
+            expect(type).toBe('image/jpeg');
+        });
+
+        it('strips parameters from the content type', async () => {
+            mockHeadResponse('image/png; charset=binary');
+            const type = await FileParser.sniffContentType('https://cdn.example.com/photo?id=1');
+            expect(type).toBe('image/png');
+        });
+
+        it('returns null when there is no content-type header', async () => {
+            mockHeadResponse(null);
+            const type = await FileParser.sniffContentType('https://example.com/noheader');
+            expect(type).toBeNull();
+        });
+
+        it('returns null on network failure (no throw)', async () => {
+            (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+                new Error('network down')
+            );
+            const type = await FileParser.sniffContentType('https://example.com/down');
+            expect(type).toBeNull();
+        });
+
+        it('rejects private/internal hosts via the SSRF guard (returns null, no fetch)', async () => {
+            const type = await FileParser.sniffContentType('http://127.0.0.1:5432/internal');
+            expect(type).toBeNull();
+            expect(globalThis.fetch).not.toHaveBeenCalled();
+        });
+    });
 });
