@@ -84,23 +84,21 @@ export class AIProviderRegistry {
         if (!provider.supportsStreaming()) {
             // Fallback to non-streaming
             const response = await provider.generate(systemPrompt, userMessage, config, tools, signal);
+            const fallbackMetadata = {
+                tokensUsed: response.tokensUsed,
+                latency: response.latency,
+                error: response.error,
+                truncated: response.truncated,
+            };
             yield {
                 content: response.content,
                 done: false,
-                metadata: {
-                    tokensUsed: response.tokensUsed,
-                    latency: response.latency,
-                    error: response.error,
-                },
+                metadata: fallbackMetadata,
             };
             yield {
                 content: '',
                 done: true,
-                metadata: {
-                    tokensUsed: response.tokensUsed,
-                    latency: response.latency,
-                    error: response.error,
-                },
+                metadata: fallbackMetadata,
             };
             return;
         }

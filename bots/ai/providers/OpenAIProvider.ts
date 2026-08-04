@@ -149,6 +149,7 @@ export class OpenAIProvider implements AIProvider {
         let completionTokens = 0;
         let responseModel = '';
         let streamEnded = false;
+        let finishReason: string | undefined;
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -289,6 +290,10 @@ export class OpenAIProvider implements AIProvider {
                         try {
                             const json = JSON.parse(data);
                             const delta = json.choices?.[0]?.delta;
+                            const choice = json.choices?.[0];
+                            if (choice?.finish_reason) {
+                                finishReason = choice.finish_reason;
+                            }
 
                             // Extract token usage
                             if (json.usage) {
@@ -346,6 +351,7 @@ export class OpenAIProvider implements AIProvider {
                     completionTokens,
                     latency,
                     error: !streamEnded,
+                    truncated: finishReason === 'length',
                 },
             };
 
@@ -497,7 +503,7 @@ export class OpenAIProvider implements AIProvider {
                     }
                 }
 
-                const data = await finalResponse.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
+                const data = await finalResponse.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
                 const content = data.choices?.[0]?.message?.content || '';
                 const tokensUsed = data.usage?.total_tokens || 0;
                 const promptTokens = data.usage?.prompt_tokens || 0;
@@ -514,6 +520,7 @@ export class OpenAIProvider implements AIProvider {
                     tokensUsed,
                     latency,
                     error: false,
+                    truncated: data.choices?.[0]?.finish_reason === 'length',
                 };
             } catch (error: any) {
                 const latency = Date.now() - startTime;
