@@ -314,4 +314,97 @@ describe('BaseBehavior interruption routing', () => {
         // 3) The responseId rotated after the reset — follow-up content landed in a fresh bubble
         expect(result.responseId).not.toBe('resp-orig');
     });
+
+    it('regenerateOnRepetition: generates the exhausted-attempts fallback via LLM (no hardcoded strings)', async () => {
+        // Repetition stays high across ALL regeneration attempts → fallback path.
+        const processed = {
+            cleaned: 'repeated answer',
+            metrics: { repetitionScore: 0.95 },
+        };
+        // Every regenerated response re-scores as repetitive → loop exhausts attempts.
+        async function* stillRepetitiveStream() {
+            yield { content: 'still repeating the same thing', done: false };
+            yield { content: '', done: true, metadata: { tokensUsed: 10, latency: 5, error: false } };
+        }
+        ai.generateBotResponseStream.mockReturnValue(stillRepetitiveStream());
+        // quickGenerate supplies the LLM-generated fallback in the bot's voice.
+        ai.quickGenerate.mockResolvedValue('Let me look at this from a completely different angle.');
+
+        const mockResponseProcessor = {
+            processResponse: vi.fn().mockReturnValue({
+                cleaned: 'still repeating the same thing',
+                metrics: { repetitionScore: 0.95 }, // stays repetitive
+            }),
+            clearRecentResponses: vi.fn(),
+        };
+        behavior.setServices(ai as any, {} as any, undefined, mockResponseProcessor as any);
+
+        const result = await behavior.testRegenerateOnRepetition({
+            botId: 'bot-1',
+            playerId: SENDER,
+            playerMessage: 'say it differently',
+            chatInstructions: 'You are a test bot.',
+            aiProviderRef: 'provider-1',
+            spaceName: SPACE,
+            context: '',
+            processed,
+            processedMessage: 'repeated answer',
+            fullMessage: 'repeated answer',
+            responseTime: 100,
+            tokenUsage: { prompt: 10, completion: 10, total: 20 },
+            responseId: 'resp-orig',
+            debugLabel: 'TestBehavior',
+        });
+
+        // The LLM-generated fallback was used — NOT one of the old hardcoded phrases.
+        expect(result.processedMessage).toBe('Let me look at this from a completely different angle.');
+        // The repetition cycle was cleared so the next turn starts fresh.
+        expect(mockResponseProcessor.clearRecentResponses).toHaveBeenCalledWith('bot-1', SENDER);
+        // quickGenerate received the persona chat instructions as its system prompt.
+        expect(ai.quickGenerate).toHaveBeenCalledWith('provider-1', 'You are a test bot.', expect.any(String));
+    });
+
+    it('regenerateOnRepetition: stays silent (empty message) when the LLM fallback also fails', async () => {
+        const processed = {
+            cleaned: 'repeated answer',
+            metrics: { repetitionScore: 0.95 },
+        };
+        async function* stillRepetitiveStream() {
+            yield { content: 'still repeating the same thing', done: false };
+            yield { content: '', done: true, metadata: { tokensUsed: 10, latency: 5, error: false } };
+        }
+        ai.generateBotResponseStream.mockReturnValue(stillRepetitiveStream());
+        // Provider unavailable → quickGenerate returns '' (runBoundedProviderCall contract).
+        ai.quickGenerate.mockResolvedValue('');
+
+        const mockResponseProcessor = {
+            processResponse: vi.fn().mockReturnValue({
+                cleaned: 'still repeating the same thing',
+                metrics: { repetitionScore: 0.95 },
+            }),
+            clearRecentResponses: vi.fn(),
+        };
+        behavior.setServices(ai as any, {} as any, undefined, mockResponseProcessor as any);
+
+        const result = await behavior.testRegenerateOnRepetition({
+            botId: 'bot-1',
+            playerId: SENDER,
+            playerMessage: 'say it differently',
+            chatInstructions: 'You are a test bot.',
+            aiProviderRef: 'provider-1',
+            spaceName: SPACE,
+            context: '',
+            processed,
+            processedMessage: 'repeated answer',
+            fullMessage: 'repeated answer',
+            responseTime: 100,
+            tokenUsage: { prompt: 10, completion: 10, total: 20 },
+            responseId: 'resp-orig',
+            debugLabel: 'TestBehavior',
+        });
+
+        // Empty message → the caller's empty-final guard drops the bubble; the
+        // stale repeated text is NOT sent.
+        expect(result.processedMessage).toBe('');
+    });
 });

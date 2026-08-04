@@ -1586,18 +1586,25 @@ export abstract class BaseBehavior {
         // (skipped if the turn was aborted — the player already got an ack)
         if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts && !abortSignal?.aborted) {
             console.warn(`[${debugLabel}] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
-            // Use varied fallbacks to avoid repetition loop
-            const fallbacks = [
-                "Hmm, let me approach this differently.",
-                "Interesting point. Let me think...",
-                "That's something to consider.",
-                "I hear you.",
-                "Alright then.",
-                "Fair enough.",
-                "I see what you mean.",
-                "Got it.",
-            ];
-            processedMessage = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+            // LLM-generate the fallback in the bot's own voice — never hardcoded
+            // strings (they break persona + localization). One-shot call, no
+            // tools; if it fails, stay silent ('' — the caller's empty-final
+            // guard drops the bubble) rather than emitting a canned phrase or
+            // sending the stale repeated text.
+            processedMessage = '';
+            const providerId = this.bot?.getFullConfig()?.aiProviderRef;
+            if (providerId && this.aiService) {
+                const fallbackPrompt =
+                    `You keep catching yourself about to repeat the same thing you just said to ` +
+                    `the person you're talking to (${currentMessage.substring(0, 150)}...). ` +
+                    `Say one short, natural line that genuinely moves the conversation forward — ` +
+                    `a new thought, a question, or a fresh angle. Do NOT repeat anything you already said. ` +
+                    `No emojis, no apologies for repeating.`;
+                const fallbackMessage = await this.aiService.quickGenerate(providerId, chatInstructions, fallbackPrompt);
+                if (fallbackMessage.trim()) {
+                    processedMessage = fallbackMessage.trim();
+                }
+            }
             // Clear recent responses to break the repetition cycle
             if (this.responseProcessor) {
                 this.responseProcessor.clearRecentResponses(botId, playerId);
