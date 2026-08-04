@@ -193,10 +193,10 @@
     <!-- Vision fallback (only relevant when the main model is text-only) -->
     <div class="border border-white/15 rounded-lg p-4">
         <div class="flex items-center justify-between mb-2">
-            <label class="block text-sm text-white/80 font-semibold">
+            <div class="block text-sm text-white/80 font-semibold">
                 Vision fallback
                 <span class="text-white/50 text-xs font-normal ml-2"> (Describe images the main model can't see) </span>
-            </label>
+            </div>
             {#if mainProviderSupportsVision}
                 <span class="text-xs text-emerald-400"> Fallback ignored — main model already supports vision </span>
             {/if}
