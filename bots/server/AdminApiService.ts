@@ -28,6 +28,8 @@ export interface BotConfiguration {
     
     // AI Configuration (Sensitive - stored in Admin API only)
     aiProviderRef?: string; // Reference to AI provider (e.g., "lmstudio-local")
+    visionFallbackProviderRef?: string; // Optional vision-capable provider for describing images when main model is text-only
+    visionFallbackModel?: string; // Optional model override for the vision fallback (defaults to fallback provider's model)
     
     // Chat Instructions (Sensitive - stored in Admin API only)
     chatInstructions?: string; // System prompt/instructions for AI behavior
@@ -393,6 +395,7 @@ export class AdminApiService {
         temperature: number;
         maxTokens: number;
         supportsStreaming: boolean;
+        supportsVision: boolean | null;
         settings?: Record<string, any>;
     } | null> {
         if (!this.isConfigured()) {
@@ -434,7 +437,9 @@ export class AdminApiService {
         name: string;
         type: string;
         enabled: boolean;
+        model: string;
         supportsStreaming: boolean;
+        supportsVision: boolean | null;
     }>> {
         if (!this.isConfigured()) {
             return [];

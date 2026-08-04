@@ -2,6 +2,7 @@
     import { onMount, createEventDispatcher } from "svelte";
     import { botApiService } from "../services/BotApiService";
     import type { BotData } from "../types";
+    import { resolveVisionSupport } from "../visionModels";
 
     export let bot: BotData | null = null;
 
@@ -12,11 +13,15 @@
         name: string;
         type: string;
         enabled: boolean;
+        model: string;
         supportsStreaming: boolean;
+        supportsVision: boolean | null;
     }
 
     let aiProviderRef: string = "";
     let chatInstructions = "";
+    let visionFallbackProviderRef = "";
+    let visionFallbackModel = "";
     let availableProviders: AIProvider[] = [];
     let isLoadingProviders = false;
     let providerError: string | null = null;
@@ -30,6 +35,8 @@
             );
             aiProviderRef = bot.aiProviderRef || "";
             chatInstructions = bot.chatInstructions || "";
+            visionFallbackProviderRef = bot.visionFallbackProviderRef || "";
+            visionFallbackModel = bot.visionFallbackModel || "";
         }
         await loadProviders();
     });
@@ -41,7 +48,19 @@
         lastBotId = bot.id;
         aiProviderRef = bot.aiProviderRef || "";
         chatInstructions = bot.chatInstructions || "";
+        visionFallbackProviderRef = bot.visionFallbackProviderRef || "";
+        visionFallbackModel = bot.visionFallbackModel || "";
     }
+
+    // Reactive: does the selected main provider support vision?
+    $: selectedProvider = availableProviders.find((p) => p.providerId.toLowerCase() === aiProviderRef.toLowerCase());
+    $: mainProviderSupportsVision = selectedProvider
+        ? resolveVisionSupport(selectedProvider.model || "", selectedProvider.supportsVision)
+        : false;
+    // Fallback provider options: any enabled provider except the main one
+    $: fallbackProviderOptions = availableProviders.filter(
+        (p) => p.providerId.toLowerCase() !== aiProviderRef.toLowerCase()
+    );
 
     async function loadProviders() {
         if (!botApiService.isInitialized()) {
@@ -102,6 +121,25 @@
             console.warn("[BotInstructionsEditor] updateChatInstructions called but bot is null");
         }
     }
+
+    function updateVisionFallbackProviderRef() {
+        if (bot) {
+            bot.visionFallbackProviderRef = visionFallbackProviderRef || undefined;
+            // If the fallback provider changed, clear a stale model override unless
+            // it was explicitly set for the new provider.
+            if (!visionFallbackModel && bot.visionFallbackModel) {
+                bot.visionFallbackModel = undefined;
+            }
+            dispatch("change");
+        }
+    }
+
+    function updateVisionFallbackModel() {
+        if (bot) {
+            bot.visionFallbackModel = visionFallbackModel || undefined;
+            dispatch("change");
+        }
+    }
 </script>
 
 <div class="space-y-6">
@@ -141,6 +179,7 @@
                 {#each availableProviders as provider (provider.providerId)}
                     <option value={provider.providerId} style="background-color: rgba(0, 0, 0, 0.8); color: white;">
                         {provider.name}
+                        {#if resolveVisionSupport(provider.model || "", provider.supportsVision)}👁 vision{/if}
                         {#if !provider.enabled}(Disabled){/if}
                     </option>
                 {/each}
@@ -149,6 +188,76 @@
         <p class="text-xs text-white/50 mt-2">
             Select an AI provider configured in Admin API. Providers are managed by administrators.
         </p>
+    </div>
+
+    <!-- Vision fallback (only relevant when the main model is text-only) -->
+    <div class="border border-white/15 rounded-lg p-4">
+        <div class="flex items-center justify-between mb-2">
+            <label class="block text-sm text-white/80 font-semibold">
+                Vision fallback
+                <span class="text-white/50 text-xs font-normal ml-2"> (Describe images the main model can't see) </span>
+            </label>
+            {#if mainProviderSupportsVision}
+                <span class="text-xs text-emerald-400"> Fallback ignored — main model already supports vision </span>
+            {/if}
+        </div>
+
+        {#if !mainProviderSupportsVision}
+            <div class="space-y-4">
+                <div>
+                    <label for="vision-fallback-provider" class="block text-xs text-white/60 mb-1">
+                        Fallback provider
+                    </label>
+                    {#if fallbackProviderOptions.length === 0}
+                        <div
+                            class="w-full px-3 py-2 border border-yellow-500/50 rounded bg-yellow-500/10 text-yellow-400 text-sm"
+                        >
+                            No other providers available. Configure a vision-capable provider in Admin API first.
+                        </div>
+                    {:else}
+                        <select
+                            id="vision-fallback-provider"
+                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            bind:value={visionFallbackProviderRef}
+                            on:change={updateVisionFallbackProviderRef}
+                            style="color: white; background-color: rgba(255, 255, 255, 0.05);"
+                        >
+                            <option value="" style="background-color: rgba(0, 0, 0, 0.8); color: white;">
+                                None (image URLs are passed as text)
+                            </option>
+                            {#each fallbackProviderOptions as provider (provider.providerId)}
+                                <option
+                                    value={provider.providerId}
+                                    style="background-color: rgba(0, 0, 0, 0.8); color: white;"
+                                >
+                                    {provider.name}
+                                    {#if resolveVisionSupport(provider.model || "", provider.supportsVision)}👁 vision{/if}
+                                    {#if !provider.enabled}(Disabled){/if}
+                                </option>
+                            {/each}
+                        </select>
+                    {/if}
+                </div>
+                <div>
+                    <label for="vision-fallback-model" class="block text-xs text-white/60 mb-1">
+                        Fallback model
+                        <span class="text-white/40">(optional — defaults to the provider's model)</span>
+                    </label>
+                    <input
+                        id="vision-fallback-model"
+                        type="text"
+                        class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        bind:value={visionFallbackModel}
+                        on:change={updateVisionFallbackModel}
+                        placeholder="e.g., gemini-2.0-flash"
+                    />
+                    <p class="text-xs text-white/50 mt-1">
+                        Used when someone sends an image to a bot whose main model is text-only — the fallback describes
+                        the image and the main model reads the description.
+                    </p>
+                </div>
+            </div>
+        {/if}
     </div>
 
     <div>

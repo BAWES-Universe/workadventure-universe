@@ -16,6 +16,7 @@ export interface AIProviderConfig {
     temperature: number;
     maxTokens: number;
     supportsStreaming: boolean;
+    supportsVision?: boolean | null; // null/undefined = auto (model-name regex), true = force vision, false = force text-only
     settings?: Record<string, any>;
 }
 

@@ -32,6 +32,8 @@ export interface BotData {
     };
     chatInstructions?: string;
     aiProviderRef?: string; // Reference to AI provider config in Admin API
+    visionFallbackProviderRef?: string; // Optional vision-capable provider for describing images when main model is text-only
+    visionFallbackModel?: string; // Optional model override for the vision fallback (defaults to fallback provider's model)
     enabled?: boolean; // Whether bot is active
     createdAt?: string;
     updatedAt?: string;

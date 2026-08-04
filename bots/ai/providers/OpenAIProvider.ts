@@ -10,6 +10,7 @@ import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { decryptApiKey } from '../encryption';
 import { linkExternalAbort } from './abortUtils';
+import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
 export class OpenAIProvider implements AIProvider {
@@ -26,6 +27,16 @@ export class OpenAIProvider implements AIProvider {
 
     supportsStreaming(): boolean {
         return true;
+    }
+
+    /**
+     * Whether the model config supports vision (image_url content blocks).
+     * Tri-state: null/undefined = auto (model-name regex), true = force vision,
+     * false = force text-only. The override comes from the provider config
+     * (BotsAiProvider.supportsVision) served by the admin API.
+     */
+    supportsVision(config: AIProviderConfig): boolean {
+        return resolveVisionSupport(config.model || '', config.supportsVision);
     }
 
     /**
@@ -89,7 +100,8 @@ export class OpenAIProvider implements AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         stream: boolean,
-        tools?: any[]
+        tools?: any[],
+        images?: string[]
     ): Record<string, any> {
         const body: Record<string, any> = {
             model: config.model,
@@ -99,6 +111,20 @@ export class OpenAIProvider implements AIProvider {
             ],
             stream,
         };
+
+        // Vision: when the model supports image_url blocks and images are present,
+        // send the user message as multipart content (text + image_url blocks).
+        // Text-only models keep the plain string — the caller injects image URLs
+        // into the message text instead.
+        if (images && images.length > 0 && this.supportsVision(config)) {
+            body.messages[1].content = [
+                { type: 'text', text: userMessage },
+                ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+            ];
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[OpenAIProvider] Sending ${images.length} image(s) as multipart content to vision-capable model ${config.model}`);
+            }
+        }
 
         if (tools && tools.length > 0) {
             body.tools = tools;
@@ -141,7 +167,8 @@ export class OpenAIProvider implements AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        externalSignal?: AbortSignal
+        externalSignal?: AbortSignal,
+        images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -163,7 +190,7 @@ export class OpenAIProvider implements AIProvider {
             let streamController = controller; // tracks the controller for the active stream (may be updated on retry)
             timeoutId = setTimeout(() => controller.abort(), timeout);
 
-            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools);
+            const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, true, tools, images);
 
             const response = await fetch(endpoint, {
                 method: 'POST',
@@ -375,7 +402,8 @@ export class OpenAIProvider implements AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        externalSignal?: AbortSignal
+        externalSignal?: AbortSignal,
+        images?: string[]
     ): Promise<AIResponse> {
         const startTime = Date.now();
         let responseModel = '';
@@ -398,7 +426,7 @@ export class OpenAIProvider implements AIProvider {
                 const endpoint = this.getEndpoint(config);
                 const apiKey = this.getApiKey(config);
 
-                const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false, tools);
+                const requestBody = this.buildRequestBody(systemPrompt, userMessage, config, false, tools, images);
 
                 const response = await fetch(endpoint, {
                     method: 'POST',

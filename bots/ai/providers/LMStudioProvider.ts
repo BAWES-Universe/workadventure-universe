@@ -8,6 +8,7 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { linkExternalAbort } from './abortUtils';
+import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
 export class LMStudioProvider implements AIProvider {
@@ -23,6 +24,17 @@ export class LMStudioProvider implements AIProvider {
 
     supportsStreaming(): boolean {
         return true;
+    }
+
+    /**
+     * Whether the model config supports vision (image_url content blocks).
+     * LMStudio serves local models via the OpenAI-compatible protocol; vision
+     * capability is resolved from the model name with the same tri-state
+     * override as OpenAIProvider. Multipart sending is not implemented here yet,
+     * so vision-capable local models degrade to URL-as-text context.
+     */
+    supportsVision(config: AIProviderConfig): boolean {
+        return resolveVisionSupport(config.model || '', config.supportsVision);
     }
 
     async *generateStream(

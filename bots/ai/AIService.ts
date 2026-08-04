@@ -120,6 +120,7 @@ export class AIService {
             temperature: credentialsData.temperature,
             maxTokens: credentialsData.maxTokens,
             supportsStreaming: credentialsData.supportsStreaming,
+            supportsVision: credentialsData.supportsVision ?? null,
             settings: credentialsData.settings,
         };
 
@@ -130,6 +131,62 @@ export class AIService {
         });
 
         return config;
+    }
+
+    /**
+     * Describe images using a fallback vision provider, when the main model is
+     * text-only. The description is injected into the main model's prompt so it
+     * can "see" the image without supporting image_url blocks itself.
+     *
+     * Fails soft: any error returns '' and the caller falls back to the existing
+     * URL-as-text-context behavior (no crash, no dead turn).
+     */
+    private async describeImagesViaFallback(
+        fallbackProviderRef: string,
+        fallbackModel: string | null | undefined,
+        images: string[],
+        abortSignal?: AbortSignal
+    ): Promise<string> {
+        try {
+            const fallbackConfig = await this.getProviderCredentials(fallbackProviderRef);
+            if (!fallbackConfig) {
+                console.warn(`[AIService] Vision fallback provider '${fallbackProviderRef}' not found`);
+                return '';
+            }
+
+            // Model override: when the bot specifies a visionFallbackModel, use it
+            // instead of the fallback provider's configured model.
+            const effectiveConfig: AIProviderConfig =
+                fallbackModel && fallbackConfig.model !== fallbackModel
+                    ? { ...fallbackConfig, model: fallbackModel }
+                    : fallbackConfig;
+
+            const provider = this.providerRegistry.getOrCreateProvider(effectiveConfig);
+            if (!provider.supportsVision(effectiveConfig)) {
+                console.warn(`[AIService] Vision fallback provider '${fallbackProviderRef}' (model ${effectiveConfig.model}) does not look vision-capable; sending image URLs as text`);
+            }
+
+            const describePrompt = [
+                'Describe the image(s) below so someone who cannot see them can understand what they show.',
+                'Be concise but complete: subject, setting, any visible text, and notable details.',
+                'Image URL(s):',
+                ...images.map((url, i) => `${i + 1}. ${url}`),
+            ].join('\n');
+
+            const response = await provider.generate(
+                'You are an image description assistant. Respond only with the description.',
+                describePrompt,
+                effectiveConfig,
+                undefined,
+                abortSignal,
+                images
+            );
+
+            return (response.content || '').trim();
+        } catch (error) {
+            console.error('[AIService] Vision fallback describe failed:', error);
+            return '';
+        }
     }
 
     /**
@@ -145,7 +202,8 @@ export class AIService {
         conversationContext: string,
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
@@ -156,6 +214,35 @@ export class AIService {
         try {
             // Get provider credentials
             const config = await this.getProviderCredentials(providerId);
+
+            // Vision routing (per-request decision tree):
+            // - Main model supports vision  -> send image URLs as multipart content
+            // - Main model text-only + fallback configured -> describe images via the
+            //   fallback vision provider, inject the description into the prompt
+            // - Otherwise -> image URLs stay as text context (behavior layer already
+            //   augments the message with "[User also sent an image: <url>]")
+            let visionImages: string[] | undefined = images && images.length > 0 ? images : undefined;
+            if (visionImages) {
+                const visionCapable = this.providerRegistry.supportsVision(config);
+                if (!visionCapable) {
+                    const fullConfig = botClient?.getFullConfig();
+                    const fallbackRef = fullConfig?.visionFallbackProviderRef;
+                    if (fallbackRef) {
+                        const description = await this.describeImagesViaFallback(
+                            fallbackRef,
+                            fullConfig?.visionFallbackModel,
+                            visionImages,
+                            abortSignal
+                        );
+                        if (description) {
+                            message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
+                        }
+                    }
+                    // Images are NOT passed to a text-only main model (it would 400 on
+                    // image_url blocks). The URL/description stays in the message text.
+                    visionImages = undefined;
+                }
+            }
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
@@ -563,7 +650,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                     userMessageForQwen,
                     configWithParent,
                     tools.length > 0 ? tools : undefined,
-                    abortSignal
+                    abortSignal,
+                    visionImages
                 )) {
                     // Mid-stream interruption (cancel/update): stop consuming chunks.
                     // The behavior handles the abort via abortCurrentStream(); this

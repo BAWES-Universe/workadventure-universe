@@ -15,6 +15,8 @@ export interface CreateBotDto {
     behaviorConfig: BotData["behaviorConfig"];
     chatInstructions?: string;
     aiProviderRef?: string;
+    visionFallbackProviderRef?: string;
+    visionFallbackModel?: string;
 }
 
 export interface UpdateBotDto extends Partial<CreateBotDto> {
@@ -634,7 +636,9 @@ export class BotApiService {
             name: string;
             type: string;
             enabled: boolean;
+            model: string;
             supportsStreaming: boolean;
+            supportsVision: boolean | null;
         }>
     > {
         try {

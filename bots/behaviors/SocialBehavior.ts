@@ -728,8 +728,8 @@ export class SocialBehavior extends BaseBehavior {
 
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
-            (signal) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal),
-            url, mediaType, mimeType
+            (signal, images) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal, images),
+            url, mediaType, mimeType, galleryUrls
         );
     }
 
@@ -741,7 +741,8 @@ export class SocialBehavior extends BaseBehavior {
         playerId: number,
         playerMessage: string,
         botId: string,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        images?: string[]
     ): Promise<void> {
         if (!this.bot || !this.aiService) {
             console.warn(`[SocialBehavior] Missing required services for AI response`);
@@ -811,7 +812,8 @@ export class SocialBehavior extends BaseBehavior {
                 context,
                 this.bot,
                 this.adminApiService,
-                abortSignal
+                abortSignal,
+                images
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);

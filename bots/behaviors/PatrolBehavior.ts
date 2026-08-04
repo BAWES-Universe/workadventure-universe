@@ -1746,8 +1746,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
-            (signal) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal),
-            url, mediaType, mimeType
+            (signal, images) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal, images),
+            url, mediaType, mimeType, galleryUrls
         );
     }
 
@@ -1759,7 +1759,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         playerId: number,
         playerMessage: string,
         botId: string,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        images?: string[]
     ): Promise<void> {
         if (!this.bot || !this.aiService) {
             console.warn(`[PatrolBehavior] Missing required services for AI response`);
@@ -1812,7 +1813,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                 context,
                 this.bot,
                 this.adminApiService,
-                abortSignal
+                abortSignal,
+                images
             )) {
                 if (chunk.reset) {
                         batchFlush(batchState, sendBatch);
