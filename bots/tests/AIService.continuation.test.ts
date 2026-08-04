@@ -108,6 +108,19 @@ async function* toolCallOnlyFollowUpStream() {
     yield { content: "", done: true, metadata: { tokensUsed: 10, latency: 20, error: false, truncated: false } };
 }
 
+// Main stream that emits a VALID tool call (built-in, no MCP server needed)
+// then ends — the follow-up round that follows it will produce no text.
+async function* validToolCallStream() {
+    yield { content: "", done: false, toolCalls: [{ id: "call_1", name: "get_bot_position", arguments: "{}" }] };
+    yield { content: "", done: true, metadata: { tokensUsed: 10, latency: 20, error: false, truncated: false } };
+}
+
+// Follow-up round that produces NO content and NO tool calls — the while loop
+// exits with empty responseContent, triggering the no-content retry path.
+async function* emptyFollowUpStream() {
+    yield { content: "", done: true, metadata: { tokensUsed: 10, latency: 20, error: false, truncated: false } };
+}
+
 // ---- Build minimal mocks ----
 function buildMocks() {
     const mockAdminApiService: any = {
@@ -295,5 +308,62 @@ describe("AIService – truncated response auto-continuation", () => {
         // Retry produced a real answer — the placeholder must NOT appear.
         expect(content).not.toContain("Let me check on that for you.");
         expect(content).toContain("a complete answer");
+    });
+
+    it("continues a TRUNCATED empty-name retry (retry hits max_tokens) and carries the retry's metadata on the done chunk", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        mockGenerateStream
+            .mockImplementationOnce(emptyNameToolCallStream) // main call → empty-name tool call
+            .mockImplementationOnce(truncatedStream)          // retry (no tools) → ALSO truncated
+            .mockImplementationOnce(continuationStream);      // continuation → completes
+
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+        const chunks = await drain(service.generateBotResponseStream(
+            "bot-1", 42, "what's the status?", "You are a bot.", "test-provider", "space-1", ""
+        ));
+
+        // Original + retry + continuation = 3 calls.
+        expect(mockGenerateStream).toHaveBeenCalledTimes(3);
+
+        // Continuation content reaches the behavior (without the fix, the retry's
+        // truncated flag was dropped and NO continuation call would fire).
+        const content = chunks.filter((c: any) => c.content && !c.done).map((c: any) => c.content).join("");
+        expect(content).toContain("Here is the first part of the answer");
+        expect(content).toContain("and here is the rest.");
+
+        // Done chunk carries the RETRY's metadata (truncated: true, retry token count),
+        // not the original empty-name chunk's metadata (truncated: false).
+        const doneChunks = chunks.filter((c: any) => c.done);
+        expect(doneChunks).toHaveLength(1);
+        expect(doneChunks[0].metadata?.truncated).toBe(true);
+        expect(doneChunks[0].metadata?.tokensUsed).toBe(50); // truncatedStream's tokens, not the original 10
+    });
+
+    it("continues a TRUNCATED no-content follow-up retry and carries the retry's metadata on the done chunk", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        mockGenerateStream
+            .mockImplementationOnce(validToolCallStream)  // main call → valid tool call (get_bot_position)
+            .mockImplementationOnce(emptyFollowUpStream)   // follow-up → NO content, NO tool calls → triggers retry
+            .mockImplementationOnce(truncatedStream)       // retry (no tools) → ALSO truncated
+            .mockImplementationOnce(continuationStream);   // continuation → completes
+
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+        const chunks = await drain(service.generateBotResponseStream(
+            "bot-1", 42, "what's the status?", "You are a bot.", "test-provider", "space-1", ""
+        ));
+
+        // Main + follow-up + retry + continuation = 4 calls.
+        expect(mockGenerateStream).toHaveBeenCalledTimes(4);
+
+        // Continuation content reaches the behavior.
+        const content = chunks.filter((c: any) => c.content && !c.done).map((c: any) => c.content).join("");
+        expect(content).toContain("Here is the first part of the answer");
+        expect(content).toContain("and here is the rest.");
+
+        // Done chunk carries the RETRY's metadata, not the follow-up's.
+        const doneChunks = chunks.filter((c: any) => c.done);
+        expect(doneChunks).toHaveLength(1);
+        expect(doneChunks[0].metadata?.truncated).toBe(true);
+        expect(doneChunks[0].metadata?.tokensUsed).toBe(50); // truncatedStream's tokens, not the follow-up's 10
     });
 });

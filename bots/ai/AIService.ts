@@ -705,6 +705,13 @@ Everything above is technical guidance. Follow your personality as defined in th
                             // response; only if that also fails do we end the
                             // turn with whatever was already streamed.
                             let retryProducedContent = false;
+                            // Track the retry's own done-chunk metadata so a
+                            // truncated retry (finish_reason='length') can still
+                            // auto-continue — the final done chunk must NOT
+                            // re-use the original chunk's metadata, which would
+                            // silently drop the retry's truncated flag.
+                            let retryTruncated = false;
+                            let retryMeta: AIStreamChunk['metadata'] | undefined;
                             try {
                                 for await (const retryChunk of this.providerRegistry.generateStream(
                                     providerId,
@@ -724,14 +731,45 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     if (retryChunk.metadata?.tokensUsed) tokensUsed += retryChunk.metadata.tokensUsed;
                                     if (retryChunk.metadata?.promptTokens) promptTokens += retryChunk.metadata.promptTokens;
                                     if (retryChunk.metadata?.completionTokens) completionTokens += retryChunk.metadata.completionTokens;
+                                    if (retryChunk.done) {
+                                        retryTruncated = !!retryChunk.metadata?.truncated;
+                                        retryMeta = retryChunk.metadata;
+                                    }
                                 }
                             } catch (retryError) {
                                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                     console.error('[AIService] Empty-name retry call failed:', retryError);
                                 }
                             }
-                            // Yield the accumulated content (original pre-tool or retry) as final
-                            yield {content: '', done: true, metadata: chunk.metadata};
+                            // finish_reason='length': the retry itself hit the
+                            // max_tokens cap mid-sentence. Auto-continue so the
+                            // answer completes — without this, the retry's
+                            // truncated flag is lost and the response is cut off
+                            // with no continuation.
+                            if (retryTruncated && !abortSignal?.aborted && accumulatedContent) {
+                                const contTokens = { used: 0, prompt: 0, completion: 0 };
+                                for await (const contChunk of this.continueTruncatedResponse(
+                                    providerId,
+                                    systemPrompt,
+                                    accumulatedContent,
+                                    configWithParent,
+                                    abortSignal,
+                                    contTokens
+                                )) {
+                                    if (contChunk.content) {
+                                        accumulatedContent += contChunk.content;
+                                        firstCallContent += contChunk.content;
+                                        yield {content: contChunk.content, done: false, metadata: undefined};
+                                    }
+                                }
+                                tokensUsed += contTokens.used;
+                                promptTokens += contTokens.prompt;
+                                completionTokens += contTokens.completion;
+                            }
+                            // Yield the accumulated content (original pre-tool or retry) as final.
+                            // Carry the RETRY's metadata (not the original chunk's) so consumers
+                            // see the retry's real token counts and truncation status.
+                            yield {content: '', done: true, metadata: retryMeta || chunk.metadata};
                             streamCompleted = true;
                             break;
                         }
@@ -1163,6 +1201,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 // may have chained another empty-name tool call); only fall back to
                                 // the placeholder if the retry also produces nothing.
                                 let retryProducedContent = false;
+                                // Track the retry's own done-chunk metadata so a truncated retry
+                                // (finish_reason='length') can still auto-continue — the final done
+                                // chunk must NOT re-use the follow-up's metadata, which would
+                                // silently drop the retry's truncated flag.
+                                let retryTruncated = false;
+                                let retryMeta: AIStreamChunk['metadata'] | undefined;
                                 try {
                                     // followUpInput holds the last follow-up message (set per-round
                                     // at followUpInput = followUpMessageWithNoThink) and is in scope
@@ -1196,15 +1240,47 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                             completionTokens += retryChunk.metadata.completionTokens;
                                             followUpCompletionTokens += retryChunk.metadata.completionTokens;
                                         }
+                                        if (retryChunk.done) {
+                                            retryTruncated = !!retryChunk.metadata?.truncated;
+                                            retryMeta = retryChunk.metadata;
+                                        }
                                     }
                                 } catch (retryError) {
                                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                         console.error('[AIService] No-content follow-up retry failed:', retryError);
                                     }
                                 }
-                                if (retryProducedContent) {
+                                // finish_reason='length': the retry itself hit the max_tokens cap
+                                // mid-sentence. Auto-continue so the answer completes.
+                                if (retryTruncated && !abortSignal?.aborted && followUpContent) {
+                                    const contTokens = { used: 0, prompt: 0, completion: 0 };
+                                    for await (const contChunk of this.continueTruncatedResponse(
+                                        providerId,
+                                        systemPrompt,
+                                        followUpContent,
+                                        configWithParent,
+                                        abortSignal,
+                                        contTokens
+                                    )) {
+                                        if (contChunk.content) {
+                                            followUpContent += contChunk.content;
+                                            followUpContentBuffer += contChunk.content;
+                                            accumulatedContent += contChunk.content;
+                                            yield {content: contChunk.content, done: false, metadata: undefined};
+                                        }
+                                    }
+                                    followUpTokens += contTokens.used;
+                                    followUpPromptTokens += contTokens.prompt;
+                                    followUpCompletionTokens += contTokens.completion;
+                                    tokensUsed += contTokens.used;
+                                    promptTokens += contTokens.prompt;
+                                    completionTokens += contTokens.completion;
+                                }
+                                if (retryProducedContent || retryMeta) {
                                     // Retry produced a real answer — finalize normally.
-                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    // Carry the RETRY's metadata (not the follow-up's) so consumers
+                                    // see the retry's real token counts and truncation status.
+                                    yield {content: '', done: true, metadata: retryMeta || lastFollowUpDoneChunk?.metadata};
                                     lastFollowUpDoneChunk = null;
                                 } else {
                                     // Send a fallback so the user sees something happened instead of
