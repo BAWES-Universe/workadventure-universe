@@ -1369,7 +1369,8 @@ export abstract class BaseBehavior {
      *
      * Shared by Idle/Social/Patrol (previously triplicated ~160-line blocks).
      * Streams a fresh response with an anti-repetition prompt, up to 3 attempts,
-     * then falls back to a canned phrase if the model keeps repeating.
+     * then asks the LLM for a short fresh line if the model keeps repeating.
+     * If that call fails, the method returns an empty message and stays silent.
      *
      * Fix: on a tool-call `reset` chunk, the accumulated ack is FINALIZED as its
      * own bubble and the responseId rotated — previously a blank reset was sent,
@@ -1413,6 +1414,12 @@ export abstract class BaseBehavior {
             debugLabel,
         } = params;
 
+        // Self-contained guard: callers (Idle/Social/Patrol) early-return when
+        // aiService is null, but this shared method must not assume it.
+        if (!this.aiService) {
+            return { processed: initialProcessed, processedMessage: initialProcessedMessage, responseId: initialResponseId };
+        }
+
         // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
         // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
         let regenerationAttempts = 0;
@@ -1443,7 +1450,7 @@ export abstract class BaseBehavior {
                 let emotionBlockStarted = false;
                 // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
                 let pendingPrefix = '';
-                for await (const chunk of this.aiService!.generateBotResponseStream(
+                for await (const chunk of this.aiService.generateBotResponseStream(
                     botId,
                     playerId,
                     playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response- attempt ${regenerationAttempts}]`,
@@ -1592,15 +1599,18 @@ export abstract class BaseBehavior {
             // guard drops the bubble) rather than emitting a canned phrase or
             // sending the stale repeated text.
             processedMessage = '';
-            const providerId = this.bot?.getFullConfig()?.aiProviderRef;
-            if (providerId && this.aiService) {
+            // Use the method's aiProviderRef parameter (already validated and used
+            // for the regeneration stream above) instead of re-reading the bot's
+            // full config — getFullConfig() can return null, silently disabling
+            // the fallback when the bot is mid-config-update.
+            if (aiProviderRef && this.aiService) {
                 const fallbackPrompt =
                     `You keep catching yourself about to repeat the same thing you just said to ` +
                     `the person you're talking to (${currentMessage.substring(0, 150)}...). ` +
                     `Say one short, natural line that genuinely moves the conversation forward — ` +
                     `a new thought, a question, or a fresh angle. Do NOT repeat anything you already said. ` +
                     `No emojis, no apologies for repeating.`;
-                const fallbackMessage = await this.aiService.quickGenerate(providerId, chatInstructions, fallbackPrompt);
+                const fallbackMessage = await this.aiService.quickGenerate(aiProviderRef, chatInstructions, fallbackPrompt);
                 if (fallbackMessage.trim()) {
                     processedMessage = fallbackMessage.trim();
                 }
