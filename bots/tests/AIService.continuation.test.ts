@@ -14,6 +14,7 @@ const mockParentSpanEnd = vi.fn();
 const mockParentSpan = {
     end: mockParentSpanEnd,
     setAttribute: vi.fn(),
+    spanContext: vi.fn(() => ({ spanId: 'test-span-id', traceId: 'test-trace-id' })),
 };
 
 const mockStartSpanManual = vi.fn((_opts: unknown, callback: (span: any) => any) => {
@@ -118,6 +119,13 @@ async function* validToolCallStream() {
 // Follow-up round that produces NO content and NO tool calls — the while loop
 // exits with empty responseContent, triggering the no-content retry path.
 async function* emptyFollowUpStream() {
+    yield { content: "", done: true, metadata: { tokensUsed: 10, latency: 20, error: false, truncated: false } };
+}
+
+// Retry (no tools) that emits ONLY a done chunk with no content — the retry
+// produced nothing at all. Most providers still emit a done chunk with
+// metadata, so this exercises the "empty retry → placeholder" branch.
+async function* emptyRetryStream() {
     yield { content: "", done: true, metadata: { tokensUsed: 10, latency: 20, error: false, truncated: false } };
 }
 
@@ -293,7 +301,7 @@ describe("AIService – truncated response auto-continuation", () => {
         expect(doneChunks).toHaveLength(1);
     });
 
-    it("falls back to the placeholder only when the no-tools retry also produces nothing", async () => {
+    it("empty-name retry that produces content: no placeholder, real answer returned", async () => {
         const { mockAdminApiService, mockConversationMemory } = buildMocks();
         mockGenerateStream
             .mockImplementationOnce(emptyNameToolCallStream) // main call → empty-name tool call
@@ -308,6 +316,25 @@ describe("AIService – truncated response auto-continuation", () => {
         // Retry produced a real answer — the placeholder must NOT appear.
         expect(content).not.toContain("Let me check on that for you.");
         expect(content).toContain("a complete answer");
+    });
+
+    it("shows the placeholder when the no-content follow-up retry produces nothing", async () => {
+        const { mockAdminApiService, mockConversationMemory } = buildMocks();
+        mockGenerateStream
+            .mockImplementationOnce(validToolCallStream) // main call → valid tool call (get_bot_position)
+            .mockImplementationOnce(emptyFollowUpStream)  // follow-up → NO content, NO tool calls → triggers retry
+            .mockImplementationOnce(emptyRetryStream);    // retry (no tools) → emits done chunk, NO content → placeholder
+
+        const service = new AIService(mockConversationMemory, mockAdminApiService, "http://admin.local");
+        const chunks = await drain(service.generateBotResponseStream(
+            "bot-1", 42, "what's the status?", "You are a bot.", "test-provider", "space-1", ""
+        ));
+
+        // The retry emitted a done chunk with metadata but NO content. Gate on
+        // retryProducedContent (not retryMeta) → the placeholder branch fires so
+        // the user sees something happened instead of an empty bubble.
+        const content = chunks.filter((c: any) => c.content && !c.done).map((c: any) => c.content).join("");
+        expect(content).toContain("Let me check on that for you.");
     });
 
     it("continues a TRUNCATED empty-name retry (retry hits max_tokens) and carries the retry's metadata on the done chunk", async () => {

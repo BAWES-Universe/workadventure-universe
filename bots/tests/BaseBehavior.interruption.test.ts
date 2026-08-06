@@ -264,7 +264,7 @@ describe('BaseBehavior interruption routing', () => {
             yield { content: 'Here is the real answer.', done: false };
             yield { content: '', done: true, metadata: { tokensUsed: 10, latency: 5, error: false } };
         }
-        ai.generateBotResponseStream.mockReturnValue(regenStream());
+        ai.generateBotResponseStream.mockImplementation(() => regenStream());
         // The regeneration re-checks repetition on the new content — return a low
         // score so the loop exits after one attempt.
         const mockResponseProcessor = {
@@ -326,7 +326,7 @@ describe('BaseBehavior interruption routing', () => {
             yield { content: 'still repeating the same thing', done: false };
             yield { content: '', done: true, metadata: { tokensUsed: 10, latency: 5, error: false } };
         }
-        ai.generateBotResponseStream.mockReturnValue(stillRepetitiveStream());
+        ai.generateBotResponseStream.mockImplementation(() => stillRepetitiveStream());
         // quickGenerate supplies the LLM-generated fallback in the bot's voice.
         ai.quickGenerate.mockResolvedValue('Let me look at this from a completely different angle.');
 
@@ -373,7 +373,7 @@ describe('BaseBehavior interruption routing', () => {
             yield { content: 'still repeating the same thing', done: false };
             yield { content: '', done: true, metadata: { tokensUsed: 10, latency: 5, error: false } };
         }
-        ai.generateBotResponseStream.mockReturnValue(stillRepetitiveStream());
+        ai.generateBotResponseStream.mockImplementation(() => stillRepetitiveStream());
         // Provider unavailable → quickGenerate returns '' (runBoundedProviderCall contract).
         ai.quickGenerate.mockResolvedValue('');
 

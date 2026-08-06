@@ -747,24 +747,24 @@ Everything above is technical guidance. Follow your personality as defined in th
                             // truncated flag is lost and the response is cut off
                             // with no continuation.
                             if (retryTruncated && !abortSignal?.aborted && accumulatedContent) {
-                                const contTokens = { used: 0, prompt: 0, completion: 0 };
-                                for await (const contChunk of this.continueTruncatedResponse(
+                                for await (const contText of this.runTruncationContinuation(
                                     providerId,
                                     systemPrompt,
                                     accumulatedContent,
                                     configWithParent,
                                     abortSignal,
-                                    contTokens
-                                )) {
-                                    if (contChunk.content) {
-                                        accumulatedContent += contChunk.content;
-                                        firstCallContent += contChunk.content;
-                                        yield {content: contChunk.content, done: false, metadata: undefined};
+                                    (text) => {
+                                        accumulatedContent += text;
+                                        firstCallContent += text;
+                                    },
+                                    (used, prompt, completion) => {
+                                        tokensUsed += used;
+                                        promptTokens += prompt;
+                                        completionTokens += completion;
                                     }
+                                )) {
+                                    yield {content: contText, done: false, metadata: undefined};
                                 }
-                                tokensUsed += contTokens.used;
-                                promptTokens += contTokens.prompt;
-                                completionTokens += contTokens.completion;
                             }
                             // Yield the accumulated content (original pre-tool or retry) as final.
                             // Carry the RETRY's metadata (not the original chunk's) so consumers
@@ -1253,30 +1253,36 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 // finish_reason='length': the retry itself hit the max_tokens cap
                                 // mid-sentence. Auto-continue so the answer completes.
                                 if (retryTruncated && !abortSignal?.aborted && followUpContent) {
-                                    const contTokens = { used: 0, prompt: 0, completion: 0 };
-                                    for await (const contChunk of this.continueTruncatedResponse(
+                                    for await (const contText of this.runTruncationContinuation(
                                         providerId,
                                         systemPrompt,
                                         followUpContent,
                                         configWithParent,
                                         abortSignal,
-                                        contTokens
-                                    )) {
-                                        if (contChunk.content) {
-                                            followUpContent += contChunk.content;
-                                            followUpContentBuffer += contChunk.content;
-                                            accumulatedContent += contChunk.content;
-                                            yield {content: contChunk.content, done: false, metadata: undefined};
+                                        (text) => {
+                                            followUpContent += text;
+                                            followUpContentBuffer += text;
+                                            accumulatedContent += text;
+                                        },
+                                        (used, prompt, completion) => {
+                                            followUpTokens += used;
+                                            followUpPromptTokens += prompt;
+                                            followUpCompletionTokens += completion;
+                                            tokensUsed += used;
+                                            promptTokens += prompt;
+                                            completionTokens += completion;
                                         }
+                                    )) {
+                                        yield {content: contText, done: false, metadata: undefined};
                                     }
-                                    followUpTokens += contTokens.used;
-                                    followUpPromptTokens += contTokens.prompt;
-                                    followUpCompletionTokens += contTokens.completion;
-                                    tokensUsed += contTokens.used;
-                                    promptTokens += contTokens.prompt;
-                                    completionTokens += contTokens.completion;
                                 }
-                                if (retryProducedContent || retryMeta) {
+                                // Gate on retryProducedContent ONLY — retryMeta is set
+                                // whenever the retry stream emits a done chunk (most
+                                // providers always do, with metadata), even when the
+                                // retry produced zero content. Including retryMeta here
+                                // would take the normal-finalize branch for an empty
+                                // retry and the fallback below would be unreachable.
+                                if (retryProducedContent) {
                                     // Retry produced a real answer — finalize normally.
                                     // Carry the RETRY's metadata (not the follow-up's) so consumers
                                     // see the retry's real token counts and truncation status.
@@ -1285,8 +1291,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 } else {
                                     // Send a fallback so the user sees something happened instead of
                                     // an empty bubble that gets silently dropped by the frontend.
-                                    yield {content: "Let me check on that for you.", done: false, metadata: lastFollowUpDoneChunk?.metadata};
-                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    yield {content: "Let me check on that for you.", done: false, metadata: retryMeta || lastFollowUpDoneChunk?.metadata};
+                                    yield {content: '', done: true, metadata: retryMeta || lastFollowUpDoneChunk?.metadata};
                                     lastFollowUpDoneChunk = null;
                                 }
                             }
@@ -1297,28 +1303,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // finish_reason='length': the follow-up call hit the max_tokens
                             // cap mid-sentence. Auto-continue so the answer completes.
                             if (lastFollowUpDoneChunk?.metadata?.truncated && !abortSignal?.aborted && followUpContent) {
-                                const contTokens = { used: 0, prompt: 0, completion: 0 };
-                                for await (const contChunk of this.continueTruncatedResponse(
+                                for await (const contText of this.runTruncationContinuation(
                                     providerId,
                                     systemPrompt,
                                     followUpContent,
                                     configWithParent,
                                     abortSignal,
-                                    contTokens
-                                )) {
-                                    if (contChunk.content) {
-                                        followUpContent += contChunk.content;
-                                        followUpContentBuffer += contChunk.content;
-                                        accumulatedContent += contChunk.content;
-                                        yield {content: contChunk.content, done: false, metadata: undefined};
+                                    (text) => {
+                                        followUpContent += text;
+                                        followUpContentBuffer += text;
+                                        accumulatedContent += text;
+                                    },
+                                    (used, prompt, completion) => {
+                                        followUpTokens += used;
+                                        followUpPromptTokens += prompt;
+                                        followUpCompletionTokens += completion;
+                                        tokensUsed += used;
+                                        promptTokens += prompt;
+                                        completionTokens += completion;
                                     }
+                                )) {
+                                    yield {content: contText, done: false, metadata: undefined};
                                 }
-                                followUpTokens += contTokens.used;
-                                followUpPromptTokens += contTokens.prompt;
-                                followUpCompletionTokens += contTokens.completion;
-                                tokensUsed += contTokens.used;
-                                promptTokens += contTokens.prompt;
-                                completionTokens += contTokens.completion;
                             }
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;
@@ -1719,28 +1725,79 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 `apologize, or add a closing line — just continue the response from the last sentence.`;
 
             let stillTruncated = false;
-            for await (const chunk of this.providerRegistry.generateStream(
-                providerId,
-                systemPrompt,
-                continueMessage,
-                config,
-                undefined, // no tools — this is a pure text continuation
-                abortSignal
-            )) {
-                if (abortSignal?.aborted) return;
-                if (chunk.content) {
-                    content += chunk.content;
-                    yield {content: chunk.content, done: false, metadata: undefined};
+            try {
+                for await (const chunk of this.providerRegistry.generateStream(
+                    providerId,
+                    systemPrompt,
+                    continueMessage,
+                    config,
+                    undefined, // no tools — this is a pure text continuation
+                    abortSignal
+                )) {
+                    if (abortSignal?.aborted) return;
+                    if (chunk.content) {
+                        content += chunk.content;
+                        yield {content: chunk.content, done: false, metadata: undefined};
+                    }
+                    if (chunk.metadata?.tokensUsed) tokenSink.used += chunk.metadata.tokensUsed;
+                    if (chunk.metadata?.promptTokens) tokenSink.prompt += chunk.metadata.promptTokens;
+                    if (chunk.metadata?.completionTokens) tokenSink.completion += chunk.metadata.completionTokens;
+                    if (chunk.done) {
+                        stillTruncated = !!chunk.metadata?.truncated;
+                    }
                 }
-                if (chunk.metadata?.tokensUsed) tokenSink.used += chunk.metadata.tokensUsed;
-                if (chunk.metadata?.promptTokens) tokenSink.prompt += chunk.metadata.promptTokens;
-                if (chunk.metadata?.completionTokens) tokenSink.completion += chunk.metadata.completionTokens;
-                if (chunk.done) {
-                    stillTruncated = !!chunk.metadata?.truncated;
+            } catch (continuationError) {
+                // Continuation is best-effort: a provider failure mid-continuation
+                // must NOT propagate to the outer turn handler — that would yield
+                // an error done chunk after real content was already streamed,
+                // showing the user a partial answer plus an error finalization.
+                // Swallow and stop; the caller keeps whatever was streamed.
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.error('[AIService] Truncation continuation call failed (swallowed):', continuationError);
                 }
+                return;
             }
             if (!stillTruncated) return;
         }
+    }
+
+    /**
+     * Run a truncation continuation and fold its output into the caller's
+     * accumulators. Shared by the three retry/truncated paths (empty-name
+     * retry, no-content follow-up retry, follow-up truncation) which used to
+     * duplicate this loop. The continuation is best-effort: provider errors
+     * are swallowed inside continueTruncatedResponse, so this never throws.
+     *
+     * @param accumulateContent callback receiving each continuation content
+     *        chunk so the caller can append it to its own accumulators
+     *        (e.g. followUpContent + accumulatedContent)
+     * @param accumulateTokens callback receiving the continuation's final
+     *        token counts so the caller can fold them into telemetry totals
+     */
+    private async *runTruncationContinuation(
+        providerId: string,
+        systemPrompt: string,
+        partialContent: string,
+        config: AIProviderConfig,
+        abortSignal: AbortSignal | undefined,
+        accumulateContent: (text: string) => void,
+        accumulateTokens: (used: number, prompt: number, completion: number) => void
+    ): AsyncGenerator<string> {
+        const contTokens = { used: 0, prompt: 0, completion: 0 };
+        for await (const contChunk of this.continueTruncatedResponse(
+            providerId,
+            systemPrompt,
+            partialContent,
+            config,
+            abortSignal,
+            contTokens
+        )) {
+            if (contChunk.content) {
+                accumulateContent(contChunk.content);
+                yield contChunk.content;
+            }
+        }
+        accumulateTokens(contTokens.used, contTokens.prompt, contTokens.completion);
     }
 
     /**
