@@ -640,29 +640,38 @@ Everything above is technical guidance. Follow your personality as defined in th
                     if (chunk.done && toolCallAccumulator.size > 0) {
                         // Capture $ai_generation for the initial LLM call NOW —
                         // before tool execution distorts its latency and before
-                        // the follow-up call inverts event ordering
-                        captureAiGeneration({
-                            distinctId: `bot-${botId}`,
-                            traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
-                            sessionId: `conversation-${botId}-player-${playerId}`,
-                            model: config.model,
-                            provider: config.type,
-                            input: userMessageForQwen,
-                            output: firstCallContent,
-                            inputTokens: promptTokens,
-                            outputTokens: completionTokens,
-                            latency: (Date.now() - firstCallStartTime) / 1000,
-                            cost: this.calculateCost(providerId, {
-                                tokensUsed,
-                                promptTokens,
-                                completionTokens,
-                                latency: Date.now() - firstCallStartTime,
-                                error,
-                            }),
-                            botId,
-                            playerId: String(playerId),
-                            space: spaceName,
-                        });
+                        // the follow-up call inverts event ordering.
+                        // Telemetry is fire-and-forget: a capture failure must never
+                        // propagate (it would abort the stream and yield an error
+                        // done chunk, killing the turn).
+                        try {
+                            captureAiGeneration({
+                                distinctId: `bot-${botId}`,
+                                traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                                sessionId: `conversation-${botId}-player-${playerId}`,
+                                model: config.model,
+                                provider: config.type,
+                                input: userMessageForQwen,
+                                output: firstCallContent,
+                                inputTokens: promptTokens,
+                                outputTokens: completionTokens,
+                                latency: (Date.now() - firstCallStartTime) / 1000,
+                                cost: this.calculateCost(providerId, {
+                                    tokensUsed,
+                                    promptTokens,
+                                    completionTokens,
+                                    latency: Date.now() - firstCallStartTime,
+                                    error,
+                                }),
+                                botId,
+                                playerId: String(playerId),
+                                space: spaceName,
+                            });
+                        } catch (captureError) {
+                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                console.error('[AIService] Initial-call telemetry capture failed (swallowed):', captureError);
+                            }
+                        }
                         initialGenCaptured = true;
 
                         // Discard pre-tool-call content buffer — the model was
@@ -689,8 +698,78 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 console.warn(`[AIService] Skipping tool execution: all ${toolCallAccumulator.size} tool call(s) have empty names`);
                             }
                             toolCallAccumulator.clear();
-                            // Yield the accumulated pre-tool content (already streamed) as final
-                            yield {content: '', done: true, metadata: chunk.metadata};
+                            // Retry ONCE without tools — the model streamed
+                            // empty-name tool calls (known DeepSeek streaming
+                            // quirk) but still owes the player an answer. A
+                            // fresh call with no tools forces a direct text
+                            // response; only if that also fails do we end the
+                            // turn with whatever was already streamed.
+                            let retryProducedContent = false;
+                            // Track the retry's own done-chunk metadata so a
+                            // truncated retry (finish_reason='length') can still
+                            // auto-continue — the final done chunk must NOT
+                            // re-use the original chunk's metadata, which would
+                            // silently drop the retry's truncated flag.
+                            let retryTruncated = false;
+                            let retryMeta: AIStreamChunk['metadata'] | undefined;
+                            try {
+                                for await (const retryChunk of this.providerRegistry.generateStream(
+                                    providerId,
+                                    systemPrompt,
+                                    userMessageForQwen,
+                                    configWithParent,
+                                    [], // No tools — force a direct answer
+                                    abortSignal
+                                )) {
+                                    if (abortSignal?.aborted) break;
+                                    if (retryChunk.content) {
+                                        retryProducedContent = true;
+                                        accumulatedContent += retryChunk.content;
+                                        firstCallContent += retryChunk.content;
+                                        yield {content: retryChunk.content, done: false, metadata: undefined};
+                                    }
+                                    if (retryChunk.metadata?.tokensUsed) tokensUsed += retryChunk.metadata.tokensUsed;
+                                    if (retryChunk.metadata?.promptTokens) promptTokens += retryChunk.metadata.promptTokens;
+                                    if (retryChunk.metadata?.completionTokens) completionTokens += retryChunk.metadata.completionTokens;
+                                    if (retryChunk.done) {
+                                        retryTruncated = !!retryChunk.metadata?.truncated;
+                                        retryMeta = retryChunk.metadata;
+                                    }
+                                }
+                            } catch (retryError) {
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.error('[AIService] Empty-name retry call failed:', retryError);
+                                }
+                            }
+                            // finish_reason='length': the retry itself hit the
+                            // max_tokens cap mid-sentence. Auto-continue so the
+                            // answer completes — without this, the retry's
+                            // truncated flag is lost and the response is cut off
+                            // with no continuation.
+                            if (retryTruncated && !abortSignal?.aborted && accumulatedContent) {
+                                const contTokens = { used: 0, prompt: 0, completion: 0 };
+                                for await (const contChunk of this.continueTruncatedResponse(
+                                    providerId,
+                                    systemPrompt,
+                                    accumulatedContent,
+                                    configWithParent,
+                                    abortSignal,
+                                    contTokens
+                                )) {
+                                    if (contChunk.content) {
+                                        accumulatedContent += contChunk.content;
+                                        firstCallContent += contChunk.content;
+                                        yield {content: contChunk.content, done: false, metadata: undefined};
+                                    }
+                                }
+                                tokensUsed += contTokens.used;
+                                promptTokens += contTokens.prompt;
+                                completionTokens += contTokens.completion;
+                            }
+                            // Yield the accumulated content (original pre-tool or retry) as final.
+                            // Carry the RETRY's metadata (not the original chunk's) so consumers
+                            // see the retry's real token counts and truncation status.
+                            yield {content: '', done: true, metadata: retryMeta || chunk.metadata};
                             streamCompleted = true;
                             break;
                         }
@@ -927,28 +1006,36 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 }
                                 // Capture $ai_generation for this round's follow-up call (not the final one)
                                 if (followUpContent || followUpError) {
-                                    captureAiGeneration({
-                                        distinctId: `bot-${botId}`,
-                                        traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
-                                        sessionId: `conversation-${botId}-player-${playerId}`,
-                                        model: config.model,
-                                        provider: config.type,
-                                        input: followUpMessageWithNoThink,
-                                        output: followUpContent,
-                                        inputTokens: followUpPromptTokens,
-                                        outputTokens: followUpCompletionTokens,
-                                        latency: (Date.now() - followUpStartTime) / 1000,
-                                        cost: this.calculateCost(providerId, {
-                                            tokensUsed: followUpTokens,
-                                            promptTokens: followUpPromptTokens,
-                                            completionTokens: followUpCompletionTokens,
-                                            latency: Date.now() - followUpStartTime,
-                                            error: followUpError,
-                                        }),
-                                        botId,
-                                        playerId: String(playerId),
-                                        space: spaceName,
-                                    });
+                                    // Telemetry is fire-and-forget: a capture failure must never
+                                    // propagate (it would abort the follow-up loop mid-turn).
+                                    try {
+                                        captureAiGeneration({
+                                            distinctId: `bot-${botId}`,
+                                            traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                                            sessionId: `conversation-${botId}-player-${playerId}`,
+                                            model: config.model,
+                                            provider: config.type,
+                                            input: followUpMessageWithNoThink,
+                                            output: followUpContent,
+                                            inputTokens: followUpPromptTokens,
+                                            outputTokens: followUpCompletionTokens,
+                                            latency: (Date.now() - followUpStartTime) / 1000,
+                                            cost: this.calculateCost(providerId, {
+                                                tokensUsed: followUpTokens,
+                                                promptTokens: followUpPromptTokens,
+                                                completionTokens: followUpCompletionTokens,
+                                                latency: Date.now() - followUpStartTime,
+                                                error: followUpError,
+                                            }),
+                                            botId,
+                                            playerId: String(playerId),
+                                            space: spaceName,
+                                        });
+                                    } catch (captureError) {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.error('[AIService] Follow-up round telemetry capture failed (swallowed):', captureError);
+                                        }
+                                    }
                                 }
                                 // Reset per-round tracking unconditionally for next follow-up iteration
                                 // (must run even when round produces tool calls with zero text content)
@@ -1110,16 +1197,129 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             } else {
                                 // Normal no-content case: follow-up produced only tool calls with no
                                 // text — the initial content was already streamed and finalized.
-                                // Send a fallback so the user sees something happened instead of
-                                // an empty bubble that gets silently dropped by the frontend.
-                                yield {content: "Let me check on that for you.", done: false, metadata: lastFollowUpDoneChunk?.metadata};
-                                yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
-                                lastFollowUpDoneChunk = null;
+                                // Retry ONCE without tools to force a direct answer (the follow-up
+                                // may have chained another empty-name tool call); only fall back to
+                                // the placeholder if the retry also produces nothing.
+                                let retryProducedContent = false;
+                                // Track the retry's own done-chunk metadata so a truncated retry
+                                // (finish_reason='length') can still auto-continue — the final done
+                                // chunk must NOT re-use the follow-up's metadata, which would
+                                // silently drop the retry's truncated flag.
+                                let retryTruncated = false;
+                                let retryMeta: AIStreamChunk['metadata'] | undefined;
+                                try {
+                                    // followUpInput holds the last follow-up message (set per-round
+                                    // at followUpInput = followUpMessageWithNoThink) and is in scope
+                                    // after the while loop.
+                                    const retryMessage = followUpInput || message;
+                                    for await (const retryChunk of this.providerRegistry.generateStream(
+                                        providerId,
+                                        systemPrompt,
+                                        retryMessage,
+                                        configWithParent,
+                                        [], // No tools — force a direct answer
+                                        abortSignal
+                                    )) {
+                                        if (abortSignal?.aborted) break;
+                                        if (retryChunk.content) {
+                                            retryProducedContent = true;
+                                            accumulatedContent += retryChunk.content;
+                                            followUpContent += retryChunk.content;
+                                            followUpContentBuffer += retryChunk.content;
+                                            yield {content: retryChunk.content, done: false, metadata: undefined};
+                                        }
+                                        if (retryChunk.metadata?.tokensUsed) {
+                                            tokensUsed += retryChunk.metadata.tokensUsed;
+                                            followUpTokens += retryChunk.metadata.tokensUsed;
+                                        }
+                                        if (retryChunk.metadata?.promptTokens) {
+                                            promptTokens += retryChunk.metadata.promptTokens;
+                                            followUpPromptTokens += retryChunk.metadata.promptTokens;
+                                        }
+                                        if (retryChunk.metadata?.completionTokens) {
+                                            completionTokens += retryChunk.metadata.completionTokens;
+                                            followUpCompletionTokens += retryChunk.metadata.completionTokens;
+                                        }
+                                        if (retryChunk.done) {
+                                            retryTruncated = !!retryChunk.metadata?.truncated;
+                                            retryMeta = retryChunk.metadata;
+                                        }
+                                    }
+                                } catch (retryError) {
+                                    if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                        console.error('[AIService] No-content follow-up retry failed:', retryError);
+                                    }
+                                }
+                                // finish_reason='length': the retry itself hit the max_tokens cap
+                                // mid-sentence. Auto-continue so the answer completes.
+                                if (retryTruncated && !abortSignal?.aborted && followUpContent) {
+                                    const contTokens = { used: 0, prompt: 0, completion: 0 };
+                                    for await (const contChunk of this.continueTruncatedResponse(
+                                        providerId,
+                                        systemPrompt,
+                                        followUpContent,
+                                        configWithParent,
+                                        abortSignal,
+                                        contTokens
+                                    )) {
+                                        if (contChunk.content) {
+                                            followUpContent += contChunk.content;
+                                            followUpContentBuffer += contChunk.content;
+                                            accumulatedContent += contChunk.content;
+                                            yield {content: contChunk.content, done: false, metadata: undefined};
+                                        }
+                                    }
+                                    followUpTokens += contTokens.used;
+                                    followUpPromptTokens += contTokens.prompt;
+                                    followUpCompletionTokens += contTokens.completion;
+                                    tokensUsed += contTokens.used;
+                                    promptTokens += contTokens.prompt;
+                                    completionTokens += contTokens.completion;
+                                }
+                                if (retryProducedContent || retryMeta) {
+                                    // Retry produced a real answer — finalize normally.
+                                    // Carry the RETRY's metadata (not the follow-up's) so consumers
+                                    // see the retry's real token counts and truncation status.
+                                    yield {content: '', done: true, metadata: retryMeta || lastFollowUpDoneChunk?.metadata};
+                                    lastFollowUpDoneChunk = null;
+                                } else {
+                                    // Send a fallback so the user sees something happened instead of
+                                    // an empty bubble that gets silently dropped by the frontend.
+                                    yield {content: "Let me check on that for you.", done: false, metadata: lastFollowUpDoneChunk?.metadata};
+                                    yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
+                                    lastFollowUpDoneChunk = null;
+                                }
                             }
                         } else {
                             // Content was streamed per-chunk during each round via immediate yields.
                             // Each round's content was properly separated by chunk.reset signals.
                             // Just yield done — the behavior finalizes the last bubble.
+                            // finish_reason='length': the follow-up call hit the max_tokens
+                            // cap mid-sentence. Auto-continue so the answer completes.
+                            if (lastFollowUpDoneChunk?.metadata?.truncated && !abortSignal?.aborted && followUpContent) {
+                                const contTokens = { used: 0, prompt: 0, completion: 0 };
+                                for await (const contChunk of this.continueTruncatedResponse(
+                                    providerId,
+                                    systemPrompt,
+                                    followUpContent,
+                                    configWithParent,
+                                    abortSignal,
+                                    contTokens
+                                )) {
+                                    if (contChunk.content) {
+                                        followUpContent += contChunk.content;
+                                        followUpContentBuffer += contChunk.content;
+                                        accumulatedContent += contChunk.content;
+                                        yield {content: contChunk.content, done: false, metadata: undefined};
+                                    }
+                                }
+                                followUpTokens += contTokens.used;
+                                followUpPromptTokens += contTokens.prompt;
+                                followUpCompletionTokens += contTokens.completion;
+                                tokensUsed += contTokens.used;
+                                promptTokens += contTokens.prompt;
+                                completionTokens += contTokens.completion;
+                            }
                             yield {content: '', done: true, metadata: lastFollowUpDoneChunk?.metadata};
                             lastFollowUpDoneChunk = null;
                         }
@@ -1128,28 +1328,36 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // Skip when data was restored from a previous round that already
                         // had its in-loop telemetry captured — avoids double-counting.
                         if ((followUpContent || followUpError) && !(hadDroppedFollowUpToolCalls && previousRoundContent)) {
-                            captureAiGeneration({
-                                distinctId: `bot-${botId}`,
-                                traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
-                                sessionId: `conversation-${botId}-player-${playerId}`,
-                                model: config.model,
-                                provider: config.type,
-                                input: followUpInput,
-                                output: followUpContent,
-                                inputTokens: followUpPromptTokens,
-                                outputTokens: followUpCompletionTokens,
-                                latency: (Date.now() - followUpStartTime) / 1000,
-                                cost: this.calculateCost(providerId, {
-                                    tokensUsed: followUpTokens,
-                                    promptTokens: followUpPromptTokens,
-                                    completionTokens: followUpCompletionTokens,
-                                    latency: Date.now() - followUpStartTime,
-                                    error: followUpError,
-                                }),
-                                botId,
-                                playerId: String(playerId),
-                                space: spaceName,
-                            });
+                            // Telemetry is fire-and-forget: a capture failure must never
+                            // propagate (it would abort the turn after the answer).
+                            try {
+                                captureAiGeneration({
+                                    distinctId: `bot-${botId}`,
+                                    traceId: parentSpan?.spanContext().spanId || crypto.randomUUID(),
+                                    sessionId: `conversation-${botId}-player-${playerId}`,
+                                    model: config.model,
+                                    provider: config.type,
+                                    input: followUpInput,
+                                    output: followUpContent,
+                                    inputTokens: followUpPromptTokens,
+                                    outputTokens: followUpCompletionTokens,
+                                    latency: (Date.now() - followUpStartTime) / 1000,
+                                    cost: this.calculateCost(providerId, {
+                                        tokensUsed: followUpTokens,
+                                        promptTokens: followUpPromptTokens,
+                                        completionTokens: followUpCompletionTokens,
+                                        latency: Date.now() - followUpStartTime,
+                                        error: followUpError,
+                                    }),
+                                    botId,
+                                    playerId: String(playerId),
+                                    space: spaceName,
+                                });
+                            } catch (captureError) {
+                                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                    console.error('[AIService] Final follow-up telemetry capture failed (swallowed):', captureError);
+                                }
+                            }
                             followUpGenCaptured = true;
                         } else if (followUpContent || followUpError) {
                             // Data was restored from a previously-captured round — skip
@@ -1206,6 +1414,29 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     // When tool calls later trigger a reset, the behavior finalizes the
                     // bubble with this content.
                     if (chunk.done) {
+                        // finish_reason='length': the model hit its max_tokens cap
+                        // mid-sentence. Auto-continue so the response completes
+                        // instead of silently truncating.
+                        if (chunk.metadata?.truncated && !abortSignal?.aborted && accumulatedContent) {
+                            const contTokens = { used: 0, prompt: 0, completion: 0 };
+                            for await (const contChunk of this.continueTruncatedResponse(
+                                providerId,
+                                systemPrompt,
+                                accumulatedContent,
+                                configWithParent,
+                                abortSignal,
+                                contTokens
+                            )) {
+                                if (contChunk.content) {
+                                    accumulatedContent += contChunk.content;
+                                    firstCallContent += contChunk.content;
+                                    yield {content: contChunk.content, done: false, metadata: undefined};
+                                }
+                            }
+                            tokensUsed += contTokens.used;
+                            promptTokens += contTokens.prompt;
+                            completionTokens += contTokens.completion;
+                        }
                         // No tool calls seen — content was already streamed word-by-word
                         // via per-chunk yields above. Just yield the done signal.
                         yield {content: '', done: true, metadata: chunk.metadata};
@@ -1303,6 +1534,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             playerId: String(playerId),
                             space: spaceName,
                         });
+                    }
+                } catch (telemetryError) {
+                    // Telemetry (PostHog $ai_generation/$ai_trace) is fire-and-forget
+                    // observability — a capture failure must NEVER propagate to the
+                    // outer catch, which would yield a SECOND done chunk after the
+                    // stream already completed (double-done → frontend artifacts).
+                    // Log and swallow so the response stream stays intact. The
+                    // Sentry span cleanup below still runs via the finally.
+                    if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                        console.error('[AIService] Telemetry capture failed (swallowed):', telemetryError);
                     }
                 } finally {
                     // Always close Sentry span and restore scope, even if PostHog fails
@@ -1446,6 +1687,61 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         'claude-3-sonnet':   { in: 0.003,    out: 0.015 },
         'claude-3-opus':     { in: 0.015,    out: 0.075 },
     };
+
+    /**
+     * Continue a response that hit finish_reason='length' (max_tokens cap).
+     *
+     * When the model is cut off mid-sentence, issue follow-up calls that tell
+     * it to continue from where it stopped, streaming the continuation content
+     * so the user sees the complete answer. Capped at MAX_TRUNCATION_CONTINUATIONS
+     * to bound cost/latency — if the model keeps hitting the cap we stop.
+     *
+     * @param tokenSink mutable accumulator for continuation token counts so the
+     *        caller can fold them into telemetry
+     */
+    private async *continueTruncatedResponse(
+        providerId: string,
+        systemPrompt: string,
+        partialContent: string,
+        config: AIProviderConfig,
+        abortSignal: AbortSignal | undefined,
+        tokenSink: { used: number; prompt: number; completion: number }
+    ): AsyncGenerator<AIStreamChunk> {
+        const MAX_TRUNCATION_CONTINUATIONS = 2;
+        let content = partialContent;
+        for (let i = 0; i < MAX_TRUNCATION_CONTINUATIONS; i++) {
+            // Abort (stop/correction/leave) wins over continuation.
+            if (abortSignal?.aborted) return;
+
+            const continueMessage =
+                `You were cut off mid-response. Here is what you said so far:\n\n${content}\n\n` +
+                `Continue EXACTLY from where you left off. Do NOT repeat, restate, re-introduce, ` +
+                `apologize, or add a closing line — just continue the response from the last sentence.`;
+
+            let stillTruncated = false;
+            for await (const chunk of this.providerRegistry.generateStream(
+                providerId,
+                systemPrompt,
+                continueMessage,
+                config,
+                undefined, // no tools — this is a pure text continuation
+                abortSignal
+            )) {
+                if (abortSignal?.aborted) return;
+                if (chunk.content) {
+                    content += chunk.content;
+                    yield {content: chunk.content, done: false, metadata: undefined};
+                }
+                if (chunk.metadata?.tokensUsed) tokenSink.used += chunk.metadata.tokensUsed;
+                if (chunk.metadata?.promptTokens) tokenSink.prompt += chunk.metadata.promptTokens;
+                if (chunk.metadata?.completionTokens) tokenSink.completion += chunk.metadata.completionTokens;
+                if (chunk.done) {
+                    stillTruncated = !!chunk.metadata?.truncated;
+                }
+            }
+            if (!stillTruncated) return;
+        }
+    }
 
     /**
      * Calculate cost based on provider and model pricing

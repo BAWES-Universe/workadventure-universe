@@ -956,170 +956,26 @@ export class SocialBehavior extends BaseBehavior {
                         
                         // If high repetition detected (score >= 0.85), block and regenerate (up to 3 attempts)
                         // Lower threshold catches near-duplicates like "*snorts* response" vs "*grunts* response"
-                        let regenerationAttempts = 0;
-                        const maxRegenerationAttempts = 3;
-                        const repetitionThreshold = 0.85; // Block at 85% similarity, not just exact duplicates
-                        let currentRepetitionScore = processed.metrics.repetitionScore;
-                        let currentMessage = fullMessage;
-                        
-                        while (currentRepetitionScore >= repetitionThreshold && regenerationAttempts < maxRegenerationAttempts && !abortSignal?.aborted) {
-                            regenerationAttempts++;
-                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn(`[SocialBehavior] ⚠️ High repetition (${(currentRepetitionScore * 100).toFixed(0)}%) detected for bot ${botId}, player ${playerId} (attempt ${regenerationAttempts}/${maxRegenerationAttempts}). Blocking response: "${currentMessage.substring(0, 50)}..."`);
-                            }
-                            
-                            // BLOCK the duplicate - clear frontend buffer and start fresh
-                            this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
-                            
-                            // Instead, generate a new response with explicit anti-repetition instruction
-                            const urgency = regenerationAttempts > 1 ? `ATTEMPT ${regenerationAttempts} - ` : '';
-                            const antiRepetitionPrompt = `${chatInstructions}\n\n${urgency}CRITICAL: You just said "${currentMessage.substring(0, 100)}". DO NOT repeat this. Give a COMPLETELY DIFFERENT response. Use different words and structure.`;
-                            
-                            // Regenerate with anti-repetition prompt
-                            let regeneratedMessage = '';
-                            try {
-                                let emotionBlockStarted = false;
-                                // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
-                                let pendingPrefix = '';
-                                for await (const chunk of this.aiService.generateBotResponseStream(
-                                    botId,
-                                    playerId,
-                                    playerMessage + ` [IMPORTANT: Give a COMPLETELY DIFFERENT response- attempt ${regenerationAttempts}]`,
-                                    antiRepetitionPrompt,
-                                    botConfig.aiProviderRef,
-                                    spaceName,
-                                    context,
-                                    this.bot,
-                                    this.adminApiService,
-                                    abortSignal
-                                )) {
-                                    if (chunk.reset) {
-                                        this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
-                                        regeneratedMessage = '';
-                                        emotionBlockStarted = false;
-                                        pendingPrefix = '';
-                                        continue;
-                                    }
-
-                                    if (chunk.content) {
-                                        regeneratedMessage = appendStreamedChunk(regeneratedMessage, chunk.content);
-
-                                        if (emotionBlockStarted) {
-                                            continue;
-                                        }
-                                        // Check for [EM both within current chunk AND across chunk boundaries
-                                        const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
-                                        const emInFull = regeneratedMessage.includes('[EMOTION_UPDATE');
-                                        if (emInChunk || emInFull) {
-                                            emotionBlockStarted = true;
-                                            pendingPrefix = ''; // discard — it's part of [EMOTION_UPDATE]
-                                            if (emInChunk) {
-                                                const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
-                                                const beforeEmotion = chunk.content.substring(0, emotionIdx);
-                                                if (beforeEmotion.trim()) {
-                                                    this.bot?.sendStreamMessage(spaceName, responseId, beforeEmotion, false);
-                                                }
-                                            }
-                                            continue;
-                                            }
-
-                                            // Check if this chunk ends with a prefix of [EMOTION_UPDATE — defer it
-                                            const combinedContent = pendingPrefix + chunk.content;
-                                            const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
-                                            if (deferredLen > 0) {
-                                                pendingPrefix = combinedContent.slice(-deferredLen);
-                                                const contentToStream = combinedContent.slice(0, -deferredLen);
-                                                if (contentToStream) {
-                                                    this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
-                                                }
-                                                continue;
-                                            }
-
-                                            // Flush any previously deferred prefix — not the start of [EMOTION_UPDATE]
-                                            const contentToStream = pendingPrefix + chunk.content;
-                                            pendingPrefix = '';
-
-                                            this.bot?.sendStreamMessage(spaceName, responseId, contentToStream, false);
-                                    }
-                                    if (chunk.done) {
-                                        break;
-                                    }
-                                    }
-                            
-                                    // Parse emotions from regenerated response
-                                const regeneratedParsed = parseEmotionsFromResponse(regeneratedMessage);
-                                
-                                // Update emotions from regenerated response
-                                if (regeneratedParsed.emotions && this.conversationMemory) {
-                                    this.conversationMemory.updateEmotionsFromAI(botId, playerId, regeneratedParsed.emotions);
-                                }
-                                
-                                // Process the regenerated response
-                                if (regeneratedParsed.cleanedResponse.trim() && this.responseProcessor) {
-                                    // Use the same responseTime and tokenUsage from the original response
-                                    const reprocessed = this.responseProcessor.processResponse(
-                                        botId,
-                                        playerId,
-                                        regeneratedParsed.cleanedResponse,
-                                        chatInstructions,
-                                        responseTime, // Use original response time
-                                        tokenUsage    // Use original token usage
-                                    );
-                                    processedMessage = reprocessed.cleaned;
-                                    currentRepetitionScore = reprocessed.metrics.repetitionScore;
-                                    currentMessage = regeneratedParsed.cleanedResponse;
-                                    processed = reprocessed; // Update processed for next iteration check
-                                    
-                                    if (currentRepetitionScore < 1.0) {
-                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                            console.log(`[SocialBehavior] ✅ Regenerated response after blocking duplicate (attempt ${regenerationAttempts})`);
-                                        }
-                                    }
-                                } else {
-                                    // Fallback if regeneration fails - don't break, try again
-                                    continue;
-                                }
-                            } catch (error) {
-                                console.error(`[SocialBehavior] Error regenerating response after duplicate:`, error);
-                                // Clear pending batch timer to prevent stale partial content from leaking
-                                if (batchState.timer) {
-                                    clearTimeout(batchState.timer);
-                                    batchState.timer = null;
-                                }
-                                batchState.buffer = '';
-                                // Don't break, try again if attempts remaining
-                                continue;
-                            }
-                        }
-                        
-                        // If still too similar after max attempts, use a varied fallback
-                        // (skipped if the turn was aborted — the player already got an ack)
-                        if (currentRepetitionScore >= repetitionThreshold && regenerationAttempts >= maxRegenerationAttempts && !abortSignal?.aborted) {
-                            console.warn(`[SocialBehavior] ⚠️ Still duplicate after ${maxRegenerationAttempts} attempts, using fallback and clearing context`);
-                            // Use varied fallbacks to avoid repetition loop
-                            const fallbacks = [
-                                "Hmm, let me approach this differently.",
-                                "Interesting point. Let me think...",
-                                "That's something to consider.",
-                                "I hear you.",
-                                "Alright then.",
-                                "Fair enough.",
-                                "I see what you mean.",
-                                "Got it.",
-                            ];
-                            processedMessage = fallbacks[Math.floor(Math.random() * fallbacks.length)];
-                            // Clear recent responses to break the repetition cycle
-                            if (this.responseProcessor) {
-                                this.responseProcessor.clearRecentResponses(botId, playerId);
-                            }
-                        }
-                        
-                        if (processed.metrics.repetitionScore > 0.8 && processed.metrics.repetitionScore < 1.0) {
-                            // High repetition (but not exact duplicate) - warn but allow
-                            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                                console.warn(`[SocialBehavior] ⚠️ High repetition detected (${(processed.metrics.repetitionScore * 100).toFixed(1)}%) for bot ${botId}, player ${playerId}`);
-                            }
-                        }
+                        const regenResult = await this.regenerateOnRepetition({
+                            botId,
+                            playerId,
+                            playerMessage,
+                            chatInstructions,
+                            aiProviderRef: botConfig.aiProviderRef,
+                            spaceName,
+                            context,
+                            abortSignal,
+                            processed,
+                            processedMessage,
+                            fullMessage,
+                            responseTime,
+                            tokenUsage,
+                            responseId,
+                            debugLabel: 'SocialBehavior',
+                        });
+                        processed = regenResult.processed;
+                        processedMessage = regenResult.processedMessage;
+                        responseId = regenResult.responseId;
                     }
                     
                     // Metrics are now recorded in ResponseProcessor (combined into one record)
