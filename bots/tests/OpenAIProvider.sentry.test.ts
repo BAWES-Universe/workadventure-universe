@@ -219,6 +219,86 @@ describe("OpenAIProvider.generateStream – per-chunk streaming", () => {
         expect(doneChunk.metadata.tokensUsed).toBeGreaterThan(0);
     });
 
+    it("flags truncated=true when finish_reason is length (max_tokens cap hit)", async () => {
+        const config = buildConfig();
+        const encoder = new TextEncoder();
+        // OpenAI sends a final chunk with finish_reason BEFORE the [DONE] marker
+        const sseLines = [
+            JSON.stringify({ choices: [{ delta: { content: "Hello" } }] }),
+            JSON.stringify({ choices: [{ delta: { content: " world" } }, { finish_reason: null }] }),
+            JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] }),
+        ];
+        const allData = sseLines.map(l => `data: ${l}\n\n`).join("") + "data: [DONE]\n\n";
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode(allData));
+                controller.close();
+            },
+        });
+
+        vi.stubGlobal("fetch", buildFetchOk(stream));
+        const chunks = await drainStream(provider.generateStream("system", "user", config));
+
+        const doneChunk = chunks[chunks.length - 1];
+        expect(doneChunk).toMatchObject({ done: true });
+        expect(doneChunk.metadata?.truncated).toBe(true);
+    });
+
+    it("does NOT flag truncated when finish_reason is stop (natural end)", async () => {
+        const config = buildConfig();
+        const encoder = new TextEncoder();
+        const sseLines = [
+            JSON.stringify({ choices: [{ delta: { content: "Hello" } }] }),
+            JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+        ];
+        const allData = sseLines.map(l => `data: ${l}\n\n`).join("") + "data: [DONE]\n\n";
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue(encoder.encode(allData));
+                controller.close();
+            },
+        });
+
+        vi.stubGlobal("fetch", buildFetchOk(stream));
+        const chunks = await drainStream(provider.generateStream("system", "user", config));
+
+        const doneChunk = chunks[chunks.length - 1];
+        expect(doneChunk).toMatchObject({ done: true });
+        expect(doneChunk.metadata?.truncated).toBe(false);
+    });
+
+    it("flags truncated=true on non-streaming generate when finish_reason is length", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({
+                choices: [{ message: { content: "partial response" }, finish_reason: "length" }],
+                usage: { total_tokens: 10, prompt_tokens: 5, completion_tokens: 5 },
+                model: "gpt-4o",
+            }),
+            text: vi.fn().mockResolvedValue(""),
+        }));
+
+        const result = await provider.generate("sys", "user", buildConfig());
+        expect(result.content).toBe("partial response");
+        expect(result.truncated).toBe(true);
+    });
+
+    it("does NOT flag truncated on non-streaming generate when finish_reason is stop", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({
+                choices: [{ message: { content: "full response" }, finish_reason: "stop" }],
+                usage: { total_tokens: 10, prompt_tokens: 5, completion_tokens: 5 },
+                model: "gpt-4o",
+            }),
+            text: vi.fn().mockResolvedValue(""),
+        }));
+
+        const result = await provider.generate("sys", "user", buildConfig());
+        expect(result.content).toBe("full response");
+        expect(result.truncated).toBe(false);
+    });
+
     it("handles network errors gracefully", async () => {
         const config = buildConfig();
         vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
