@@ -35,6 +35,15 @@ export type InterruptionAction = 'update' | 'cancel' | 'answer' | 'queue';
  */
 const QUICK_LLM_TIMEOUT_MS = 3000;
 
+/**
+ * Fixed neutral fallback emitted when the FIRST generation hiccups (e.g.
+ * DeepSeek streams empty-name tool calls) and the no-tools retry also fails.
+ * Deliberately a FIXED string, never model-narrated: the model's pre-tool
+ * narration (e.g. "One moment — my thinking is hiccuping") is filler/thinking
+ * text that must never stand as (or prefix) the player-facing answer.
+ */
+const FIRST_GENERATION_FALLBACK = 'One second.';
+
 // Internal API for setting active span on scope — scope.setSpan() removed in v10
 // Note: startSpanManual already calls _setSpanForScope internally (verified in SDK source).
 // The explicit sentrySetSpan below is belt-and-suspenders to guarantee scope propagation
@@ -698,6 +707,13 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 console.warn(`[AIService] Skipping tool execution: all ${toolCallAccumulator.size} tool call(s) have empty names`);
                             }
                             toolCallAccumulator.clear();
+                            // Discard the model's pre-tool narration (e.g.
+                            // "One moment — my thinking is hiccuping") — it was
+                            // filler/thinking text streamed before the malformed
+                            // tool calls and must not stand as (or prefix) the
+                            // answer. The reset clears the frontend bubble; the
+                            // retry below refills it.
+                            yield {content: '', done: false, reset: true, toolNames: []};
                             // Retry ONCE without tools — the model streamed
                             // empty-name tool calls (known DeepSeek streaming
                             // quirk) but still owes the player an answer. A
@@ -712,6 +728,11 @@ Everything above is technical guidance. Follow your personality as defined in th
                             // silently drop the retry's truncated flag.
                             let retryTruncated = false;
                             let retryMeta: AIStreamChunk['metadata'] | undefined;
+                            // Snapshot the pre-retry content length — the retry
+                            // (and its possible truncation continuation) below
+                            // must produce NEW content, otherwise the player
+                            // gets the fixed neutral fallback.
+                            const preRetryContentLength = accumulatedContent.length;
                             try {
                                 for await (const retryChunk of this.providerRegistry.generateStream(
                                     providerId,
@@ -765,6 +786,17 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 )) {
                                     yield {content: contText, done: false, metadata: undefined};
                                 }
+                            }
+                            // If the retry (and any truncation continuation)
+                            // produced NO new content, the reset above already
+                            // cleared the model's pre-tool narration — emit the
+                            // FIXED neutral fallback so the player sees a
+                            // coherent non-empty response instead of the model
+                            // explaining its own hiccup (or an empty bubble).
+                            if (accumulatedContent.length <= preRetryContentLength) {
+                                accumulatedContent = FIRST_GENERATION_FALLBACK;
+                                firstCallContent = FIRST_GENERATION_FALLBACK;
+                                yield {content: FIRST_GENERATION_FALLBACK, done: false, metadata: retryMeta || chunk.metadata};
                             }
                             // Yield the accumulated content (original pre-tool or retry) as final.
                             // Carry the RETRY's metadata (not the original chunk's) so consumers
@@ -895,8 +927,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                             }
                             const previousResponseSection = previousRoundContent
                                 ? `You previously responded with:\n"${previousRoundContent}"`
-                                : `You are continuing after gathering more data. The user's original question was: "${message}"`;
-                            const followUpMessage = `${previousResponseSection}\n\nContinue from there. Do NOT restate your intent — you already said the above.\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location\n- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
+                                : `You are continuing after gathering more data.`;
+                            const followUpMessage = `${previousResponseSection}\n\nThe user's original question was: "${message}"\n\nYou just received these new tool results:\n\n${toolResultsMessage}\n\nCRITICAL RESPONSE RULES:\n- **ANSWER THE USER'S QUESTION DIRECTLY** — your response must directly answer: "${message}"\n- No evasive filler — NEVER say "where were we", "let me check", "one moment", or anything that dodges the user's question\n- No apologies, no disclaimers, no meta-commentary about your own thinking or the tools\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n- For "take me to X" questions: Just say "Follow me!" or "I'll take you there" - do NOT say the location\n- For navigation: Just respond naturally (e.g., "Follow me!") - do NOT prefix with location\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             const followUpMessageWithNoThink = isQwenModel 

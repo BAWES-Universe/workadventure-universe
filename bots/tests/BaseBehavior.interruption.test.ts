@@ -249,15 +249,16 @@ describe('BaseBehavior interruption routing', () => {
         expect(state.messageQueue[0].originalMessage).toBe('hello?');
     });
 
-    it('regenerateOnRepetition: finalizes the ack as its own bubble on a tool-call reset (fix empty-bubble churn)', async () => {
+    it('regenerateOnRepetition: clears the pre-tool ack on a tool-call reset and streams the answer into the SAME bubble (no double-send)', async () => {
         // Repetition score high enough to trigger the regeneration loop.
         const processed = {
             cleaned: 'repeated answer',
             metrics: { repetitionScore: 0.95 },
         };
         // Regenerated stream: ack text → tool-call reset → follow-up content → done.
-        // The reset chunk previously sent a BLANK reset that wiped the ack on the
-        // frontend. The fix finalizes the ack (isFinal=true) and rotates responseId.
+        // The reset must CLEAR the ack with a non-final reset (never finalize it
+        // as its own bubble) and the follow-up must stream into the SAME bubble
+        // (responseId NOT rotated) — one coherent message per turn.
         async function* regenStream() {
             yield { content: 'You are right to nudge me — let me dig in.', done: false };
             yield { content: '', done: false, reset: true, toolNames: ['list_issues'] };
@@ -294,25 +295,28 @@ describe('BaseBehavior interruption routing', () => {
         });
 
         const streamCalls = bot.sendStreamMessage.mock.calls;
-        // 1) The ack is FINALIZED on the original responseId (isFinal=true, initialContent=ack)
-        const finalizeCall = streamCalls.find(
-            (c: any[]) => c[1] === 'resp-orig' && c[3] === true && (c[4] as string).includes('nudge me')
-        );
-        expect(finalizeCall).toBeTruthy();
-        // 2) The ack is NOT wiped: no blank reset is sent AFTER the ack content
-        //    streams. (The blank reset at the loop top — before regeneration —
-        //    is the intentional duplicate-block; a reset AFTER the ack would be
-        //    the old bug that cleared the just-streamed ack on the frontend.)
+        // 1) The ack still streams on the original responseId.
         const ackStreamIdx = streamCalls.findIndex(
             (c: any[]) => c[1] === 'resp-orig' && c[3] === false && (c[2] as string).includes('nudge me')
         );
         expect(ackStreamIdx).toBeGreaterThanOrEqual(0);
-        const blankResetAfterAck = streamCalls.some(
+        // 2) AFTER the ack streams, a NON-FINAL reset-clear wipes it — it is
+        //    never finalized as its own bubble. (The blank reset at the loop top
+        //    — before regeneration — is the intentional duplicate-block; the
+        //    reset AFTER the ack is the new filler-clear.)
+        const resetClearAfterAck = streamCalls.find(
             (c: any[], i: number) => i > ackStreamIdx && c[1] === 'resp-orig' && c[3] === false && c[7] === true
         );
-        expect(blankResetAfterAck).toBe(false);
-        // 3) The responseId rotated after the reset — follow-up content landed in a fresh bubble
-        expect(result.responseId).not.toBe('resp-orig');
+        expect(resetClearAfterAck).toBeTruthy();
+        // 3) The ack text is never finalized as a standalone message.
+        const finalizedAck = streamCalls.find(
+            (c: any[]) => c[1] === 'resp-orig' && c[3] === true && (c[4] as string).includes('nudge me')
+        );
+        expect(finalizedAck).toBeFalsy();
+        // 4) The responseId is NOT rotated — the follow-up answer streams into
+        //    the SAME bubble and is the one coherent final message.
+        expect(result.responseId).toBe('resp-orig');
+        expect(result.processedMessage).toBe('Here is the real answer.');
     });
 
     it('regenerateOnRepetition: generates the exhausted-attempts fallback via LLM (no hardcoded strings)', async () => {

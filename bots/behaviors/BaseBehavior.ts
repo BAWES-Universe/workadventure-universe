@@ -1372,10 +1372,10 @@ export abstract class BaseBehavior {
      * then asks the LLM for a short fresh line if the model keeps repeating.
      * If that call fails, the method returns an empty message and stays silent.
      *
-     * Fix: on a tool-call `reset` chunk, the accumulated ack is FINALIZED as its
-     * own bubble and the responseId rotated — previously a blank reset was sent,
-     * which wiped the just-streamed ack on the frontend ("empty bubble → small
-     * message → cleared → replaced" artifact).
+     * Fix: on a tool-call `reset` chunk, the pre-tool ack is CLEARED with a
+     * non-final reset and the follow-up answer streams into the SAME bubble —
+     * the ack is never finalized as its own bubble (previously it was, which
+     * double-sent the ack + answer as two messages).
      *
      * @returns the (possibly rotated) responseId and the final processed content.
      */
@@ -1463,16 +1463,18 @@ export abstract class BaseBehavior {
                     abortSignal
                 )) {
                     if (chunk.reset) {
-                        // Tool calls overrode the streamed ack — finalize the current
-                        // bubble with the accumulated ack instead of wiping it, then
-                        // rotate to a fresh responseId for the follow-up content.
+                        // Tool calls overrode the streamed ack — NEVER finalize that
+                        // ack as its own bubble (it would double-send as a separate
+                        // message). Clear it with a non-final reset and stream the
+                        // follow-up answer into the SAME bubble → one coherent
+                        // response per turn.
                         if (regeneratedMessage.trim()) {
-                            // Strip any deferred '[' that was not streamed to the frontend
-                            const finalAck = pendingPrefix ? regeneratedMessage.slice(0, -pendingPrefix.length) : regeneratedMessage;
-                            this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalAck);
+                            this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                         }
-                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        this.trackActiveResponseId(playerId, responseId);
+                        const originalResponseId = responseId;
+                        regeneratedMessage = '';
+                        emotionBlockStarted = false;
+                        pendingPrefix = '';
                         // Show tool names as separate bubbles — one per tool call invocation
                         if (chunk.toolNames?.length) {
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -1486,14 +1488,11 @@ export abstract class BaseBehavior {
                                     this.bot?.sendStreamMessage(spaceName, toolResponseId, '', true, toolStatus);
                                 }
                             }
-                            // Create a new responseId for follow-up content so it appears
-                            // in its own bubble instead of merging into the last tool-name bubble.
-                            responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                            // Follow-up content streams into the SAME (cleared) bubble —
+                            // not a fresh one — so the turn renders as one coherent message.
+                            responseId = originalResponseId;
                             this.trackActiveResponseId(playerId, responseId);
                         }
-                        regeneratedMessage = '';
-                        emotionBlockStarted = false;
-                        pendingPrefix = '';
                         continue;
                     }
 

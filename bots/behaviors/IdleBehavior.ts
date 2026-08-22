@@ -512,16 +512,17 @@ export class IdleBehavior extends BaseBehavior {
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);
-                    // Tool calls overrode streamed pre-tool content — finalize current bubble
-                    // only if there was pre-tool text. If the model went straight to tool calls,
-                    // skip the empty bubble entirely.
+                    // Tool calls overrode streamed pre-tool content. NEVER finalize
+                    // that pre-tool narration as its own bubble — it is filler/
+                    // thinking text and would double-send as a separate message.
+                    // Instead, CLEAR the current bubble with a non-final reset and
+                    // stream the follow-up answer into the SAME bubble → one
+                    // coherent response per turn. If the model went straight to
+                    // tool calls (no filler), there is nothing to clear.
                     if (fullMessage) {
-                        // Strip any deferred '[' that was not streamed to the frontend
-                        const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
-                        this.bot?.sendStreamMessage(spaceName, responseId, '', true, finalContent);
+                        this.bot?.sendStreamMessage(spaceName, responseId, '', false, undefined, false, undefined, true);
                     }
-                    responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                    this.trackActiveResponseId(playerId, responseId);
+                    const originalResponseId = responseId;
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
@@ -530,20 +531,18 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                 const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                this.trackActiveResponseId(playerId, responseId);
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, responseId, toolStatus, false);
+                                const toolResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                this.trackActiveResponseId(playerId, toolResponseId);
+                                this.bot?.sendStreamMessage(spaceName, toolResponseId, toolStatus, false);
                                 // Finalize the tool-name bubble so it doesn't linger in
                                 // the frontend's streamMessages map.
-                                this.bot?.sendStreamMessage(spaceName, responseId, '', true, toolStatus);
+                                this.bot?.sendStreamMessage(spaceName, toolResponseId, '', true, toolStatus);
                             }
                         }
-                        // Create a new responseId for follow-up content so it appears
-                        // in its own bubble instead of merging into the last tool-name bubble.
-                        responseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        // Follow-up content streams into the SAME (cleared) bubble —
+                        // not a fresh one — so the turn renders as one coherent message.
+                        responseId = originalResponseId;
                         this.trackActiveResponseId(playerId, responseId);
-                        fullMessage = ''; // Clear so follow-up content starts fresh
                     }
                     continue;
                 }
@@ -1559,13 +1558,14 @@ export class IdleBehavior extends BaseBehavior {
                 this.adminApiService
             )) {
                 if (chunk.reset) {
-                    // Only finalize the pre-tool bubble if there was actual text
+                    // Tool calls overrode the pre-tool greeting text. NEVER finalize
+                    // that narration as its own bubble — clear it with a non-final
+                    // reset so the actual greeting answer streams into the SAME
+                    // bubble (one coherent message, no double-send).
                     if (fullMessage) {
-                        // Strip any deferred '[' that was not streamed to the frontend
-                        const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
-                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, finalContent);
+                        this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', false, undefined, false, undefined, true);
                     }
-                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    const originalGreetingResponseId = greetingResponseId;
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';
@@ -1573,15 +1573,14 @@ export class IdleBehavior extends BaseBehavior {
                         if (process.env.ENABLE_BOT_DEBUG === 'true') {
                             for (let ti = 0; ti < chunk.toolNames.length; ti++) {
                                 const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
-                                greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                                fullMessage = toolStatus;
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, toolStatus, false);
+                                const toolResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                this.bot?.sendStreamMessage(spaceName, toolResponseId, toolStatus, false);
                                 // Finalize the tool-name bubble so it does not linger
-                                this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, toolStatus);
+                                this.bot?.sendStreamMessage(spaceName, toolResponseId, '', true, toolStatus);
                             }
                         }
-                        greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
-                        fullMessage = '';
+                        // Follow-up streams into the SAME (cleared) bubble — not a fresh one.
+                        greetingResponseId = originalGreetingResponseId;
                     }
                     continue;
                 }
