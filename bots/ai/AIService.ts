@@ -166,8 +166,18 @@ export class AIService {
                     : defaultConfig;
 
             const provider = this.providerRegistry.getOrCreateProvider(effectiveConfig);
-            if (!provider.supportsVision(effectiveConfig)) {
-                console.warn(`[AIService] Default vision provider '${defaultConfig.providerId}' (model ${effectiveConfig.model}) does not look vision-capable; sending image URLs as text`);
+            // A declared visionModel IS a capability assertion — the field exists
+            // to say "this model accepts images" (e.g. deepseek-v4-flash-vision-exp,
+            // which the name-regex doesn't know). Only a FORCED text-only setting
+            // overrides it. When neither holds, bail out BEFORE calling generate:
+            // firing images at a genuinely text-only model just 400s — a wasted
+            // call, not a fallback.
+            const visionCapable =
+                provider.supportsVision(effectiveConfig) ||
+                (!!effectiveConfig.visionModel && effectiveConfig.supportsVision !== false);
+            if (!visionCapable) {
+                console.warn(`[AIService] Default vision provider '${defaultConfig.providerId}' (model ${effectiveConfig.model}) is not vision-capable; sending image URLs as text`);
+                return '';
             }
 
             const describePrompt = [
