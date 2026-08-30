@@ -563,13 +563,6 @@
                     {:else}
                         <div class="space-y-2">
                             <p class="text-sm text-white/70">{providerDisplayName}</p>
-                            {#if currentBot.visionFallbackProviderRef}
-                                <p class="text-xs text-white/50">
-                                    Vision fallback: {currentBot.visionFallbackProviderRef}{#if currentBot.visionFallbackModel}
-                                        ({currentBot.visionFallbackModel})
-                                    {/if}
-                                </p>
-                            {/if}
                         </div>
                     {/if}
                 </div>

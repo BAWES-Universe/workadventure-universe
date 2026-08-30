@@ -20,6 +20,7 @@ import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
 import { jsonrepair } from 'jsonrepair';
+import { resolveVisionSupport } from './providers/visionModels';
 
 /**
  * Validated interruption routing actions. Shared with BaseBehavior so
@@ -121,6 +122,8 @@ export class AIService {
             maxTokens: credentialsData.maxTokens,
             supportsStreaming: credentialsData.supportsStreaming,
             supportsVision: credentialsData.supportsVision ?? null,
+            visionModel: credentialsData.visionModel ?? null,
+            defaultVision: credentialsData.defaultVision ?? false,
             settings: credentialsData.settings,
         };
 
@@ -134,36 +137,37 @@ export class AIService {
     }
 
     /**
-     * Describe images using a fallback vision provider, when the main model is
+     * Describe images using the default vision provider, when the main model is
      * text-only. The description is injected into the main model's prompt so it
      * can "see" the image without supporting image_url blocks itself.
      *
-     * Fails soft: any error returns '' and the caller falls back to the existing
-     * URL-as-text-context behavior (no crash, no dead turn).
+     * The default vision provider is the first enabled provider marked
+     * defaultVision, falling back to the first vision-capable provider (declared
+     * vision model or vision-supporting model). Fails soft: any error returns ''
+     * and the caller falls back to the existing URL-as-text-context behavior
+     * (no crash, no dead turn).
      */
-    private async describeImagesViaFallback(
-        fallbackProviderRef: string,
-        fallbackModel: string | null | undefined,
+    private async describeImagesViaDefaultVision(
         images: string[],
         abortSignal?: AbortSignal
     ): Promise<string> {
         try {
-            const fallbackConfig = await this.getProviderCredentials(fallbackProviderRef);
-            if (!fallbackConfig) {
-                console.warn(`[AIService] Vision fallback provider '${fallbackProviderRef}' not found`);
+            const defaultConfig = await this.getDefaultVisionProviderConfig();
+            if (!defaultConfig) {
+                console.warn('[AIService] No default vision provider configured; sending image URLs as text');
                 return '';
             }
 
-            // Model override: when the bot specifies a visionFallbackModel, use it
-            // instead of the fallback provider's configured model.
+            // Use the provider's declared vision model when set (e.g.
+            // deepseek-v4-flash-vision-exp on the DeepSeek entry).
             const effectiveConfig: AIProviderConfig =
-                fallbackModel && fallbackConfig.model !== fallbackModel
-                    ? { ...fallbackConfig, model: fallbackModel }
-                    : fallbackConfig;
+                defaultConfig.visionModel && defaultConfig.model !== defaultConfig.visionModel
+                    ? { ...defaultConfig, model: defaultConfig.visionModel }
+                    : defaultConfig;
 
             const provider = this.providerRegistry.getOrCreateProvider(effectiveConfig);
             if (!provider.supportsVision(effectiveConfig)) {
-                console.warn(`[AIService] Vision fallback provider '${fallbackProviderRef}' (model ${effectiveConfig.model}) does not look vision-capable; sending image URLs as text`);
+                console.warn(`[AIService] Default vision provider '${defaultConfig.providerId}' (model ${effectiveConfig.model}) does not look vision-capable; sending image URLs as text`);
             }
 
             const describePrompt = [
@@ -184,9 +188,30 @@ export class AIService {
 
             return (response.content || '').trim();
         } catch (error) {
-            console.error('[AIService] Vision fallback describe failed:', error);
+            console.error('[AIService] Vision describe failed:', error);
             return '';
         }
+    }
+
+    /**
+     * Resolve the default vision provider config: the first enabled provider
+     * marked defaultVision, else the first enabled vision-capable provider
+     * (declared vision model, or supportsVision resolving true).
+     */
+    private async getDefaultVisionProviderConfig(): Promise<AIProviderConfig | null> {
+        const providers = await this.adminApiService.getAvailableAIProviders(true);
+        const isVisionEligible = (p: {
+            model: string;
+            supportsVision: boolean | null;
+            visionModel: string | null;
+        }) => !!p.visionModel || resolveVisionSupport(p.model || '', p.supportsVision);
+
+        const preferred = providers.find((p) => p.defaultVision === true && isVisionEligible(p));
+        const selected = preferred || providers.find(isVisionEligible);
+        if (!selected) {
+            return null;
+        }
+        return this.getProviderCredentials(selected.providerId);
     }
 
     /**
@@ -213,30 +238,33 @@ export class AIService {
 
         try {
             // Get provider credentials
-            const config = await this.getProviderCredentials(providerId);
+            let config = await this.getProviderCredentials(providerId);
 
             // Vision routing (per-request decision tree):
-            // - Main model supports vision  -> send image URLs as multipart content
-            // - Main model text-only + fallback configured -> describe images via the
-            //   fallback vision provider, inject the description into the prompt
+            // - Main model can see images (supports vision, or declares a vision
+            //   model) -> send image URLs as multipart content, using the declared
+            //   vision model for the turn when set
+            // - Main model text-only + a default vision provider exists -> describe
+            //   the images via that provider, inject the description into the prompt
             // - Otherwise -> image URLs stay as text context (behavior layer already
             //   augments the message with "[User also sent an image: <url>]")
             let visionImages: string[] | undefined = images && images.length > 0 ? images : undefined;
             if (visionImages) {
-                const visionCapable = this.providerRegistry.supportsVision(config);
-                if (!visionCapable) {
-                    const fullConfig = botClient?.getFullConfig();
-                    const fallbackRef = fullConfig?.visionFallbackProviderRef;
-                    if (fallbackRef) {
-                        const description = await this.describeImagesViaFallback(
-                            fallbackRef,
-                            fullConfig?.visionFallbackModel,
-                            visionImages,
-                            abortSignal
-                        );
-                        if (description) {
-                            message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
-                        }
+                const visionCapable =
+                    this.providerRegistry.supportsVision(config) || !!config.visionModel;
+                if (visionCapable) {
+                    // Use the declared vision model (e.g. deepseek-v4-flash-vision-exp)
+                    // so the image reaches a model that actually accepts image_url blocks.
+                    if (config.visionModel) {
+                        config = { ...config, model: config.visionModel };
+                    }
+                } else {
+                    const description = await this.describeImagesViaDefaultVision(
+                        visionImages,
+                        abortSignal
+                    );
+                    if (description) {
+                        message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
                     }
                     // Images are NOT passed to a text-only main model (it would 400 on
                     // image_url blocks). The URL/description stays in the message text.

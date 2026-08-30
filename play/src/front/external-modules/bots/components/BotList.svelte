@@ -63,8 +63,6 @@
                 behaviorConfig: updatedBot.behaviorConfig || bot.behaviorConfig,
                 chatInstructions: updatedBot.chatInstructions || bot.chatInstructions || "",
                 aiProviderRef: updatedBot.aiProviderRef || bot.aiProviderRef || undefined,
-                visionFallbackProviderRef: updatedBot.visionFallbackProviderRef ?? bot.visionFallbackProviderRef,
-                visionFallbackModel: updatedBot.visionFallbackModel ?? bot.visionFallbackModel,
                 createdAt: updatedBot.createdAt || bot.createdAt || new Date().toISOString(),
                 updatedAt: updatedBot.updatedAt || new Date().toISOString(),
                 createdBy: updatedBot.createdBy || bot.createdBy || null,
