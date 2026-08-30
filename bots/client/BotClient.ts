@@ -2623,16 +2623,19 @@ export class BotClient {
                         // Detect URL from message text independently of uploads —
                         // previously `url || extractUrlFromText` short-circuited,
                         // so text links were never extracted when an image/file was
-                        // attached. Extra text links + the upload go to the gallery
-                        // so every URL is still parsed as an attachment.
+                        // attached. The UPLOAD stays the primary attachment (its
+                        // mediaType matches it); extra text links go to the gallery
+                        // where each is classified per-type (image → vision, page →
+                        // Readability, file → FileParser).
                         const textUrls = this.extractUrlsFromText(spaceMessage.message);
                         const textUrl = textUrls[0] || null;
-                        const detectedUrl = textUrl || spaceMessage.url || undefined;
-                        const galleryUrls = [
-                            ...(spaceMessage.galleryUrls || []),
-                            ...(textUrls.length > 1 ? textUrls.slice(1) : []),
-                            ...(spaceMessage.url && textUrl ? [spaceMessage.url] : []),
-                        ];
+                        const detectedUrl = spaceMessage.url || textUrl || undefined;
+                        const galleryUrls = spaceMessage.url
+                            ? [...(spaceMessage.galleryUrls || []), ...textUrls]
+                            : [
+                                  ...(spaceMessage.galleryUrls || []),
+                                  ...(textUrls.length > 1 ? textUrls.slice(1) : []),
+                              ];
                         const detectedMime: string | null | undefined = detectedUrl && !spaceMessage.mimeType
                             ? await this.inferMimeTypeFromUrl(detectedUrl)
                             : spaceMessage.mimeType;

@@ -557,19 +557,37 @@ export class FileParser {
      */
     static async sniffContentType(url: string): Promise<string | null> {
         try {
-            // SSRF guard: same validation as every other fetch in this class.
-            await FileParser.validateUrl(url);
-
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
-            const response = await fetch(url, {
-                method: 'HEAD',
-                redirect: 'follow',
-                signal: controller.signal,
-            });
-            clearTimeout(timeoutId);
-            const contentType = response.headers.get('content-type');
-            return contentType ? contentType.split(';')[0].trim() : null;
+            try {
+                // SSRF guard: same hop-validated redirect handling as fetchBuffer —
+                // validate the initial URL AND every redirect target, so a
+                // public attacker URL cannot 302 the request into an internal
+                // or private endpoint (localhost, 169.254.169.254, 10.x, ...).
+                const MAX_REDIRECTS = 5;
+                let currentUrl = url;
+                for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+                    await FileParser.validateUrl(currentUrl);
+                    const response = await fetch(currentUrl, {
+                        method: 'HEAD',
+                        redirect: 'manual',
+                        signal: controller.signal,
+                    });
+                    if (response.status >= 300 && response.status < 400) {
+                        const location = response.headers.get('location');
+                        if (!location) {
+                            return null;
+                        }
+                        currentUrl = new URL(location, currentUrl).href;
+                        continue; // validate next hop
+                    }
+                    const contentType = response.headers.get('content-type');
+                    return contentType ? contentType.split(';')[0].trim() : null;
+                }
+                return null; // redirect chain exceeded MAX_REDIRECTS
+            } finally {
+                clearTimeout(timeoutId);
+            }
         } catch {
             // Fail soft: caller falls back to its existing mime/octet-stream default
             return null;
