@@ -57,10 +57,12 @@
     $: mainProviderSupportsVision = selectedProvider
         ? resolveVisionSupport(selectedProvider.model || "", selectedProvider.supportsVision)
         : false;
-    // Fallback provider options: any enabled provider except the main one
-    $: fallbackProviderOptions = availableProviders.filter(
-        (p) => p.providerId.toLowerCase() !== aiProviderRef.toLowerCase()
-    );
+    // Fallback provider options: all providers — the main provider is allowed too,
+    // because a vision fallback can reuse the same provider entry with a different
+    // model via the fallback model field (e.g. deepseek-v4-flash main + vision-exp fallback).
+    $: fallbackProviderOptions = availableProviders;
+    $: fallbackIsMainProvider =
+        visionFallbackProviderRef && visionFallbackProviderRef.toLowerCase() === aiProviderRef.toLowerCase();
 
     async function loadProviders() {
         if (!botApiService.isInitialized()) {
@@ -238,24 +240,34 @@
                         </select>
                     {/if}
                 </div>
-                <div>
-                    <label for="vision-fallback-model" class="block text-xs text-white/60 mb-1">
-                        Fallback model
-                        <span class="text-white/40">(optional — defaults to the provider's model)</span>
-                    </label>
-                    <input
-                        id="vision-fallback-model"
-                        type="text"
-                        class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        bind:value={visionFallbackModel}
-                        on:change={updateVisionFallbackModel}
-                        placeholder="e.g., gemini-2.0-flash"
-                    />
-                    <p class="text-xs text-white/50 mt-1">
-                        Used when someone sends an image to a bot whose main model is text-only — the fallback describes
-                        the image and the main model reads the description.
-                    </p>
-                </div>
+                {#if visionFallbackProviderRef}
+                    <div>
+                        <label for="vision-fallback-model" class="block text-xs text-white/60 mb-1">
+                            Fallback model
+                            <span class="text-white/40">(optional — defaults to the provider's model)</span>
+                        </label>
+                        <input
+                            id="vision-fallback-model"
+                            type="text"
+                            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            bind:value={visionFallbackModel}
+                            on:change={updateVisionFallbackModel}
+                            placeholder="e.g., gemini-2.0-flash"
+                        />
+                        {#if fallbackIsMainProvider}
+                            <p class="text-xs text-amber-400/90 mt-1">
+                                Same as the main provider — set a vision-capable model here (e.g. the vision variant of
+                                your provider's model) or the fallback has nothing new to offer.
+                            </p>
+                        {:else}
+                            <p class="text-xs text-white/50 mt-1">
+                                Used when someone sends an image to a bot whose main model is text-only — the fallback
+                                describes the image and the main model reads the description. Leave empty to use the
+                                provider's own model.
+                            </p>
+                        {/if}
+                    </div>
+                {/if}
             </div>
         {/if}
     </div>
