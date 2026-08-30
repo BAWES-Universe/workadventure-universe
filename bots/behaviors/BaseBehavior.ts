@@ -2032,7 +2032,7 @@ The person you're talking to just sent several more messages while you were stil
         mediaType?: string,
         galleryUrls?: string[]
     ): Promise<string> {
-        const allUrls = [url, ...(galleryUrls || [])];
+        const allUrls = [...new Set([url, ...(galleryUrls || [])])];
         let augmentedMessage = message;
 
         // Hoist dynamic import and load all files in parallel

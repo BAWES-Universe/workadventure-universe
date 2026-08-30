@@ -845,7 +845,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     userMessageForQwen,
                                     configWithParent,
                                     [], // No tools — force a direct answer
-                                    abortSignal
+                                    abortSignal,
+                                    visionImages
                                 )) {
                                     if (abortSignal?.aborted) break;
                                     if (retryChunk.content) {
@@ -1041,7 +1042,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 followUpMessageWithNoThink,
                                 configWithParent,
                                 tools.length > 0 ? tools : undefined,
-                                abortSignal
+                                abortSignal,
+                                visionImages
                             )) {
                                 // Mid-stream interruption: stop the follow-up tool-call
                                 // round and let the generator end early.
@@ -1267,7 +1269,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         synthesisMsg,
                                         configWithParent,
                                         [], // No tools — force direct answer
-                                        abortSignal
+                                        abortSignal,
+                                        visionImages
                                     )) {
                                         // Mid-stream interruption: stop the synthesis call.
                                         if (abortSignal?.aborted) break;
@@ -1344,7 +1347,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         retryMessage,
                                         configWithParent,
                                         [], // No tools — force a direct answer
-                                        abortSignal
+                                        abortSignal,
+                                        visionImages
                                     )) {
                                         if (abortSignal?.aborted) break;
                                         if (retryChunk.content) {
