@@ -3,7 +3,7 @@ import type { SvelteComponent } from "svelte";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
-import { mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
+import { mapEditorModeStore, mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
@@ -27,13 +27,50 @@ export const botEditorAvailableStore = writable(false);
 /**
  * Open the bot editor from an external UI entry point (e.g. the Tools menu).
  * No-op with a warning if the bot module hasn't been initialized for this world.
+ *
+ * The bot editor is a tool inside the map editor mode's sidebar, so if the map
+ * editor mode isn't active yet we activate it first (same as the "Map editor"
+ * menu button) and wait for the sidebar to be in the DOM before opening — the
+ * module's own retry pattern, since the sidebar renders asynchronously.
  */
 export function openBotEditorFromMenu(): void {
     if (!_extensionOptions) {
         console.warn("[Bot Extension] Bot editor requested from menu but module is not initialized");
         return;
     }
-    openBotEditor();
+
+    // The bot editor is a tool inside the map editor mode's sidebar. If the mode
+    // isn't active yet, activate it (same as the "Map editor" menu button) and
+    // wait for the sidebar to be in the DOM before opening — the module's own
+    // retry pattern, since the sidebar renders asynchronously.
+    if (!get(mapEditorModeStore)) {
+        mapEditorModeStore.switchMode(true);
+    }
+
+    const sidebarReady = () => {
+        const sidebar = document.querySelector(".side-bar-container");
+        return sidebar !== null && get(mapEditorActivated);
+    };
+
+    if (sidebarReady()) {
+        openBotEditor();
+        return;
+    }
+
+    let retries = 0;
+    const tryOpen = () => {
+        if (sidebarReady()) {
+            openBotEditor();
+        } else if (retries < 20) {
+            retries++;
+            setTimeout(tryOpen, 300);
+        } else {
+            console.warn("[Bot Extension] Bot editor: sidebar did not appear after map editor activation");
+        }
+    };
+    tryOpen();
+    setTimeout(tryOpen, 500);
+    setTimeout(tryOpen, 1000);
 }
 
 let _extensionOptions: ExtensionModuleOptions | null = null;

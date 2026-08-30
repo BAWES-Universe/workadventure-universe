@@ -25,6 +25,12 @@
 
     function openBotEditorMenu() {
         closeMapMenu();
+        // Activate the map editor mode first (same as the Map editor button) —
+        // the bot editor is a tool inside that mode's sidebar. The module then
+        // waits for the sidebar to mount and opens the bot editor.
+        if (!$mapEditorModeStore) {
+            toggleMapEditorMode();
+        }
         openBotEditorFromMenu();
     }
 
