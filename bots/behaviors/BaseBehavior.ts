@@ -1703,7 +1703,7 @@ export abstract class BaseBehavior {
         const abortSignal = this.activeConversations.get(senderId)?.abortController?.signal;
         // Image URLs from the attachment(s) — sent as multipart content when the
         // main model supports vision, described via the fallback model otherwise.
-        const imageUrls = this.collectImageUrls(url, mediaType, mimeType, galleryUrls);
+        const imageUrls = await this.collectImageUrls(url, mediaType, mimeType, galleryUrls);
 
         try {
             await generator(abortSignal, imageUrls);
@@ -1990,17 +1990,34 @@ The person you're talking to just sent several more messages while you were stil
      * Used to send images as multipart content to vision-capable models, or to
      * the vision fallback model when the main model is text-only.
      */
-    protected collectImageUrls(
+    protected async collectImageUrls(
         url: string | undefined,
         mediaType: string | undefined,
         mimeType: string | undefined,
         galleryUrls: string[] | undefined
-    ): string[] {
+    ): Promise<string[]> {
+        // Extension inference wins (cheap, sync); only extension-less URLs get a
+        // Content-Type sniff (SSRF-safe HEAD, 5s cap, in parallel) so Unsplash /
+        // signed-S3 gallery images are still collected for vision instead of
+        // silently dropping out of the vision list.
+        const classify = async (u: string): Promise<string | undefined> => {
+            const byExt = this.inferMimeFromUrl(u);
+            if (byExt) return byExt;
+            try {
+                const { FileParser } = await import('../services/FileParser');
+                return (await FileParser.sniffContentType(u)) || undefined;
+            } catch {
+                return undefined;
+            }
+        };
+
+        const primaryMime = mimeType || (url ? await classify(url) : undefined);
         const candidates: Array<{ u: string; m: string | undefined; primary: boolean }> = [];
-        if (url) candidates.push({ u: url, m: mimeType || this.inferMimeFromUrl(url), primary: true });
-        for (const g of galleryUrls || []) {
-            candidates.push({ u: g, m: this.inferMimeFromUrl(g), primary: false });
-        }
+        if (url) candidates.push({ u: url, m: primaryMime, primary: true });
+        const galleryMimes = await Promise.all((galleryUrls || []).map(classify));
+        (galleryUrls || []).forEach((g, i) => {
+            candidates.push({ u: g, m: galleryMimes[i], primary: false });
+        });
         const seen = new Set<string>();
         return candidates
             .filter((c) => (c.primary && mediaType === 'image') || (c.m && c.m.startsWith('image/')))
