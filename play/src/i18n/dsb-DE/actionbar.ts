@@ -6,7 +6,28 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //menu: "Menij wótcyniś / zacyniś",
     calendar: "Kalender wótcyniś / zacyniś",
     mapEditor: "Editor kórty wótcyniś / zacyniś",
-    botEditor: "Bot editor",
+    botEditor: "Botowy editor",
+    botEditorModule: {
+        visionMarker: "👁 wiźenje",
+        providerDisabled: "(znjemóžnjony)",
+        visionHelper:
+            "Póbitowaŕ, kótarež mógu wobraze wiźeś, su z 👁 woznamjenjone — wobraze, kótarež grajarje sćelu, se awtomatiski pśeźěłaju, žedno pśidatne nastajenje njetrjeba.",
+        aiProviderLabel: "KI-póbitowaŕ",
+        aiProviderHelp: "(Wubjeŕ KI-póbitowarja za toś togo bota)",
+        loadingProviders: "Póbitowarje se zacytaju...",
+        retry: "Hyśi raz wopytaś",
+        noProvidersConfigured:
+            "Žedne KI-póbitowarje konfigurěrowane. Pšosym nastaj nejpjerwjej póbitowarje w administraciskej API.",
+        errorNotInitialized: "Bot-API-słužba njejo inicializěrowana",
+        errorNoProviders: "Žedne KI-póbitowarje k dispoziciji. Pšosym konfigurěruj póbitowarje w administraciskej API.",
+        errorLoadFailed: "KI-póbitowarje njejsu se dali zacytaś",
+        providerVisionHeading: "KI-póbitowaŕ a wiźenje",
+        chatInstructions: "Chat-pokazki",
+        chatInstructionsHelp: "(Co by měł bot groniś a kak ma komunikěrowaś)",
+        chatInstructionsPlaceholder:
+            "Pśikład: Sy pśistojny witanjowy bot z mjenim 'WelcomeBot'. Twója nadoba jo nowych woglowaŕjow w lobby witaś. Bu wjaseły a pśiłužny. Wótegrono na pšašanja wo rumje. Njewospětuj samsku witanje pśi někom, kogo sy źinsa južo witał.",
+        noChatInstructions: "Žedne chat-pokazki nastajone",
+    },
     subtitle: {
         microphone: "Mikrofon",
         speaker: "Głosniki",

@@ -633,6 +633,10 @@ function setupBotEditor(options: ExtensionModuleOptions) {
                 roomChangeTriggerStore.update((n) => n + 1);
             });
         }
+
+        // The bot editor becomes available only after setup succeeds for an
+        // authenticated user (init sets the store from here, not earlier).
+        botEditorAvailableStore.set(true);
     } catch (e) {
         console.warn("[Bot Editor] Failed to initialize API service:", e);
     }
@@ -1221,7 +1225,6 @@ const botExtensionModule: ExtensionModule = {
 
         // Store options for later use
         _extensionOptions = options;
-        botEditorAvailableStore.set(true);
 
         // Notify room enter immediately (user is already in the room when module loads)
         // This ensures bots spawn even if userIsConnected hasn't fired yet
@@ -1355,6 +1358,10 @@ const botExtensionModule: ExtensionModule = {
             console.warn("Error deactivating bot editor tool in destroy:", e);
         }
         sidebarContentElement = null;
+        // The editor is no longer available after destroy — stale menu entries
+        // must not remain clickable. _extensionOptions is intentionally NOT
+        // cleared: init() needs the previous roomId for room-change detection.
+        botEditorAvailableStore.set(false);
         // Don't clear _extensionOptions - we need it to detect room changes
         // It will be updated in init() with the new roomId
     },

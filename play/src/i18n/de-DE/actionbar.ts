@@ -21,7 +21,27 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //menu: "Menü öffnen / schließen",
     calendar: "Kalender öffnen / schließen",
     mapEditor: "Kartenmanager öffnen / schließen",
-    botEditor: "Bot editor",
+    botEditor: "Bot-Editor",
+    botEditorModule: {
+        visionMarker: "👁 Vision",
+        providerDisabled: "(Deaktiviert)",
+        visionHelper:
+            "Anbieter, die Bilder sehen können, sind mit 👁 markiert — von Spielern gesendete Bilder werden automatisch verarbeitet, keine weitere Einrichtung nötig.",
+        aiProviderLabel: "KI-Anbieter",
+        aiProviderHelp: "(KI-Anbieter für diesen Bot auswählen)",
+        loadingProviders: "Anbieter werden geladen...",
+        retry: "Erneut versuchen",
+        noProvidersConfigured: "Keine KI-Anbieter konfiguriert. Bitte richte zuerst Anbieter in der Admin-API ein.",
+        errorNotInitialized: "Bot-API-Dienst nicht initialisiert",
+        errorNoProviders: "Keine KI-Anbieter verfügbar. Bitte konfiguriere Anbieter in der Admin-API.",
+        errorLoadFailed: "KI-Anbieter konnten nicht geladen werden",
+        providerVisionHeading: "KI-Anbieter & Vision",
+        chatInstructions: "Chat-Anweisungen",
+        chatInstructionsHelp: "(Was der Bot sagen und wie er kommunizieren soll)",
+        chatInstructionsPlaceholder:
+            "Beispiel: Du bist ein freundlicher Begrüßungs-Bot namens 'WelcomeBot'. Deine Aufgabe ist es, neue Besucher in der Lobby willkommen zu heißen. Sei fröhlich und hilfsbereit. Beantworte Fragen zum Raum. Wiederhole dieselbe Begrüßung nicht bei jemandem, den du heute schon begrüßt hast.",
+        noChatInstructions: "Keine Chat-Anweisungen festgelegt",
+    },
     mapEditorMobileLocked: "Karteneditor ist im mobilen Modus gesperrt",
     mapEditorLocked: "Karteneditor ist gesperrt 🔐",
     subtitle: {

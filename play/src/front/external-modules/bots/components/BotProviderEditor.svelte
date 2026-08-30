@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, createEventDispatcher } from "svelte";
+    import LL from "../../../../i18n/i18n-svelte";
     import { botApiService } from "../services/BotApiService";
     import type { BotData } from "../types";
     import { resolveVisionSupport } from "../visionModels";
@@ -29,7 +30,10 @@
     // model-name detection) or when the admin declared a dedicated vision model
     // for it (e.g. deepseek-v4-flash-vision-exp on the DeepSeek entry).
     function isVisionEligible(provider: AIProvider): boolean {
-        return resolveVisionSupport(provider.model || "", provider.supportsVision) || !!provider.visionModel;
+        return (
+            resolveVisionSupport(provider.model || "", provider.supportsVision) ||
+            (!!provider.visionModel && provider.supportsVision !== false)
+        );
     }
 
     // Load available providers on mount
@@ -49,7 +53,7 @@
 
     async function loadProviders() {
         if (!botApiService.isInitialized()) {
-            providerError = "Bot API service not initialized";
+            providerError = $LL.actionbar.botEditorModule.errorNotInitialized();
             return;
         }
 
@@ -59,7 +63,7 @@
         try {
             availableProviders = await botApiService.getAvailableAIProviders(true);
             if (availableProviders.length === 0) {
-                providerError = "No AI providers available. Please configure providers in Admin API.";
+                providerError = $LL.actionbar.botEditorModule.errorNoProviders();
             } else {
                 // Auto-select first provider if bot has no provider and providers are available
                 if (bot && !bot.aiProviderRef && !aiProviderRef && availableProviders.length > 0) {
@@ -74,7 +78,7 @@
             }
         } catch (error) {
             console.error("[BotProviderEditor] Error loading providers:", error);
-            providerError = "Failed to load AI providers";
+            providerError = $LL.actionbar.botEditorModule.errorLoadFailed();
         } finally {
             isLoadingProviders = false;
         }
@@ -93,12 +97,14 @@
     <!-- AI Provider Selection -->
     <div>
         <label for="ai-provider" class="block text-sm text-white/80 mb-2 font-semibold">
-            AI Provider
-            <span class="text-white/50 text-xs font-normal ml-2"> (Select the AI provider for this bot) </span>
+            {$LL.actionbar.botEditorModule.aiProviderLabel()}
+            <span class="text-white/50 text-xs font-normal ml-2">
+                {$LL.actionbar.botEditorModule.aiProviderHelp()}
+            </span>
         </label>
         {#if isLoadingProviders}
             <div class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white/50 text-sm">
-                Loading providers...
+                {$LL.actionbar.botEditorModule.loadingProviders()}
             </div>
         {:else if providerError}
             <div class="w-full px-3 py-2 border border-red-500/50 rounded bg-red-500/10 text-red-400 text-sm mb-2">
@@ -108,11 +114,11 @@
                 class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
                 on:click={loadProviders}
             >
-                Retry
+                {$LL.actionbar.botEditorModule.retry()}
             </button>
         {:else if availableProviders.length === 0}
             <div class="w-full px-3 py-2 border border-yellow-500/50 rounded bg-yellow-500/10 text-yellow-400 text-sm">
-                No AI providers configured. Please set up providers in Admin API first.
+                {$LL.actionbar.botEditorModule.noProvidersConfigured()}
             </div>
         {:else}
             <select
@@ -126,15 +132,14 @@
                 {#each availableProviders as provider (provider.providerId)}
                     <option value={provider.providerId} style="background-color: rgba(0, 0, 0, 0.8); color: white;">
                         {provider.name}
-                        {#if isVisionEligible(provider)}👁 vision{/if}
-                        {#if !provider.enabled}(Disabled){/if}
+                        {#if isVisionEligible(provider)}{$LL.actionbar.botEditorModule.visionMarker()}{/if}
+                        {#if !provider.enabled}{$LL.actionbar.botEditorModule.providerDisabled()}{/if}
                     </option>
                 {/each}
             </select>
         {/if}
         <p class="text-xs text-white/50 mt-2">
-            Providers that can see images are marked with 👁 — images sent by players are handled automatically, no extra
-            setup needed.
+            {$LL.actionbar.botEditorModule.visionHelper()}
         </p>
     </div>
 </div>

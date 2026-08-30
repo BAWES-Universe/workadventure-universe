@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
+    import LL from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
@@ -548,12 +549,14 @@
                 <!-- AI Provider & Vision -->
                 <div>
                     <div class="flex items-center gap-2 mb-3">
-                        <h3 class="text-base text-white/80 normal-case">AI Provider & Vision</h3>
+                        <h3 class="text-base text-white/80 normal-case">
+                            {$LL.actionbar.botEditorModule.providerVisionHeading()}
+                        </h3>
                         <button
                             class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
                             on:click={() => (editingProvider = !editingProvider)}
                         >
-                            {editingProvider ? "Close" : "Edit"}
+                            {editingProvider ? $LL.actionbar.close() : $LL.actionbar.edit()}
                         </button>
                     </div>
                     {#if editingProvider}
@@ -570,12 +573,14 @@
                 <!-- Chat instructions -->
                 <div>
                     <div class="flex items-center gap-2 mb-3">
-                        <h3 class="text-base text-white/80 normal-case">Chat instructions</h3>
+                        <h3 class="text-base text-white/80 normal-case">
+                            {$LL.actionbar.botEditorModule.chatInstructions()}
+                        </h3>
                         <button
                             class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
                             on:click={() => (editingChatInstructions = !editingChatInstructions)}
                         >
-                            {editingChatInstructions ? "Close" : "Edit"}
+                            {editingChatInstructions ? $LL.actionbar.close() : $LL.actionbar.edit()}
                         </button>
                     </div>
                     {#if editingChatInstructions}
@@ -584,7 +589,7 @@
                         </div>
                     {:else}
                         <p class="text-sm text-white/70 whitespace-pre-wrap">
-                            {currentBot.chatInstructions || "No chat instructions set"}
+                            {currentBot.chatInstructions || $LL.actionbar.botEditorModule.noChatInstructions()}
                         </p>
                     {/if}
                 </div>

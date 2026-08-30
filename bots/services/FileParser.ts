@@ -44,6 +44,14 @@ export interface ParsedFile {
 }
 
 export class FileParser {
+    // Short-lived URL-keyed memo for sniffContentType: coalesces in-flight
+    // requests and caches results briefly (see sniffContentType).
+    private static sniffCache = new Map<
+        string,
+        { promise: Promise<string | null>; expiresAt: number }
+    >();
+    private static readonly SNIFF_CACHE_TTL_MS = 30_000;
+
     static readonly MAX_FILE_CHARS = MAX_FILE_CHARS;
 
     /**
@@ -554,12 +562,48 @@ export class FileParser {
      * fallback for URLs without a recognizable extension (Unsplash, signed
      * S3/CDN URLs, `photo?id=123`). Returns null when undetermined (validation
      * failure, network error, missing header) so callers can fall back.
+     *
+     * Results are memoized briefly per URL: the same extension-less URL is
+     * sniffed twice per message cycle (collectImageUrls for vision,
+     * formatParsedAttachment for text classification). In-flight requests are
+     * coalesced; cached results expire after SNIFF_CACHE_TTL_MS.
      */
-    static async sniffContentType(url: string): Promise<string | null> {
+    static sniffContentType(url: string): Promise<string | null> {
+        const cached = FileParser.sniffCache.get(url);
+        if (cached && cached.expiresAt > Date.now()) {
+            return cached.promise;
+        }
+        const promise = FileParser.doSniffContentType(url);
+        FileParser.sniffCache.set(url, {
+            promise,
+            expiresAt: Date.now() + FileParser.SNIFF_CACHE_TTL_MS,
+        });
+        promise
+            .finally(() => {
+                const entry = FileParser.sniffCache.get(url);
+                if (entry && entry.expiresAt <= Date.now()) {
+                    FileParser.sniffCache.delete(url);
+                }
+            })
+            .catch(() => { /* handled by doSniffContentType */ });
+        return promise;
+    }
+
+    private static async doSniffContentType(url: string): Promise<string | null> {
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
             try {
+                // DNS resolution inside validateUrl does not observe the abort
+                // signal, so race it against the same 5s deadline — slow lookups
+                // must not extend the documented cap.
+                const abortRace = new Promise<never>((_, reject) => {
+                    controller.signal.addEventListener(
+                        'abort',
+                        () => reject(new Error('sniff aborted')),
+                        { once: true }
+                    );
+                });
                 // SSRF guard: same hop-validated redirect handling as fetchBuffer —
                 // validate the initial URL AND every redirect target, so a
                 // public attacker URL cannot 302 the request into an internal
@@ -567,7 +611,7 @@ export class FileParser {
                 const MAX_REDIRECTS = 5;
                 let currentUrl = url;
                 for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
-                    await FileParser.validateUrl(currentUrl);
+                    await Promise.race([FileParser.validateUrl(currentUrl), abortRace]);
                     const response = await fetch(currentUrl, {
                         method: 'HEAD',
                         redirect: 'manual',

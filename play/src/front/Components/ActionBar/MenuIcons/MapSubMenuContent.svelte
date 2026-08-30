@@ -86,7 +86,7 @@
         <IconMapEditor font-size="20" />
     </ActionBarButton>
 {/if}
-{#if $botEditorAvailableStore}
+{#if $botEditorAvailableStore && $mapEditorMenuVisibleStore}
     <ActionBarButton on:click={openBotEditorMenu} label={$LL.actionbar.botEditor()}>
         <IconRobot font-size="20" />
     </ActionBarButton>

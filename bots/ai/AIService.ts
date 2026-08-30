@@ -214,7 +214,9 @@ export class AIService {
             model: string;
             supportsVision: boolean | null;
             visionModel: string | null;
-        }) => !!p.visionModel || resolveVisionSupport(p.model || '', p.supportsVision);
+        }) =>
+            (!!p.visionModel && p.supportsVision !== false) ||
+            resolveVisionSupport(p.model || '', p.supportsVision);
 
         const preferred = providers.find((p) => p.defaultVision === true && isVisionEligible(p));
         const selected = preferred || providers.find(isVisionEligible);
