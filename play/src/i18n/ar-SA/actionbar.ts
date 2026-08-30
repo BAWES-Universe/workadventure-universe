@@ -21,6 +21,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     allSettings: "جميع الإعدادات",
     globalMessage: "إرسال رسالة عالمية",
     mapEditor: "محرر الخرائط",
+    botEditor: "Bot editor",
     mapEditorMobileLocked: "محرر الخرائط مقفل في الوضع المحمول",
     mapEditorLocked: "محرر الخرائط مغلق 🔐",
     app: "التطبيقات الخارجية",

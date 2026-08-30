@@ -22,6 +22,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     allSettings: "모든 설정",
     globalMessage: "전체 메시지 보내기",
     mapEditor: "맵 에디터",
+    botEditor: "Bot editor",
     mapEditorMobileLocked: "모바일 모드에서는 맵 에디터를 사용할 수 없습니다",
     mapEditorLocked: "맵 에디터가 잠겨 있습니다 🔐",
     app: "외부 애플리케이션",

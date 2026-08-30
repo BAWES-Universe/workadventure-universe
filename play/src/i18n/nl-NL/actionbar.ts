@@ -8,6 +8,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //menu: "Openen / Sluiten menu",
     calendar: "Openen / Sluiten kalender",
     mapEditor: "Openen / Sluiten kaartbeheerder",
+    botEditor: "Bot editor",
     mapEditorMobileLocked: "Kaarteditor is vergrendeld in mobiele modus",
     mapEditorLocked: "Kaarteditor is vergrendeld 🔐",
     subtitle: {

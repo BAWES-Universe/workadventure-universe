@@ -9,6 +9,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     calendar: "Apri / Chiudi calendario",
     todoList: "Apri / Chiudi lista delle cose da fare",
     mapEditor: "Apri / Chiudi gestore delle mappe",
+    botEditor: "Bot editor",
     mapEditorMobileLocked: "L'editor delle mappe è bloccato in modalità mobile",
     mapEditorLocked: "L'editor delle mappe è bloccato 🔐",
     subtitle: {

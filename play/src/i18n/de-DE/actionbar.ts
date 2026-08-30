@@ -21,6 +21,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //menu: "Menü öffnen / schließen",
     calendar: "Kalender öffnen / schließen",
     mapEditor: "Kartenmanager öffnen / schließen",
+    botEditor: "Bot editor",
     mapEditorMobileLocked: "Karteneditor ist im mobilen Modus gesperrt",
     mapEditorLocked: "Karteneditor ist gesperrt 🔐",
     subtitle: {

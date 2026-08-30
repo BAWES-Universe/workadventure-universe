@@ -19,8 +19,14 @@
     import { chatVisibilityStore } from "../../../Stores/ChatStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
+    import { botEditorAvailableStore, openBotEditorFromMenu } from "../../../external-modules/bots/index";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconMapSearch, IconSpeakerPhone, IconMapEditor } from "@wa-icons";
+    import { IconMapEditor, IconMapSearch, IconRobot, IconSpeakerPhone } from "@wa-icons";
+
+    function openBotEditorMenu() {
+        closeMapMenu();
+        openBotEditorFromMenu();
+    }
 
     function resetChatVisibility() {
         chatVisibilityStore.set(false);
@@ -72,6 +78,11 @@
         state={$mapEditorModeStore ? "active" : "normal"}
     >
         <IconMapEditor font-size="20" />
+    </ActionBarButton>
+{/if}
+{#if $botEditorAvailableStore}
+    <ActionBarButton on:click={openBotEditorMenu} label={$LL.actionbar.botEditor()}>
+        <IconRobot font-size="20" />
     </ActionBarButton>
 {/if}
 {#if $mapManagerActivated}

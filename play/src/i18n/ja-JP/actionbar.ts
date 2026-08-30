@@ -7,6 +7,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //disableMegaphone: "メガホンの無効化",
     //menu: "メニューの表示／非表示",
     mapEditor: "マップエディターの表示／非表示",
+    botEditor: "Bot editor",
     mapEditorMobileLocked: "マップエディタ―はモバイルモードではロックされています",
     mapEditorLocked: "マップエディターはロックされています 🔐",
     subtitle: {

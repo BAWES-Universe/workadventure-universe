@@ -6,6 +6,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //menu: "Menij wótcyniś / zacyniś",
     calendar: "Kalender wótcyniś / zacyniś",
     mapEditor: "Editor kórty wótcyniś / zacyniś",
+    botEditor: "Bot editor",
     subtitle: {
         microphone: "Mikrofon",
         speaker: "Głosniki",

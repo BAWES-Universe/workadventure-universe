@@ -25,6 +25,7 @@ const actionbar: BaseTranslation = {
     allSettings: "Todas as configurações",
     globalMessage: "Enviar mensagem global",
     mapEditor: "Editor de mapa",
+    botEditor: "Bot editor",
     mapEditorMobileLocked: "Editor de mapa está bloqueado no modo móvel",
     mapEditorLocked: "Editor de mapa está bloqueado 🔐",
     app: "Aplicações de terceiros",

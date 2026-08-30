@@ -1,4 +1,4 @@
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
 import type { SvelteComponent } from "svelte";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
@@ -20,6 +20,21 @@ let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeMapEditor: (() => void) | null = null;
 let unsubscribeMapEditorVisibility: (() => void) | null = null;
 let unsubscribeSelectedTool: (() => void) | null = null;
+
+// Exposed for UI (e.g. the Tools menu): true once the bot module is initialized
+export const botEditorAvailableStore = writable(false);
+
+/**
+ * Open the bot editor from an external UI entry point (e.g. the Tools menu).
+ * No-op with a warning if the bot module hasn't been initialized for this world.
+ */
+export function openBotEditorFromMenu(): void {
+    if (!_extensionOptions) {
+        console.warn("[Bot Extension] Bot editor requested from menu but module is not initialized");
+        return;
+    }
+    openBotEditor();
+}
 
 let _extensionOptions: ExtensionModuleOptions | null = null;
 let toolButtonElement: HTMLElement | null = null;
@@ -1169,6 +1184,7 @@ const botExtensionModule: ExtensionModule = {
 
         // Store options for later use
         _extensionOptions = options;
+        botEditorAvailableStore.set(true);
 
         // Notify room enter immediately (user is already in the room when module loads)
         // This ensures bots spawn even if userIsConnected hasn't fired yet
