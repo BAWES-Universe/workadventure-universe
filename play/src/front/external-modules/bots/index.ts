@@ -57,20 +57,20 @@ export function openBotEditorFromMenu(): void {
         return;
     }
 
-    let retries = 0;
+    // Single polling chain with a wall-clock deadline. A shared counter across
+    // concurrent chains would burn the retry budget ~3x faster than intended
+    // (and leftover chains could re-open the editor after a success).
+    const deadline = Date.now() + 6000; // ~20 × 300ms polling budget
     const tryOpen = () => {
         if (sidebarReady()) {
             openBotEditor();
-        } else if (retries < 20) {
-            retries++;
+        } else if (Date.now() < deadline) {
             setTimeout(tryOpen, 300);
         } else {
             console.warn("[Bot Extension] Bot editor: sidebar did not appear after map editor activation");
         }
     };
     tryOpen();
-    setTimeout(tryOpen, 500);
-    setTimeout(tryOpen, 1000);
 }
 
 let _extensionOptions: ExtensionModuleOptions | null = null;
