@@ -880,6 +880,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     accumulatedContent,
                                     configWithParent,
                                     abortSignal,
+                                    visionImages,
                                     (text) => {
                                         accumulatedContent += text;
                                         firstCallContent += text;
@@ -1389,6 +1390,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         followUpContent,
                                         configWithParent,
                                         abortSignal,
+                                        visionImages,
                                         (text) => {
                                             followUpContent += text;
                                             followUpContentBuffer += text;
@@ -1439,6 +1441,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     followUpContent,
                                     configWithParent,
                                     abortSignal,
+                                    visionImages,
                                     (text) => {
                                         followUpContent += text;
                                         followUpContentBuffer += text;
@@ -1561,7 +1564,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 accumulatedContent,
                                 configWithParent,
                                 abortSignal,
-                                contTokens
+                                contTokens,
+                                visionImages
                             )) {
                                 if (contChunk.content) {
                                     accumulatedContent += contChunk.content;
@@ -1841,7 +1845,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         partialContent: string,
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
-        tokenSink: { used: number; prompt: number; completion: number }
+        tokenSink: { used: number; prompt: number; completion: number },
+        visionImages?: string[] | undefined
     ): AsyncGenerator<AIStreamChunk> {
         const MAX_TRUNCATION_CONTINUATIONS = 2;
         let content = partialContent;
@@ -1862,7 +1867,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     continueMessage,
                     config,
                     undefined, // no tools — this is a pure text continuation
-                    abortSignal
+                    abortSignal,
+                    visionImages
                 )) {
                     if (abortSignal?.aborted) return;
                     if (chunk.content) {
@@ -1910,6 +1916,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         partialContent: string,
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
+        visionImages: string[] | undefined,
         accumulateContent: (text: string) => void,
         accumulateTokens: (used: number, prompt: number, completion: number) => void
     ): AsyncGenerator<string> {
@@ -1920,7 +1927,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             partialContent,
             config,
             abortSignal,
-            contTokens
+            contTokens,
+            visionImages
         )) {
             if (contChunk.content) {
                 accumulateContent(contChunk.content);
