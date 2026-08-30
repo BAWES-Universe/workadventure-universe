@@ -30,11 +30,33 @@ export class LMStudioProvider implements AIProvider {
      * Whether the model config supports vision (image_url content blocks).
      * LMStudio serves local models via the OpenAI-compatible protocol; vision
      * capability is resolved from the model name with the same tri-state
-     * override as OpenAIProvider. Multipart sending is not implemented here yet,
-     * so vision-capable local models degrade to URL-as-text context.
+     * override as OpenAIProvider.
      */
     supportsVision(config: AIProviderConfig): boolean {
         return resolveVisionSupport(config.model || '', config.supportsVision);
+    }
+
+    /**
+     * Build the user message content: plain text, or multipart (text + image_url
+     * blocks) when the model supports vision and images are present. Mirrors
+     * OpenAIProvider so local vision models (llava, qwen-vl, ...) get the same
+     * treatment as remote ones.
+     */
+    private buildUserContent(
+        userMessage: string,
+        config: AIProviderConfig,
+        images?: string[]
+    ): string | Array<Record<string, any>> {
+        if (images && images.length > 0 && this.supportsVision(config)) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[LMStudioProvider] Sending ${images.length} image(s) as multipart content to vision-capable model ${config.model}`);
+            }
+            return [
+                { type: 'text', text: userMessage },
+                ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+            ];
+        }
+        return userMessage;
     }
 
     async *generateStream(
@@ -42,7 +64,8 @@ export class LMStudioProvider implements AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        externalSignal?: AbortSignal
+        externalSignal?: AbortSignal,
+        images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -50,6 +73,7 @@ export class LMStudioProvider implements AIProvider {
         let completionTokens = 0;
         let responseModel = '';
         let streamEnded = false;
+        let finishReason: string | undefined;
         const timeout = config.settings?.timeout || this.DEFAULT_TIMEOUT;
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -71,7 +95,7 @@ export class LMStudioProvider implements AIProvider {
                     model: config.model,
                     messages: [
                         { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage },
+                        { role: 'user', content: this.buildUserContent(userMessage, config, images) },
                     ],
                     stream: true,
                     stream_options: {
@@ -128,6 +152,10 @@ export class LMStudioProvider implements AIProvider {
                         try {
                             const json = JSON.parse(data);
                             const delta = json.choices?.[0]?.delta;
+                            const choice = json.choices?.[0];
+                            if (choice?.finish_reason) {
+                                finishReason = choice.finish_reason;
+                            }
 
                             // Extract token usage
                             if (json.usage) {
@@ -191,6 +219,7 @@ export class LMStudioProvider implements AIProvider {
                     completionTokens,
                     latency,
                     error: !streamEnded,
+                    truncated: finishReason === 'length',
                 },
             };
 
@@ -220,7 +249,8 @@ export class LMStudioProvider implements AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        externalSignal?: AbortSignal
+        externalSignal?: AbortSignal,
+        images?: string[]
     ): Promise<AIResponse> {
         const startTime = Date.now();
 
@@ -249,7 +279,7 @@ export class LMStudioProvider implements AIProvider {
                         model: config.model,
                         messages: [
                             { role: 'system', content: systemPrompt },
-                            { role: 'user', content: userMessage },
+                            { role: 'user', content: this.buildUserContent(userMessage, config, images) },
                         ],
                         stream: false,
                         stream_options: {
@@ -269,7 +299,7 @@ export class LMStudioProvider implements AIProvider {
                     throw new Error(`LMStudio API error: ${response.status} ${errorText}`);
                 }
 
-                const data = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
+                const data = await response.json() as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }>; usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
                 const content = data.choices?.[0]?.message?.content || '';
                 const tokensUsed = data.usage?.total_tokens || 0;
                 const promptTokens = data.usage?.prompt_tokens || 0;
@@ -285,6 +315,7 @@ export class LMStudioProvider implements AIProvider {
                     tokensUsed,
                     latency,
                     error: false,
+                    truncated: data.choices?.[0]?.finish_reason === 'length',
                 };
             } catch (error: any) {
                 const latency = Date.now() - startTime;

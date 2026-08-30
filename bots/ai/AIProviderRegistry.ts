@@ -92,14 +92,13 @@ export class AIProviderRegistry {
         if (!provider.supportsStreaming()) {
             // Fallback to non-streaming
             const response = await provider.generate(systemPrompt, userMessage, config, tools, signal, images);
+            // Metadata (tokens/truncated/error) is attached ONLY to the done chunk —
+            // consumers accumulate usage with += across chunks (e.g.
+            // continueTruncatedResponse, follow-up rounds), so sharing the same
+            // metadata object on both chunks would double-count token usage.
             yield {
                 content: response.content,
                 done: false,
-                metadata: {
-                    tokensUsed: response.tokensUsed,
-                    latency: response.latency,
-                    error: response.error,
-                },
             };
             yield {
                 content: '',
@@ -108,6 +107,7 @@ export class AIProviderRegistry {
                     tokensUsed: response.tokensUsed,
                     latency: response.latency,
                     error: response.error,
+                    truncated: response.truncated,
                 },
             };
             return;

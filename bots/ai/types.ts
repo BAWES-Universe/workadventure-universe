@@ -45,6 +45,7 @@ export interface AIStreamChunk {
         latency?: number;
         durationSeconds?: number; // For voice AI
         error?: boolean;
+        truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
         // MultiPromptAIService analysis metadata
         analysis?: {
             tokensUsed: number;
@@ -72,6 +73,7 @@ export interface AIResponse {
     tokensUsed: number;
     latency: number;
     error?: boolean;
+    truncated?: boolean; // true when the provider hit finish_reason='length' (max_tokens cap)
 }
 
 /**
