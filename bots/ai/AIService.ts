@@ -241,24 +241,23 @@ export class AIService {
             let config = await this.getProviderCredentials(providerId);
 
             // Vision routing (per-request decision tree):
-            // - Main model can see images (supports vision, or declares a vision
-            //   model) -> send image URLs as multipart content, using the declared
-            //   vision model for the turn when set
+            // - Main model itself can see images (supports vision) -> send the
+            //   images as multipart content: the brain sees and answers directly,
+            //   one call, consistent persona
             // - Main model text-only + a default vision provider exists -> describe
-            //   the images via that provider, inject the description into the prompt
+            //   the images via that provider (its declared visionModel is the eyes),
+            //   inject the description into the prompt, and let the main model
+            //   (the brain) answer with its own persona/instructions
             // - Otherwise -> image URLs stay as text context (behavior layer already
             //   augments the message with "[User also sent an image: <url>]")
             let visionImages: string[] | undefined = images && images.length > 0 ? images : undefined;
             if (visionImages) {
-                const visionCapable =
-                    this.providerRegistry.supportsVision(config) || !!config.visionModel;
-                if (visionCapable) {
-                    // Use the declared vision model (e.g. deepseek-v4-flash-vision-exp)
-                    // so the image reaches a model that actually accepts image_url blocks.
-                    if (config.visionModel) {
-                        config = { ...config, model: config.visionModel };
-                    }
-                } else {
+                // Note: a declared visionModel does NOT make the main provider
+                // "vision-capable" here — it only qualifies it as a describer.
+                // The configured main model is the bot's brain and must always
+                // be the one answering (persona, chat instructions, tools).
+                const visionCapable = this.providerRegistry.supportsVision(config);
+                if (!visionCapable) {
                     const description = await this.describeImagesViaDefaultVision(
                         visionImages,
                         abortSignal
@@ -270,6 +269,7 @@ export class AIService {
                     // image_url blocks). The URL/description stays in the message text.
                     visionImages = undefined;
                 }
+                // visionCapable: brain can see — images pass through as multipart.
             }
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
