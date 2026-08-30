@@ -19,7 +19,6 @@
     }
 
     let aiProviderRef: string = "";
-    let chatInstructions = "";
     let visionFallbackProviderRef = "";
     let visionFallbackModel = "";
     let availableProviders: AIProvider[] = [];
@@ -29,12 +28,7 @@
     // Load available providers on mount
     onMount(async () => {
         if (bot) {
-            console.log(
-                "[BotInstructionsEditor] onMount, bot.chatInstructions:",
-                bot.chatInstructions?.substring(0, 50)
-            );
             aiProviderRef = bot.aiProviderRef || "";
-            chatInstructions = bot.chatInstructions || "";
             visionFallbackProviderRef = bot.visionFallbackProviderRef || "";
             visionFallbackModel = bot.visionFallbackModel || "";
         }
@@ -44,10 +38,8 @@
     // Watch for bot ID changes (only sync when bot changes, not on every prop update)
     let lastBotId: string | undefined = undefined;
     $: if (bot && bot.id !== lastBotId) {
-        console.log("[BotInstructionsEditor] Bot ID changed, syncing all fields");
         lastBotId = bot.id;
         aiProviderRef = bot.aiProviderRef || "";
-        chatInstructions = bot.chatInstructions || "";
         visionFallbackProviderRef = bot.visionFallbackProviderRef || "";
         visionFallbackModel = bot.visionFallbackModel || "";
     }
@@ -90,7 +82,7 @@
                 }
             }
         } catch (error) {
-            console.error("[BotInstructionsEditor] Error loading providers:", error);
+            console.error("[BotProviderEditor] Error loading providers:", error);
             providerError = "Failed to load AI providers";
         } finally {
             isLoadingProviders = false;
@@ -100,27 +92,8 @@
     // Update bot when values change
     function updateAIProviderRef() {
         if (bot) {
-            console.log("[BotInstructionsEditor] updateAIProviderRef called, new value:", aiProviderRef);
             bot.aiProviderRef = aiProviderRef || undefined;
-            console.log("[BotInstructionsEditor] bot.aiProviderRef after update:", bot.aiProviderRef);
             dispatch("change");
-        }
-    }
-
-    function updateChatInstructions() {
-        if (bot) {
-            console.log(
-                "[BotInstructionsEditor] updateChatInstructions called, new value:",
-                chatInstructions.substring(0, 50)
-            );
-            bot.chatInstructions = chatInstructions;
-            console.log(
-                "[BotInstructionsEditor] bot.chatInstructions after update:",
-                bot.chatInstructions?.substring(0, 50)
-            );
-            dispatch("change");
-        } else {
-            console.warn("[BotInstructionsEditor] updateChatInstructions called but bot is null");
         }
     }
 
@@ -270,22 +243,5 @@
                 {/if}
             </div>
         {/if}
-    </div>
-
-    <div>
-        <label for="chat-instructions" class="block text-sm text-white/80 mb-2 font-semibold">
-            Chat instructions
-            <span class="text-white/50 text-xs font-normal ml-2">
-                (What the bot should say and how it should communicate)
-            </span>
-        </label>
-        <textarea
-            id="chat-instructions"
-            class="w-full px-3 py-2 border border-white/20 rounded bg-white/5 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            bind:value={chatInstructions}
-            on:input={updateChatInstructions}
-            placeholder="Example: You are a friendly greeter bot named 'WelcomeBot'. Your job is to welcome new visitors to the lobby. Be cheerful and helpful. Answer questions about the space. Don't repeat the same greeting to someone you've already greeted today."
-            rows="8"
-        />
     </div>
 </div>
