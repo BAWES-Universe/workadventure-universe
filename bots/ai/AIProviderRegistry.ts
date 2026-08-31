@@ -65,6 +65,13 @@ export class AIProviderRegistry {
     }
 
     /**
+     * Check whether the provider for the given config supports vision.
+     */
+    supportsVision(config: AIProviderConfig): boolean {
+        return this.getOrCreateProvider(config).supportsVision(config);
+    }
+
+    /**
      * Generate streaming response
      */
     async *generateStream(
@@ -73,7 +80,8 @@ export class AIProviderRegistry {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const provider = this.getOrCreateProvider(config);
 
@@ -83,7 +91,7 @@ export class AIProviderRegistry {
 
         if (!provider.supportsStreaming()) {
             // Fallback to non-streaming
-            const response = await provider.generate(systemPrompt, userMessage, config, tools, signal);
+            const response = await provider.generate(systemPrompt, userMessage, config, tools, signal, images);
             // Metadata (tokens/truncated/error) is attached ONLY to the done chunk —
             // consumers accumulate usage with += across chunks (e.g.
             // continueTruncatedResponse, follow-up rounds), so sharing the same
@@ -106,7 +114,7 @@ export class AIProviderRegistry {
         }
 
         // Use streaming
-        yield* provider.generateStream(systemPrompt, userMessage, config, tools, signal);
+        yield* provider.generateStream(systemPrompt, userMessage, config, tools, signal, images);
     }
 
     /**

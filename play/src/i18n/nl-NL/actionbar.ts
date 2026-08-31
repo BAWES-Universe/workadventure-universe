@@ -8,6 +8,27 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //menu: "Openen / Sluiten menu",
     calendar: "Openen / Sluiten kalender",
     mapEditor: "Openen / Sluiten kaartbeheerder",
+    botEditor: "Bot-editor",
+    botEditorModule: {
+        visionMarker: "👁 visie",
+        providerDisabled: "(Uitgeschakeld)",
+        visionHelper:
+            "Aanbieders die afbeeldingen kunnen zien zijn gemarkeerd met 👁 — afbeeldingen die spelers sturen worden automatisch verwerkt, geen extra instellingen nodig.",
+        aiProviderLabel: "AI-aanbieder",
+        aiProviderHelp: "(Selecteer de AI-aanbieder voor deze bot)",
+        loadingProviders: "Aanbieders laden...",
+        retry: "Opnieuw proberen",
+        noProvidersConfigured: "Geen AI-aanbieders geconfigureerd. Stel eerst aanbieders in in de beheer-API.",
+        errorNotInitialized: "Bot-API-service niet geïnitialiseerd",
+        errorNoProviders: "Geen AI-aanbieders beschikbaar. Configureer aanbieders in de beheer-API.",
+        errorLoadFailed: "AI-aanbieders laden mislukt",
+        providerVisionHeading: "AI-aanbieder en visie",
+        chatInstructions: "Chatinstructies",
+        chatInstructionsHelp: "(Wat de bot moet zeggen en hoe hij moet communiceren)",
+        chatInstructionsPlaceholder:
+            "Voorbeeld: je bent een vriendelijke begroetingsbot genaamd 'WelcomeBot'. Je taak is om nieuwe bezoekers in de lobby te verwelkomen. Wees vrolijk en behulpzaam. Beantwoord vragen over de ruimte. Herhaal niet dezelfde begroeting bij iemand die je vandaag al hebt begroet.",
+        noChatInstructions: "Geen chatinstructies ingesteld",
+    },
     mapEditorMobileLocked: "Kaarteditor is vergrendeld in mobiele modus",
     mapEditorLocked: "Kaarteditor is vergrendeld 🔐",
     subtitle: {

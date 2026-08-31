@@ -16,6 +16,9 @@ export interface AIProviderConfig {
     temperature: number;
     maxTokens: number;
     supportsStreaming: boolean;
+    supportsVision?: boolean | null; // null/undefined = auto (model-name regex), true = force vision, false = force text-only
+    visionModel?: string | null; // model used when this provider describes images (vision fallback)
+    defaultVision?: boolean; // preferred vision provider for bots whose main model is text-only
     settings?: Record<string, any>;
 }
 

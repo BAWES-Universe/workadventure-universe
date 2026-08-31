@@ -425,8 +425,8 @@ export class IdleBehavior extends BaseBehavior {
 
         // Interruption-safe generation (handles queue, abort, update, generation tracking)
         await this.safeGenerateResponse(spaceName, senderId, originalUserMessage, message, botId,
-            (signal) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal),
-            url, mediaType, mimeType
+            (signal, images) => this.generateAIResponseStream(spaceName, senderId, message, botId, signal, images),
+            url, mediaType, mimeType, galleryUrls
         );
     }
 
@@ -438,7 +438,8 @@ export class IdleBehavior extends BaseBehavior {
         playerId: number,
         playerMessage: string,
         botId: string,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        images?: string[]
     ): Promise<void> {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[IdleBehavior] generateAIResponseStream called for bot ${botId}`);
@@ -508,7 +509,8 @@ export class IdleBehavior extends BaseBehavior {
                 context,
                 this.bot,
                 this.adminApiService,
-                abortSignal
+                abortSignal,
+                images
             )) {
                 if (chunk.reset) {
                     batchFlush(batchState, sendBatch);

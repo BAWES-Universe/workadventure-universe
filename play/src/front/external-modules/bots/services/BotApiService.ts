@@ -634,7 +634,11 @@ export class BotApiService {
             name: string;
             type: string;
             enabled: boolean;
+            model: string;
             supportsStreaming: boolean;
+            supportsVision: boolean | null;
+            visionModel: string | null;
+            defaultVision: boolean;
         }>
     > {
         try {

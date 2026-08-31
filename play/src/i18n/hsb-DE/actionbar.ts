@@ -2,6 +2,28 @@ import type { Translation } from "../i18n-types";
 import type { DeepPartial } from "../DeepPartial";
 
 const actionbar: DeepPartial<Translation["actionbar"]> = {
+    botEditor: "Botowy editor",
+    botEditorModule: {
+        visionMarker: "👁 widźenje",
+        providerDisabled: "(znjemóžnjeny)",
+        visionHelper:
+            "Poskićowarjo, kotřiž móža wobrazy widźeć, su z 👁 woznamjenjeni — wobrazy, kotrež hrajerjo sćelu, so awtomatisce předźěłaja, žane přidatne nastajenje njetrjeba.",
+        aiProviderLabel: "KI-poskićowar",
+        aiProviderHelp: "(Wubjer KI-poskićowarja za tutoho bota)",
+        loadingProviders: "Poskićowarjo so začitaja...",
+        retry: "Hišće raz spytać",
+        noProvidersConfigured:
+            "Žane KI-poskićowarjo konfigurowani. Prošu nastaj najprjedy poskićowarjow w administraciskej API.",
+        errorNotInitialized: "Bot-API-słužba njeje inicializowana",
+        errorNoProviders: "Žane KI-poskićowarjo k dispoziciji. Prošu konfiguruj poskićowarjow w administraciskej API.",
+        errorLoadFailed: "KI-poskićowarjo njeda so začitać",
+        providerVisionHeading: "KI-poskićowar a widźenje",
+        chatInstructions: "Chat-pokiwy",
+        chatInstructionsHelp: "(Što měł bot rjec a kak měł komunikować)",
+        chatInstructionsPlaceholder:
+            "Přikład: Sy přećelny witanjowy bot z mjenom 'WelcomeBot'. Twoja nadawka je nowych wopytowarjow w lobby witać. Budź wjesoły a přećelny. Wotmołw na prašenja wo rumje. Njejespytuj samsne witanje pola někoho, koho sy dźensa hižo witał.",
+        noChatInstructions: "Žane chat-pokiwy nastajene",
+    },
     //menu: "meni wočinić/začinić",
     calendar: "kalender wočinić/začinić",
     subtitle: {

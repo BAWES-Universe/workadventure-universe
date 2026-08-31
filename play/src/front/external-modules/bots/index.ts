@@ -1,9 +1,9 @@
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
 import type { SvelteComponent } from "svelte";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
-import { mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
+import { mapEditorModeStore, mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
@@ -20,6 +20,58 @@ let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeMapEditor: (() => void) | null = null;
 let unsubscribeMapEditorVisibility: (() => void) | null = null;
 let unsubscribeSelectedTool: (() => void) | null = null;
+
+// Exposed for UI (e.g. the Tools menu): true once the bot module is initialized
+export const botEditorAvailableStore = writable(false);
+
+/**
+ * Open the bot editor from an external UI entry point (e.g. the Tools menu).
+ * No-op with a warning if the bot module hasn't been initialized for this world.
+ *
+ * The bot editor is a tool inside the map editor mode's sidebar, so if the map
+ * editor mode isn't active yet we activate it first (same as the "Map editor"
+ * menu button) and wait for the sidebar to be in the DOM before opening — the
+ * module's own retry pattern, since the sidebar renders asynchronously.
+ */
+export function openBotEditorFromMenu(): void {
+    if (!_extensionOptions) {
+        console.warn("[Bot Extension] Bot editor requested from menu but module is not initialized");
+        return;
+    }
+
+    // The bot editor is a tool inside the map editor mode's sidebar. If the mode
+    // isn't active yet, activate it (same as the "Map editor" menu button) and
+    // wait for the sidebar to be in the DOM before opening — the module's own
+    // retry pattern, since the sidebar renders asynchronously.
+    if (!get(mapEditorModeStore)) {
+        mapEditorModeStore.switchMode(true);
+    }
+
+    const sidebarReady = () => {
+        const sidebar = document.querySelector(".side-bar-container");
+        return sidebar !== null && get(mapEditorActivated);
+    };
+
+    if (sidebarReady()) {
+        openBotEditor();
+        return;
+    }
+
+    // Single polling chain with a wall-clock deadline. A shared counter across
+    // concurrent chains would burn the retry budget ~3x faster than intended
+    // (and leftover chains could re-open the editor after a success).
+    const deadline = Date.now() + 6000; // ~20 × 300ms polling budget
+    const tryOpen = () => {
+        if (sidebarReady()) {
+            openBotEditor();
+        } else if (Date.now() < deadline) {
+            setTimeout(tryOpen, 300);
+        } else {
+            console.warn("[Bot Extension] Bot editor: sidebar did not appear after map editor activation");
+        }
+    };
+    tryOpen();
+}
 
 let _extensionOptions: ExtensionModuleOptions | null = null;
 let toolButtonElement: HTMLElement | null = null;
@@ -581,6 +633,10 @@ function setupBotEditor(options: ExtensionModuleOptions) {
                 roomChangeTriggerStore.update((n) => n + 1);
             });
         }
+
+        // The bot editor becomes available only after setup succeeds for an
+        // authenticated user (init sets the store from here, not earlier).
+        botEditorAvailableStore.set(true);
     } catch (e) {
         console.warn("[Bot Editor] Failed to initialize API service:", e);
     }
@@ -1302,6 +1358,10 @@ const botExtensionModule: ExtensionModule = {
             console.warn("Error deactivating bot editor tool in destroy:", e);
         }
         sidebarContentElement = null;
+        // The editor is no longer available after destroy — stale menu entries
+        // must not remain clickable. _extensionOptions is intentionally NOT
+        // cleared: init() needs the previous roomId for room-change detection.
+        botEditorAvailableStore.set(false);
         // Don't clear _extensionOptions - we need it to detect room changes
         // It will be updated in init() with the new roomId
     },
