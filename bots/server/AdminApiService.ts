@@ -393,6 +393,9 @@ export class AdminApiService {
         temperature: number;
         maxTokens: number;
         supportsStreaming: boolean;
+        supportsVision: boolean | null;
+        visionModel: string | null;
+        defaultVision: boolean;
         settings?: Record<string, any>;
     } | null> {
         if (!this.isConfigured()) {
@@ -434,7 +437,11 @@ export class AdminApiService {
         name: string;
         type: string;
         enabled: boolean;
+        model: string;
         supportsStreaming: boolean;
+        supportsVision: boolean | null;
+        visionModel: string | null;
+        defaultVision: boolean;
     }>> {
         if (!this.isConfigured()) {
             return [];

@@ -9,6 +9,28 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     calendar: "Apri / Chiudi calendario",
     todoList: "Apri / Chiudi lista delle cose da fare",
     mapEditor: "Apri / Chiudi gestore delle mappe",
+    botEditor: "Editor dei bot",
+    botEditorModule: {
+        visionMarker: "👁 visione",
+        providerDisabled: "(Disabilitato)",
+        visionHelper:
+            "I provider che possono vedere le immagini sono contrassegnati con 👁 — le immagini inviate dai giocatori vengono elaborate automaticamente, senza configurazione aggiuntiva.",
+        aiProviderLabel: "Provider IA",
+        aiProviderHelp: "(Seleziona il provider IA per questo bot)",
+        loadingProviders: "Caricamento provider...",
+        retry: "Riprova",
+        noProvidersConfigured:
+            "Nessun provider IA configurato. Configura prima i provider nell'API di amministrazione.",
+        errorNotInitialized: "Servizio API del bot non inizializzato",
+        errorNoProviders: "Nessun provider IA disponibile. Configura i provider nell'API di amministrazione.",
+        errorLoadFailed: "Impossibile caricare i provider IA",
+        providerVisionHeading: "Provider IA e visione",
+        chatInstructions: "Istruzioni di chat",
+        chatInstructionsHelp: "(Cosa deve dire il bot e come deve comunicare)",
+        chatInstructionsPlaceholder:
+            "Esempio: sei un bot di benvenuto amichevole chiamato 'WelcomeBot'. Il tuo compito è accogliere i nuovi visitatori nell'atrio. Sii allegro e disponibile. Rispondi alle domande sullo spazio. Non ripetere lo stesso saluto a qualcuno che hai già salutato oggi.",
+        noChatInstructions: "Nessuna istruzione di chat impostata",
+    },
     mapEditorMobileLocked: "L'editor delle mappe è bloccato in modalità mobile",
     mapEditorLocked: "L'editor delle mappe è bloccato 🔐",
     subtitle: {

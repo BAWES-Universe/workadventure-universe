@@ -7,6 +7,27 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     //disableMegaphone: "メガホンの無効化",
     //menu: "メニューの表示／非表示",
     mapEditor: "マップエディターの表示／非表示",
+    botEditor: "ボットエディター",
+    botEditorModule: {
+        visionMarker: "👁 ビジョン",
+        providerDisabled: "(無効)",
+        visionHelper:
+            "画像を見ることができるプロバイダーには 👁 マークが付いています — プレイヤーが送信した画像は自動的に処理され、追加設定は不要です。",
+        aiProviderLabel: "AIプロバイダー",
+        aiProviderHelp: "(このボットのAIプロバイダーを選択)",
+        loadingProviders: "プロバイダーを読み込み中...",
+        retry: "再試行",
+        noProvidersConfigured: "AIプロバイダーが設定されていません。まず管理APIでプロバイダーを設定してください。",
+        errorNotInitialized: "ボットAPIサービスが初期化されていません",
+        errorNoProviders: "利用可能なAIプロバイダーがありません。管理APIでプロバイダーを設定してください。",
+        errorLoadFailed: "AIプロバイダーの読み込みに失敗しました",
+        providerVisionHeading: "AIプロバイダーとビジョン",
+        chatInstructions: "チャット指示",
+        chatInstructionsHelp: "(ボットが何を言うべきか、どのようにコミュニケーションするか)",
+        chatInstructionsPlaceholder:
+            "例: あなたは「WelcomeBot」という名前のフレンドリーな挨拶ボットです。あなたの仕事はロビーに新しく来た訪問者を歓迎することです。明るく親切に。スペースについての質問に答えてください。今日すでに挨拶した相手に同じ挨拶を繰り返さないでください。",
+        noChatInstructions: "チャット指示が設定されていません",
+    },
     mapEditorMobileLocked: "マップエディタ―はモバイルモードではロックされています",
     mapEditorLocked: "マップエディターはロックされています 🔐",
     subtitle: {

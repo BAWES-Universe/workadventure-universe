@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
+    import LL from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
@@ -10,7 +11,8 @@
     import { botApiService } from "../services/BotApiService";
     import BotTexturePicker from "./BotTexturePicker.svelte";
     import BotBehaviorEditor from "./BotBehaviorEditor.svelte";
-    import BotInstructionsEditor from "./BotInstructionsEditor.svelte";
+    import BotProviderEditor from "./BotProviderEditor.svelte";
+    import BotChatInstructionsEditor from "./BotChatInstructionsEditor.svelte";
     import BotMcpServersEditor from "./BotMcpServersEditor.svelte";
     import { IconChevronLeft } from "@wa-icons";
 
@@ -32,7 +34,8 @@
     let editingDescription = false;
     let editingTexture = false;
     let editingBehavior = false;
-    let editingInstructions = false;
+    let editingProvider = false;
+    let editingChatInstructions = false;
 
     function handleTextureKeydown(e: KeyboardEvent) {
         if (e.key === "Escape") {
@@ -543,36 +546,51 @@
                     {/if}
                 </div>
 
-                <!-- Instructions -->
+                <!-- AI Provider & Vision -->
                 <div>
                     <div class="flex items-center gap-2 mb-3">
-                        <h3 class="text-base text-white/80 normal-case">Instructions</h3>
+                        <h3 class="text-base text-white/80 normal-case">
+                            {$LL.actionbar.botEditorModule.providerVisionHeading()}
+                        </h3>
                         <button
                             class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
-                            on:click={() => (editingInstructions = !editingInstructions)}
+                            on:click={() => (editingProvider = !editingProvider)}
                         >
-                            {editingInstructions ? "Close" : "Edit"}
+                            {editingProvider ? $LL.actionbar.close() : $LL.actionbar.edit()}
                         </button>
                     </div>
-                    {#if editingInstructions}
+                    {#if editingProvider}
                         <div class="p-4 bg-white/5 rounded-lg border border-white/20">
-                            <BotInstructionsEditor bind:bot={currentBot} on:change={() => autoSave()} />
+                            <BotProviderEditor bind:bot={currentBot} on:change={() => autoSave()} />
                         </div>
                     {:else}
-                        <div class="space-y-4">
-                            <div>
-                                <p class="text-sm text-white/80 font-semibold mb-2">AI Provider</p>
-                                <p class="text-sm text-white/70">
-                                    {providerDisplayName}
-                                </p>
-                            </div>
-                            <div>
-                                <p class="text-sm text-white/80 font-semibold mb-2">Chat instructions</p>
-                                <p class="text-sm text-white/70 whitespace-pre-wrap">
-                                    {currentBot.chatInstructions || "No chat instructions set"}
-                                </p>
-                            </div>
+                        <div class="space-y-2">
+                            <p class="text-sm text-white/70">{providerDisplayName}</p>
                         </div>
+                    {/if}
+                </div>
+
+                <!-- Chat instructions -->
+                <div>
+                    <div class="flex items-center gap-2 mb-3">
+                        <h3 class="text-base text-white/80 normal-case">
+                            {$LL.actionbar.botEditorModule.chatInstructions()}
+                        </h3>
+                        <button
+                            class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 hover:bg-blue-500/10 rounded transition-colors"
+                            on:click={() => (editingChatInstructions = !editingChatInstructions)}
+                        >
+                            {editingChatInstructions ? $LL.actionbar.close() : $LL.actionbar.edit()}
+                        </button>
+                    </div>
+                    {#if editingChatInstructions}
+                        <div class="p-4 bg-white/5 rounded-lg border border-white/20">
+                            <BotChatInstructionsEditor bind:bot={currentBot} on:change={() => autoSave()} />
+                        </div>
+                    {:else}
+                        <p class="text-sm text-white/70 whitespace-pre-wrap">
+                            {currentBot.chatInstructions || $LL.actionbar.botEditorModule.noChatInstructions()}
+                        </p>
                     {/if}
                 </div>
 

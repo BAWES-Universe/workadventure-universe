@@ -25,6 +25,28 @@ const actionbar: BaseTranslation = {
     allSettings: "Todas as configurações",
     globalMessage: "Enviar mensagem global",
     mapEditor: "Editor de mapa",
+    botEditor: "Editor de bots",
+    botEditorModule: {
+        visionMarker: "👁 visão",
+        providerDisabled: "(Desabilitado)",
+        visionHelper:
+            "Provedores que podem ver imagens são marcados com 👁 — imagens enviadas por jogadores são processadas automaticamente, sem configuração adicional.",
+        aiProviderLabel: "Provedor de IA",
+        aiProviderHelp: "(Selecione o provedor de IA para este bot)",
+        loadingProviders: "Carregando provedores...",
+        retry: "Tentar novamente",
+        noProvidersConfigured:
+            "Nenhum provedor de IA configurado. Configure os provedores na API de administração primeiro.",
+        errorNotInitialized: "Serviço de API do bot não inicializado",
+        errorNoProviders: "Nenhum provedor de IA disponível. Configure os provedores na API de administração.",
+        errorLoadFailed: "Falha ao carregar provedores de IA",
+        providerVisionHeading: "Provedor de IA e visão",
+        chatInstructions: "Instruções de chat",
+        chatInstructionsHelp: "(O que o bot deve dizer e como deve se comunicar)",
+        chatInstructionsPlaceholder:
+            "Exemplo: você é um bot de boas-vindas amigável chamado 'WelcomeBot'. Seu trabalho é receber novos visitantes no lobby. Seja alegre e prestativo. Responda perguntas sobre o espaço. Não repita a mesma saudação para alguém que você já saudou hoje.",
+        noChatInstructions: "Nenhuma instrução de chat definida",
+    },
     mapEditorMobileLocked: "Editor de mapa está bloqueado no modo móvel",
     mapEditorLocked: "Editor de mapa está bloqueado 🔐",
     app: "Aplicações de terceiros",

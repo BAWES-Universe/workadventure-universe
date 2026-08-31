@@ -77,6 +77,7 @@ export interface QueuedMessage {
     url?: string;
     mediaType?: string;
     mimeType?: string;
+    galleryUrls?: string[];
     timestamp: number;
     /** 'answer' | 'queue' — set when queued via interruption classification */
     classification?: string;
@@ -111,7 +112,8 @@ export abstract class BaseBehavior {
         playerId: number,
         playerMessage: string,
         botId: string,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        images?: string[]
     ): Promise<void>;
     
     // Engagement tracking - when players are in conversation with the bot
@@ -1395,6 +1397,8 @@ export abstract class BaseBehavior {
         tokenUsage?: { prompt: number; completion: number; total: number };
         responseId: string;
         debugLabel: string;
+        /** Image URLs to carry into the regenerated attempt (vision context must survive repetition retries). */
+        images?: string[];
     }): Promise<{ processed: ProcessedResponse; processedMessage: string; responseId: string }> {
         const {
             botId,
@@ -1412,6 +1416,7 @@ export abstract class BaseBehavior {
             tokenUsage,
             responseId: initialResponseId,
             debugLabel,
+            images,
         } = params;
 
         // Self-contained guard: callers (Idle/Social/Patrol) early-return when
@@ -1460,7 +1465,8 @@ export abstract class BaseBehavior {
                     context,
                     this.bot,
                     this.adminApiService,
-                    abortSignal
+                    abortSignal,
+                    images
                 )) {
                     if (chunk.reset) {
                         // Tool calls overrode the streamed ack — finalize the current
@@ -1671,14 +1677,15 @@ export abstract class BaseBehavior {
         originalMessage: string,
         augmentedMessage: string,
         botId: string,
-        generator: (signal?: AbortSignal) => Promise<void>,
+        generator: (signal?: AbortSignal, images?: string[]) => Promise<void>,
         url?: string,
         mediaType?: string,
-        mimeType?: string
+        mimeType?: string,
+        galleryUrls?: string[]
     ): Promise<'generated' | 'queued' | 'cancelled'> {
         this.pruneStaleConversations();
 
-        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType);
+        const action = await this.handleInterruption(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
         if (action === 'queued' || action === 'cancelled') {
             if (action === 'cancelled') {
                 this.bot?.stopTyping(spaceName);
@@ -1700,7 +1707,12 @@ export abstract class BaseBehavior {
         const abortSignal = this.activeConversations.get(senderId)?.abortController?.signal;
 
         try {
-            await generator(abortSignal);
+            // Image URLs from the attachment(s) — sent as multipart content when the
+            // main model supports vision, described via the fallback model otherwise.
+            // Inside the try so any throw still reaches the finally that calls
+            // finishGeneration (a stuck isGenerating would wedge this player's queue).
+            const imageUrls = await this.collectImageUrls(url, mediaType, mimeType, galleryUrls);
+            await generator(abortSignal, imageUrls);
         } catch (error) {
             // A stale generation means cancel/update already aborted this stream
             // and sent its own acknowledgment. Do not add a confusing error bubble.
@@ -1765,10 +1777,11 @@ export abstract class BaseBehavior {
             queued.originalMessage,
             queued.message,
             botId,
-            (signal) => this.generateAIResponseStream(state.spaceName, senderId, queued.message, botId, signal),
+            (signal, images) => this.generateAIResponseStream(state.spaceName, senderId, queued.message, botId, signal, images),
             queued.url,
             queued.mediaType,
-            queued.mimeType
+            queued.mimeType,
+            queued.galleryUrls
         );
     }
 
@@ -1782,7 +1795,8 @@ export abstract class BaseBehavior {
         augmentedMessage: string,
         url?: string,
         mediaType?: string,
-        mimeType?: string
+        mimeType?: string,
+        galleryUrls?: string[]
     ): Promise<'queued' | 'cancelled' | 'proceed'> {
         const state = this.activeConversations.get(senderId);
         if (!state || !state.isGenerating) return 'proceed';
@@ -1794,14 +1808,14 @@ export abstract class BaseBehavior {
         try {
             result = await this.classifyInterruption(currentTask, originalMessage);
         } catch {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
             return 'queued';
         }
 
         // Guard against the generation advancing during the classifyInterruption await
         const currentState = this.activeConversations.get(senderId);
         if (!currentState || currentState.generation !== interruptedGen) {
-            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType);
+            await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls);
             return 'queued';
         }
 
@@ -1849,7 +1863,7 @@ export abstract class BaseBehavior {
                     currentState.pendingAnswers.push(result.message);
                 } else {
                     // No quick answer produced — fall back to queueing so it isn't lost.
-                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, 'answer');
+                    await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'answer');
                 }
                 return 'queued';
             }
@@ -1859,7 +1873,7 @@ export abstract class BaseBehavior {
                 if (result.message) {
                     this.sendStatusAck(currentState.spaceName, result.message);
                 }
-                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, 'queue');
+                await this.enqueueMessage(senderId, originalMessage, augmentedMessage, url, mediaType, mimeType, galleryUrls, 'queue');
                 return 'queued';
             }
         }
@@ -1885,6 +1899,7 @@ export abstract class BaseBehavior {
         url?: string,
         mediaType?: string,
         mimeType?: string,
+        galleryUrls?: string[],
         classification?: string
     ): Promise<void> {
         const state = this.activeConversations.get(senderId);
@@ -1900,7 +1915,7 @@ export abstract class BaseBehavior {
             return;
         }
 
-        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, classification, timestamp: Date.now() });
+        state.messageQueue.push({ originalMessage, message, url, mediaType, mimeType, galleryUrls, classification, timestamp: Date.now() });
     }
 
     /**
@@ -1976,6 +1991,64 @@ The person you're talking to just sent several more messages while you were stil
         return mimeMap[ext];
     }
 
+    /**
+     * Collect image URLs from a message's attachments (primary upload + gallery).
+     * Used to send images as multipart content to vision-capable models, or to
+     * the vision fallback model when the main model is text-only.
+     */
+    protected async collectImageUrls(
+        url: string | undefined,
+        mediaType: string | undefined,
+        mimeType: string | undefined,
+        galleryUrls: string[] | undefined
+    ): Promise<string[]> {
+        // Single hoisted import — every URL handed to the vision provider (as
+        // image_url blocks) must first pass the same SSRF-safe destination
+        // validation as fetched files, including URLs recognized by extension
+        // (which previously skipped validation on the fast path). Extension
+        // inference then wins (cheap, sync); only extension-less URLs get a
+        // Content-Type sniff (SSRF-safe HEAD, 5s cap, in parallel) so Unsplash
+        // / signed-S3 gallery images are still collected for vision instead of
+        // silently dropping out of the vision list.
+        const { FileParser } = await import('../services/FileParser');
+        const classify = async (u: string): Promise<{ safe: boolean; mime?: string }> => {
+            try {
+                await FileParser.validateUrl(u); // throws on unsafe destination
+                const byExt = this.inferMimeFromUrl(u);
+                if (byExt) return { safe: true, mime: byExt };
+                try {
+                    return { safe: true, mime: (await FileParser.sniffContentType(u)) || undefined };
+                } catch {
+                    return { safe: true, mime: undefined };
+                }
+            } catch {
+                return { safe: false }; // unsafe destination — never reach the provider
+            }
+        };
+
+        // Primary MIME resolution: classify the URL FIRST — its actual
+        // extension/content decides whether this is an image. The passed-in
+        // mimeType is only a fallback when classification can't determine a
+        // type, so a generic application/octet-stream label can't drop a real
+        // image from vision. Classification also validates the primary URL even
+        // when mimeType was supplied (it previously skipped validation).
+        const primary = url ? await classify(url) : undefined;
+        const primaryMime = primary?.mime || mimeType || undefined;
+        const candidates: Array<{ u: string; m: string | undefined; primary: boolean; safe: boolean }> = [];
+        if (url && primary?.safe !== false) {
+            candidates.push({ u: url, m: primaryMime, primary: true, safe: true });
+        }
+        const galleryResults = await Promise.all((galleryUrls || []).map(classify));
+        (galleryUrls || []).forEach((g, i) => {
+            candidates.push({ u: g, m: galleryResults[i].mime, primary: false, safe: galleryResults[i].safe });
+        });
+        const seen = new Set<string>();
+        return candidates
+            .filter((c) => c.safe && ((c.primary && mediaType === 'image') || (c.m && c.m.startsWith('image/'))))
+            .filter((c) => (seen.has(c.u) ? false : (seen.add(c.u), true)))
+            .map((c) => c.u);
+    }
+
     protected async formatParsedAttachment(
         message: string,
         url: string,
@@ -1983,13 +2056,19 @@ The person you're talking to just sent several more messages while you were stil
         mediaType?: string,
         galleryUrls?: string[]
     ): Promise<string> {
-        const allUrls = [url, ...(galleryUrls || [])];
+        const allUrls = [...new Set([url, ...(galleryUrls || [])])];
         let augmentedMessage = message;
 
         // Hoist dynamic import and load all files in parallel
         const { FileParser } = await import('../services/FileParser');
         const results = await Promise.allSettled(allUrls.map(async (fileUrl) => {
-            const fileMime = this.inferMimeFromUrl(fileUrl) || mimeType || 'application/octet-stream';
+            // Extension match wins; otherwise sniff Content-Type (SSRF-validated,
+            // 5s cap) so extension-less URLs (Unsplash, signed S3) route to image
+            // handling instead of the web-page bucket or the primary's mime.
+            let fileMime = this.inferMimeFromUrl(fileUrl);
+            if (!fileMime) {
+                fileMime = (await FileParser.sniffContentType(fileUrl)) || mimeType || 'application/octet-stream';
+            }
             return FileParser.parseFile(fileUrl, fileMime);
         }));
 
