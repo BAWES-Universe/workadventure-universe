@@ -285,6 +285,21 @@ export class AIService {
                     );
                     if (description) {
                         message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
+                        // Persist the description into conversation history so
+                        // follow-ups ("what did you see in that image?") keep
+                        // the context — behaviors stored the pre-description
+                        // original message, and without this the description
+                        // only lives in the current turn's prompt.
+                        try {
+                            this.conversationMemory?.appendVisionDescription(
+                                botId,
+                                playerId,
+                                description,
+                                spaceName
+                            );
+                        } catch (memoryError) {
+                            console.error('[AIService] Failed to persist vision description to memory:', memoryError);
+                        }
                     }
                     // Images are NOT passed to a text-only main model (it would 400 on
                     // image_url blocks). The URL/description stays in the message text.
