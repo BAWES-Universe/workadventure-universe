@@ -64,7 +64,13 @@ export function openBotEditorFromMenu(): void {
     // concurrent chains would burn the retry budget ~3x faster than intended
     // (and leftover chains could re-open the editor after a success).
     const deadline = Date.now() + 6000; // ~20 × 300ms polling budget
+    // Capture the lifecycle generation: if the extension is destroyed while we
+    // poll (room navigation), the chain must die. Without this, a stale poll
+    // started in the previous room would call openBotEditor() the moment the
+    // new room's sidebar renders — opening the editor without user intent.
+    const lifecycle = botEditorLifecycle;
     const tryOpen = () => {
+        if (lifecycle !== botEditorLifecycle) return; // stale — destroyed mid-poll
         if (sidebarReady()) {
             openBotEditor();
         } else if (Date.now() < deadline) {
