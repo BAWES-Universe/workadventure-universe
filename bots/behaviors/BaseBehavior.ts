@@ -2002,31 +2002,49 @@ The person you're talking to just sent several more messages while you were stil
         mimeType: string | undefined,
         galleryUrls: string[] | undefined
     ): Promise<string[]> {
-        // Extension inference wins (cheap, sync); only extension-less URLs get a
-        // Content-Type sniff (SSRF-safe HEAD, 5s cap, in parallel) so Unsplash /
-        // signed-S3 gallery images are still collected for vision instead of
+        // Single hoisted import — every URL handed to the vision provider (as
+        // image_url blocks) must first pass the same SSRF-safe destination
+        // validation as fetched files, including URLs recognized by extension
+        // (which previously skipped validation on the fast path). Extension
+        // inference then wins (cheap, sync); only extension-less URLs get a
+        // Content-Type sniff (SSRF-safe HEAD, 5s cap, in parallel) so Unsplash
+        // / signed-S3 gallery images are still collected for vision instead of
         // silently dropping out of the vision list.
-        const classify = async (u: string): Promise<string | undefined> => {
-            const byExt = this.inferMimeFromUrl(u);
-            if (byExt) return byExt;
+        const { FileParser } = await import('../services/FileParser');
+        const classify = async (u: string): Promise<{ safe: boolean; mime?: string }> => {
             try {
-                const { FileParser } = await import('../services/FileParser');
-                return (await FileParser.sniffContentType(u)) || undefined;
+                await FileParser.validateUrl(u); // throws on unsafe destination
+                const byExt = this.inferMimeFromUrl(u);
+                if (byExt) return { safe: true, mime: byExt };
+                try {
+                    return { safe: true, mime: (await FileParser.sniffContentType(u)) || undefined };
+                } catch {
+                    return { safe: true, mime: undefined };
+                }
             } catch {
-                return undefined;
+                return { safe: false }; // unsafe destination — never reach the provider
             }
         };
 
-        const primaryMime = mimeType || (url ? await classify(url) : undefined);
-        const candidates: Array<{ u: string; m: string | undefined; primary: boolean }> = [];
-        if (url) candidates.push({ u: url, m: primaryMime, primary: true });
-        const galleryMimes = await Promise.all((galleryUrls || []).map(classify));
+        // Primary MIME resolution: classify the URL FIRST — its actual
+        // extension/content decides whether this is an image. The passed-in
+        // mimeType is only a fallback when classification can't determine a
+        // type, so a generic application/octet-stream label can't drop a real
+        // image from vision. Classification also validates the primary URL even
+        // when mimeType was supplied (it previously skipped validation).
+        const primary = url ? await classify(url) : undefined;
+        const primaryMime = primary?.mime || mimeType || undefined;
+        const candidates: Array<{ u: string; m: string | undefined; primary: boolean; safe: boolean }> = [];
+        if (url && primary?.safe !== false) {
+            candidates.push({ u: url, m: primaryMime, primary: true, safe: true });
+        }
+        const galleryResults = await Promise.all((galleryUrls || []).map(classify));
         (galleryUrls || []).forEach((g, i) => {
-            candidates.push({ u: g, m: galleryMimes[i], primary: false });
+            candidates.push({ u: g, m: galleryResults[i].mime, primary: false, safe: galleryResults[i].safe });
         });
         const seen = new Set<string>();
         return candidates
-            .filter((c) => (c.primary && mediaType === 'image') || (c.m && c.m.startsWith('image/')))
+            .filter((c) => c.safe && ((c.primary && mediaType === 'image') || (c.m && c.m.startsWith('image/'))))
             .filter((c) => (seen.has(c.u) ? false : (seen.add(c.u), true)))
             .map((c) => c.u);
     }

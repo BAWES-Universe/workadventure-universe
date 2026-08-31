@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { BaseBehavior } from '../behaviors/BaseBehavior';
 import type { BehaviorConfig } from '../behaviors/BaseBehavior';
+import { FileParser } from '../services/FileParser';
 
 // Mock FileParser so extension-less gallery URLs classify via sniff without
 // hitting the network in unit tests.
@@ -53,6 +54,14 @@ describe('collectImageUrls — vision attachment collection', () => {
 
     beforeEach(() => {
         behavior = new TestableBehavior();
+        (FileParser.validateUrl as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+        (FileParser.sniffContentType as ReturnType<typeof vi.fn>).mockImplementation(
+            async (url: string) => {
+                if (url.includes('photo-') || url.includes('unsplash')) return 'image/jpeg';
+                if (url.includes('s3')) return 'image/png';
+                return null;
+            }
+        );
     });
 
     it('collects a single uploaded image', async () => {
@@ -168,5 +177,68 @@ describe('collectImageUrls — vision attachment collection', () => {
                 'https://e.com/x.pdf',
             ])
         ).toEqual([]);
+    });
+
+    it('excludes an unsafe destination even when the extension says image (SSRF)', async () => {
+        // validateUrl throws for internal/private destinations — the URL must
+        // NOT reach the vision provider as an image_url block.
+        (FileParser.validateUrl as ReturnType<typeof vi.fn>).mockRejectedValue(
+            new Error('blocked: private IP')
+        );
+        const urls = await behavior.testCollectImageUrls(
+            'http://169.254.169.254/latest/meta.png',
+            'image',
+            'image/png'
+        );
+        expect(urls).toEqual([]);
+    });
+
+    it('excludes an unsafe primary URL even when mimeType was supplied (SSRF)', async () => {
+        // Primary URLs with a provided mimeType used to skip classification
+        // entirely — the SSRF check must still apply.
+        (FileParser.validateUrl as ReturnType<typeof vi.fn>).mockRejectedValue(
+            new Error('blocked: private IP')
+        );
+        const urls = await behavior.testCollectImageUrls(
+            'http://10.0.0.5/internal.png',
+            undefined,
+            'image/png'
+        );
+        expect(urls).toEqual([]);
+    });
+
+    it('excludes unsafe gallery URLs while keeping safe ones (SSRF)', async () => {
+        (FileParser.validateUrl as ReturnType<typeof vi.fn>)
+            .mockResolvedValueOnce(undefined) // primary a.png: safe
+            .mockRejectedValueOnce(new Error('blocked')) // gallery internal.png
+            .mockResolvedValueOnce(undefined); // gallery b.jpg: safe
+        const urls = await behavior.testCollectImageUrls(
+            'https://cdn.example.com/a.png',
+            'image',
+            'image/png',
+            ['http://192.168.1.1/internal.png', 'https://cdn.example.com/b.jpg']
+        );
+        expect(urls).toEqual(['https://cdn.example.com/a.png', 'https://cdn.example.com/b.jpg']);
+    });
+
+    it('classifies the primary URL first — octet-stream mimeType does not drop a real image', async () => {
+        // Extension-less image with generic application/octet-stream MIME must
+        // be retained: classification (sniff) wins over the supplied mimeType.
+        const urls = await behavior.testCollectImageUrls(
+            'https://img.unsplash.com/photo-99999',
+            undefined,
+            'application/octet-stream'
+        );
+        expect(urls).toEqual(['https://img.unsplash.com/photo-99999']);
+    });
+
+    it('falls back to the supplied mimeType when classification yields nothing', async () => {
+        // Sniff returns null (unknown) → supplied mimeType still applies.
+        const urls = await behavior.testCollectImageUrls(
+            'https://example.com/unknown-image',
+            undefined,
+            'image/png'
+        );
+        expect(urls).toEqual(['https://example.com/unknown-image']);
     });
 });
