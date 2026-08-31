@@ -313,6 +313,22 @@ export class PersistentMemory extends ConversationMemory {
     }
 
     /**
+     * Append a vision-description note to the last person message AND persist
+     * the annotated history (debounced), so the description survives restarts.
+     * Deliberately side-effect free in the base class — here we only add the
+     * debounced save on top.
+     */
+    override appendVisionDescription(
+        botId: string,
+        playerId: number,
+        description: string,
+        spaceName?: string
+    ): void {
+        super.appendVisionDescription(botId, playerId, description, spaceName);
+        this.scheduleDebouncedSave(botId, playerId);
+    }
+
+    /**
      * Update emotions with immediate persistence
      */
     updateEmotions(
