@@ -503,6 +503,22 @@ export class FileParser {
     }
 
     private static isPrivateIp(ip: string): boolean {
+        // IPv4-mapped IPv6 (RFC 4291 §2.2.3) — ::ffff:a.b.c.d and its canonical
+        // hex form ::ffff:xxxx:xxxx (e.g. ::ffff:7f00:1 = 127.0.0.1) embed an
+        // IPv4 address that must be evaluated with the same private-range
+        // checks below. WHATWG URL parsing canonicalizes the dotted form into
+        // hex groups, so both shapes must be decoded before the existing tests.
+        const mapped = ip.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-f]{1,4}:[0-9a-f]{1,4})$/i);
+        if (mapped) {
+            let embedded: string;
+            if (mapped[1].includes('.')) {
+                embedded = mapped[1];
+            } else {
+                const [hi, lo] = mapped[1].split(':').map((h) => parseInt(h, 16));
+                embedded = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+            }
+            return FileParser.isPrivateIp(embedded);
+        }
         if (/^127\.\d+\.\d+\.\d+$/.test(ip)) return true;
         if (ip === '0.0.0.0' || ip === '::1' || /^::$/.test(ip)) return true;
         if (/^10\.\d+\.\d+\.\d+$/.test(ip)) return true;
