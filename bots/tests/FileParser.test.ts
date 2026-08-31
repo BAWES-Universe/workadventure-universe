@@ -405,4 +405,33 @@ describe('FileParser', () => {
             expect(globalThis.fetch).not.toHaveBeenCalled();
         });
     });
+
+    describe('validateUrl — SSRF guard', () => {
+        it('rejects IPv4-mapped IPv6 loopback in canonical hex form (::ffff:7f00:1)', async () => {
+            // RFC 4291 §2.2.3: ::ffff:7f00:1 is 127.0.0.1 in mapped form —
+            // must be rejected like the plain loopback it embeds.
+            await expect(FileParser.validateUrl('http://[::ffff:7f00:1]/x')).rejects.toThrow(/private/i);
+            expect(globalThis.fetch).not.toHaveBeenCalled();
+        });
+
+        it('rejects IPv4-mapped IPv6 in dotted form (::ffff:127.0.0.1)', async () => {
+            await expect(FileParser.validateUrl('http://[::ffff:127.0.0.1]/x')).rejects.toThrow(/private/i);
+            expect(globalThis.fetch).not.toHaveBeenCalled();
+        });
+
+        it('rejects IPv4-mapped IPv6 of a private 10.x address (::ffff:a00:1)', async () => {
+            await expect(FileParser.validateUrl('http://[::ffff:a00:1]/x')).rejects.toThrow(/private/i);
+            expect(globalThis.fetch).not.toHaveBeenCalled();
+        });
+
+        it('rejects IPv4-mapped IPv6 of the metadata address (::ffff:a9fe:a9fe)', async () => {
+            await expect(FileParser.validateUrl('http://[::ffff:a9fe:a9fe]/latest/meta-data/')).rejects.toThrow(/private/i);
+            expect(globalThis.fetch).not.toHaveBeenCalled();
+        });
+
+        it('allows a public IPv6 address', async () => {
+            // Must not throw — public IPv6 literals are safe destinations.
+            await expect(FileParser.validateUrl('http://[2606:4700:4700::1111]/')).resolves.toBeUndefined();
+        });
+    });
 });
