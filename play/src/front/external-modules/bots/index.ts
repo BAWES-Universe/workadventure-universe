@@ -20,6 +20,9 @@ let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeMapEditor: (() => void) | null = null;
 let unsubscribeMapEditorVisibility: (() => void) | null = null;
 let unsubscribeSelectedTool: (() => void) | null = null;
+// Lifecycle generation: bumped in destroy() so delayed setupBotEditor callbacks
+// scheduled before a navigation can never run against the previous room's state.
+let botEditorLifecycle = 0;
 
 // Exposed for UI (e.g. the Tools menu): true once the bot module is initialized
 export const botEditorAvailableStore = writable(false);
@@ -1175,7 +1178,10 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
         if (connected) {
             // Only set up bot editor UI for authenticated users
             if (localUserStore.isLogged()) {
+                const lifecycle = botEditorLifecycle;
                 setTimeout(() => {
+                    // Stale if the extension was destroyed while we waited (room navigation).
+                    if (lifecycle !== botEditorLifecycle) return;
                     setupBotEditor(options);
                 }, 1000);
             }
@@ -1196,7 +1202,10 @@ function initializeBotEditor(options: ExtensionModuleOptions) {
     if (alreadyConnected) {
         if (localUserStore.isLogged()) {
             console.log("[Bot Extension] User already connected, setting up bot editor");
+            const lifecycle = botEditorLifecycle;
             setTimeout(() => {
+                // Stale if the extension was destroyed while we waited (room navigation).
+                if (lifecycle !== botEditorLifecycle) return;
                 setupBotEditor(options);
             }, 1000);
         }
@@ -1256,7 +1265,10 @@ const botExtensionModule: ExtensionModule = {
             const alreadyConnected = get(userIsConnected);
             if (alreadyConnected) {
                 console.log("[Bot Extension] User already connected, ensuring bot editor is set up for new room");
+                const lifecycle = botEditorLifecycle;
                 setTimeout(() => {
+                    // Stale if the extension was destroyed while we waited (room navigation).
+                    if (lifecycle !== botEditorLifecycle) return;
                     setupBotEditor(options);
 
                     // Wait a bit longer to ensure setupBotEditor has fully initialized subscriptions
@@ -1362,6 +1374,10 @@ const botExtensionModule: ExtensionModule = {
         // must not remain clickable. _extensionOptions is intentionally NOT
         // cleared: init() needs the previous roomId for room-change detection.
         botEditorAvailableStore.set(false);
+        // Invalidate any delayed setupBotEditor callbacks scheduled before this
+        // destroy (e.g. waiting on userIsConnected) — they must not re-enable the
+        // editor or reinitialize the API service for the previous room.
+        botEditorLifecycle++;
         // Don't clear _extensionOptions - we need it to detect room changes
         // It will be updated in init() with the new roomId
     },

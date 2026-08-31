@@ -1973,6 +1973,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                             tokenUsage,
                             responseId,
                             debugLabel: 'PatrolBehavior',
+                            images,
                         });
                         processed = regenResult.processed;
                         processedMessage = regenResult.processedMessage;

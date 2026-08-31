@@ -132,8 +132,8 @@
                 {#each availableProviders as provider (provider.providerId)}
                     <option value={provider.providerId} style="background-color: rgba(0, 0, 0, 0.8); color: white;">
                         {provider.name}
-                        {#if isVisionEligible(provider)}{$LL.actionbar.botEditorModule.visionMarker()}{/if}
-                        {#if !provider.enabled}{$LL.actionbar.botEditorModule.providerDisabled()}{/if}
+                        {#if isVisionEligible(provider)} {$LL.actionbar.botEditorModule.visionMarker()}{/if}
+                        {#if !provider.enabled} {$LL.actionbar.botEditorModule.providerDisabled()}{/if}
                     </option>
                 {/each}
             </select>
