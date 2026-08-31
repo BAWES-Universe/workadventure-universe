@@ -201,6 +201,41 @@ export class ConversationMemory {
         }
     }
 
+    /**
+     * Append a vision-description note to the last person message in history.
+     *
+     * The vision describe path (AIService) injects the image description into
+     * the current turn's prompt, but the behaviors store the ORIGINAL user
+     * message before that injection — so without this, follow-ups like
+     * "what did you see in that image?" lose the description entirely.
+     *
+     * Side-effect free by design: no emotion analysis, no personal-info
+     * extraction, no relationship/stat mutation — it only annotates the
+     * stored message so history stays consistent with what the model saw.
+     */
+    appendVisionDescription(
+        botId: string,
+        playerId: number,
+        description: string,
+        spaceName?: string
+    ): void {
+        const memory = this.getOrCreateMemory(botId, playerId);
+        // Find the most recent person message (the message the image came with)
+        for (let i = memory.conversationHistory.length - 1; i >= 0; i--) {
+            const entry = memory.conversationHistory[i];
+            if (entry.sender === 'person') {
+                const note = `\n[Image description: ${description}]`;
+                entry.message = entry.message.endsWith('\n')
+                    ? `${entry.message}${note.trimStart()}`
+                    : `${entry.message}${note}`;
+                memory.lastUpdated = Date.now();
+                return;
+            }
+        }
+        // No person message to annotate — nothing to do (rare; the describe
+        // path only runs for a message that carried an image).
+    }
+
     // NOTE: Rule-based sentiment analysis has been replaced by unified AI emotion analysis.
     // Emotion detection is now done by the AI itself when generating responses.
     // The AI outputs emotion data in [EMOTION_UPDATE] blocks which are parsed and processed
