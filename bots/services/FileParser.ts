@@ -457,8 +457,10 @@ export class FileParser {
 
     /**
      * SSRF guard: validate a URL before fetching.
+     * Public so other modules (e.g. vision image-URL collection) can apply the
+     * same safe-destination check to URLs they hand off to external providers.
      */
-    private static async validateUrl(url: string): Promise<void> {
+    static async validateUrl(url: string): Promise<void> {
         let parsedUrl: URL;
         try {
             parsedUrl = new URL(url);
