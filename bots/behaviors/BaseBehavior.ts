@@ -1397,6 +1397,8 @@ export abstract class BaseBehavior {
         tokenUsage?: { prompt: number; completion: number; total: number };
         responseId: string;
         debugLabel: string;
+        /** Image URLs to carry into the regenerated attempt (vision context must survive repetition retries). */
+        images?: string[];
     }): Promise<{ processed: ProcessedResponse; processedMessage: string; responseId: string }> {
         const {
             botId,
@@ -1414,6 +1416,7 @@ export abstract class BaseBehavior {
             tokenUsage,
             responseId: initialResponseId,
             debugLabel,
+            images,
         } = params;
 
         // Self-contained guard: callers (Idle/Social/Patrol) early-return when
@@ -1462,7 +1465,8 @@ export abstract class BaseBehavior {
                     context,
                     this.bot,
                     this.adminApiService,
-                    abortSignal
+                    abortSignal,
+                    images
                 )) {
                     if (chunk.reset) {
                         // Tool calls overrode the streamed ack — finalize the current
@@ -1701,11 +1705,13 @@ export abstract class BaseBehavior {
         // The AbortController for THIS generation — passed to the stream so
         // cancel/update can actually stop the in-flight provider call.
         const abortSignal = this.activeConversations.get(senderId)?.abortController?.signal;
-        // Image URLs from the attachment(s) — sent as multipart content when the
-        // main model supports vision, described via the fallback model otherwise.
-        const imageUrls = await this.collectImageUrls(url, mediaType, mimeType, galleryUrls);
 
         try {
+            // Image URLs from the attachment(s) — sent as multipart content when the
+            // main model supports vision, described via the fallback model otherwise.
+            // Inside the try so any throw still reaches the finally that calls
+            // finishGeneration (a stuck isGenerating would wedge this player's queue).
+            const imageUrls = await this.collectImageUrls(url, mediaType, mimeType, galleryUrls);
             await generator(abortSignal, imageUrls);
         } catch (error) {
             // A stale generation means cancel/update already aborted this stream

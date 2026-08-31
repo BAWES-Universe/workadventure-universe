@@ -578,14 +578,16 @@ export class FileParser {
             promise,
             expiresAt: Date.now() + FileParser.SNIFF_CACHE_TTL_MS,
         });
-        promise
-            .finally(() => {
-                const entry = FileParser.sniffCache.get(url);
-                if (entry && entry.expiresAt <= Date.now()) {
-                    FileParser.sniffCache.delete(url);
-                }
-            })
-            .catch(() => { /* handled by doSniffContentType */ });
+        // Evict after the TTL elapses, NOT when the promise settles — the sniff
+        // itself is capped at ~5s, far short of the 30s TTL, so checking expiry
+        // at settle time could never delete anything (single-use URLs would
+        // accumulate in the cache for the life of the process).
+        setTimeout(() => {
+            const entry = FileParser.sniffCache.get(url);
+            if (entry && entry.promise === promise) {
+                FileParser.sniffCache.delete(url);
+            }
+        }, FileParser.SNIFF_CACHE_TTL_MS);
         return promise;
     }
 

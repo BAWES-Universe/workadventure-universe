@@ -974,6 +974,7 @@ export class SocialBehavior extends BaseBehavior {
                             tokenUsage,
                             responseId,
                             debugLabel: 'SocialBehavior',
+                            images,
                         });
                         processed = regenResult.processed;
                         processedMessage = regenResult.processedMessage;

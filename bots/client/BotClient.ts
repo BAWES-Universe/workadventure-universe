@@ -52,6 +52,8 @@ export interface BotConfig {
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
+    /** Max URLs extracted from a single chat message (bounds downstream classification/sniffing). */
+    private static readonly MAX_CHAT_URLS = 10;
     
     private ws: WebSocket | null = null;
     private state: BotState;
@@ -3006,12 +3008,18 @@ export class BotClient {
     /**
      * Extract ALL URLs from plain text content (deduped, in order).
      * Returns an empty array if no URLs are found.
+     *
+     * Capped at MAX_CHAT_URLS: every extracted URL is classified downstream and
+     * may trigger outbound requests (HEAD sniff for extension-less URLs,
+     * download for non-images), so an unbounded list would let a single chat
+     * message drive arbitrary resource consumption.
      */
     private extractUrlsFromText(text: string): string[] {
         const matches = text.match(/https?:\/\/[^\s)]+/g) || [];
         return matches
             .map(match => match.replace(/[.,!?;:]+$/, ''))
-            .filter((url, index, all) => all.indexOf(url) === index);
+            .filter((url, index, all) => all.indexOf(url) === index)
+            .slice(0, BotClient.MAX_CHAT_URLS);
     }
 
     /**

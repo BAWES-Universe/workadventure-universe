@@ -159,11 +159,20 @@ export class AIService {
             }
 
             // Use the provider's declared vision model when set (e.g.
-            // deepseek-v4-flash-vision-exp on the DeepSeek entry).
-            const effectiveConfig: AIProviderConfig =
-                defaultConfig.visionModel && defaultConfig.model !== defaultConfig.visionModel
-                    ? { ...defaultConfig, model: defaultConfig.visionModel }
-                    : defaultConfig;
+            // deepseek-v4-flash-vision-exp on the DeepSeek entry). A declared
+            // visionModel IS a capability assertion, so also force
+            // supportsVision: true — otherwise the provider's multipart gate
+            // (which resolves vision from the model-name regex + tri-state)
+            // would drop the images for models the regex doesn't know. A forced
+            // false (text-only) is never overridden here: isVisionEligible
+            // already excluded those providers upstream.
+            const effectiveConfig: AIProviderConfig = defaultConfig.visionModel
+                ? {
+                      ...defaultConfig,
+                      model: defaultConfig.visionModel,
+                      supportsVision: defaultConfig.supportsVision ?? true,
+                  }
+                : defaultConfig;
 
             const provider = this.providerRegistry.getOrCreateProvider(effectiveConfig);
             // A declared visionModel IS a capability assertion — the field exists

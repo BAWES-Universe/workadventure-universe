@@ -678,6 +678,7 @@ export class IdleBehavior extends BaseBehavior {
                             tokenUsage,
                             responseId,
                             debugLabel: 'IdleBehavior',
+                            images,
                         });
                         processed = regenResult.processed;
                         processedMessage = regenResult.processedMessage;
