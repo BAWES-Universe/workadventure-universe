@@ -56,16 +56,32 @@ export class BotApiService {
         botServerUrl?: string
     ): boolean {
         const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
-        this.accessToken = this.getAccessTokenFromJwt(userAccessToken);
+        const previousAdminUrl = this.adminUrl;
+        const nextAccessToken = this.getAccessTokenFromJwt(userAccessToken);
+        if (this.accessToken !== nextAccessToken) {
+            this.clearSessionCache();
+            this.sessionTokenPromise = null;
+        }
+        this.accessToken = nextAccessToken;
+
         try {
             this.adminUrl = adminUrl ? resolveCredentialUrl(adminUrl, window.location.href).origin : null;
+        } catch (error) {
+            console.error("[BotApiService] Refusing insecure Admin credential target:", error);
+            this.adminUrl = null;
+        }
+        if (this.adminUrl !== previousAdminUrl) {
+            this.clearSessionCache();
+            this.sessionTokenPromise = null;
+        }
+
+        try {
             this.botServerUrl = resolveCredentialUrl(
                 botServerUrl || "http://bot-server.workadventure.localhost",
                 window.location.href
             ).origin;
         } catch (error) {
-            console.error("[BotApiService] Refusing insecure credential target:", error);
-            this.adminUrl = null;
+            console.error("[BotApiService] Refusing insecure bot-server credential target:", error);
             this.botServerUrl = null;
         }
         this.roomId = roomId;
@@ -131,9 +147,12 @@ export class BotApiService {
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotApiService] Fetching new session token from Admin API");
             }
-            this.sessionTokenPromise = this.fetchSessionTokenFromAdminApi();
-            const token = await this.sessionTokenPromise;
-            this.sessionTokenPromise = null; // Clear cache after completion
+            const loginAttempt = this.fetchSessionTokenFromAdminApi();
+            this.sessionTokenPromise = loginAttempt;
+            const token = await loginAttempt;
+            if (this.sessionTokenPromise === loginAttempt) {
+                this.sessionTokenPromise = null;
+            }
             return token;
         }
 
@@ -152,11 +171,14 @@ export class BotApiService {
             return null;
         }
 
+        const adminUrl = this.adminUrl;
+        const accessToken = this.accessToken;
+
         try {
-            const response = await fetch(`${this.adminUrl}/api/auth/session`, {
+            const response = await fetch(`${adminUrl}/api/auth/session`, {
                 method: "POST",
                 headers: {
-                    Authorization: `Bearer ${this.accessToken}`,
+                    Authorization: `Bearer ${accessToken}`,
                 },
                 credentials: "omit",
             });
@@ -183,6 +205,12 @@ export class BotApiService {
                 return null;
             }
 
+            // The authenticated user or Admin origin changed while the exchange
+            // was in flight. Never cache or return the previous identity's session.
+            if (this.accessToken !== accessToken || this.adminUrl !== adminUrl) {
+                return null;
+            }
+
             sessionStorage.setItem(SESSION_KEY, sessionToken);
             sessionStorage.setItem(SESSION_EXPIRES_KEY, expiresAt.toString());
 
@@ -196,6 +224,12 @@ export class BotApiService {
             }
             return null;
         }
+    }
+
+    private clearSessionCache(): void {
+        if (typeof sessionStorage === "undefined") return;
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(SESSION_EXPIRES_KEY);
     }
 
     /**
