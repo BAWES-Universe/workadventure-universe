@@ -16,10 +16,13 @@ export interface OrbitAuthTokenMessage {
 export function isOrbitAuthReadyMessage(value: unknown): value is OrbitAuthReadyMessage {
     if (!value || typeof value !== "object") return false;
     const message = value as Partial<OrbitAuthReadyMessage>;
-    return message.type === "orbit-auth-ready-v2" &&
+    return (
+        message.type === "orbit-auth-ready-v2" &&
         message.version === ORBIT_AUTH_VERSION &&
         typeof message.nonce === "string" &&
-        message.nonce.length >= 16 && message.nonce.length <= 128;
+        message.nonce.length >= 16 &&
+        message.nonce.length <= 128
+    );
 }
 
 export function buildAdminLoginUrl(adminUrl: string, roomId: string): string {

@@ -12,9 +12,13 @@ const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
     const response = value as { version?: unknown; sessionId?: unknown; expiresAt?: unknown };
-    return response.version === 2 &&
-        typeof response.sessionId === "string" && OPAQUE_SESSION_PATTERN.test(response.sessionId) &&
-        typeof response.expiresAt === "number" && Number.isFinite(response.expiresAt);
+    return (
+        response.version === 2 &&
+        typeof response.sessionId === "string" &&
+        OPAQUE_SESSION_PATTERN.test(response.sessionId) &&
+        typeof response.expiresAt === "number" &&
+        Number.isFinite(response.expiresAt)
+    );
 }
 
 export interface CreateBotDto {

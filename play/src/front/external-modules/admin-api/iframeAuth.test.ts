@@ -12,8 +12,12 @@ describe("Orbit iframe authentication", () => {
     });
 
     it("accepts only a versioned ready message with a bounded nonce", () => {
-        expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 2, nonce: "1234567890abcdef" })).toBe(true);
-        expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 1, nonce: "1234567890abcdef" })).toBe(false);
+        expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 2, nonce: "1234567890abcdef" })).toBe(
+            true
+        );
+        expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 1, nonce: "1234567890abcdef" })).toBe(
+            false
+        );
         expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 2, nonce: "short" })).toBe(false);
     });
 });

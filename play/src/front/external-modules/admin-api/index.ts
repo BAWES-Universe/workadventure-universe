@@ -38,7 +38,8 @@ function getAccessTokenFromJwt(jwtToken: string | null): string | null {
 }
 
 function handleAdminAuthMessage(event: MessageEvent<unknown>) {
-    if (!extensionOptions || !adminOrigin || event.origin !== adminOrigin || !isOrbitAuthReadyMessage(event.data)) return;
+    if (!extensionOptions || !adminOrigin || event.origin !== adminOrigin || !isOrbitAuthReadyMessage(event.data))
+        return;
     const accessToken = getAccessTokenFromJwt(extensionOptions.userAccessToken);
     if (!accessToken || !event.source) return;
     const response: OrbitAuthTokenMessage = {
