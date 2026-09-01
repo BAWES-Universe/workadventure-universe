@@ -500,8 +500,9 @@ export class AdminApiService {
                 hostname.endsWith('.localhost') ||
                 hostname === '127.0.0.1' ||
                 hostname === '[::1]';
-            const allowsDevelopmentHttp = process.env.NODE_ENV !== 'production' && adminApiUrl.protocol === 'http:';
-            if (adminApiUrl.protocol !== 'https:' && !isLoopback && !allowsDevelopmentHttp) return null;
+            const allowsDevelopmentHttp =
+                process.env.NODE_ENV !== 'production' && isLoopback && adminApiUrl.protocol === 'http:';
+            if (adminApiUrl.protocol !== 'https:' && !allowsDevelopmentHttp) return null;
         } catch {
             return null;
         }
