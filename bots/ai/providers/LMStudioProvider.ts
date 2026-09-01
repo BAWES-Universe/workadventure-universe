@@ -8,6 +8,7 @@
 import type { AIProvider } from '../AIProvider';
 import type { AIProviderConfig, AIStreamChunk, AIResponse } from '../types';
 import { linkExternalAbort } from './abortUtils';
+import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
 
 export class LMStudioProvider implements AIProvider {
@@ -25,12 +26,46 @@ export class LMStudioProvider implements AIProvider {
         return true;
     }
 
+    /**
+     * Whether the model config supports vision (image_url content blocks).
+     * LMStudio serves local models via the OpenAI-compatible protocol; vision
+     * capability is resolved from the model name with the same tri-state
+     * override as OpenAIProvider.
+     */
+    supportsVision(config: AIProviderConfig): boolean {
+        return resolveVisionSupport(config.model || '', config.supportsVision);
+    }
+
+    /**
+     * Build the user message content: plain text, or multipart (text + image_url
+     * blocks) when the model supports vision and images are present. Mirrors
+     * OpenAIProvider so local vision models (llava, qwen-vl, ...) get the same
+     * treatment as remote ones.
+     */
+    private buildUserContent(
+        userMessage: string,
+        config: AIProviderConfig,
+        images?: string[]
+    ): string | Array<Record<string, any>> {
+        if (images && images.length > 0 && this.supportsVision(config)) {
+            if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[LMStudioProvider] Sending ${images.length} image(s) as multipart content to vision-capable model ${config.model}`);
+            }
+            return [
+                { type: 'text', text: userMessage },
+                ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+            ];
+        }
+        return userMessage;
+    }
+
     async *generateStream(
         systemPrompt: string,
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        externalSignal?: AbortSignal
+        externalSignal?: AbortSignal,
+        images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         let tokensUsed = 0;
@@ -60,7 +95,7 @@ export class LMStudioProvider implements AIProvider {
                     model: config.model,
                     messages: [
                         { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage },
+                        { role: 'user', content: this.buildUserContent(userMessage, config, images) },
                     ],
                     stream: true,
                     stream_options: {
@@ -214,7 +249,8 @@ export class LMStudioProvider implements AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        externalSignal?: AbortSignal
+        externalSignal?: AbortSignal,
+        images?: string[]
     ): Promise<AIResponse> {
         const startTime = Date.now();
 
@@ -243,7 +279,7 @@ export class LMStudioProvider implements AIProvider {
                         model: config.model,
                         messages: [
                             { role: 'system', content: systemPrompt },
-                            { role: 'user', content: userMessage },
+                            { role: 'user', content: this.buildUserContent(userMessage, config, images) },
                         ],
                         stream: false,
                         stream_options: {

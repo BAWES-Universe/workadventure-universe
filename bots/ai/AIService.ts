@@ -20,6 +20,7 @@ import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
 import { jsonrepair } from 'jsonrepair';
+import { resolveVisionSupport } from './providers/visionModels';
 
 /**
  * Validated interruption routing actions. Shared with BaseBehavior so
@@ -120,6 +121,9 @@ export class AIService {
             temperature: credentialsData.temperature,
             maxTokens: credentialsData.maxTokens,
             supportsStreaming: credentialsData.supportsStreaming,
+            supportsVision: credentialsData.supportsVision ?? null,
+            visionModel: credentialsData.visionModel ?? null,
+            defaultVision: credentialsData.defaultVision ?? false,
             settings: credentialsData.settings,
         };
 
@@ -130,6 +134,105 @@ export class AIService {
         });
 
         return config;
+    }
+
+    /**
+     * Describe images using the default vision provider, when the main model is
+     * text-only. The description is injected into the main model's prompt so it
+     * can "see" the image without supporting image_url blocks itself.
+     *
+     * The default vision provider is the first enabled provider marked
+     * defaultVision, falling back to the first vision-capable provider (declared
+     * vision model or vision-supporting model). Fails soft: any error returns ''
+     * and the caller falls back to the existing URL-as-text-context behavior
+     * (no crash, no dead turn).
+     */
+    private async describeImagesViaDefaultVision(
+        images: string[],
+        abortSignal?: AbortSignal
+    ): Promise<string> {
+        try {
+            const defaultConfig = await this.getDefaultVisionProviderConfig();
+            if (!defaultConfig) {
+                console.warn('[AIService] No default vision provider configured; sending image URLs as text');
+                return '';
+            }
+
+            // Use the provider's declared vision model when set (e.g.
+            // deepseek-v4-flash-vision-exp on the DeepSeek entry). A declared
+            // visionModel IS a capability assertion, so also force
+            // supportsVision: true — otherwise the provider's multipart gate
+            // (which resolves vision from the model-name regex + tri-state)
+            // would drop the images for models the regex doesn't know. A forced
+            // false (text-only) is never overridden here: isVisionEligible
+            // already excluded those providers upstream.
+            const effectiveConfig: AIProviderConfig = defaultConfig.visionModel
+                ? {
+                      ...defaultConfig,
+                      model: defaultConfig.visionModel,
+                      supportsVision: defaultConfig.supportsVision ?? true,
+                  }
+                : defaultConfig;
+
+            const provider = this.providerRegistry.getOrCreateProvider(effectiveConfig);
+            // A declared visionModel IS a capability assertion — the field exists
+            // to say "this model accepts images" (e.g. deepseek-v4-flash-vision-exp,
+            // which the name-regex doesn't know). Only a FORCED text-only setting
+            // overrides it. When neither holds, bail out BEFORE calling generate:
+            // firing images at a genuinely text-only model just 400s — a wasted
+            // call, not a fallback.
+            const visionCapable =
+                provider.supportsVision(effectiveConfig) ||
+                (!!effectiveConfig.visionModel && effectiveConfig.supportsVision !== false);
+            if (!visionCapable) {
+                console.warn(`[AIService] Default vision provider '${defaultConfig.providerId}' (model ${effectiveConfig.model}) is not vision-capable; sending image URLs as text`);
+                return '';
+            }
+
+            const describePrompt = [
+                'Describe the image(s) below so someone who cannot see them can understand what they show.',
+                'Be concise but complete: subject, setting, any visible text, and notable details.',
+                'Image URL(s):',
+                ...images.map((url, i) => `${i + 1}. ${url}`),
+            ].join('\n');
+
+            const response = await provider.generate(
+                'You are an image description assistant. Respond only with the description.',
+                describePrompt,
+                effectiveConfig,
+                undefined,
+                abortSignal,
+                images
+            );
+
+            return (response.content || '').trim();
+        } catch (error) {
+            console.error('[AIService] Vision describe failed:', error);
+            return '';
+        }
+    }
+
+    /**
+     * Resolve the default vision provider config: the first enabled provider
+     * marked defaultVision, else the first enabled vision-capable provider
+     * (declared vision model, or supportsVision resolving true).
+     */
+    private async getDefaultVisionProviderConfig(): Promise<AIProviderConfig | null> {
+        const providers = await this.adminApiService.getAvailableAIProviders(true);
+        const isVisionEligible = (p: {
+            model: string;
+            supportsVision: boolean | null;
+            visionModel: string | null;
+        }) =>
+            (!!p.visionModel && p.supportsVision !== false) ||
+            resolveVisionSupport(p.model || '', p.supportsVision);
+
+        const preferred = providers.find((p) => p.defaultVision === true && isVisionEligible(p));
+        const selected = preferred || providers.find(isVisionEligible);
+        if (!selected) {
+            return null;
+        }
+        return this.getProviderCredentials(selected.providerId);
     }
 
     /**
@@ -145,7 +248,8 @@ export class AIService {
         conversationContext: string,
         botClient?: BotClient,
         adminApiService?: AdminApiService,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
@@ -155,7 +259,54 @@ export class AIService {
 
         try {
             // Get provider credentials
-            const config = await this.getProviderCredentials(providerId);
+            let config = await this.getProviderCredentials(providerId);
+
+            // Vision routing (per-request decision tree):
+            // - Main model itself can see images (supports vision) -> send the
+            //   images as multipart content: the brain sees and answers directly,
+            //   one call, consistent persona
+            // - Main model text-only + a default vision provider exists -> describe
+            //   the images via that provider (its declared visionModel is the eyes),
+            //   inject the description into the prompt, and let the main model
+            //   (the brain) answer with its own persona/instructions
+            // - Otherwise -> image URLs stay as text context (behavior layer already
+            //   augments the message with "[User also sent an image: <url>]")
+            let visionImages: string[] | undefined = images && images.length > 0 ? images : undefined;
+            if (visionImages) {
+                // Note: a declared visionModel does NOT make the main provider
+                // "vision-capable" here — it only qualifies it as a describer.
+                // The configured main model is the bot's brain and must always
+                // be the one answering (persona, chat instructions, tools).
+                const visionCapable = this.providerRegistry.supportsVision(config);
+                if (!visionCapable) {
+                    const description = await this.describeImagesViaDefaultVision(
+                        visionImages,
+                        abortSignal
+                    );
+                    if (description) {
+                        message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
+                        // Persist the description into conversation history so
+                        // follow-ups ("what did you see in that image?") keep
+                        // the context — behaviors stored the pre-description
+                        // original message, and without this the description
+                        // only lives in the current turn's prompt.
+                        try {
+                            this.conversationMemory?.appendVisionDescription(
+                                botId,
+                                playerId,
+                                description,
+                                spaceName
+                            );
+                        } catch (memoryError) {
+                            console.error('[AIService] Failed to persist vision description to memory:', memoryError);
+                        }
+                    }
+                    // Images are NOT passed to a text-only main model (it would 400 on
+                    // image_url blocks). The URL/description stays in the message text.
+                    visionImages = undefined;
+                }
+                // visionCapable: brain can see — images pass through as multipart.
+            }
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
@@ -563,7 +714,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                     userMessageForQwen,
                     configWithParent,
                     tools.length > 0 ? tools : undefined,
-                    abortSignal
+                    abortSignal,
+                    visionImages
                 )) {
                     // Mid-stream interruption (cancel/update): stop consuming chunks.
                     // The behavior handles the abort via abortCurrentStream(); this
@@ -719,7 +871,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     userMessageForQwen,
                                     configWithParent,
                                     [], // No tools — force a direct answer
-                                    abortSignal
+                                    abortSignal,
+                                    visionImages
                                 )) {
                                     if (abortSignal?.aborted) break;
                                     if (retryChunk.content) {
@@ -753,6 +906,7 @@ Everything above is technical guidance. Follow your personality as defined in th
                                     accumulatedContent,
                                     configWithParent,
                                     abortSignal,
+                                    visionImages,
                                     (text) => {
                                         accumulatedContent += text;
                                         firstCallContent += text;
@@ -915,7 +1069,8 @@ Everything above is technical guidance. Follow your personality as defined in th
                                 followUpMessageWithNoThink,
                                 configWithParent,
                                 tools.length > 0 ? tools : undefined,
-                                abortSignal
+                                abortSignal,
+                                visionImages
                             )) {
                                 // Mid-stream interruption: stop the follow-up tool-call
                                 // round and let the generator end early.
@@ -1141,7 +1296,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         synthesisMsg,
                                         configWithParent,
                                         [], // No tools — force direct answer
-                                        abortSignal
+                                        abortSignal,
+                                        visionImages
                                     )) {
                                         // Mid-stream interruption: stop the synthesis call.
                                         if (abortSignal?.aborted) break;
@@ -1218,7 +1374,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         retryMessage,
                                         configWithParent,
                                         [], // No tools — force a direct answer
-                                        abortSignal
+                                        abortSignal,
+                                        visionImages
                                     )) {
                                         if (abortSignal?.aborted) break;
                                         if (retryChunk.content) {
@@ -1259,6 +1416,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         followUpContent,
                                         configWithParent,
                                         abortSignal,
+                                        visionImages,
                                         (text) => {
                                             followUpContent += text;
                                             followUpContentBuffer += text;
@@ -1309,6 +1467,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     followUpContent,
                                     configWithParent,
                                     abortSignal,
+                                    visionImages,
                                     (text) => {
                                         followUpContent += text;
                                         followUpContentBuffer += text;
@@ -1431,7 +1590,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 accumulatedContent,
                                 configWithParent,
                                 abortSignal,
-                                contTokens
+                                contTokens,
+                                visionImages
                             )) {
                                 if (contChunk.content) {
                                     accumulatedContent += contChunk.content;
@@ -1711,7 +1871,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         partialContent: string,
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
-        tokenSink: { used: number; prompt: number; completion: number }
+        tokenSink: { used: number; prompt: number; completion: number },
+        visionImages?: string[] | undefined
     ): AsyncGenerator<AIStreamChunk> {
         const MAX_TRUNCATION_CONTINUATIONS = 2;
         let content = partialContent;
@@ -1732,7 +1893,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     continueMessage,
                     config,
                     undefined, // no tools — this is a pure text continuation
-                    abortSignal
+                    abortSignal,
+                    visionImages
                 )) {
                     if (abortSignal?.aborted) return;
                     if (chunk.content) {
@@ -1780,6 +1942,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         partialContent: string,
         config: AIProviderConfig,
         abortSignal: AbortSignal | undefined,
+        visionImages: string[] | undefined,
         accumulateContent: (text: string) => void,
         accumulateTokens: (used: number, prompt: number, completion: number) => void
     ): AsyncGenerator<string> {
@@ -1790,7 +1953,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             partialContent,
             config,
             abortSignal,
-            contTokens
+            contTokens,
+            visionImages
         )) {
             if (contChunk.content) {
                 accumulateContent(contChunk.content);

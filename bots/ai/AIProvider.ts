@@ -26,6 +26,15 @@ export interface AIProvider {
     supportsStreaming(): boolean;
 
     /**
+     * Check if the given model config supports vision (image_url content blocks).
+     * Tri-state override: null/undefined = auto (model-name regex), true = force vision,
+     * false = force text-only. When the model supports vision, the provider may send
+     * multipart content (text + image_url blocks); otherwise the caller must pass
+     * images as text context instead.
+     */
+    supportsVision(config: AIProviderConfig): boolean;
+
+    /**
      * Generate streaming response
      * 
      * @param systemPrompt - System prompt/instructions
@@ -34,6 +43,8 @@ export interface AIProvider {
      * @param tools - Optional array of tool definitions for function calling
      * @param signal - Optional external AbortSignal; when aborted, the active
      *                 upstream stream/request is cancelled immediately
+     * @param images - Optional image URLs to attach as image_url content blocks
+     *                 (only honored when supportsVision(config) is true)
      * @returns Async generator yielding stream chunks
      */
     generateStream(
@@ -41,7 +52,8 @@ export interface AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        images?: string[]
     ): AsyncGenerator<AIStreamChunk>;
 
     /**
@@ -53,6 +65,8 @@ export interface AIProvider {
      * @param tools - Optional array of tool definitions for function calling
      * @param signal - Optional external AbortSignal; when aborted, the in-flight
      *                 request is cancelled immediately
+     * @param images - Optional image URLs to attach as image_url content blocks
+     *                 (only honored when supportsVision(config) is true)
      * @returns Complete response
      */
     generate(
@@ -60,7 +74,8 @@ export interface AIProvider {
         userMessage: string,
         config: AIProviderConfig,
         tools?: any[],
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        images?: string[]
     ): Promise<AIResponse>;
 }
 

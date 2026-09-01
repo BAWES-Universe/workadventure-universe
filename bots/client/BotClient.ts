@@ -29,6 +29,7 @@ import { BotPathfindingManager } from '../utils/BotPathfindingManager';
 import { PathSmoother } from '../utils/PathSmoother';
 import { movementLogger } from '../utils/MovementLogger';
 import type { BotConfiguration } from '../server/AdminApiService';
+import { FileParser } from '../services/FileParser';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
 
@@ -51,6 +52,8 @@ export interface BotConfig {
 export class BotClient {
     // Static set of all bot user IDs - shared across all bot instances
     private static botUserIds: Set<number> = new Set();
+    /** Max URLs extracted from a single chat message (bounds downstream classification/sniffing). */
+    private static readonly MAX_CHAT_URLS = 10;
     
     private ws: WebSocket | null = null;
     private state: BotState;
@@ -2520,15 +2523,19 @@ export class BotClient {
                     const chatMessage = message.updateSpaceUserMessage.message.message;
                     if (chatMessage && this.behavior) {
                         console.log(`[Bot ${this.config.botId}] Received chat via updateSpaceUserMessage: "${chatMessage}" from user ${message.updateSpaceUserMessage.userId}`);
-                        const detectedUrl = this.extractUrlFromText(chatMessage) || undefined;
-                        const detectedMime = detectedUrl ? this.inferMimeTypeFromUrl(detectedUrl) : undefined;
+                        // Extract ALL URLs (not just the first) so multi-link
+                        // messages get each link parsed as an attachment.
+                        const textUrls = this.extractUrlsFromText(chatMessage);
+                        const detectedUrl = textUrls[0] || undefined;
+                        const detectedMime = detectedUrl ? await this.inferMimeTypeFromUrl(detectedUrl) : undefined;
                         this.behavior.onChatMessage(
                             message.updateSpaceUserMessage.spaceName,
                             chatMessage,
                             message.updateSpaceUserMessage.userId ?? 0,
                             detectedUrl,
                             undefined,
-                            detectedMime
+                            detectedMime,
+                            textUrls.length > 1 ? textUrls.slice(1) : undefined
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
@@ -2615,10 +2622,24 @@ export class BotClient {
                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                             console.log(`[Bot ${this.config.botId}] Calling behavior.onChatMessage: "${spaceMessage.message}" from ${senderName} (userId: ${senderId})`);
                         }
-                        // Detect URL from message text if not already a file upload
-                        const detectedUrl = spaceMessage.url || this.extractUrlFromText(spaceMessage.message) || undefined;
+                        // Detect URL from message text independently of uploads —
+                        // previously `url || extractUrlFromText` short-circuited,
+                        // so text links were never extracted when an image/file was
+                        // attached. The UPLOAD stays the primary attachment (its
+                        // mediaType matches it); extra text links go to the gallery
+                        // where each is classified per-type (image → vision, page →
+                        // Readability, file → FileParser).
+                        const textUrls = this.extractUrlsFromText(spaceMessage.message);
+                        const textUrl = textUrls[0] || null;
+                        const detectedUrl = spaceMessage.url || textUrl || undefined;
+                        const galleryUrls = spaceMessage.url
+                            ? [...(spaceMessage.galleryUrls || []), ...textUrls]
+                            : [
+                                  ...(spaceMessage.galleryUrls || []),
+                                  ...(textUrls.length > 1 ? textUrls.slice(1) : []),
+                              ];
                         const detectedMime: string | null | undefined = detectedUrl && !spaceMessage.mimeType
-                            ? this.inferMimeTypeFromUrl(detectedUrl)
+                            ? await this.inferMimeTypeFromUrl(detectedUrl)
                             : spaceMessage.mimeType;
                         this.behavior.onChatMessage(
                             spaceName,
@@ -2627,7 +2648,7 @@ export class BotClient {
                             detectedUrl,
                             spaceMessage.mediaType,
                             detectedMime,
-                            spaceMessage.galleryUrls
+                            galleryUrls.length > 0 ? galleryUrls : undefined
                         ).catch(error => {
                             console.error(`[Bot ${this.config.botId}] onChatMessage error:`, error);
                             Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
@@ -2985,23 +3006,38 @@ export class BotClient {
     }
 
     /**
+     * Extract ALL URLs from plain text content (deduped, in order).
+     * Returns an empty array if no URLs are found.
+     *
+     * Capped at MAX_CHAT_URLS: every extracted URL is classified downstream and
+     * may trigger outbound requests (HEAD sniff for extension-less URLs,
+     * download for non-images), so an unbounded list would let a single chat
+     * message drive arbitrary resource consumption.
+     */
+    private extractUrlsFromText(text: string): string[] {
+        const matches = text.match(/https?:\/\/[^\s)]+/g) || [];
+        return matches
+            .map(match => match.replace(/[.,!?;:]+$/, ''))
+            .filter((url, index, all) => all.indexOf(url) === index)
+            .slice(0, BotClient.MAX_CHAT_URLS);
+    }
+
+    /**
      * Extract the first URL from plain text content.
      * Returns the URL string or null if no URL is found.
      */
     private extractUrlFromText(text: string): string | null {
-        const match = text.match(/https?:\/\/[^\s)]+/);
-        if (match) {
-            // Strip trailing sentence punctuation
-            return match[0].replace(/[.,!?;:]+$/, '');
-        }
-        return null;
+        const urls = this.extractUrlsFromText(text);
+        return urls.length > 0 ? urls[0] : null;
     }
 
     /**
      * Infer a MIME type from a URL's file extension.
-     * Defaults to 'text/html' for URLs without a recognized extension (i.e., web pages).
+     * For URLs without a recognized extension (Unsplash, signed S3 URLs, etc.),
+     * sniff the content-type via a HEAD request so images are not misrouted to
+     * web-page extraction. Defaults to 'text/html' when nothing can be determined.
      */
-    private inferMimeTypeFromUrl(url: string): string {
+    private async inferMimeTypeFromUrl(url: string): Promise<string> {
         let ext: string;
         try {
             const pathname = new URL(url).pathname;
@@ -3040,7 +3076,18 @@ export class BotClient {
             'mov': 'video/quicktime',
         };
 
-        return mimeMap[ext] || 'text/html';
+        if (ext && mimeMap[ext]) {
+            return mimeMap[ext];
+        }
+
+        // Extension-less URL — sniff content-type (SSRF-validated) so image URLs
+        // like Unsplash or signed S3 links are routed to image handling, not web pages.
+        const sniffed = await FileParser.sniffContentType(url);
+        if (sniffed) {
+            return sniffed;
+        }
+
+        return 'text/html';
     }
 
     private send(message: ClientToServerMessage): void {

@@ -44,6 +44,14 @@ export interface ParsedFile {
 }
 
 export class FileParser {
+    // Short-lived URL-keyed memo for sniffContentType: coalesces in-flight
+    // requests and caches results briefly (see sniffContentType).
+    private static sniffCache = new Map<
+        string,
+        { promise: Promise<string | null>; expiresAt: number }
+    >();
+    private static readonly SNIFF_CACHE_TTL_MS = 30_000;
+
     static readonly MAX_FILE_CHARS = MAX_FILE_CHARS;
 
     /**
@@ -449,8 +457,10 @@ export class FileParser {
 
     /**
      * SSRF guard: validate a URL before fetching.
+     * Public so other modules (e.g. vision image-URL collection) can apply the
+     * same safe-destination check to URLs they hand off to external providers.
      */
-    private static async validateUrl(url: string): Promise<void> {
+    static async validateUrl(url: string): Promise<void> {
         let parsedUrl: URL;
         try {
             parsedUrl = new URL(url);
@@ -493,6 +503,22 @@ export class FileParser {
     }
 
     private static isPrivateIp(ip: string): boolean {
+        // IPv4-mapped IPv6 (RFC 4291 §2.2.3) — ::ffff:a.b.c.d and its canonical
+        // hex form ::ffff:xxxx:xxxx (e.g. ::ffff:7f00:1 = 127.0.0.1) embed an
+        // IPv4 address that must be evaluated with the same private-range
+        // checks below. WHATWG URL parsing canonicalizes the dotted form into
+        // hex groups, so both shapes must be decoded before the existing tests.
+        const mapped = ip.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[0-9a-f]{1,4}:[0-9a-f]{1,4})$/i);
+        if (mapped) {
+            let embedded: string;
+            if (mapped[1].includes('.')) {
+                embedded = mapped[1];
+            } else {
+                const [hi, lo] = mapped[1].split(':').map((h) => parseInt(h, 16));
+                embedded = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+            }
+            return FileParser.isPrivateIp(embedded);
+        }
         if (/^127\.\d+\.\d+\.\d+$/.test(ip)) return true;
         if (ip === '0.0.0.0' || ip === '::1' || /^::$/.test(ip)) return true;
         if (/^10\.\d+\.\d+\.\d+$/.test(ip)) return true;
@@ -545,6 +571,91 @@ export class FileParser {
         } catch { /* no AAAA record */ }
         // Fail-closed: if neither A nor AAAA resolved, we can't verify safety
         return resolved ? safe : false;
+    }
+
+    /**
+     * Sniff a URL's Content-Type via HEAD (5s cap), behind the SSRF guard.
+     *
+     * Extension inference happens at the call site; this is the extension
+     * fallback for URLs without a recognizable extension (Unsplash, signed
+     * S3/CDN URLs, `photo?id=123`). Returns null when undetermined (validation
+     * failure, network error, missing header) so callers can fall back.
+     *
+     * Results are memoized briefly per URL: the same extension-less URL is
+     * sniffed twice per message cycle (collectImageUrls for vision,
+     * formatParsedAttachment for text classification). In-flight requests are
+     * coalesced; cached results expire after SNIFF_CACHE_TTL_MS.
+     */
+    static sniffContentType(url: string): Promise<string | null> {
+        const cached = FileParser.sniffCache.get(url);
+        if (cached && cached.expiresAt > Date.now()) {
+            return cached.promise;
+        }
+        const promise = FileParser.doSniffContentType(url);
+        FileParser.sniffCache.set(url, {
+            promise,
+            expiresAt: Date.now() + FileParser.SNIFF_CACHE_TTL_MS,
+        });
+        // Evict after the TTL elapses, NOT when the promise settles — the sniff
+        // itself is capped at ~5s, far short of the 30s TTL, so checking expiry
+        // at settle time could never delete anything (single-use URLs would
+        // accumulate in the cache for the life of the process).
+        setTimeout(() => {
+            const entry = FileParser.sniffCache.get(url);
+            if (entry && entry.promise === promise) {
+                FileParser.sniffCache.delete(url);
+            }
+        }, FileParser.SNIFF_CACHE_TTL_MS);
+        return promise;
+    }
+
+    private static async doSniffContentType(url: string): Promise<string | null> {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            try {
+                // DNS resolution inside validateUrl does not observe the abort
+                // signal, so race it against the same 5s deadline — slow lookups
+                // must not extend the documented cap.
+                const abortRace = new Promise<never>((_, reject) => {
+                    controller.signal.addEventListener(
+                        'abort',
+                        () => reject(new Error('sniff aborted')),
+                        { once: true }
+                    );
+                });
+                // SSRF guard: same hop-validated redirect handling as fetchBuffer —
+                // validate the initial URL AND every redirect target, so a
+                // public attacker URL cannot 302 the request into an internal
+                // or private endpoint (localhost, 169.254.169.254, 10.x, ...).
+                const MAX_REDIRECTS = 5;
+                let currentUrl = url;
+                for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
+                    await Promise.race([FileParser.validateUrl(currentUrl), abortRace]);
+                    const response = await fetch(currentUrl, {
+                        method: 'HEAD',
+                        redirect: 'manual',
+                        signal: controller.signal,
+                    });
+                    if (response.status >= 300 && response.status < 400) {
+                        const location = response.headers.get('location');
+                        if (!location) {
+                            return null;
+                        }
+                        currentUrl = new URL(location, currentUrl).href;
+                        continue; // validate next hop
+                    }
+                    const contentType = response.headers.get('content-type');
+                    return contentType ? contentType.split(';')[0].trim() : null;
+                }
+                return null; // redirect chain exceeded MAX_REDIRECTS
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        } catch {
+            // Fail soft: caller falls back to its existing mime/octet-stream default
+            return null;
+        }
     }
 
     /**
