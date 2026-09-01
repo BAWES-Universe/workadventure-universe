@@ -1,5 +1,5 @@
-import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { get } from "svelte/store";
+import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
 import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
@@ -56,7 +56,7 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
         nonce: event.data.nonce,
         accessToken,
     };
-    (event.source as Window).postMessage(response, adminOrigin);
+    event.source.postMessage(response, adminOrigin);
 }
 
 // Function to open the admin modal
