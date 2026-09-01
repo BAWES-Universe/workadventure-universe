@@ -5,6 +5,18 @@ interface AuthError extends Error {
     isSessionExpired: boolean;
 }
 
+const SESSION_KEY = "orbit_admin_session_v2";
+const SESSION_EXPIRES_KEY = "orbit_admin_session_v2_expires";
+const OPAQUE_SESSION_PATTERN = /^orb_sess_v2_[0-9a-f]{64}$/;
+
+export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
+    if (!value || typeof value !== "object") return false;
+    const response = value as { version?: unknown; sessionId?: unknown; expiresAt?: unknown };
+    return response.version === 2 &&
+        typeof response.sessionId === "string" && OPAQUE_SESSION_PATTERN.test(response.sessionId) &&
+        typeof response.expiresAt === "number" && Number.isFinite(response.expiresAt);
+}
+
 export interface CreateBotDto {
     roomId: string;
     name: string;
@@ -23,7 +35,6 @@ export interface UpdateBotDto extends Partial<CreateBotDto> {
 
 export class BotApiService {
     private accessToken: string | null = null;
-    private jwtToken: string | null = null; // Store original JWT for bot server auth
     private adminUrl: string | null = null;
     private roomId: string | null = null;
     private botServerUrl: string | null = null;
@@ -41,7 +52,6 @@ export class BotApiService {
     ): boolean {
         const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
         this.accessToken = this.getAccessTokenFromJwt(userAccessToken);
-        this.jwtToken = userAccessToken; // Store original JWT for bot server authentication
         this.adminUrl = adminUrl || null;
         this.roomId = roomId;
         // Default to bot-server.workadventure.localhost if not provided
@@ -66,22 +76,22 @@ export class BotApiService {
     }
 
     /**
-     * Get Admin API session token from localStorage
-     * Primary key: admin_session_token (base64-encoded session data)
-     * Fallback key: admin_session_id (session ID - less preferred)
-     * If not found or expired, fetches new session token from Admin API
+     * Get the opaque Admin API session from this tab's sessionStorage.
      */
     private async getAdminApiSessionToken(): Promise<string | null> {
-        if (typeof window === "undefined" || typeof localStorage === "undefined") {
+        if (typeof window === "undefined" || typeof sessionStorage === "undefined") {
             return null;
         }
 
-        // Check if we have a cached token
-        const sessionToken = localStorage.getItem("admin_session_token");
-        const expiresAtStr = localStorage.getItem("admin_session_token_expires_at");
+        // Remove credentials created by the legacy URL/base64 implementation.
+        localStorage.removeItem("admin_session_token");
+        localStorage.removeItem("admin_session_token_expires_at");
+        localStorage.removeItem("admin_session_id");
 
-        // Check if token exists and is not expired
-        if (sessionToken && expiresAtStr) {
+        const sessionToken = sessionStorage.getItem(SESSION_KEY);
+        const expiresAtStr = sessionStorage.getItem(SESSION_EXPIRES_KEY);
+
+        if (sessionToken && OPAQUE_SESSION_PATTERN.test(sessionToken) && expiresAtStr) {
             const expirationTime = parseInt(expiresAtStr, 10);
             const now = Date.now();
 
@@ -92,15 +102,11 @@ export class BotApiService {
             }
 
             // Token expires soon or is expired - clear it and fetch new one
-            localStorage.removeItem("admin_session_token");
-            localStorage.removeItem("admin_session_token_expires_at");
+            sessionStorage.removeItem(SESSION_KEY);
+            sessionStorage.removeItem(SESSION_EXPIRES_KEY);
         }
-
-        // Fallback: admin_session_id (session ID - for backward compatibility)
-        const sessionId = localStorage.getItem("admin_session_id");
-        if (sessionId) {
-            return sessionId;
-        }
+        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(SESSION_EXPIRES_KEY);
 
         // No valid token found - fetch new one from Admin API
         if (this.accessToken && this.adminUrl) {
@@ -137,9 +143,9 @@ export class BotApiService {
             const response = await fetch(`${this.adminUrl}/api/auth/session`, {
                 method: "POST",
                 headers: {
-                    "Content-Type": "application/json",
                     Authorization: `Bearer ${this.accessToken}`,
                 },
+                credentials: "omit",
             });
 
             if (!response.ok) {
@@ -154,21 +160,18 @@ export class BotApiService {
             }
 
             const data = await response.json();
-            const sessionToken = data.sessionToken || data.token;
+            const sessionToken = data.sessionId;
             const expiresAt = data.expiresAt;
 
-            if (!sessionToken) {
+            if (!isOrbitSessionResponse(data)) {
                 if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                     console.warn("[BotApiService] Session token not found in response");
                 }
                 return null;
             }
 
-            // Store session token and expiration in localStorage
-            localStorage.setItem("admin_session_token", sessionToken);
-            if (expiresAt && typeof expiresAt === "number") {
-                localStorage.setItem("admin_session_token_expires_at", expiresAt.toString());
-            }
+            sessionStorage.setItem(SESSION_KEY, sessionToken);
+            sessionStorage.setItem(SESSION_EXPIRES_KEY, expiresAt.toString());
 
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotApiService] Session token fetched and cached successfully");
@@ -210,7 +213,7 @@ export class BotApiService {
 
     /**
      * Make authenticated API request
-     * Uses Admin API session token if available, falls back to JWT accessToken
+     * Uses only an opaque Admin API session in the Authorization header.
      */
     private async fetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
         if (!this.adminUrl) {
@@ -220,24 +223,17 @@ export class BotApiService {
         // Try to get Admin API session token first (async - may fetch new one if missing/expired)
         const sessionToken = await this.getAdminApiSessionToken();
 
-        // Build base URL
-        let url = `${this.adminUrl}${endpoint}`;
+        const url = `${this.adminUrl}${endpoint}`;
 
         // Build headers
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
-
-        // PRIMARY METHOD: Use session token as _token query parameter
         if (sessionToken) {
-            const separator = endpoint.includes("?") ? "&" : "?";
-            url = `${url}${separator}_token=${encodeURIComponent(sessionToken)}`;
-        } else if (this.accessToken) {
-            // FALLBACK METHOD: Use JWT accessToken in Authorization header
-            headers.Authorization = `Bearer ${this.accessToken}`;
+            headers.Authorization = `Bearer ${sessionToken}`;
         } else {
-            throw new Error("BotApiService not initialized. Missing session token or accessToken.");
+            throw new Error("BotApiService not initialized. Missing Orbit session.");
         }
 
         const response = await fetch(url, {
@@ -269,21 +265,19 @@ export class BotApiService {
                 if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                     console.warn("[BotApiService] Session token may be expired, clearing cache and refreshing");
                 }
-                localStorage.removeItem("admin_session_token");
-                localStorage.removeItem("admin_session_token_expires_at");
+                sessionStorage.removeItem(SESSION_KEY);
+                sessionStorage.removeItem(SESSION_EXPIRES_KEY);
 
                 // If we have accessToken, try to fetch a new session token and retry
                 if (this.accessToken) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
                     if (newToken) {
-                        // Retry the request with new token
                         const retryUrl = `${this.adminUrl}${endpoint}`;
-                        const retrySeparator = endpoint.includes("?") ? "&" : "?";
-                        const retryUrlWithToken = `${retryUrl}${retrySeparator}_token=${encodeURIComponent(newToken)}`;
+                        const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
-                        const retryResponse = await fetch(retryUrlWithToken, {
+                        const retryResponse = await fetch(retryUrl, {
                             ...options,
-                            headers,
+                            headers: retryHeaders,
                         });
 
                         if (retryResponse.ok) {
@@ -386,23 +380,17 @@ export class BotApiService {
         // Try to get Admin API session token first (preferred method)
         const sessionToken = await this.getAdminApiSessionToken();
 
-        // Build URL - add session token as query parameter if available (same as Admin API)
-        let url = `${this.botServerUrl}${endpoint}`;
+        const url = `${this.botServerUrl}${endpoint}`;
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
+        const isPublicRoomLifecycle = endpoint === "/api/bots/room-enter" || endpoint === "/api/bots/room-leave";
 
-        // PRIMARY METHOD: Use Admin API session token (same as Admin API authentication)
         if (sessionToken) {
-            const separator = endpoint.includes("?") ? "&" : "?";
-            url = `${url}${separator}_token=${encodeURIComponent(sessionToken)}`;
-        } else if (this.jwtToken) {
-            // FALLBACK METHOD: Use JWT token (for backward compatibility or initial auth)
-            headers.Authorization = `Bearer ${this.jwtToken}`;
-        } else if (this.accessToken) {
-            // FALLBACK METHOD: Use accessToken if JWT not available
-            headers.Authorization = `Bearer ${this.accessToken}`;
+            headers.Authorization = `Bearer ${sessionToken}`;
+        } else if (!isPublicRoomLifecycle) {
+            throw new Error("BotApiService not initialized. Missing Orbit session.");
         }
 
         const response = await fetch(url, {
@@ -437,21 +425,19 @@ export class BotApiService {
                         "[BotApiService] Bot server session token may be expired, clearing cache and refreshing"
                     );
                 }
-                localStorage.removeItem("admin_session_token");
-                localStorage.removeItem("admin_session_token_expires_at");
+                sessionStorage.removeItem(SESSION_KEY);
+                sessionStorage.removeItem(SESSION_EXPIRES_KEY);
 
                 // If we have accessToken, try to fetch a new session token and retry
                 if (this.accessToken) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
                     if (newToken) {
-                        // Retry the request with new token
                         const retryUrl = `${this.botServerUrl}${endpoint}`;
-                        const retrySeparator = endpoint.includes("?") ? "&" : "?";
-                        const retryUrlWithToken = `${retryUrl}${retrySeparator}_token=${encodeURIComponent(newToken)}`;
+                        const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
-                        const retryResponse = await fetch(retryUrlWithToken, {
+                        const retryResponse = await fetch(retryUrl, {
                             ...options,
-                            headers,
+                            headers: retryHeaders,
                         });
 
                         if (retryResponse.ok) {
