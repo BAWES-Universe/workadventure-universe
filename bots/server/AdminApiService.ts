@@ -491,8 +491,23 @@ export class AdminApiService {
             return null;
         }
 
+        let adminApiUrl: URL;
         try {
-            const response: AxiosResponse = await axios.get(`${this.adminApiUrl}/api/auth/me`, {
+            adminApiUrl = new URL(this.adminApiUrl);
+            const hostname = adminApiUrl.hostname.toLowerCase();
+            const isLoopback =
+                hostname === 'localhost' ||
+                hostname.endsWith('.localhost') ||
+                hostname === '127.0.0.1' ||
+                hostname === '[::1]';
+            const allowsDevelopmentHttp = process.env.NODE_ENV !== 'production' && adminApiUrl.protocol === 'http:';
+            if (adminApiUrl.protocol !== 'https:' && !isLoopback && !allowsDevelopmentHttp) return null;
+        } catch {
+            return null;
+        }
+
+        try {
+            const response: AxiosResponse = await axios.get(new URL('/api/auth/me', adminApiUrl).toString(), {
                 headers: {
                     Authorization: `Bearer ${sessionToken}`,
                     'Cache-Control': 'no-store',

@@ -1,4 +1,5 @@
 import type { BotData } from "../types";
+import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 
 interface AuthError extends Error {
     isAuthError: boolean;
@@ -56,10 +57,18 @@ export class BotApiService {
     ): boolean {
         const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
         this.accessToken = this.getAccessTokenFromJwt(userAccessToken);
-        this.adminUrl = adminUrl || null;
+        try {
+            this.adminUrl = adminUrl ? resolveCredentialUrl(adminUrl, window.location.href).origin : null;
+            this.botServerUrl = resolveCredentialUrl(
+                botServerUrl || "http://bot-server.workadventure.localhost",
+                window.location.href
+            ).origin;
+        } catch (error) {
+            console.error("[BotApiService] Refusing insecure credential target:", error);
+            this.adminUrl = null;
+            this.botServerUrl = null;
+        }
         this.roomId = roomId;
-        // Default to bot-server.workadventure.localhost if not provided
-        this.botServerUrl = botServerUrl || "http://bot-server.workadventure.localhost";
         return roomIdChanged;
     }
 

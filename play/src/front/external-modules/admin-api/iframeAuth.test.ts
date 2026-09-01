@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAdminLoginUrl, isOrbitAuthReadyMessage } from "./iframeAuth";
+import { buildAdminLoginUrl, isOrbitAuthReadyMessage, resolveCredentialUrl } from "./iframeAuth";
 
 describe("Orbit iframe authentication", () => {
     it("builds a credential-free login URL", () => {
@@ -19,5 +19,14 @@ describe("Orbit iframe authentication", () => {
             false
         );
         expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 2, nonce: "short" })).toBe(false);
+    });
+
+    it("requires HTTPS except for loopback development origins", () => {
+        expect(resolveCredentialUrl("https://admin.example.com").origin).toBe("https://admin.example.com");
+        expect(resolveCredentialUrl("http://admin.workadventure.localhost").origin).toBe(
+            "http://admin.workadventure.localhost"
+        );
+        expect(() => resolveCredentialUrl("http://admin.example.com")).toThrow(/HTTPS/);
+        expect(resolveCredentialUrl("/admin", "https://play.example.com").origin).toBe("https://play.example.com");
     });
 });

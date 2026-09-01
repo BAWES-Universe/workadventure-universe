@@ -25,8 +25,19 @@ export function isOrbitAuthReadyMessage(value: unknown): value is OrbitAuthReady
     );
 }
 
-export function buildAdminLoginUrl(adminUrl: string, roomId: string): string {
-    const loginUrl = new URL("/admin/login", adminUrl);
+export function resolveCredentialUrl(value: string, baseUrl?: string): URL {
+    const url = baseUrl ? new URL(value, baseUrl) : new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const isLoopback =
+        hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "[::1]";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback)) {
+        throw new Error("Orbit credentials require HTTPS outside local development");
+    }
+    return url;
+}
+
+export function buildAdminLoginUrl(adminUrl: string, roomId: string, baseUrl?: string): string {
+    const loginUrl = new URL("/admin/login", resolveCredentialUrl(adminUrl, baseUrl));
     loginUrl.searchParams.set("playUri", roomId);
     return loginUrl.toString();
 }
