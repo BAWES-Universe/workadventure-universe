@@ -23,7 +23,7 @@ export function resolveAdminApiEndpoint(adminApiUrl: string | URL, endpoint: str
     }
     baseUrl.search = '';
     baseUrl.hash = '';
-    return new URL(endpoint.replace(/^\\/+/, ''), baseUrl).toString();
+    return new URL(endpoint.replace(/^\/+/, ''), baseUrl).toString();
 }
 
 export interface BotConfiguration {
