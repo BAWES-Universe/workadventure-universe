@@ -16,6 +16,16 @@ const captureException = (error: Error) => {
     console.error('AdminApiService error:', error);
 };
 
+export function resolveAdminApiEndpoint(adminApiUrl: string | URL, endpoint: string): string {
+    const baseUrl = new URL(adminApiUrl.toString());
+    if (!baseUrl.pathname.endsWith('/')) {
+        baseUrl.pathname += '/';
+    }
+    baseUrl.search = '';
+    baseUrl.hash = '';
+    return new URL(endpoint.replace(/^\/+/, ''), baseUrl).toString();
+}
+
 export interface BotConfiguration {
     botId: string;
     name: string;
@@ -508,7 +518,7 @@ export class AdminApiService {
         }
 
         try {
-            const response: AxiosResponse = await axios.get(new URL('/api/auth/me', adminApiUrl).toString(), {
+            const response: AxiosResponse = await axios.get(resolveAdminApiEndpoint(adminApiUrl, 'api/auth/me'), {
                 headers: {
                     Authorization: `Bearer ${sessionToken}`,
                     'Cache-Control': 'no-store',

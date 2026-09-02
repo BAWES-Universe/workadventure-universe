@@ -16,6 +16,22 @@ let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
 let adminOrigin: string | null = null;
+const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function schedulePending(callback: () => void, delay: number) {
+    const timer = setTimeout(() => {
+        pendingTimers.delete(timer);
+        callback();
+    }, delay);
+    pendingTimers.add(timer);
+}
+
+function cancelPendingTimers() {
+    for (const timer of pendingTimers) {
+        clearTimeout(timer);
+    }
+    pendingTimers.clear();
+}
 
 // Helper to extract OIDC access token from JWT
 function getAccessTokenFromJwt(jwtToken: string | null): string | null {
@@ -141,7 +157,7 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     adminDashboardActivatedStore.set(true);
 
     // Auto-open after a short delay
-    setTimeout(() => {
+    schedulePending(() => {
         openAdminModal(options);
     }, 1500);
 }
@@ -157,7 +173,7 @@ const adminExtensionModule: ExtensionModule = {
         // Wait for user to be connected, then initialize
         unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
             if (connected && localUserStore.isLogged()) {
-                setTimeout(() => {
+                schedulePending(() => {
                     initializeAdminIntegration(options);
                 }, 1000);
                 if (unsubscribeUserConnected) {
@@ -169,7 +185,7 @@ const adminExtensionModule: ExtensionModule = {
 
         // Also check if already connected
         if (localUserStore.isLogged()) {
-            setTimeout(() => {
+            schedulePending(() => {
                 initializeAdminIntegration(options);
             }, 1000);
         }
@@ -183,6 +199,7 @@ const adminExtensionModule: ExtensionModule = {
     },
 
     destroy() {
+        cancelPendingTimers();
         if (unsubscribeUserConnected) {
             unsubscribeUserConnected();
             unsubscribeUserConnected = null;
