@@ -477,10 +477,8 @@ export class AdminApiService {
     }
 
     /**
-     * Validate Admin API session token
-     * Session tokens are base64-encoded JSON with userId, uuid, email, name, tags, createdAt, expiresAt
-     * Validates by decoding and checking expiration
-     * Returns user info if token is valid, null otherwise
+     * Validate an opaque Orbit session with the Admin API, which owns the
+     * server-side session record. The bot server never decodes credentials.
      */
     async validateSessionToken(sessionToken: string): Promise<{
         userId: string;
@@ -489,38 +487,46 @@ export class AdminApiService {
         name: string | null;
         tags: string[];
     } | null> {
-        if (!this.isConfigured()) {
+        if (!this.adminApiUrl || !/^orb_sess_v2_[0-9a-f]{64}$/.test(sessionToken)) {
+            return null;
+        }
+
+        let adminApiUrl: URL;
+        try {
+            adminApiUrl = new URL(this.adminApiUrl);
+            const hostname = adminApiUrl.hostname.toLowerCase();
+            const isLoopback =
+                hostname === 'localhost' ||
+                hostname.endsWith('.localhost') ||
+                hostname === '127.0.0.1' ||
+                hostname === '[::1]';
+            const allowsDevelopmentHttp =
+                process.env.NODE_ENV !== 'production' && isLoopback && adminApiUrl.protocol === 'http:';
+            if (adminApiUrl.protocol !== 'https:' && !allowsDevelopmentHttp) return null;
+        } catch {
             return null;
         }
 
         try {
-            // Decode base64 session token
-            const decoded = Buffer.from(sessionToken, 'base64').toString('utf-8');
-            const sessionData = JSON.parse(decoded);
-
-            // Check if token has required fields
-            if (!sessionData.userId || !sessionData.uuid || !sessionData.expiresAt) {
-                return null;
-            }
-
-            // Check if token is expired
-            const now = Date.now();
-            if (sessionData.expiresAt <= now) {
-                return null;
-            }
-
-            // Return user info from session token
+            const response: AxiosResponse = await axios.get(new URL('/api/auth/me', adminApiUrl).toString(), {
+                headers: {
+                    Authorization: `Bearer ${sessionToken}`,
+                    'Cache-Control': 'no-store',
+                },
+                timeout: 5_000,
+            });
+            const user = response.data?.user;
+            if (!user?.id || !user?.uuid) return null;
             return {
-                userId: sessionData.userId,
-                uuid: sessionData.uuid,
-                email: sessionData.email || null,
-                name: sessionData.name || null,
-                tags: sessionData.tags || [],
+                userId: user.id,
+                uuid: user.uuid,
+                email: user.email || null,
+                name: user.name || null,
+                tags: Array.isArray(user.tags) ? user.tags : [],
             };
         } catch (error) {
-            // Invalid token format (not base64, not JSON, missing fields, etc.)
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[AdminApiService] Error validating session token:', error);
+                console.error('[AdminApiService] Admin API rejected Orbit session');
             }
             return null;
         }
@@ -916,4 +922,3 @@ export class AdminApiService {
 
 // Singleton instance
 export const adminApiService = new AdminApiService();
-
