@@ -1,12 +1,37 @@
+import { get } from "svelte/store";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
-import { modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
+import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
+import {
+    ORBIT_AUTH_VERSION,
+    buildAdminLoginUrl,
+    isOrbitAuthReadyMessage,
+    resolveCredentialUrl,
+    type OrbitAuthTokenMessage,
+} from "./iframeAuth";
 let adminModalOpen = false;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
+let adminOrigin: string | null = null;
+const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function schedulePending(callback: () => void, delay: number) {
+    const timer = setTimeout(() => {
+        pendingTimers.delete(timer);
+        callback();
+    }, delay);
+    pendingTimers.add(timer);
+}
+
+function cancelPendingTimers() {
+    for (const timer of pendingTimers) {
+        clearTimeout(timer);
+    }
+    pendingTimers.clear();
+}
 
 // Helper to extract OIDC access token from JWT
 function getAccessTokenFromJwt(jwtToken: string | null): string | null {
@@ -30,6 +55,26 @@ function getAccessTokenFromJwt(jwtToken: string | null): string | null {
     }
 }
 
+function handleAdminAuthMessage(event: MessageEvent<unknown>) {
+    if (
+        !extensionOptions ||
+        !adminOrigin ||
+        event.origin !== adminOrigin ||
+        event.source !== get(modalIframeWindowStore) ||
+        !isOrbitAuthReadyMessage(event.data)
+    )
+        return;
+    const accessToken = getAccessTokenFromJwt(extensionOptions.userAccessToken);
+    if (!accessToken || !event.source) return;
+    const response: OrbitAuthTokenMessage = {
+        type: "orbit-auth-token-v2",
+        version: ORBIT_AUTH_VERSION,
+        nonce: event.data.nonce,
+        accessToken,
+    };
+    event.source.postMessage(response, adminOrigin);
+}
+
 // Function to open the admin modal
 function openAdminModal(options: ExtensionModuleOptions) {
     if (adminModalOpen) return;
@@ -46,9 +91,13 @@ function openAdminModal(options: ExtensionModuleOptions) {
         return;
     }
 
-    const adminDashboardUrl = `${adminUrl}/admin/login?accessToken=${encodeURIComponent(
-        accessToken
-    )}&playUri=${encodeURIComponent(options.roomId)}`;
+    let adminDashboardUrl: string;
+    try {
+        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href);
+    } catch (error) {
+        console.error("Refusing insecure Admin URL:", error);
+        return;
+    }
 
     const modalEvent: ModalEvent = {
         title: "Admin Dashboard",
@@ -75,6 +124,7 @@ export function openAdminModalFromMenu() {
 function closeAdminModal() {
     modalVisibilityStore.set(false);
     modalIframeStore.set(null);
+    modalIframeWindowStore.set(null);
     adminModalOpen = false;
 }
 
@@ -93,13 +143,21 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     }
 
     // Store options for cleanup
+    try {
+        adminOrigin = resolveCredentialUrl(adminUrl, window.location.href).origin;
+    } catch (error) {
+        console.error("Refusing insecure Admin URL:", error);
+        return;
+    }
     extensionOptions = options;
+    window.removeEventListener("message", handleAdminAuthMessage);
+    window.addEventListener("message", handleAdminAuthMessage);
 
     // Activate the Orbit button in the action bar (highest priority)
     adminDashboardActivatedStore.set(true);
 
     // Auto-open after a short delay
-    setTimeout(() => {
+    schedulePending(() => {
         openAdminModal(options);
     }, 1500);
 }
@@ -115,7 +173,7 @@ const adminExtensionModule: ExtensionModule = {
         // Wait for user to be connected, then initialize
         unsubscribeUserConnected = userIsConnected.subscribe((connected) => {
             if (connected && localUserStore.isLogged()) {
-                setTimeout(() => {
+                schedulePending(() => {
                     initializeAdminIntegration(options);
                 }, 1000);
                 if (unsubscribeUserConnected) {
@@ -127,7 +185,7 @@ const adminExtensionModule: ExtensionModule = {
 
         // Also check if already connected
         if (localUserStore.isLogged()) {
-            setTimeout(() => {
+            schedulePending(() => {
                 initializeAdminIntegration(options);
             }, 1000);
         }
@@ -141,6 +199,7 @@ const adminExtensionModule: ExtensionModule = {
     },
 
     destroy() {
+        cancelPendingTimers();
         if (unsubscribeUserConnected) {
             unsubscribeUserConnected();
             unsubscribeUserConnected = null;
@@ -151,7 +210,9 @@ const adminExtensionModule: ExtensionModule = {
         }
         // Deactivate the Orbit button
         adminDashboardActivatedStore.set(false);
+        window.removeEventListener("message", handleAdminAuthMessage);
         extensionOptions = null;
+        adminOrigin = null;
         closeAdminModal();
     },
 };

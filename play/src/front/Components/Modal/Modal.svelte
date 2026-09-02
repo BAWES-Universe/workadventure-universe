@@ -1,8 +1,9 @@
 <script lang="ts">
     import { blur } from "svelte/transition";
     import { onDestroy, onMount } from "svelte";
+    import { get } from "svelte/store";
     import { iframeListener } from "../../Api/IframeListener";
-    import { modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
+    import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
@@ -27,6 +28,7 @@
 
     onMount(() => {
         resizeObserver.observe(mainModal);
+        modalIframeWindowStore.set(modalIframe.contentWindow);
         if ($modalIframeStore?.allowApi) {
             iframeListener.registerIframe(modalIframe);
         }
@@ -37,6 +39,9 @@
     });
 
     onDestroy(() => {
+        if (get(modalIframeWindowStore) === modalIframe.contentWindow) {
+            modalIframeWindowStore.set(null);
+        }
         // Note: we are running unregisterIframe every time and not only when allowApi is true,
         // because of a possible race condition where the $modalIframeStore store is emptied before onDestroy is called,
         // which would lead to an error in unregisterIframe.

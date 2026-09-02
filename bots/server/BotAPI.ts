@@ -17,7 +17,7 @@ export interface BotAPIRequest extends Request {
 
 /**
  * Middleware to verify authentication token
- * Accepts Admin API session tokens (preferred) or WorkAdventure JWTs (fallback)
+ * Accepts only a v2 opaque Orbit session in the Authorization header.
  */
 async function authenticateToken(
     req: BotAPIRequest,
@@ -36,82 +36,28 @@ async function authenticateToken(
         }
     }
     
-    // Try to get session token from query parameter (Admin API style)
-    const sessionToken = req.query._token as string | undefined;
-    
-    // Try to get token from Authorization header
     const authHeader = req.headers.authorization;
-    const bearerToken = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-    // Priority 1: Admin API session token (from query param or Authorization header)
-    if (sessionToken || (bearerToken && !bearerToken.includes('.'))) {
-        const token = sessionToken || bearerToken;
-        if (!token) {
-            res.status(401).json({ error: 'Missing session token' });
-            return;
-        }
-
-        try {
-            // Validate session token with Admin API
-            const userInfo = await adminApiService.validateSessionToken(token);
-            if (!userInfo) {
-                res.status(401).json({ error: 'Invalid or expired session token' });
-                return;
-            }
-
-            req.userIdentifier = userInfo.email || userInfo.uuid;
-            req.isLogged = true;
-            next();
-            return;
-        } catch (error) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[BotAPI] Session token validation error:', error);
-            }
-            res.status(401).json({ error: 'Session token validation failed' });
-            return;
-        }
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
+    if (!/^orb_sess_v2_[0-9a-f]{64}$/.test(bearerToken)) {
+        res.status(401).json({ error: 'Missing or invalid Orbit session' });
+        return;
     }
 
-    // Priority 2: WorkAdventure JWT (fallback for backward compatibility)
-    if (bearerToken && bearerToken.includes('.')) {
-        try {
-            // Extract user identifier from JWT (no signature verification for now)
-            // This is a fallback - session tokens are preferred
-            const base64Url = bearerToken.split('.')[1];
-            if (!base64Url) {
-                res.status(401).json({ error: 'Invalid JWT token' });
-                return;
-            }
-            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-            const jsonPayload = decodeURIComponent(
-                atob(base64)
-                    .split('')
-                    .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-                    .join('')
-            );
-            const payload = JSON.parse(jsonPayload);
-            
-            req.userIdentifier = payload.identifier;
-            req.isLogged = !!(payload.accessToken || payload.identifier);
-            
-            if (!req.isLogged) {
-                res.status(401).json({ error: 'User not authenticated' });
-                return;
-            }
-
-            next();
-            return;
-        } catch (error) {
-            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                console.error('[BotAPI] JWT token verification error:', error);
-            }
-            res.status(401).json({ error: 'Invalid JWT token' });
+    try {
+        const userInfo = await adminApiService.validateSessionToken(bearerToken);
+        if (!userInfo) {
+            res.status(401).json({ error: 'Invalid or expired Orbit session' });
             return;
         }
+        req.userIdentifier = userInfo.email || userInfo.uuid;
+        req.isLogged = true;
+        next();
+    } catch (error) {
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.error('[BotAPI] Orbit session validation failed:', error);
+        }
+        res.status(401).json({ error: 'Orbit session validation failed' });
     }
-
-    // No valid token found
-    res.status(401).json({ error: 'Missing authorization token' });
 }
 
 export class BotAPI {
@@ -1526,4 +1472,3 @@ export class BotAPI {
         return this.app;
     }
 }
-
