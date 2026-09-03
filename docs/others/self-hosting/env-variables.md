@@ -128,6 +128,11 @@ Environment variables for the Back service (backend API).
 | `GROUP_RADIUS` | No | Radius (in pixels) of a group/bubble. Defaults to 48 |
 | `ADMIN_API_URL` | No | URL of the admin API for centralized configuration |
 | `ADMIN_API_TOKEN` | No | Authentication token for the admin API |
+| `PUSH_SERVICE_TOKEN` | No | Authentication token for push notification send operations |
+| `PUSH_VAPID_PUBLIC_KEY` | No | Public VAPID key exposed to web clients for Web Push subscriptions |
+| `PUSH_VAPID_PRIVATE_KEY` | No | Private VAPID key used by the push notification delivery worker |
+| `PUSH_VAPID_SUBJECT` | No | VAPID subject, for example "mailto:admin@example.com" |
+| `PUSH_NOTIFICATIONS_DRY_RUN` | No | If true, the push send endpoint validates and matches registrations without delivering notifications |
 | `CPU_OVERHEAT_THRESHOLD` | No | CPU usage threshold (in %) that triggers dropping intermediate movement packets to ease to CPU load. Defaults to 80 |
 | `JITSI_URL` | No | URL of the Jitsi Meet server for video conferencing |
 | `JITSI_ISS` | No | Jitsi JWT issuer for authentication |
