@@ -103,7 +103,8 @@ export const LOGROCKET_ID: string | undefined = env.LOGROCKET_ID;
 // Sentry integration
 export const SENTRY_DSN: string | undefined = env.SENTRY_DSN_PUSHER;
 export const SENTRY_ENVIRONMENT: string | undefined = env.SENTRY_ENVIRONMENT;
-export const SENTRY_RELEASE: string | undefined = env.SENTRY_RELEASE;
+export const RELEASE_VERSION: string | undefined = env.RELEASE_VERSION || env.SENTRY_RELEASE;
+export const SENTRY_RELEASE: string | undefined = RELEASE_VERSION;
 export const SENTRY_TRACES_SAMPLE_RATE: number | undefined = env.SENTRY_TRACES_SAMPLE_RATE;
 
 // TURN config
@@ -183,7 +184,8 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     SENTRY_DSN_FRONT: env.SENTRY_DSN_FRONT,
     SENTRY_DSN_PUSHER: env.SENTRY_DSN_PUSHER,
     SENTRY_ENVIRONMENT: env.SENTRY_ENVIRONMENT,
-    SENTRY_RELEASE: env.SENTRY_RELEASE,
+    RELEASE_VERSION: env.RELEASE_VERSION || env.SENTRY_RELEASE,
+    SENTRY_RELEASE: env.RELEASE_VERSION || env.SENTRY_RELEASE,
     SENTRY_TRACES_SAMPLE_RATE: env.SENTRY_TRACES_SAMPLE_RATE,
     WOKA_SPEED: env.WOKA_SPEED,
     FEATURE_FLAG_BROADCAST_AREAS: env.FEATURE_FLAG_BROADCAST_AREAS,

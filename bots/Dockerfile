@@ -52,6 +52,8 @@ COPY bots/tsconfig.json ./bots/tsconfig.json
 
 WORKDIR /usr/src/app/bots
 
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
 
 # Expose REST API port
 EXPOSE 3001

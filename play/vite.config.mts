@@ -100,7 +100,8 @@ export default defineConfig(({ mode }) => {
         },
     };
 
-    if (env.SENTRY_ORG && env.SENTRY_PROJECT && env.SENTRY_AUTH_TOKEN && env.SENTRY_RELEASE && env.SENTRY_ENVIRONMENT) {
+    const releaseVersion = env.RELEASE_VERSION || env.SENTRY_RELEASE;
+    if (env.SENTRY_ORG && env.SENTRY_PROJECT && env.SENTRY_AUTH_TOKEN && releaseVersion && env.SENTRY_ENVIRONMENT) {
         console.info("Sentry plugin enabled");
         config.plugins.push(
             sentryVitePlugin({
@@ -116,7 +117,7 @@ export default defineConfig(({ mode }) => {
                 authToken: env.SENTRY_AUTH_TOKEN,
                 // Optionally uncomment the line below to override automatic release name detection
                 release: {
-                    name: env.SENTRY_RELEASE,
+                    name: releaseVersion,
                     deploy: {
                         env: env.SENTRY_ENVIRONMENT,
                     },

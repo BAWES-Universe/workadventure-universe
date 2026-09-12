@@ -19,8 +19,9 @@ DOCKER_USERNAME="${DOCKER_USERNAME:-}"
 VERSION="${VERSION:-latest}"
 SERVICES=("play" "back" "map-storage" "uploader")
 
-# Build arguments for play service (Sentry - optional)
-SENTRY_RELEASE="${SENTRY_RELEASE:-}"
+# Build arguments for services (Sentry / release tracking)
+RELEASE_VERSION="${RELEASE_VERSION:-${SENTRY_RELEASE:-}}"
+SENTRY_RELEASE="${RELEASE_VERSION}"
 SENTRY_URL="${SENTRY_URL:-}"
 SENTRY_AUTH_TOKEN="${SENTRY_AUTH_TOKEN:-}"
 SENTRY_ORG="${SENTRY_ORG:-}"
@@ -142,6 +143,9 @@ build_service() {
     build_args+=("--build-arg" "NODE_OPTIONS=$NODE_OPTIONS")
     if [[ -n "$FAST_BUILD" ]]; then
         build_args+=("--build-arg" "FAST_BUILD=$FAST_BUILD")
+    fi
+    if [[ -n "$RELEASE_VERSION" ]]; then
+        build_args+=("--build-arg" "RELEASE_VERSION=$RELEASE_VERSION")
     fi
     
     # Play service specific: Sentry build args

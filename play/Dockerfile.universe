@@ -12,6 +12,7 @@ FROM --platform=$BUILDPLATFORM node:20.18-bullseye-slim AS builder
 ARG NODE_OPTIONS="--max-old-space-size=16384"
 ARG FAST_BUILD=""
 # Sentry build args (optional - for universe builds)
+ARG RELEASE_VERSION=""
 ARG SENTRY_RELEASE=""
 ARG SENTRY_URL=""
 ARG SENTRY_AUTH_TOKEN=""
@@ -41,7 +42,8 @@ RUN export NODE_OPTIONS="$NODE_OPTIONS" && \
     cd play && \
     npm run typesafe-i18n && \
     npm run build-iframe-api && \
-    SENTRY_RELEASE="$SENTRY_RELEASE" \
+    RELEASE_VERSION="${RELEASE_VERSION:-$SENTRY_RELEASE}" \
+    SENTRY_RELEASE="${RELEASE_VERSION:-$SENTRY_RELEASE}" \
     SENTRY_URL="$SENTRY_URL" \
     SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN" \
     SENTRY_ORG="$SENTRY_ORG" \
@@ -65,6 +67,8 @@ COPY libs/store-utils/package.json libs/store-utils/package.json
 COPY libs/shared-utils/package.json libs/shared-utils/package.json
 ENV NODE_ENV=production
 ENV UWS_HTTP_MAX_HEADERS_SIZE=16384
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
 RUN npm ci --omit=dev --workspace workadventure-play
 COPY --from=builder /usr/src/libs /usr/src/libs
 COPY --from=builder --chown=node:node /usr/src/play /usr/src/play

@@ -10,6 +10,8 @@ RUN npm ci --omit=dev --workspace workadventureuploader
 COPY uploader uploader
 
 WORKDIR /usr/src/uploader
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
 USER node
 CMD ["npm", "run", "start"]
 

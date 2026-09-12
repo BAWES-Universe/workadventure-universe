@@ -17,6 +17,9 @@ FROM node:20.18-bullseye-slim
 
 WORKDIR /usr/src/app
 
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
+
     # Copy package files and install only production dependencies
     COPY package.json package-lock.json ./
     RUN npm ci --omit=dev

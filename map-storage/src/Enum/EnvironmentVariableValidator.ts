@@ -105,11 +105,16 @@ export const EnvironmentVariables = z.object({
         .optional()
         .transform(emptyStringToUndefined)
         .describe("If set, WorkAdventure will send errors to Sentry"),
+    RELEASE_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Release version identifier."),
     SENTRY_RELEASE: z
         .string()
         .optional()
         .transform(emptyStringToUndefined)
-        .describe("The Sentry release we target. Only used if SENTRY_DSN is configured."),
+        .describe("The Sentry release we target. Deprecated: use RELEASE_VERSION instead."),
     SENTRY_ENVIRONMENT: z
         .string()
         .optional()

@@ -17,7 +17,7 @@ import { mapPathUsingDomain } from "./Services/PathMapper";
 import { ValidatorController } from "./Upload/ValidatorController";
 import {
     SENTRY_DSN,
-    SENTRY_RELEASE,
+    RELEASE_VERSION,
     WEB_HOOK_URL,
     SENTRY_TRACES_SAMPLE_RATE,
     SENTRY_ENVIRONMENT,
@@ -30,7 +30,7 @@ if (SENTRY_DSN != undefined) {
     try {
         const sentryOptions: Sentry.NodeOptions = {
             dsn: SENTRY_DSN,
-            release: SENTRY_RELEASE,
+            release: RELEASE_VERSION,
             environment: SENTRY_ENVIRONMENT,
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
             attachStacktrace: true,

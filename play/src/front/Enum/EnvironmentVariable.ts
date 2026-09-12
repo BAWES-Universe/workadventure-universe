@@ -44,7 +44,8 @@ export const MAX_EXTRAPOLATION_TIME = 100; // Extrapolate a maximum of 250ms if 
 
 export const SENTRY_DSN_FRONT = env.SENTRY_DSN_FRONT;
 export const SENTRY_ENVIRONMENT = env.SENTRY_ENVIRONMENT;
-export const SENTRY_RELEASE = env.SENTRY_RELEASE;
+export const RELEASE_VERSION = env.RELEASE_VERSION || env.SENTRY_RELEASE;
+export const SENTRY_RELEASE = RELEASE_VERSION;
 export const SENTRY_TRACES_SAMPLE_RATE = env.SENTRY_TRACES_SAMPLE_RATE;
 export const WOKA_SPEED = env.WOKA_SPEED;
 

@@ -316,7 +316,8 @@ export const EnvironmentVariables = z.object({
     LOGROCKET_ID: z.string().optional().describe("LogRocket application ID for session recording and monitoring"),
     SENTRY_DSN_FRONT: z.string().optional().describe("Sentry DSN for frontend error tracking"),
     SENTRY_DSN_PUSHER: z.string().optional().describe("Sentry DSN for pusher service error tracking"),
-    SENTRY_RELEASE: z.string().optional().describe("Sentry release version identifier for error tracking"),
+    RELEASE_VERSION: z.string().optional().describe("Release version identifier"),
+    SENTRY_RELEASE: z.string().optional().describe("Sentry release version identifier for error tracking (deprecated: use RELEASE_VERSION)"),
     SENTRY_ENVIRONMENT: z
         .string()
         .optional()

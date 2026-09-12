@@ -6,7 +6,7 @@
     import AwaitLoaderPlugin from "phaser3-rex-plugins/plugins/awaitloader-plugin.js";
     import OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
     import type { Unsubscriber } from "svelte/store";
-    import { DEBUG_MODE, SENTRY_DSN_FRONT, SENTRY_ENVIRONMENT, SENTRY_RELEASE } from "../Enum/EnvironmentVariable";
+    import { DEBUG_MODE, SENTRY_DSN_FRONT, SENTRY_ENVIRONMENT, RELEASE_VERSION } from "../Enum/EnvironmentVariable";
     import { HdpiManager } from "../Phaser/Services/HdpiManager";
     import { EntryScene } from "../Phaser/Login/EntryScene";
     import { LoginScene } from "../Phaser/Login/LoginScene";
@@ -47,7 +47,7 @@
             try {
                 const sentryOptions: Sentry.BrowserOptions = {
                     dsn: SENTRY_DSN_FRONT,
-                    release: SENTRY_RELEASE,
+                    release: RELEASE_VERSION,
                     environment: SENTRY_ENVIRONMENT,
                     integrations: [Sentry.browserTracingIntegration()],
                     // Set tracesSampleRate to 1.0 to capture 100%

@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/node";
 import App from "./src/App";
 import {
     SENTRY_DSN,
-    SENTRY_RELEASE,
+    RELEASE_VERSION,
     SENTRY_ENVIRONMENT,
     SENTRY_TRACES_SAMPLE_RATE,
 } from "./src/Enum/EnvironmentVariable";
@@ -12,7 +12,7 @@ if (SENTRY_DSN) {
     try {
         const sentryOptions: Sentry.NodeOptions = {
             dsn: SENTRY_DSN,
-            release: SENTRY_RELEASE,
+            release: RELEASE_VERSION,
             environment: SENTRY_ENVIRONMENT,
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
             attachStacktrace: true,
