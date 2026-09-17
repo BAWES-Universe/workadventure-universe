@@ -102,6 +102,17 @@ export class AdminApiService {
         return !!this.adminApiUrl && !!this.adminApiToken;
     }
 
+    /** Internal Linear SH calls deliberately bypass generic error logging (credentials/task text). */
+    async linearSh(body: Record<string, unknown>, signal?: AbortSignal): Promise<any> {
+        if (!this.isConfigured()) throw new Error('Linear SH unavailable');
+        try {
+            const result = await axios.post(resolveAdminApiEndpoint(this.adminApiUrl, 'api/linear-sh'), body, {
+                headers: { Authorization: `Bearer ${this.adminApiToken}` }, timeout: 30000, maxRedirects: 0, signal,
+            });
+            return result.data;
+        } catch { throw new Error('Linear SH unavailable'); }
+    }
+
     /**
      * Save bot configuration to admin API
      */

@@ -18,6 +18,7 @@ import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
+import { isLinearSh } from '../linear-sh/policy';
 import { appendStreamedChunk } from './EmotionParser';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
@@ -88,6 +89,25 @@ export class AIService {
             console.error('[AIService] Error getting available providers:', error);
             return [];
         }
+    }
+
+    /** One bounded intent parse, no tools, memory, synthesis, media or regeneration. Lists bypass this. */
+    async planLinearSh(providerId: string, message: string, teams: { id: string; name: string; key: string }[], signal?: AbortSignal): Promise<unknown> {
+        const config = await this.getProviderCredentials(providerId);
+        const provider = this.providerRegistry.getOrCreateProvider(config);
+        const response = await provider.generate(
+            'Return only a JSON object describing the employee request. Allowed shapes: ' +
+            '{"kind":"list","status":"exact status name"}; {"kind":"details","refs":[1],"list":"displayed list code if given"}; ' +
+            '{"kind":"edit","refs":[1,2],"fields":{"title":"...","description":"...","priority":2,"dueDate":"YYYY-MM-DD or null","status":"Done"},"list":"code if given"}; ' +
+            '{"kind":"create","teamId":"explicit team name, key or ID","fields":{"title":"..."}}. ' +
+            'For explicit issue identifiers, replace refs with "identifiers":["DEMO-123"]. Never infer an identifier from description text. ' +
+            'Only include explicitly requested fields. Default lists mean In Progress. Today is not a due-date filter. ' +
+            'Never invent issue IDs, dates, priorities, teams, assignments, confirmations, or tool calls. If unclear or forbidden return {"kind":"unsupported"}. ' +
+            'First two means refs [1,2]. Trusted permitted team directory: ' + JSON.stringify(teams),
+            message, config, undefined, signal
+        );
+        if (response.error || response.truncated || response.content.length > 16000) throw new Error('Unable to interpret request');
+        return JSON.parse(response.content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
     }
 
     /**
@@ -251,6 +271,10 @@ export class AIService {
         abortSignal?: AbortSignal,
         images?: string[]
     ): AsyncGenerator<AIStreamChunk> {
+        if (isLinearSh(botId, botClient?.getFullConfig?.()?.behaviorConfig)) {
+            yield { content: '', done: true };
+            return;
+        }
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
         // Discarded if tool calls arrive (was filler/thinking text);

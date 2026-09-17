@@ -142,6 +142,7 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
 
     // This function is called when we received a message from the back (initialization of the user list)
     private initSpaceUsersMessage(spaceUsers: SpaceUser[]) {
+        this._space.linearSh?.invalidate();
         for (const spaceUser of spaceUsers) {
             const user: Partial<SpaceUserExtended> = spaceUser;
             user.lowercaseName = spaceUser.name.toLowerCase();
@@ -160,6 +161,7 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
 
     // This function is called when we received a message from the back
     private addUser(spaceUser: SpaceUser) {
+        this._space.linearSh?.invalidate();
         const user: Partial<SpaceUserExtended> = spaceUser;
         user.lowercaseName = spaceUser.name.toLowerCase();
 
@@ -209,6 +211,7 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
 
     // This function is called when we received a message from the back
     private removeUser(spaceUserId: string) {
+        this._space.linearSh?.invalidate();
         const user = this._space.users.get(spaceUserId);
         if (user) {
             this._space.users.delete(spaceUserId);
@@ -327,6 +330,25 @@ export class SpaceToFrontDispatcher implements SpaceToFrontDispatcherInterface {
         }
 
         const sender = this._space.users.get(message.senderUserId);
+
+        const event = spaceEvent.event;
+        const enrolledSender = !!process.env.LINEAR_SH_BOT_ID && sender?.uuid === `bot-${process.env.LINEAR_SH_BOT_ID}`;
+        if (enrolledSender || (event.$case === "spaceMessage" && event.spaceMessage.linearShReply)) {
+            // All other output from the reserved bot (including greetings/media/streams) is denied.
+            if (event.$case !== "spaceMessage" || !event.spaceMessage.linearShReply) return;
+            const protectedMessage = event.spaceMessage;
+            import("../services/LinearShGateway").then(({ deliverLinearSh }) => deliverLinearSh(
+                [...this._space._localConnectedUser.values()], this._space.name, protectedMessage.message, protectedMessage.linearShReply!,
+                (socket, id) => this._space._localConnectedUser.get(id) === socket,
+                (socket, text) => socket.getUserData().emitInBatch({ message: { $case: "publicEvent", publicEvent: {
+                    senderUserId: message.senderUserId, spaceName: this._space.localName,
+                    spaceEvent: { event: { $case: "spaceMessage", spaceMessage: {
+                        message: text, name: "Linear SH", characterTextures: [], galleryUrls: [], fileNames: []
+                    } } }
+                } } }), this._space.linearSh
+            )).catch(() => { /* fail closed; never log task text or credentials */ });
+            return;
+        }
 
         this.notifyAllUsers(
             {

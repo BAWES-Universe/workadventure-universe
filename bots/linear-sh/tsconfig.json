@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "CommonJS", "moduleResolution": "Node",
+    "lib": ["ES2022", "DOM"], "strict": true, "esModuleInterop": true,
+    "skipLibCheck": true, "noEmit": true, "types": ["node"]
+  },
+  "files": ["policy.ts", "adapter.ts", "assistant.ts", "../mcp/LinearShMCP.ts"]
+}

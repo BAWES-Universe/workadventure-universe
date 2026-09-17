@@ -455,12 +455,20 @@ message QueryMessage {
     JoinSpaceQuery joinSpaceQuery = 14;
     LeaveSpaceQuery leaveSpaceQuery = 15;
     MapStorageJwtQuery mapStorageJwtQuery = 16;
+    LinearShInteractionQuery linearShInteractionQuery = 21;
   }
 }
 
 message AbortQueryMessage {
   int32 id = 1;
 }
+
+message LinearShInteractionQuery {
+  string spaceName = 1;
+  string interactionId = 2;
+  string requestId = 3;
+}
+message LinearShInteractionAnswer { bool active = 1; }
 
 message MapStorageJwtQuery {
 }
@@ -549,6 +557,7 @@ message AnswerMessage {
     JoinSpaceAnswer joinSpaceAnswer = 16;
     LeaveSpaceAnswer leaveSpaceAnswer = 17;
     MapStorageJwtAnswer mapStorageJwtAnswer = 18;
+    LinearShInteractionAnswer linearShInteractionAnswer = 19;
   }
 }
 
@@ -1008,6 +1017,8 @@ message SpaceMessage {
   repeated string galleryUrls = 7;  // Additional file/image URLs for gallery messages
   optional string fileName = 8;     // Original uploaded filename (not URL-derived)
   repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
+  optional string linearShRequest = 10; // Opaque Admin-issued, socket-bound request proof. Clients cannot supply it.
+  optional string linearShReply = 11; // Opaque reply proof: final pusher delivery must authorize each recipient.
 }
 
 message SpaceIsTyping {

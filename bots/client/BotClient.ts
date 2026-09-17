@@ -32,6 +32,7 @@ import type { BotConfiguration } from '../server/AdminApiService';
 import { FileParser } from '../services/FileParser';
 import { resolve4, resolve6 } from 'dns/promises';
 import * as Sentry from '@sentry/node';
+import { isLinearSh } from '../linear-sh/policy';
 
 // Get the secret key from environment - must match pusher's SECRET_KEY
 const SECRET_KEY = process.env.SECRET_KEY || 'default-secret-key';
@@ -1254,6 +1255,15 @@ export class BotClient {
         });
     }
 
+    sendLinearShReply(spaceName: string, proof: string): void {
+        if (!proof || !this.spaces.has(spaceName)) return;
+        this.send({ message: { $case: 'publicEvent', publicEvent: { spaceName,
+            spaceEvent: { event: { $case: 'spaceMessage', spaceMessage: {
+                message: '[Protected Linear SH reply]', name: 'Linear SH', characterTextures: [], galleryUrls: [], fileNames: [], linearShReply: proof
+            } } }
+        } } });
+    }
+
     /** Return true when `ip` is a private/reserved address (both IPv4 and IPv6). */
     private isPrivateIp(ip: string): boolean {
         // IPv4 ranges
@@ -2258,6 +2268,21 @@ export class BotClient {
     }
 
     private async handleSubMessage(message: any): Promise<void> {
+        if (isLinearSh(this.config.botId, this.fullConfig?.behaviorConfig)) {
+            if (message?.$case === 'publicEvent') {
+                const event = message.publicEvent;
+                if (event.spaceEvent?.event?.$case === 'spaceMessage') {
+                    const chat = event.spaceEvent.event.spaceMessage;
+                    if (chat.linearShRequest && typeof event.senderUserId === 'string') {
+                        // This path deliberately avoids display-name fallback, URL sniffing, memory and generic behavior.
+                        void this.behavior?.onLinearShRequest(event.spaceName, event.senderUserId, chat.message, chat.linearShRequest)
+                            .catch(() => undefined);
+                    }
+                }
+                return;
+            }
+            if (message?.$case === 'updateSpaceUserMessage') return;
+        }
         if (!message) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.warn(`[Bot ${this.config.botId}] ⚠️ handleSubMessage called with null/undefined message`);
@@ -2949,11 +2974,27 @@ export class BotClient {
         });
     }
 
+    public checkLinearShInteraction(spaceName: string, interactionId: string, requestId = ""): Promise<boolean> {
+        const id = ++this.queryId;
+        return new Promise((resolve) => {
+            const timeout = setTimeout(() => { this.pendingQueries.delete(id); resolve(false); }, 5000);
+            this.pendingQueries.set(id, {
+                resolve: (value: any) => { clearTimeout(timeout); resolve(value === true); },
+                reject: () => { clearTimeout(timeout); resolve(false); }
+            });
+            this.send({ message: { $case: "queryMessage", queryMessage: { id, query: {
+                $case: "linearShInteractionQuery", linearShInteractionQuery: { spaceName, interactionId, requestId }
+            } } } });
+        });
+    }
+
     private handleAnswer(answer: any): void {
         const query = this.pendingQueries.get(answer.id);
         if (query) {
             this.pendingQueries.delete(answer.id);
-            if (answer.answer?.$case === 'joinSpaceAnswer') {
+            if (answer.answer?.$case === 'linearShInteractionAnswer') {
+                query.resolve(answer.answer.linearShInteractionAnswer.active);
+            } else if (answer.answer?.$case === 'joinSpaceAnswer') {
                 query.resolve(answer.answer.joinSpaceAnswer.spaceUserId);
             } else if (answer.answer?.$case === 'leaveSpaceAnswer') {
                 query.resolve(undefined);
@@ -3091,6 +3132,10 @@ export class BotClient {
     }
 
     private send(message: ClientToServerMessage): void {
+        if (isLinearSh(this.config.botId, this.fullConfig?.behaviorConfig) && message.message?.$case === 'publicEvent') {
+            const event = message.message.publicEvent.spaceEvent?.event;
+            if (event?.$case !== 'spaceMessage' || !event.spaceMessage.linearShReply) return;
+        }
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             return;
         }

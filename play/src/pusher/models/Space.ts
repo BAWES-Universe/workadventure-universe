@@ -5,6 +5,7 @@ import Debug from "debug";
 import { merge } from "lodash";
 import { applyFieldMask } from "protobuf-fieldmask";
 import type { Socket } from "../services/SocketManager";
+import { LinearShInteraction } from "../services/LinearShInteraction";
 import type { BackSpaceConnection } from "./Websocket/SocketData";
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceToBackForwarderInterface } from "./SpaceToBackForwarder";
@@ -35,6 +36,8 @@ const debug = Debug("space");
  */
 
 export interface SpaceInterface {
+    linearSh?: LinearShInteraction<Socket>;
+    hasUserUuid?(uuid: string): boolean;
     forwarder: SpaceToBackForwarderInterface;
     dispatcher: SpaceToFrontDispatcherInterface;
     initSpace(): void;
@@ -67,6 +70,15 @@ export interface SpaceForSpaceConnectionInterface extends SpaceInterface {
 }
 
 export class Space implements SpaceForSpaceConnectionInterface {
+    public readonly linearSh = new LinearShInteraction<Socket>(this.name, () => this.users.keys(), () => this._localConnectedUser,
+        socket => socket.getUserData().emitInBatch({ message: { $case: "publicEvent", publicEvent: {
+            spaceName: this.localName, senderUserId: this.linearSh.botSenderId(), spaceEvent: { event: { $case: "spaceMessage", spaceMessage: {
+                message: "Please use Linear SH one person at a time.", name: "Linear SH", characterTextures: [], galleryUrls: [], fileNames: []
+            } } }
+        } } }));
+    public hasUserUuid(uuid: string): boolean {
+        return Array.from(this.users.values()).some(user => user.uuid === uuid);
+    }
     public readonly users: Map<string, SpaceUserExtended>;
 
     public readonly metadata: Map<string, unknown>;
@@ -156,6 +168,7 @@ export class Space implements SpaceForSpaceConnectionInterface {
      * Cleans up the space when the space is deleted (only useful when the space is empty)
      */
     public cleanup(): void {
+        this.linearSh.invalidate();
         if (this.destroyed) {
             return;
         }

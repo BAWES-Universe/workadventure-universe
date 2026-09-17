@@ -3,6 +3,8 @@
  */
 
 import { BotClient } from '../client/BotClient';
+import { isLinearSh } from '../linear-sh/policy';
+import { LinearSHBehavior } from '../linear-sh/LinearSHBehavior';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { MapDataService } from './MapDataService';
@@ -357,6 +359,7 @@ export class BotManager {
         
         // Helper to safely cast behavior config (comes from Admin API, may not match exact interface)
         const createBehavior = (type: string, cfg: Record<string, any>) => {
+            if (isLinearSh(botId, cfg)) return new LinearSHBehavior({ ...cfg, type: 'linear-sh' });
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[BotManager] createBehavior called for type: ${type}, cfg keys:`, Object.keys(cfg));
             }
@@ -774,6 +777,7 @@ export class BotManager {
             };
             
             const createBehavior = (type: string, cfg: any) => {
+                if (isLinearSh(botId, cfg)) return new LinearSHBehavior({ ...cfg, type: 'linear-sh' });
                 const transformedConfig = transformBehaviorConfig(type, cfg);
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[BotManager] Creating new ${type} behavior with config:`, JSON.stringify(transformedConfig, null, 2));

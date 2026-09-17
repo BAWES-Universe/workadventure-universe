@@ -1315,6 +1315,9 @@ export abstract class BaseBehavior {
         return Promise.resolve();
     }
 
+    /** Only the dedicated behavior handles server-attested Linear SH messages. */
+    async onLinearShRequest(_spaceName: string, _senderId: string, _message: string, _ticket: string): Promise<void> {}
+
     /**
      * Get conversation memory for a player
      * Override in behaviors that use memory

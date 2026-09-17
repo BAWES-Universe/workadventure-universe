@@ -1,0 +1,32 @@
+name: Linear SH fixtures
+on:
+  pull_request:
+    branches: [universe-develop]
+  push:
+    branches: [feat/linear-sh]
+permissions:
+  contents: read
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LINEAR_SH_ENABLED: 'false'
+      LINEAR_SH_WRITES_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --workspace=@workadventure/bots --workspace=workadventure-play --include-workspace-root
+      - run: npm ci
+        working-directory: messages
+      - run: npm run ts-proto
+        working-directory: messages
+      - run: npm test --workspace=@workadventure/bots -- --run
+      - run: npx tsc -p bots/linear-sh/tsconfig.json --noEmit false --outDir bots/dist/linear-sh-check
+      - run: npx vitest run --config ../bots/vitest.config.ts tests/pusher/LinearSH.delivery.test.ts tests/pusher/LinearSH.dispatcher.test.ts tests/pusher/LinearSH.interaction.test.ts tests/pusher/SpaceToFrontDispatcher.test.ts tests/pusher/SpaceToBackForwarder.test.ts
+        working-directory: play
+      - run: npx eslint src/pusher/services/LinearShGateway.ts src/pusher/services/LinearShInteraction.ts tests/pusher/LinearSH.*.test.ts
+        working-directory: play

@@ -967,6 +967,14 @@ export class IoSocketController {
                                             }
                                             break;
                                         }
+                                        case "linearShInteractionQuery": {
+                                            const query = message.message.queryMessage.query.linearShInteractionQuery;
+                                            answerMessage.answer = { $case: "linearShInteractionAnswer", linearShInteractionAnswer: {
+                                                active: await socketManager.checkLinearShInteraction(socket, query.spaceName, query.interactionId, query.requestId)
+                                            } };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
                                         case "joinSpaceQuery": {
                                             const localSpaceName =
                                                 message.message.queryMessage.query.joinSpaceQuery.spaceName;

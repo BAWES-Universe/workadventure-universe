@@ -1398,6 +1398,31 @@ export class SocketManager implements ZoneEventListener {
             throw new Error("User id not found");
         }
 
+        const linearEvent = publicEvent.spaceEvent?.event;
+        if (linearEvent?.$case === "spaceMessage") {
+            // Never trust an assertion supplied by the browser or mutable SpaceUser fields.
+            delete linearEvent.spaceMessage.linearShRequest;
+            if (process.env.LINEAR_SH_BOT_ID && socketData.userUuid !== `bot-${process.env.LINEAR_SH_BOT_ID}` &&
+                space.hasUserUuid?.(`bot-${process.env.LINEAR_SH_BOT_ID}`) === true) {
+                const { attestLinearSh } = await import("./LinearShGateway");
+                const interactionId = space.filterType === 0 ? space.linearSh?.capture(client) : undefined;
+                if (!interactionId || process.env.LINEAR_SH_ENABLED !== "true") {
+                    this.linearShNotice(client, space, !socketData.isLogged ? "Please sign in to use Linear SH." :
+                        process.env.LINEAR_SH_ENABLED !== "true" ? "Linear SH is unavailable." : "Please use Linear SH one person at a time.");
+                    return;
+                }
+                linearEvent.spaceMessage.linearShRequest = await attestLinearSh(socketData, publicEvent.spaceName,
+                    publicEvent.spaceName.slice(socketData.world.length + 1), linearEvent.spaceMessage.message, interactionId);
+                if (!space.linearSh?.current(interactionId, client)) return;
+                if (!linearEvent.spaceMessage.linearShRequest) {
+                    this.linearShNotice(client, space, "Linear SH access is unavailable. Please check your sign-in and workspace access.");
+                    return;
+                }
+                space.linearSh.clearNotice(client);
+                if (socketData.disconnecting || !socketData.spaces.has(publicEvent.spaceName)) return;
+            }
+        }
+
         space.forwarder.forwardMessageToSpaceBack({
             $case: "publicEvent",
             publicEvent: {
@@ -1405,6 +1430,23 @@ export class SocketManager implements ZoneEventListener {
                 senderUserId: socketData.spaceUserId,
             },
         });
+    }
+
+    private linearShNotice(client: Socket, space: SpaceInterface, message: string): void {
+        space.linearSh?.notice(client, message, () => client.getUserData().emitInBatch({ message: {
+            $case: "publicEvent", publicEvent: { spaceName: space.name.slice(client.getUserData().world.length + 1),
+                senderUserId: space.linearSh?.botSenderId() ?? "linear-sh-notice", spaceEvent: { event: { $case: "spaceMessage", spaceMessage: {
+                    message, name: "Linear SH", characterTextures: [], galleryUrls: [], fileNames: []
+                } } } }
+        } }));
+    }
+
+    async checkLinearShInteraction(client: Socket, localSpace: string, interactionId: string, requestId: string): Promise<boolean> {
+        const data = client.getUserData();
+        const name = `${data.world}.${localSpace}`;
+        if (!process.env.LINEAR_SH_BOT_ID || process.env.LINEAR_SH_ENABLED !== "true" ||
+            data.userUuid !== `bot-${process.env.LINEAR_SH_BOT_ID}` || data.disconnecting || !data.spaces.has(name)) return false;
+        return (await this.spaces.get(name)?.linearSh?.check(interactionId, requestId)) === true;
     }
 
     async handlePrivateEvent(client: Socket, privateEvent: PrivateEventFrontToPusher) {

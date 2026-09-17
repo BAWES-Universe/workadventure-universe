@@ -25,6 +25,7 @@ export interface SpaceToBackForwarderInterface {
 export class SpaceToBackForwarder implements SpaceToBackForwarderInterface {
     constructor(private readonly _space: Space, private readonly _clientEventsEmitter = clientEventsEmitter) {}
     async registerUser(client: Socket, filterType: FilterType): Promise<void> {
+        this._space.linearSh?.invalidate();
         const socketData = client.getUserData();
         const spaceUserId = socketData.spaceUserId;
 
@@ -134,6 +135,7 @@ export class SpaceToBackForwarder implements SpaceToBackForwarderInterface {
     }
 
     async unregisterUser(socket: Socket): Promise<void> {
+        this._space.linearSh?.invalidate();
         const userData = socket.getUserData();
 
         const spaceUserId = userData.spaceUserId;
