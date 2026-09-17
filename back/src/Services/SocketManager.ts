@@ -683,6 +683,7 @@ export class SocketManager {
                 case "joinSpaceQuery":
                 case "leaveSpaceQuery":
                 case "mapStorageJwtQuery":
+                case "linearShInteractionQuery": // Answered by the pusher, like the space queries above.
                 case "enterChatRoomAreaQuery": {
                     break;
                 }

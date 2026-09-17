@@ -38,7 +38,7 @@ Bounded review (2026-09-17): [official MCP docs](https://linear.app/docs/mcp) de
 
 ## Shared effects and deferred R1
 
-Shared hooks: optional proof/query protobuf fields; BotManager enrollment; BaseBehavior no-op hook; BotClient dedicated dispatch/output guard/query; AIService dedicated planner/guard; AdminApiService internal call; SocketManager/IoSocketController; Space/forwarder/dispatcher membership invalidation and protected delivery. Ordinary separate-bubble paths retain their existing behavior once, with no Linear authorization dependency. Existing provider/gallery/vision/repetition/MCP suites and guest/employee routing fixtures cover regressions.
+Shared hooks: optional proof/query protobuf fields; BotManager enrollment; BaseBehavior no-op hook; BotClient dedicated dispatch/output guard/query; AIService dedicated planner/guard; AdminApiService internal call; pusher SocketManager/IoSocketController; Space/forwarder/dispatcher membership invalidation and protected delivery; Back's exhaustive query switch recognizes the pusher-only interaction query without handling it. Ordinary separate-bubble paths retain their existing behavior once, with no Linear authorization dependency. Existing provider/gallery/vision/repetition/MCP suites and guest/employee routing fixtures cover regressions.
 
 **Deferred R1:** a bubble containing Linear SH plus another bot/conversation can delay/drop ordinary messages while Linear authorization runs or fails. The new gate rejects this arrangement. General mixed-bot/world-chat routing is not fixed in this release. Keep Linear SH separate; never reserve another bot.
 
