@@ -51,6 +51,16 @@ describe('resolveWsUrl', () => {
         expect(url.toString()).toBe('wss://ws.example.com/ws/room');
     });
 
+    it('rejects an unsupported scheme instead of failing later inside the socket client', () => {
+        expect(() => resolveWsUrl('ftp://ws.example.com/', PUSHER_URL)).toThrow(/Unsupported WS_URL protocol/);
+        expect(() => resolveWsUrl('file:///tmp/socket', PUSHER_URL)).toThrow(/Unsupported WS_URL protocol/);
+        expect(() => resolveWsUrl('mailto:ops@example.com', PUSHER_URL)).toThrow(/Unsupported WS_URL protocol/);
+    });
+
+    it('names the offending scheme in the error', () => {
+        expect(() => resolveWsUrl('ftp://ws.example.com/', PUSHER_URL)).toThrow(/ftp:/);
+    });
+
     it('returns a base for a root-relative WS_URL that still points at the pusher', () => {
         const url = new URL('ws/room', resolveWsUrl('/', PUSHER_URL));
         url.protocol = url.protocol.replace('http', 'ws');

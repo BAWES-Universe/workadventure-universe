@@ -7,8 +7,13 @@
  * An unset or empty WS_URL (docker compose passes an empty string when the operator does not set it)
  * falls back to the pusher URL.
  *
- * The result is always normalized to http(s) so that BotClient can switch it to ws(s) itself.
+ * Only http(s) and ws(s) are accepted. The shared validator also passes any absolute URL (for instance
+ * `ftp://`), which would otherwise surface as a confusing failure inside the socket client, so an
+ * unsupported scheme is rejected here instead. The result is normalized to http(s) so that BotClient
+ * can switch it to ws(s) itself.
  */
+const SUPPORTED_WS_PROTOCOLS = ['http:', 'https:', 'ws:', 'wss:'];
+
 export function resolveWsUrl(wsUrl: string | undefined, pusherUrl: string): string {
     const absolutePusherUrl = pusherUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 
@@ -16,5 +21,19 @@ export function resolveWsUrl(wsUrl: string | undefined, pusherUrl: string): stri
         return absolutePusherUrl;
     }
 
-    return new URL(wsUrl, absolutePusherUrl).toString().replace('ws://', 'http://').replace('wss://', 'https://');
+    const resolved = new URL(wsUrl, absolutePusherUrl);
+
+    if (!SUPPORTED_WS_PROTOCOLS.includes(resolved.protocol)) {
+        throw new Error(
+            `Unsupported WS_URL protocol "${resolved.protocol}" — use http:, https:, ws: or wss: (got "${wsUrl}").`
+        );
+    }
+
+    if (resolved.protocol === 'ws:') {
+        resolved.protocol = 'http:';
+    } else if (resolved.protocol === 'wss:') {
+        resolved.protocol = 'https:';
+    }
+
+    return resolved.toString();
 }
