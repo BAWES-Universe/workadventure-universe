@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20.18-bullseye-slim AS builder
+FROM node:20.18-bookworm-slim AS builder
 
 WORKDIR /usr/src/app
 
@@ -13,7 +13,7 @@ COPY tsconfig.json ./
 RUN npm run build
 
 # Production stage
-FROM node:20.18-bullseye-slim
+FROM node:20.18-bookworm-slim
 
 WORKDIR /usr/src/app
 
