@@ -31,7 +31,9 @@ export const ALLOWED_CORS_ORIGIN = process.env.ALLOWED_CORS_ORIGIN || PLAY_URL |
 export const DEBUG_ERROR_MESSAGES = process.env.DEBUG_ERROR_MESSAGES || "";
 
 export const SENTRY_DSN = process.env.SENTRY_DSN_UPLOADER;
-export const RELEASE_VERSION = process.env.RELEASE_VERSION || process.env.SENTRY_RELEASE;
+// "" must read as unset: the image default is ENV RELEASE_VERSION="", and an empty string
+// would otherwise be reported to Sentry as a release name.
+export const RELEASE_VERSION = process.env.RELEASE_VERSION || process.env.SENTRY_RELEASE || undefined;
 /** @deprecated Kept as an alias for one release; use RELEASE_VERSION. */
 export const SENTRY_RELEASE = RELEASE_VERSION;
 export const SENTRY_ENVIRONMENT = process.env.SENTRY_ENVIRONMENT;
