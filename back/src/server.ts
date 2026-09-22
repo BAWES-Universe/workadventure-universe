@@ -4,7 +4,7 @@ import App from "./App";
 import {
     ENABLE_TELEMETRY,
     SENTRY_DSN,
-    SENTRY_RELEASE,
+    RELEASE_VERSION,
     SENTRY_ENVIRONMENT,
     SENTRY_TRACES_SAMPLE_RATE,
 } from "./Enum/EnvironmentVariable";
@@ -19,7 +19,7 @@ if (SENTRY_DSN != undefined) {
     try {
         const sentryOptions: Sentry.NodeOptions = {
             dsn: SENTRY_DSN,
-            release: SENTRY_RELEASE,
+            release: RELEASE_VERSION,
             environment: SENTRY_ENVIRONMENT,
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
             attachStacktrace: true,

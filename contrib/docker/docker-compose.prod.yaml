@@ -89,6 +89,8 @@ services:
       - SENTRY_DSN_PUSHER=${SENTRY_DSN_PUSHER}
       - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT}
       - SENTRY_RELEASE=${SENTRY_RELEASE}
+      # RELEASE_VERSION is deliberately absent: any entry here (bare, null or empty) replaces the
+      # release identity baked into the image rather than falling back to it.
       - SENTRY_TRACES_SAMPLE_RATE=${SENTRY_TRACES_SAMPLE_RATE}
       - WOKA_SPEED
       - FEATURE_FLAG_BROADCAST_AREAS=${FEATURE_FLAG_BROADCAST_AREAS}

@@ -12,12 +12,15 @@ FROM --platform=$BUILDPLATFORM node:20.18-bookworm-slim AS builder
 ARG NODE_OPTIONS="--max-old-space-size=16384"
 ARG FAST_BUILD=""
 # Sentry build args (optional - for universe builds)
-ARG SENTRY_RELEASE=""
+# SENTRY_RELEASE is derived from RELEASE_VERSION below rather than passed in directly.
 ARG SENTRY_URL=""
 ARG SENTRY_AUTH_TOKEN=""
 ARG SENTRY_ORG=""
 ARG SENTRY_PROJECT=""
 ARG SENTRY_ENVIRONMENT=""
+# Baked release identity. Its first use is the `npm run build` line below, which is rebuilt
+# anyway, so this costs no extra cache invalidation here.
+ARG RELEASE_VERSION=""
 WORKDIR /usr/src
 RUN apt-get update && apt-get install -y git
 COPY package.json package-lock.json ./
@@ -41,7 +44,7 @@ RUN export NODE_OPTIONS="$NODE_OPTIONS" && \
     cd play && \
     npm run typesafe-i18n && \
     npm run build-iframe-api && \
-    SENTRY_RELEASE="$SENTRY_RELEASE" \
+    SENTRY_RELEASE="$RELEASE_VERSION" \
     SENTRY_URL="$SENTRY_URL" \
     SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN" \
     SENTRY_ORG="$SENTRY_ORG" \
@@ -71,6 +74,12 @@ COPY --from=builder --chown=node:node /usr/src/play /usr/src/play
 WORKDIR /usr/src/play
 
 HEALTHCHECK --interval=10s --timeout=7s --start-period=10s --retries=15 CMD curl -f http://localhost:3000/ping || exit 1
+
+# Baked release identity (RELEASE_VERSION). Deliberately the last thing before USER/CMD:
+# a build arg invalidates the layer cache from its first use and this value changes on every
+# release, so anything placed after it would be rebuilt every time.
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
 
 USER node
 CMD ["npm", "run", "start"]

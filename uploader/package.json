@@ -13,7 +13,7 @@
     "startTestServer": "tsx tests/testServer.ts",
     "lint": "eslint src/ . --ext .ts",
     "lint-fix": "eslint --fix src/ . --ext .ts",
-    "push-sentry-sourcemaps": "tsc && sentry-cli releases new $SENTRY_RELEASE && sentry-cli releases files $SENTRY_RELEASE upload-sourcemaps dist && sentry-cli releases finalize $SENTRY_RELEASE"
+    "push-sentry-sourcemaps": "tsc && sentry-cli releases new ${RELEASE_VERSION:-$SENTRY_RELEASE} && sentry-cli releases files ${RELEASE_VERSION:-$SENTRY_RELEASE} upload-sourcemaps dist && sentry-cli releases finalize ${RELEASE_VERSION:-$SENTRY_RELEASE}"
   },
   "repository": {
     "type": "git",

@@ -29,6 +29,12 @@ COPY --from=proto-builder /usr/src/generated ./back/src/Messages/generated
 WORKDIR /usr/src/back
 HEALTHCHECK --interval=10s --timeout=7s --start-period=10s --retries=15 CMD curl -f http://localhost:80/ping || exit 1
 RUN mkdir ./dist
+# Baked release identity (RELEASE_VERSION). Deliberately the last thing before USER/CMD:
+# a build arg invalidates the layer cache from its first use and this value changes on every
+# release, so anything placed after it would be rebuilt every time.
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
+
 USER node
 CMD ["npm", "run", "runprod"]
 
