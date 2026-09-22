@@ -41,6 +41,11 @@ export interface BotConfig {
     name: string;
     roomUrl: string;
     pusherUrl: string;
+    /**
+     * Optional public URL used for the game WebSocket. Defaults to pusherUrl when not set, which lets
+     * deployments keep the socket on a different host than the pusher (e.g. off a CDN proxy).
+     */
+    wsUrl?: string;
     position: PositionInterface;
     viewport: ViewportInterface;
     characterTextureIds: string[];
@@ -135,7 +140,7 @@ export class BotClient {
      */
     async connect(): Promise<void> {
         return new Promise((resolve, reject) => {
-            const url = new URL('ws/room', this.config.pusherUrl);
+            const url = new URL('ws/room', this.config.wsUrl || this.config.pusherUrl);
             url.protocol = url.protocol.replace('http', 'ws');
 
             const params = url.searchParams;

@@ -10,6 +10,7 @@ declare global {
 const env = window.env;
 export const DEBUG_MODE = env.DEBUG_MODE;
 export const PUSHER_URL = env.PUSHER_URL;
+export const WS_URL = env.WS_URL;
 export const ADMIN_URL = env.ADMIN_URL;
 export const UPLOADER_URL = env.UPLOADER_URL;
 export const ICON_URL = env.ICON_URL;
@@ -44,7 +45,9 @@ export const MAX_EXTRAPOLATION_TIME = 100; // Extrapolate a maximum of 250ms if 
 
 export const SENTRY_DSN_FRONT = env.SENTRY_DSN_FRONT;
 export const SENTRY_ENVIRONMENT = env.SENTRY_ENVIRONMENT;
-export const SENTRY_RELEASE = env.SENTRY_RELEASE;
+export const RELEASE_VERSION = env.RELEASE_VERSION || env.SENTRY_RELEASE;
+/** @deprecated Kept as an alias for one release; use RELEASE_VERSION. */
+export const SENTRY_RELEASE = RELEASE_VERSION;
 export const SENTRY_TRACES_SAMPLE_RATE = env.SENTRY_TRACES_SAMPLE_RATE;
 export const WOKA_SPEED = env.WOKA_SPEED;
 

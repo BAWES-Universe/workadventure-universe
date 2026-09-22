@@ -20,7 +20,11 @@ VERSION="${VERSION:-latest}"
 SERVICES=("play" "back" "map-storage" "uploader")
 
 # Build arguments for play service (Sentry - optional)
+# SENTRY_RELEASE is the deprecated alias of the baked release identity. Defaulting it first keeps
+# `set -u` happy, then the alias is resolved with the same rule the application readers use, so a
+# manual build works with either variable.
 SENTRY_RELEASE="${SENTRY_RELEASE:-}"
+RELEASE_VERSION="${RELEASE_VERSION:-$SENTRY_RELEASE}"
 SENTRY_URL="${SENTRY_URL:-}"
 SENTRY_AUTH_TOKEN="${SENTRY_AUTH_TOKEN:-}"
 SENTRY_ORG="${SENTRY_ORG:-}"
@@ -143,12 +147,14 @@ build_service() {
     if [[ -n "$FAST_BUILD" ]]; then
         build_args+=("--build-arg" "FAST_BUILD=$FAST_BUILD")
     fi
+    # Every service bakes the release identity into its image (see the Dockerfiles), so this is
+    # passed for all of them, not just play.
+    if [[ -n "$RELEASE_VERSION" ]]; then
+        build_args+=("--build-arg" "RELEASE_VERSION=$RELEASE_VERSION")
+    fi
     
     # Play service specific: Sentry build args
     if [[ "$service" == "play" ]]; then
-        if [[ -n "$SENTRY_RELEASE" ]]; then
-            build_args+=("--build-arg" "SENTRY_RELEASE=$SENTRY_RELEASE")
-        fi
         if [[ -n "$SENTRY_URL" ]]; then
             build_args+=("--build-arg" "SENTRY_URL=$SENTRY_URL")
         fi

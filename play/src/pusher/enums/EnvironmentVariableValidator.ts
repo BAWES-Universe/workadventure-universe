@@ -60,6 +60,9 @@ export const EnvironmentVariables = z.object({
         .optional()
         .describe("Allowed CORS origin for API requests. Use '*' to allow any domain"),
     PUSHER_URL: AbsoluteOrRelativeUrl.optional().describe("Public URL of the pusher service"),
+    WS_URL: AbsoluteOrRelativeUrl.optional().describe(
+        "Public URL used by the browser for the game WebSocket. Defaults to PUSHER_URL. Set it to a dedicated hostname to keep the socket off a proxy that closes long-lived connections."
+    ),
     FRONT_URL: AbsoluteOrRelativeUrl.optional().describe("Public URL of the frontend application"),
     MAP_STORAGE_API_TOKEN: z.string().describe("API token for authenticating with the map-storage service"),
     PUBLIC_MAP_STORAGE_URL: z
@@ -316,7 +319,16 @@ export const EnvironmentVariables = z.object({
     LOGROCKET_ID: z.string().optional().describe("LogRocket application ID for session recording and monitoring"),
     SENTRY_DSN_FRONT: z.string().optional().describe("Sentry DSN for frontend error tracking"),
     SENTRY_DSN_PUSHER: z.string().optional().describe("Sentry DSN for pusher service error tracking"),
-    SENTRY_RELEASE: z.string().optional().describe("Sentry release version identifier for error tracking"),
+    RELEASE_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Release identity baked into the image at build time. Used as the Sentry release."),
+    SENTRY_RELEASE: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Deprecated: use RELEASE_VERSION. Kept as a fallback for one release."),
     SENTRY_ENVIRONMENT: z
         .string()
         .optional()

@@ -3,7 +3,7 @@
 # When the issue above is closed, we can move back messages building inside Dockerfile
 
 # protobuf build
-FROM --platform=$BUILDPLATFORM node:22.15-bullseye-slim AS proto-builder
+FROM --platform=$BUILDPLATFORM node:22.15-bookworm-slim AS proto-builder
 WORKDIR /usr/src
 COPY messages/package-lock.json messages/package.json ./
 RUN npm ci
@@ -12,7 +12,7 @@ COPY libs ./../libs
 RUN npm run tag-version && npm run ts-proto
 
 # typescript build
-FROM --platform=$BUILDPLATFORM node:22.15-bullseye-slim AS builder
+FROM --platform=$BUILDPLATFORM node:22.15-bookworm-slim AS builder
 EXPOSE 3000 50053
 WORKDIR /usr/src
 ENV STORAGE_DIRECTORY=/maps
@@ -33,7 +33,7 @@ COPY --chown=node:node map-storage map-storage
 RUN cd map-storage && npm run front:build
 
 # final production image
-FROM node:22.15-bullseye-slim
+FROM node:22.15-bookworm-slim
 EXPOSE 3000 50053
 WORKDIR /usr/src
 ENV STORAGE_DIRECTORY=/maps
@@ -57,6 +57,12 @@ WORKDIR /usr/src/map-storage
 RUN mkdir ./dist
 
 HEALTHCHECK --interval=5s --timeout=10s --start-period=5s --retries=10 CMD curl -f http://localhost:3000/ping || exit 1
+# Baked release identity (RELEASE_VERSION). Deliberately the last thing before USER/CMD:
+# a build arg invalidates the layer cache from its first use and this value changes on every
+# release, so anything placed after it would be rebuilt every time.
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
+
 USER node
 CMD ["npm", "run", "start"]
 

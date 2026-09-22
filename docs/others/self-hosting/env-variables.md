@@ -25,6 +25,7 @@ Environment variables for the Play service (frontend and pusher).
 | `VITE_URL` | No | URL of the Vite development server (development only) |
 | `ALLOWED_CORS_ORIGIN` | No | Allowed CORS origin for API requests. Use '*' to allow any domain |
 | `PUSHER_URL` | No | Public URL of the pusher service |
+| `WS_URL` | No | Public URL used by the browser for the game WebSocket. Defaults to PUSHER_URL. Set it to a dedicated hostname to keep the socket off a proxy that closes long-lived connections. |
 | `FRONT_URL` | No | Public URL of the frontend application |
 | `MAP_STORAGE_API_TOKEN` | Yes | API token for authenticating with the map-storage service |
 | `PUBLIC_MAP_STORAGE_URL` | No | The public URL to the map-storage server (for instance: "https://map-storage.example.com") |
@@ -78,7 +79,8 @@ Environment variables for the Play service (frontend and pusher).
 | `LOGROCKET_ID` | No | LogRocket application ID for session recording and monitoring |
 | `SENTRY_DSN_FRONT` | No | Sentry DSN for frontend error tracking |
 | `SENTRY_DSN_PUSHER` | No | Sentry DSN for pusher service error tracking |
-| `SENTRY_RELEASE` | No | Sentry release version identifier for error tracking |
+| `RELEASE_VERSION` | No | Release identity baked into the image at build time. Used as the Sentry release. |
+| `SENTRY_RELEASE` | No | Deprecated: use RELEASE_VERSION. Kept as a fallback for one release. |
 | `SENTRY_ENVIRONMENT` | No | Sentry environment name (e.g., 'production', 'staging', 'development') |
 | `SENTRY_TRACES_SAMPLE_RATE` | No | The sampling rate for Sentry traces. Only used if SENTRY_DSN is configured. Defaults to 0.1 |
 | `ROOM_API_PORT` | No | Port for the Room API gRPC server. Defaults to 50051 |
@@ -154,7 +156,8 @@ Environment variables for the Back service (backend API).
 | `SECURITY_EMAIL` | No | This email address will be notified if your WorkAdventure version contains a known security flaw. ENABLE_TELEMETRY must be set to "true" for this. |
 | `TELEMETRY_URL` | No | URL where telemetry data is sent. |
 | `SENTRY_DSN` | No | If set, WorkAdventure will send errors to Sentry |
-| `SENTRY_RELEASE` | No | The Sentry release we target. Only used if SENTRY_DSN is configured. |
+| `RELEASE_VERSION` | No | Release identity baked into the image at build time. Used as the Sentry release. |
+| `SENTRY_RELEASE` | No | Deprecated: use RELEASE_VERSION. Kept as a fallback for one release. |
 | `SENTRY_TRACES_SAMPLE_RATE` | No | The Sentry traces sample rate. Only used if SENTRY_DSN is configured. Defaults to 0.1 |
 | `SENTRY_ENVIRONMENT` | No | The Sentry environnement we target. Only used if SENTRY_DSN is configured. |
 | `GRPC_MAX_MESSAGE_SIZE` | Yes | The maximum size of a gRPC message. Defaults to 20 MB. |
@@ -189,7 +192,8 @@ Environment variables for the Map Storage service.
 | `WEB_HOOK_API_TOKEN` | No | The (optional) API token to use when calling the webhook. The token will be sent in the Authorization header of the POST request. |
 | `MAX_SIMULTANEOUS_FS_READS` | No | The maximum number of simultaneous file system (local or S3) reads when regenerating the cache file. Defaults to 100. |
 | `SENTRY_DSN` | No | If set, WorkAdventure will send errors to Sentry |
-| `SENTRY_RELEASE` | No | The Sentry release we target. Only used if SENTRY_DSN is configured. |
+| `RELEASE_VERSION` | No | Release identity baked into the image at build time. Used as the Sentry release. |
+| `SENTRY_RELEASE` | No | Deprecated: use RELEASE_VERSION. Kept as a fallback for one release. |
 | `SENTRY_ENVIRONMENT` | No | The Sentry environment we target. Only used if SENTRY_DSN is configured. |
 | `SENTRY_TRACES_SAMPLE_RATE` | No | The sampling rate for Sentry traces. Only used if SENTRY_DSN is configured. Defaults to 0.1 |
 | `AUTHENTICATION_STRATEGY` | No | Deprecated. Use ENABLE_BEARER_AUTHENTICATION, ENABLE_BASIC_AUTHENTICATION or ENABLE_DIGEST_AUTHENTICATION instead |

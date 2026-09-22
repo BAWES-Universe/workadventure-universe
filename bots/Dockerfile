@@ -1,5 +1,5 @@
 # protobuf build
-FROM node:20.18-bullseye-slim AS proto-builder
+FROM node:20.18-bookworm-slim AS proto-builder
 WORKDIR /usr/src
 COPY messages/package-lock.json messages/package.json ./
 RUN npm ci
@@ -8,7 +8,7 @@ COPY libs ./../libs
 RUN npm run tag-version && npm run ts-proto
 
 # main stage
-FROM node:20.18-bullseye-slim
+FROM node:20.18-bookworm-slim
 
 # Install curl for healthcheck
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
@@ -62,6 +62,12 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Install ts-node and tsx globally for running TypeScript
 RUN npm install -g ts-node tsx
+# Baked release identity (RELEASE_VERSION). Deliberately the last thing before USER/CMD:
+# a build arg invalidates the layer cache from its first use and this value changes on every
+# release, so anything placed after it would be rebuilt every time.
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
+
 # Default to production start command (can be overridden in docker-compose)
 # Note: In dev mode, docker-compose overrides this with "npm run dev" which uses tsx watch
 CMD ["npm", "run", "start"]

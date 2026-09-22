@@ -62,7 +62,9 @@ export const TELEMETRY_URL = env.TELEMETRY_URL;
 
 export const SENTRY_DSN = env.SENTRY_DSN;
 export const SENTRY_ENVIRONMENT = env.SENTRY_ENVIRONMENT;
-export const SENTRY_RELEASE = env.SENTRY_RELEASE;
+export const RELEASE_VERSION = env.RELEASE_VERSION || env.SENTRY_RELEASE;
+/** @deprecated Kept as an alias for one release; use RELEASE_VERSION. */
+export const SENTRY_RELEASE = RELEASE_VERSION;
 export const SENTRY_TRACES_SAMPLE_RATE = env.SENTRY_TRACES_SAMPLE_RATE;
 
 export const GRPC_MAX_MESSAGE_SIZE = env.GRPC_MAX_MESSAGE_SIZE;

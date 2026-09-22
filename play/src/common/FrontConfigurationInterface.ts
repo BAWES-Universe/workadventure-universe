@@ -3,6 +3,7 @@ import type { OpidWokaNamePolicy } from "@workadventure/messages";
 export interface FrontConfigurationInterface {
     DEBUG_MODE: boolean;
     PUSHER_URL: string;
+    WS_URL: string | undefined;
     FRONT_URL: string;
     ADMIN_URL: string | undefined;
     UPLOADER_URL: string;
@@ -31,6 +32,8 @@ export interface FrontConfigurationInterface {
     SENTRY_DSN_FRONT: string | undefined;
     SENTRY_DSN_PUSHER: string | undefined;
     SENTRY_ENVIRONMENT: string | undefined;
+    RELEASE_VERSION: string | undefined;
+    /** @deprecated Kept as an alias for one release; use RELEASE_VERSION. */
     SENTRY_RELEASE: string | undefined;
     SENTRY_TRACES_SAMPLE_RATE: number | undefined;
     WOKA_SPEED: number;

@@ -22,6 +22,7 @@ import { AutoImprovement } from '../improvement/AutoImprovement';
 import { SelfImprovementLoop } from '../improvement/SelfImprovementLoop';
 import type { AutoPilotImprovement } from '../services/AutoPilotImprovement';
 import * as Sentry from '@sentry/node';
+import { resolveWsUrl } from '../utils/resolveWsUrl';
 
 export interface BotInstance {
     botId: string;
@@ -242,15 +243,21 @@ export class BotManager {
         // Create bot client config
         // BotClient requires: botId, name, roomUrl, pusherUrl, position, viewport, characterTextureIds
         const pusherUrl = process.env.PUSHER_URL || process.env.WORKADVENTURE_URL || 'http://localhost:8080';
-        
+
+        // The game WebSocket can be served from a different host than the pusher (WS_URL). It defaults
+        // to the pusher URL, and a root-relative WS_URL is resolved against it, so this changes nothing
+        // unless the operator sets WS_URL explicitly.
+        const wsUrl = resolveWsUrl(process.env.WS_URL, pusherUrl);
+
         // Get position from assignedSpace.center (required field)
         const position = config.assignedSpace?.center || { x: 0, y: 0 };
-        
+
         const botConfig = {
             botId,
             name: config.name || `Bot ${botId}`,
             roomUrl: config.roomUrl,
             pusherUrl: pusherUrl.replace('ws://', 'http://').replace('wss://', 'https://'),
+            wsUrl,
             position,
             viewport: { top: 0, bottom: 1000, left: 0, right: 1000 }, // TODO: Get from config
             characterTextureIds: config.characterTextureIds || [], // TODO: Get from config or WAM file

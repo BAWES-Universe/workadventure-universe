@@ -45,6 +45,8 @@ export const PUSHER_WS_PORT = env.PUSHER_WS_PORT;
 export const SOCKET_IDLE_TIMER = env.SOCKET_IDLE_TIMER; // maximum time (in second) without activity before a socket is closed. Should be greater than 60 seconds in order to cope for Chrome intensive throttling (https://developer.chrome.com/blog/timer-throttling-in-chrome-88/#intensive-throttling)
 export const ALLOWED_CORS_ORIGIN = env.ALLOWED_CORS_ORIGIN; // Use "*" to allow any domain
 export const PUSHER_URL = env.PUSHER_URL || "";
+// Public URL the front uses to reach the game WebSocket. Falls back to the pusher URL.
+export const WS_URL = env.WS_URL || "";
 export const FRONT_URL = env.FRONT_URL || "";
 export const VITE_URL = env.VITE_URL || FRONT_URL; // Used only in development
 export const PUBLIC_MAP_STORAGE_URL = env.PUBLIC_MAP_STORAGE_URL || "";
@@ -103,7 +105,9 @@ export const LOGROCKET_ID: string | undefined = env.LOGROCKET_ID;
 // Sentry integration
 export const SENTRY_DSN: string | undefined = env.SENTRY_DSN_PUSHER;
 export const SENTRY_ENVIRONMENT: string | undefined = env.SENTRY_ENVIRONMENT;
-export const SENTRY_RELEASE: string | undefined = env.SENTRY_RELEASE;
+export const RELEASE_VERSION: string | undefined = env.RELEASE_VERSION || env.SENTRY_RELEASE;
+/** @deprecated Kept as an alias for one release; use RELEASE_VERSION. */
+export const SENTRY_RELEASE: string | undefined = RELEASE_VERSION;
 export const SENTRY_TRACES_SAMPLE_RATE: number | undefined = env.SENTRY_TRACES_SAMPLE_RATE;
 
 // TURN config
@@ -155,6 +159,7 @@ export const ENABLE_ISSUE_REPORT: boolean = env.ENABLE_ISSUE_REPORT || true;
 export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     DEBUG_MODE: env.DEBUG_MODE,
     PUSHER_URL,
+    WS_URL,
     FRONT_URL,
     ADMIN_URL,
     UPLOADER_URL: env.UPLOADER_URL,
@@ -183,6 +188,7 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     SENTRY_DSN_FRONT: env.SENTRY_DSN_FRONT,
     SENTRY_DSN_PUSHER: env.SENTRY_DSN_PUSHER,
     SENTRY_ENVIRONMENT: env.SENTRY_ENVIRONMENT,
+    RELEASE_VERSION: env.RELEASE_VERSION,
     SENTRY_RELEASE: env.SENTRY_RELEASE,
     SENTRY_TRACES_SAMPLE_RATE: env.SENTRY_TRACES_SAMPLE_RATE,
     WOKA_SPEED: env.WOKA_SPEED,
