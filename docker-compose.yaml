@@ -119,6 +119,8 @@ services:
       SENTRY_DSN_PUSHER: ${SENTRY_DSN_PUSHER:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # Taken from the host env when set, otherwise the value baked into the image wins.
+      RELEASE_VERSION: ${RELEASE_VERSION:-}
       SENTRY_ORG: ${SENTRY_ORG:-}
       SENTRY_PROJECT: ${SENTRY_PROJECT:-}
       # Room API
@@ -194,6 +196,8 @@ services:
       DEBUG_MODE: "$DEBUG_MODE"
       SENTRY_DSN_MAPS: ${SENTRY_DSN_MAPS:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # Taken from the host env when set, otherwise the value baked into the image wins.
+      RELEASE_VERSION: ${RELEASE_VERSION:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-}
       HOST: "0.0.0.0"
@@ -251,6 +255,8 @@ services:
       SENTRY_DSN: ${SENTRY_DSN_BACK:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # Taken from the host env when set, otherwise the value baked into the image wins.
+      RELEASE_VERSION: ${RELEASE_VERSION:-}
     volumes:
       - .:/usr/src/app
     tmpfs: /tmp
@@ -284,6 +290,8 @@ services:
       SENTRY_DSN: ${SENTRY_DSN_MAPSTORAGE:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # Taken from the host env when set, otherwise the value baked into the image wins.
+      RELEASE_VERSION: ${RELEASE_VERSION:-}
       PATH_PREFIX: ""
       MAP_STORAGE_API_TOKEN: "FFVSGBSGBSGFB23SFGBSFG4BS"
       PUSHER_URL: http://play.workadventure.localhost
@@ -316,6 +324,8 @@ services:
       STARTUP_COMMAND_1: ../npm-install.sh
       SENTRY_DSN_UPLOADER: ${SENTRY_DSN_UPLOADER:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # Taken from the host env when set, otherwise the value baked into the image wins.
+      RELEASE_VERSION: ${RELEASE_VERSION:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-}
       UPLOADER_URL: http://uploader.workadventure.localhost

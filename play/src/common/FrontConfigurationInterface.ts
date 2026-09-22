@@ -32,6 +32,8 @@ export interface FrontConfigurationInterface {
     SENTRY_DSN_FRONT: string | undefined;
     SENTRY_DSN_PUSHER: string | undefined;
     SENTRY_ENVIRONMENT: string | undefined;
+    RELEASE_VERSION: string | undefined;
+    /** @deprecated Kept as an alias for one release; use RELEASE_VERSION. */
     SENTRY_RELEASE: string | undefined;
     SENTRY_TRACES_SAMPLE_RATE: number | undefined;
     WOKA_SPEED: number;

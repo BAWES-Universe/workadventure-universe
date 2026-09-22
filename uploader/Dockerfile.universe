@@ -10,6 +10,12 @@ RUN npm ci --omit=dev --workspace workadventureuploader
 COPY uploader uploader
 
 WORKDIR /usr/src/uploader
+# Baked release identity (RELEASE_VERSION). Deliberately the last thing before USER/CMD:
+# a build arg invalidates the layer cache from its first use and this value changes on every
+# release, so anything placed after it would be rebuilt every time.
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
+
 USER node
 CMD ["npm", "run", "start"]
 

@@ -129,10 +129,16 @@ Note that anonymous players don't have any TTL limit because their data is store
         .default("https://stats.workadventu.re")
         .describe("URL where telemetry data is sent."),
     SENTRY_DSN: z.string().optional().describe("If set, WorkAdventure will send errors to Sentry"),
+    RELEASE_VERSION: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Release identity baked into the image at build time. Used as the Sentry release."),
     SENTRY_RELEASE: z
         .string()
         .optional()
-        .describe("The Sentry release we target. Only used if SENTRY_DSN is configured."),
+        .transform(emptyStringToUndefined)
+        .describe("Deprecated: use RELEASE_VERSION. Kept as a fallback for one release."),
     SENTRY_TRACES_SAMPLE_RATE: z
         .string()
         .optional()

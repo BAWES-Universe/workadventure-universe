@@ -28,6 +28,12 @@ COPY --from=builder /usr/src/app/dist ./dist
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD node -e "process.exit(0)" || exit 1
 
+# Baked release identity (RELEASE_VERSION). Deliberately the last thing before USER/CMD:
+# a build arg invalidates the layer cache from its first use and this value changes on every
+# release, so anything placed after it would be rebuilt every time.
+ARG RELEASE_VERSION=""
+ENV RELEASE_VERSION=$RELEASE_VERSION
+
 USER node
 
 CMD ["npm", "start"]

@@ -6,6 +6,8 @@ services:
     environment:
       SENTRY_DSN_DISCORD_BOT: ${SENTRY_DSN_DISCORD_BOT:-}
       SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+      # Taken from the host env when set, otherwise the value baked into the image wins.
+      RELEASE_VERSION: ${RELEASE_VERSION:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-}
       PUSHER_URL: ${PUSHER_URL:-http://play.workadventure.localhost}

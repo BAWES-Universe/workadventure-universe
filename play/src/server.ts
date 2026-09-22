@@ -11,7 +11,7 @@ import {
     ROOM_API_PORT,
     ROOM_API_SECRET_KEY,
     SENTRY_DSN,
-    SENTRY_RELEASE,
+    RELEASE_VERSION,
     SENTRY_TRACES_SAMPLE_RATE,
     SENTRY_ENVIRONMENT,
     PUSHER_WS_PORT,
@@ -28,7 +28,7 @@ if (SENTRY_DSN != undefined) {
     try {
         const sentryOptions: Sentry.NodeOptions = {
             dsn: SENTRY_DSN,
-            release: SENTRY_RELEASE,
+            release: RELEASE_VERSION,
             environment: SENTRY_ENVIRONMENT,
             tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE,
             attachStacktrace: true,

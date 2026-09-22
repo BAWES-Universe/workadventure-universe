@@ -35,7 +35,61 @@ env:
   IMAGE_PREFIX: ${{ github.repository_owner }}
 
 jobs:
+  # ─────────────────────────────────────────────────
+  # Version: single source of truth for both the
+  # release tag and the version baked into the images
+  # ─────────────────────────────────────────────────
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.calculate.outputs.new_version }}
+      release_version: ${{ steps.calculate.outputs.release_version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Calculate next version and what gets baked
+        id: calculate
+        run: |
+          PKG_VERSION=$(cat VERSION)
+          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          LATEST_VERSION="${LATEST_TAG#v}"
+
+          echo "VERSION file: $PKG_VERSION"
+          echo "Latest tag:   $LATEST_TAG"
+
+          if [ -z "$LATEST_TAG" ]; then
+            NEW_VERSION="$PKG_VERSION"
+          elif [ "$PKG_VERSION" = "$LATEST_VERSION" ]; then
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$PKG_VERSION"
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          elif [ "$(printf '%s\n' "$PKG_VERSION" "$LATEST_VERSION" | sort -V | tail -1)" = "$PKG_VERSION" ]; then
+            # VERSION is ahead of latest tag — use VERSION (user bumped it)
+            NEW_VERSION="$PKG_VERSION"
+          else
+            # VERSION is behind latest tag — bump from tag instead
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+          # What gets baked into the images (RELEASE_VERSION).
+          # Only a real release — a push to universe — may claim the next semver: a
+          # workflow_dispatch build is never released, and a later release would reuse that
+          # same number, so an unreleased image must be identifiable as <branch>@<sha>.
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/universe" ]; then
+            RELEASE_VERSION="v${NEW_VERSION}"
+          else
+            RELEASE_VERSION="${GITHUB_REF_NAME//\//-}@${GITHUB_SHA::7}"
+          fi
+
+          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Baking release version: $RELEASE_VERSION"
+
   build-play:
+    needs: get-version
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'play' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
@@ -75,7 +129,7 @@ jobs:
           build-args: |
             NODE_OPTIONS=--max-old-space-size=16384
             FAST_BUILD=
-            SENTRY_RELEASE=
+            RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
             SENTRY_URL=
             SENTRY_AUTH_TOKEN=
             SENTRY_ORG=
@@ -85,6 +139,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-back:
+    needs: get-version
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'back' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
@@ -121,10 +176,13 @@ jobs:
           file: ./back/Dockerfile.universe
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-map-storage:
+    needs: get-version
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'map-storage' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
@@ -161,10 +219,13 @@ jobs:
           file: ./map-storage/Dockerfile.universe
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-uploader:
+    needs: get-version
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'uploader' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
@@ -201,10 +262,13 @@ jobs:
           file: ./uploader/Dockerfile.universe
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-discord-bot:
+    needs: get-version
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'discord-bot' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
@@ -241,11 +305,13 @@ jobs:
           file: ./discord-bot/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-bot-server:
-    needs: build-play
+    needs: [get-version, build-play]
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
@@ -282,59 +348,36 @@ jobs:
           file: ./bots/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
 
   # ─────────────────────────────────────────────────
-  # Release: auto-version, tag, and GitHub Release
+  # Release: tag and GitHub Release (the version itself
+  # comes from get-version, which also feeds RELEASE_VERSION)
   # Runs only on push to universe (not PRs)
   # ─────────────────────────────────────────────────
   release:
     if: github.ref == 'refs/heads/universe' && github.event_name == 'push'
-    needs: [build-play, build-back, build-map-storage, build-uploader, build-discord-bot, build-bot-server]
+    needs: [get-version, build-play, build-back, build-map-storage, build-uploader, build-discord-bot, build-bot-server]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      new_version: ${{ steps.calculate.outputs.new_version }}
+      new_version: ${{ needs.get-version.outputs.new_version }}
       created: ${{ steps.create_release.outputs.created }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Calculate next version
-        id: calculate
-        run: |
-          PKG_VERSION=$(cat VERSION)
-          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
-          LATEST_VERSION="${LATEST_TAG#v}"
-
-          echo "VERSION file: $PKG_VERSION"
-          echo "Latest tag:   $LATEST_TAG"
-
-          if [ -z "$LATEST_TAG" ]; then
-            NEW_VERSION="$PKG_VERSION"
-          elif [ "$PKG_VERSION" = "$LATEST_VERSION" ]; then
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$PKG_VERSION"
-            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          elif [ "$(printf '%s\n' "$PKG_VERSION" "$LATEST_VERSION" | sort -V | tail -1)" = "$PKG_VERSION" ]; then
-            # VERSION is ahead of latest tag — use VERSION (user bumped it)
-            NEW_VERSION="$PKG_VERSION"
-          else
-            # VERSION is behind latest tag — bump from tag instead
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
-            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          fi
-
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Create tag and release
         id: create_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEW_VERSION: ${{ steps.calculate.outputs.new_version }}
+          NEW_VERSION: ${{ needs.get-version.outputs.new_version }}
         run: |
           VERSION="v${NEW_VERSION}"
 
@@ -357,7 +400,7 @@ jobs:
         continue-on-error: true
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          NEW_VERSION: ${{ steps.calculate.outputs.new_version }}
+          NEW_VERSION: ${{ needs.get-version.outputs.new_version }}
         run: |
           npx -y @sentry/cli@3.4.3 releases new "v${NEW_VERSION}" \
             --org bawes-co \

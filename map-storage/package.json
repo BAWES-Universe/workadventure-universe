@@ -37,7 +37,7 @@
     "test:watch": "vitest --watch",
     "test:cov": "vitest --coverage",
     "upload-test-map": "rm -f tests/assets.zip && cd tests/assets && zip -r ../assets.zip * && curl -F 'file=@../assets.zip' http://map-storage.workadventure.localhost/upload --basic -u john.doe:password",
-    "push-sentry-sourcemaps": "tsc --project tsconfig-node.json && sentry-cli releases new $SENTRY_RELEASE && sentry-cli releases files $SENTRY_RELEASE upload-sourcemaps dist && sentry-cli releases finalize $SENTRY_RELEASE",
+    "push-sentry-sourcemaps": "tsc --project tsconfig-node.json && sentry-cli releases new ${RELEASE_VERSION:-$SENTRY_RELEASE} && sentry-cli releases files ${RELEASE_VERSION:-$SENTRY_RELEASE} upload-sourcemaps dist && sentry-cli releases finalize ${RELEASE_VERSION:-$SENTRY_RELEASE}",
     "upload-test-map-single-domain": "rm -f tests/assets.zip && cd tests/assets && zip -r ../assets.zip * && curl -k -F 'file=@../assets.zip' https://play.workadventure.localhost/map-storage/upload --basic -u john.doe:password",
     "start:dev": "cross-env concurrently --kill-others-on-fail \"npm:back:start:dev\" \"npm:front:dev\"",
     "front:dev": "vite dev",
