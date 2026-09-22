@@ -20,8 +20,9 @@ VERSION="${VERSION:-latest}"
 SERVICES=("play" "back" "map-storage" "uploader")
 
 # Build arguments for play service (Sentry - optional)
-SENTRY_RELEASE="${SENTRY_RELEASE:-}"
-RELEASE_VERSION="${RELEASE_VERSION:-}"
+# RELEASE_VERSION is the baked release identity; SENTRY_RELEASE is its deprecated alias, resolved
+# here with the same rule the application readers use, so a manual build keeps working either way.
+RELEASE_VERSION="${RELEASE_VERSION:-$SENTRY_RELEASE}"
 SENTRY_URL="${SENTRY_URL:-}"
 SENTRY_AUTH_TOKEN="${SENTRY_AUTH_TOKEN:-}"
 SENTRY_ORG="${SENTRY_ORG:-}"
@@ -152,9 +153,6 @@ build_service() {
     
     # Play service specific: Sentry build args
     if [[ "$service" == "play" ]]; then
-        if [[ -n "$SENTRY_RELEASE" ]]; then
-            build_args+=("--build-arg" "SENTRY_RELEASE=$SENTRY_RELEASE")
-        fi
         if [[ -n "$SENTRY_URL" ]]; then
             build_args+=("--build-arg" "SENTRY_URL=$SENTRY_URL")
         fi
