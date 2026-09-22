@@ -25,6 +25,7 @@ Environment variables for the Play service (frontend and pusher).
 | `VITE_URL` | No | URL of the Vite development server (development only) |
 | `ALLOWED_CORS_ORIGIN` | No | Allowed CORS origin for API requests. Use '*' to allow any domain |
 | `PUSHER_URL` | No | Public URL of the pusher service |
+| `WS_URL` | No | Public URL used by the browser for the game WebSocket. Defaults to PUSHER_URL. Set it to a dedicated hostname to keep the socket off a proxy that closes long-lived connections. |
 | `FRONT_URL` | No | Public URL of the frontend application |
 | `MAP_STORAGE_API_TOKEN` | Yes | API token for authenticating with the map-storage service |
 | `PUBLIC_MAP_STORAGE_URL` | No | The public URL to the map-storage server (for instance: "https://map-storage.example.com") |

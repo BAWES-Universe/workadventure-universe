@@ -64,6 +64,7 @@ services:
       ALLOWED_CORS_ORIGIN: "http://play.workadventure.localhost"
       VITE_URL: "http://front.workadventure.localhost"
       PUSHER_URL: http://play.workadventure.localhost
+      WS_URL: ${WS_URL:-}
       FRONT_URL: http://play.workadventure.localhost
       UPLOADER_URL: http://uploader.workadventure.localhost
       ICON_URL: http://icon.workadventure.localhost

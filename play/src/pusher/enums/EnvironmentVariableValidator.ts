@@ -60,6 +60,9 @@ export const EnvironmentVariables = z.object({
         .optional()
         .describe("Allowed CORS origin for API requests. Use '*' to allow any domain"),
     PUSHER_URL: AbsoluteOrRelativeUrl.optional().describe("Public URL of the pusher service"),
+    WS_URL: AbsoluteOrRelativeUrl.optional().describe(
+        "Public URL used by the browser for the game WebSocket. Defaults to PUSHER_URL. Set it to a dedicated hostname to keep the socket off a proxy that closes long-lived connections."
+    ),
     FRONT_URL: AbsoluteOrRelativeUrl.optional().describe("Public URL of the frontend application"),
     MAP_STORAGE_API_TOKEN: z.string().describe("API token for authenticating with the map-storage service"),
     PUBLIC_MAP_STORAGE_URL: z
