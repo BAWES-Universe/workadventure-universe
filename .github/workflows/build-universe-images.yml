@@ -29,6 +29,17 @@ on:
           - discord-bot
           - bot-server
 
+# Serialise runs per ref. Two pushes to `universe` inside one run's window both computed the
+# same next version (get-version reads the latest tag at the start of a run, the tag is only
+# written at the end of it), so the second run skipped its tag while its images had already
+# been pushed to :latest / :universe. Waiting instead of racing means the second run reads the
+# first run's tag and computes the following version.
+# cancel-in-progress MUST stay false: true could cancel a release between `git push origin
+# "$VERSION"` and `gh release create`, leaving a tag with no release behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   # Change this to your GitHub username or organization
