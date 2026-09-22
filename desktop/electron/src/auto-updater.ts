@@ -30,7 +30,8 @@ async function init() {
     autoUpdater.on("update-downloaded", ({ releaseNotes, releaseName, version }: UpdateDownloadedEvent) => {
         void (async () => {
             const message =
-                (process.platform === "win32" && typeof releaseNotes === "string" ? releaseNotes : releaseName) ??
+                (process.platform === "win32" && typeof releaseNotes === "string" && releaseNotes) ||
+                releaseName ||
                 `Version ${version}`;
             const { response } = await dialog.showMessageBox({
                 type: "question",
