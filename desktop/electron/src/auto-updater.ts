@@ -1,5 +1,5 @@
 import { app, dialog } from "electron";
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, UpdateDownloadedEvent } from "electron-updater";
 import log from "electron-log";
 import * as isDev from "electron-is-dev";
 import * as util from "util";
@@ -27,14 +27,17 @@ export async function manualRequestUpdateCheck() {
 async function init() {
     autoUpdater.logger = log;
 
-    autoUpdater.on("update-downloaded", ({ releaseNotes, releaseName }) => {
+    autoUpdater.on("update-downloaded", ({ releaseNotes, releaseName, version }: UpdateDownloadedEvent) => {
         void (async () => {
+            const message =
+                (process.platform === "win32" && typeof releaseNotes === "string" ? releaseNotes : releaseName) ??
+                `Version ${version}`;
             const { response } = await dialog.showMessageBox({
                 type: "question",
                 buttons: ["Install and Restart", "Install Later"],
                 defaultId: 0,
                 title: "Universe \u2014 Update Ready",
-                message: process.platform === "win32" ? releaseNotes : releaseName,
+                message,
                 detail: "A new version has been downloaded. Restart the app to apply the update.",
             });
             if (response === 0) {

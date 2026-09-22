@@ -65,7 +65,10 @@ export default () => {
     });
     ipcMain.handle("local-app:removeServer", (_event, server: Server) => {
         const servers = settings.get("servers") || [];
-        settings.set("servers", servers.filter((s) => s._id !== server._id));
+        settings.set(
+            "servers",
+            servers.filter((s) => s._id !== server._id)
+        );
         return true;
     });
 };
