@@ -790,6 +790,22 @@ Everything above is technical guidance. Follow your personality as defined in th
 
                     // If we have tool calls and chunk is done, execute them BEFORE yielding any content
                     if (chunk.done && toolCallAccumulator.size > 0) {
+                        // This done chunk carries the initial call's token usage. Read it
+                        // first: this branch ends with `continue`, so the generic metadata
+                        // read further down the loop never sees this chunk. Without this,
+                        // the initial call is recorded with zero tokens and zero cost, and
+                        // the turn totals reported to the admin app omit it (follow-up
+                        // rounds add onto these values with +=).
+                        if (chunk.metadata?.tokensUsed) {
+                            tokensUsed = chunk.metadata.tokensUsed;
+                        }
+                        if (chunk.metadata?.promptTokens) {
+                            promptTokens = chunk.metadata.promptTokens;
+                        }
+                        if (chunk.metadata?.completionTokens) {
+                            completionTokens = chunk.metadata.completionTokens;
+                        }
+
                         // Capture $ai_generation for the initial LLM call NOW —
                         // before tool execution distorts its latency and before
                         // the follow-up call inverts event ordering.
