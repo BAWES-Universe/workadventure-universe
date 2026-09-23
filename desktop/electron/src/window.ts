@@ -39,7 +39,7 @@ function offlinePageHtml(): string {
   <button onclick="location.reload()" style="padding:10px 24px;background:#4f98a3;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Reload Now</button>
   <script>
     setTimeout(() => location.reload(), 10000);
-  <\/script>
+  </script>
 </body></html>`;
 }
 
@@ -93,14 +93,10 @@ export async function createWindow() {
     appView.webContents.on("did-fail-load", (_event, errorCode) => {
         // -3 = ERR_ABORTED (navigation cancels, not a real failure)
         if (errorCode === -3) return;
-        void appView?.webContents.loadURL(
-            `data:text/html;charset=utf-8,${encodeURIComponent(offlinePageHtml())}`
-        );
+        void appView?.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(offlinePageHtml())}`);
     });
 
-    const targetUrl = electronIsDev && process.env.LOCAL_APP_URL
-        ? process.env.LOCAL_APP_URL
-        : UNIVERSE_URL;
+    const targetUrl = electronIsDev && process.env.LOCAL_APP_URL ? process.env.LOCAL_APP_URL : UNIVERSE_URL;
 
     await appView.webContents.loadURL(targetUrl);
 }
