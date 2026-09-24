@@ -18,6 +18,7 @@
     import { v4 as uuid } from "uuid";
     import type { EmojiClickEvent } from "emoji-picker-element/shared";
     import { defautlNativeIntegrationAppName } from "@workadventure/shared-utils";
+    import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { ChatRoom } from "../../Connection/ChatConnection";
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
@@ -155,6 +156,13 @@
         // Every send path (Enter, the Send button, files, application link) ends the typing status.
         stopTypingNow();
 
+        const hasSomethingToSend =
+            (applicationProperty !== undefined && applicationProperty.link.length !== 0) ||
+            files.length > 0 ||
+            messageToSend.trim().length !== 0;
+        if (hasSomethingToSend) {
+            analyticsClient.chatMessageSent(room instanceof ProximityChatRoom ? "proximity" : "matrix");
+        }
         if (applicationProperty && applicationProperty.link.length !== 0) {
             room?.sendMessage(applicationProperty.link);
         }
