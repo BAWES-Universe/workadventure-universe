@@ -9,10 +9,13 @@
     import LL from "../../../i18n/i18n-svelte";
     import Input from "../Input/Input.svelte";
     import ButtonClose from "../Input/ButtonClose.svelte";
+    import type { ExpressionSource } from "../../Administration/AnalyticsClient";
+    import { analyticsClient } from "../../Administration/AnalyticsClient";
     import PopUpContainer from "./PopUpContainer.svelte";
     import { IconSend } from "@wa-icons";
 
     export let type: "say" | "think" = "say";
+    export let source: ExpressionSource = "keyboard";
     let message = "";
     let messageInput: Input;
 
@@ -96,6 +99,7 @@
             type === "say" ? SayMessageType.SpeechBubble : SayMessageType.ThinkingCloud,
             type === "say" ? 5000 : undefined
         );
+        analyticsClient.saySent(type, source);
         message = "";
         closeBanner();
     }

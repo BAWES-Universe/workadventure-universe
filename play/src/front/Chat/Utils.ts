@@ -10,9 +10,9 @@ import { coWebsites } from "../Stores/CoWebsiteStore";
 import { scriptUtils } from "../Api/ScriptUtils";
 import { gameManager } from "../Phaser/Game/GameManager";
 import { userIsConnected } from "../Stores/MenuStore";
-import { chatVisibilityStore } from "../Stores/ChatStore";
 import { warningMessageStore } from "../Stores/ErrorStore";
 import { LL } from "../../i18n/i18n-svelte";
+import { openChat } from "./openChat";
 import { navChat } from "./Stores/ChatStore";
 import { selectedRoomStore } from "./Stores/SelectRoomStore";
 import RequiresLoginForChatModal from "./Components/RequiresLoginForChatModal.svelte";
@@ -87,7 +87,7 @@ export const openDirectChatRoom = async (chatID: string) => {
 
         selectedRoomStore.set(room);
         navChat.switchToChat();
-        chatVisibilityStore.set(true);
+        openChat("person");
     } catch (error) {
         warningMessageStore.addWarningMessage(get(LL).chat.failedToOpenRoom({ roomId: chatID }));
         console.error(error);
@@ -108,7 +108,7 @@ export const openChatRoom = async (roomId: string) => {
 
         selectedRoomStore.set(room);
         navChat.switchToChat();
-        chatVisibilityStore.set(true);
+        openChat("person");
     } catch (error) {
         warningMessageStore.addWarningMessage(get(LL).chat.failedToOpenRoom({ roomId }));
         console.error(error);

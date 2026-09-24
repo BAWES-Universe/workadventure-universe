@@ -37,6 +37,7 @@ import {
     audioManagerVolumeStore,
 } from "../../../Stores/AudioManagerStore";
 import { chatVisibilityStore, chatZoneLiveStore } from "../../../Stores/ChatStore";
+import { openChat } from "../../../Chat/openChat";
 /**
  * @DEPRECATED - This is the old way to show trigger message
  import { layoutManagerActionStore } from "../../../Stores/LayoutManagerStore";
@@ -937,7 +938,7 @@ export class AreasPropertiesListener {
                     selectedRoomStore.set(room);
                     navChat.switchToChat();
                     chatZoneLiveStore.set(true);
-                    if (property.shouldOpenAutomatically) chatVisibilityStore.set(true);
+                    if (property.shouldOpenAutomatically) openChat("area");
                 })
                 .catch((error) => {
                     console.error("Failed to confirm emojis validation", error);
@@ -946,7 +947,7 @@ export class AreasPropertiesListener {
         }
 
         if (!isConnected && property.shouldOpenAutomatically) {
-            chatVisibilityStore.set(true);
+            openChat("area");
         }
     }
 
