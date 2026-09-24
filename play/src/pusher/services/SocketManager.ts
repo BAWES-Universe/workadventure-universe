@@ -40,7 +40,7 @@ import type {
     UserMovesMessage,
     ViewportMessage,
 } from "@workadventure/messages";
-import { noUndefined, ServerToClientMessage } from "@workadventure/messages";
+import { FilterType as FilterTypeValue, noUndefined, ServerToClientMessage } from "@workadventure/messages";
 import * as Sentry from "@sentry/node";
 import type { AxiosResponse } from "axios";
 import axios, { isAxiosError } from "axios";
@@ -65,6 +65,7 @@ import { apiClientRepository } from "./ApiClientRepository";
 import { adminService } from "./AdminService";
 import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
+import { MatrixAreaMembership } from "./MatrixAreaMembership";
 
 const debug = Debug("socket");
 
@@ -75,6 +76,15 @@ export type SocketUpgradeFailed = WebSocket<UpgradeFailedData>;
 export class SocketManager implements ZoneEventListener {
     private rooms: Map<string, PusherRoom> = new Map<string, PusherRoom>();
     private spaces: Map<string, SpaceInterface> = new Map<string, SpaceInterface>();
+    private readonly matrixAreaMembership = new MatrixAreaMembership<Socket>({
+        matrix: matrixProvider,
+        joinSpace: (socket, spaceName) =>
+            this.handleJoinSpace(socket, spaceName, spaceName, FilterTypeValue.ALL_USERS, [], {
+                signal: new AbortController().signal,
+            }),
+        leaveSpace: (socket, spaceName) => this.handleLeaveSpace(socket, spaceName),
+        getSpace: (spaceName) => this.spaces.get(spaceName),
+    });
 
     constructor(private _spaceConnection = new SpaceConnection()) {
         clientEventsEmitter.registerToClientJoin((clientUUid: string, roomId: string) => {
@@ -478,8 +488,9 @@ export class SocketManager implements ZoneEventListener {
             console.error("Error while leaving room", e);
         }
         try {
-            this.leaveSpaces(client).catch((error) => {
-                console.error("Error while leaving spaces", error);
+            // Must run before leaveSpaces: it reads which Matrix area spaces this socket is in.
+            this.leaveChatRoomArea(client).catch((error) => {
+                console.error("Error while leaving chat room area", error);
                 Sentry.captureException(error);
             });
         } catch (e) {
@@ -487,8 +498,8 @@ export class SocketManager implements ZoneEventListener {
             console.error(e);
         }
         try {
-            this.leaveChatRoomArea(client).catch((error) => {
-                console.error("Error while leaving chat room area", error);
+            this.leaveSpaces(client).catch((error) => {
+                console.error("Error while leaving spaces", error);
                 Sentry.captureException(error);
             });
         } catch (e) {
@@ -1430,59 +1441,29 @@ export class SocketManager implements ZoneEventListener {
         });
     }
 
+    /**
+     * The socket is closing: the account is removed from each area room only if none of its other tabs is still there.
+     */
     async leaveChatRoomArea(socket: Socket): Promise<void> {
-        const { chatID, currentChatRoomArea } = socket.getUserData();
+        const { currentChatRoomArea } = socket.getUserData();
 
         if (!currentChatRoomArea) {
             return Promise.reject(new Error("currentChatRoomArea is undefined"));
         }
 
-        try {
-            if (chatID) {
-                await Promise.all(
-                    currentChatRoomArea.map((chatRoomAreaID) => matrixProvider.kickUserFromRoom(chatID, chatRoomAreaID))
-                );
-            }
-        } catch (error) {
-            console.error(error);
-        }
-
-        return;
+        return this.matrixAreaMembership.leaveAll(socket);
     }
 
     async handleLeaveChatRoomArea(socket: Socket, chatRoomAreaToLeave: string) {
-        const socketData = socket.getUserData();
-        socketData.currentChatRoomArea = socketData.currentChatRoomArea.filter(
-            (ChatRoomArea) => ChatRoomArea !== chatRoomAreaToLeave
-        );
-
-        const chatID = socketData.chatID;
-
         try {
-            if (chatID) {
-                await matrixProvider.kickUserFromRoom(chatID, chatRoomAreaToLeave).catch((e) => console.error(e));
-            }
-            return;
+            await this.matrixAreaMembership.leave(socket, chatRoomAreaToLeave);
         } catch (error) {
             console.error(error);
-            return;
         }
     }
 
     async handleEnterChatRoomAreaQuery(socket: Socket, roomID: string): Promise<void> {
-        const socketData = socket.getUserData();
-        if (!socketData.chatID) {
-            return Promise.reject(new Error("Error: Chat ID not found"));
-        }
-
-        socketData.currentChatRoomArea.push(roomID);
-        const isAdmin = socketData.tags.includes("admin");
-
-        await matrixProvider.inviteUserToRoom(socketData.chatID, roomID).catch((e) => console.error(e));
-
-        if (isAdmin) {
-            await matrixProvider.promoteUserToModerator(socketData.chatID, roomID).catch((e) => console.error(e));
-        }
+        return this.matrixAreaMembership.enter(socket, roomID);
     }
 
     async handleMapStorageJwtQuery(socket: Socket): Promise<string> {
