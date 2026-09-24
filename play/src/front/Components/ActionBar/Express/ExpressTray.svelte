@@ -332,7 +332,7 @@
 <!-- The tray only stops pointer events from reaching the map and handles swipe-to-dismiss. -->
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <div
-    class="express-tray absolute bottom-full right-0 mb-2 w-[min(22rem,calc(100vw-1.5rem))] origin-bottom-right rounded-lg p-3 pointer-events-auto select-none bg-contrast/80 backdrop-blur"
+    class="express-tray absolute bottom-full right-0 mb-2 w-[min(22rem,calc(100vw-1.5rem))] origin-bottom-right rounded-lg p-3 pointer-events-auto select-none"
     style:transform={dragOffset > 0 ? `translateY(${dragOffset}px)` : undefined}
     style:opacity={dragOffset > 0 ? Math.max(0.4, 1 - dragOffset / 160) : undefined}
     role="dialog"
@@ -569,8 +569,12 @@
 
 <style lang="scss">
     .express-tray {
-        /* Same surface as the action bar buttons and menus (bg-contrast/80 + backdrop-blur, in the class list). */
-        box-shadow: 0 18px 48px -12px rgba(0, 0, 0, 0.55);
+        /* Express has its own surface, a blue gradient with a purple glow, so it stands out from the action bar. */
+        background: linear-gradient(160deg, rgba(38, 52, 82, 0.92), rgba(27, 42, 65, 0.94));
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(255, 255, 255, 0.07),
+            0 18px 48px -12px rgba(0, 0, 0, 0.55), 0 0 40px -18px rgba(134, 41, 252, 0.6);
         touch-action: none;
     }
 
