@@ -7,7 +7,7 @@ import type { ChatRoom } from "../Chat/Connection/ChatConnection";
 import { gameManager } from "../Phaser/Game/GameManager";
 import { selectedRoomStore } from "../Chat/Stores/SelectRoomStore";
 import { proximityMeetingStore } from "../Stores/MyMediaStore";
-import { chatVisibilityStore } from "../Stores/ChatStore";
+import { openChat } from "../Chat/openChat";
 import type { NotificationWA } from "./Notification";
 
 type SelectedRoomStore = {
@@ -63,7 +63,7 @@ class NotificationManager {
     }
 
     private async handleMessageNotification(chatRoomId: string) {
-        chatVisibilityStore.set(true);
+        openChat("notification");
         let room: ChatRoom | undefined;
         if (chatRoomId === "proximity") {
             this.proximityMeetingStore.set(true);

@@ -3,7 +3,7 @@ import type { APIResponse} from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import {createZipFromDirectory} from "./utils/zip";
 import {RENDERER_MODE} from "./utils/environment";
-import {map_storage_url, maps_domain} from "./utils/urls";
+import {e2e_wam_directory, map_storage_url, maps_domain} from "./utils/urls";
 import { getPage} from "./utils/auth";
 import {isMobile} from "./utils/isMobile";
 
@@ -17,7 +17,7 @@ test.describe('Map-storage Upload API @nomobile', () => {
     });
     test('users are asked to reconnect when a map is updated',
         async ({ request, browser }) => {
-        const uploadFile1 = await request.put("map1.wam", {
+        const uploadFile1 = await request.put(`${e2e_wam_directory}/reconnect/map1.wam`, {
             multipart: {
                 file: {
                     name: "map1.wam",
@@ -34,7 +34,7 @@ test.describe('Map-storage Upload API @nomobile', () => {
         });
         expect(uploadFile1.ok()).toBeTruthy();
 
-        const uploadFile2 = await request.put("map2.wam", {
+        const uploadFile2 = await request.put(`${e2e_wam_directory}/reconnect/map2.wam`, {
             multipart: {
                 file: {
                     name: "map2.wam",
@@ -50,11 +50,11 @@ test.describe('Map-storage Upload API @nomobile', () => {
             }
         });
         expect(uploadFile2.ok()).toBeTruthy();
-        await using page = await getPage(browser, 'Alice', `/~/map1.wam?phaserMode=${RENDERER_MODE}`);
-        await using page2 = await getPage(browser, 'Bob', `/~/map2.wam?phaserMode=${RENDERER_MODE}`);
+        await using page = await getPage(browser, 'Alice', `/~/${e2e_wam_directory}/reconnect/map1.wam?phaserMode=${RENDERER_MODE}`);
+        await using page2 = await getPage(browser, 'Bob', `/~/${e2e_wam_directory}/reconnect/map2.wam?phaserMode=${RENDERER_MODE}`);
 
         // Let's trigger a reload of map 1 only
-        const uploadFile3 = await request.put("map1.wam", {
+        const uploadFile3 = await request.put(`${e2e_wam_directory}/reconnect/map1.wam`, {
             multipart: {
                 file: {
                     name: "map1.wam",

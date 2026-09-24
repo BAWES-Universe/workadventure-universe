@@ -43,7 +43,7 @@
             focusElement(selected);
 
             if (isEmoteIndex(selected)) {
-                displayEmote(selected);
+                displayEmote(selected, "emoji_menu");
             } else {
                 console.warn(`Invalid emote index: ${selected}`);
                 Sentry.captureException(new Error(`Invalid emote index: ${selected}`));
@@ -249,8 +249,8 @@
                         on:mouseenter={() => (showSayBubbleTooltip = true)}
                         on:mouseleave={() => (showSayBubbleTooltip = false)}
                         on:click={() => {
-                            popupStore.addPopup(SayPopUp, { type: "say" }, "say");
-                            analyticsClient.openSayBubble();
+                            popupStore.addPopup(SayPopUp, { type: "say", source: "emoji_menu" }, "say");
+                            analyticsClient.openSayBubble("emoji_menu");
                         }}
                         data-testid="say-bubble-button"
                     >
@@ -272,8 +272,8 @@
                         on:mouseenter={() => (showThinkBubbleTooltip = true)}
                         on:mouseleave={() => (showThinkBubbleTooltip = false)}
                         on:click={() => {
-                            popupStore.addPopup(SayPopUp, { type: "think" }, "say");
-                            analyticsClient.openThinkBubble();
+                            popupStore.addPopup(SayPopUp, { type: "think", source: "emoji_menu" }, "say");
+                            analyticsClient.openThinkBubble("emoji_menu");
                         }}
                         data-testid="think-bubble-button"
                     >
