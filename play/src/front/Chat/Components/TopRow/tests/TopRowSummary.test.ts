@@ -164,9 +164,8 @@ describe("formatWorldLine", () => {
             "3 others in Headquarters · 12 elsewhere in this world"
         );
         expect(formatWorldLine({ here: 3, elsewhere: 0 }, "Headquarters", world)).toBe("3 others in Headquarters");
-        expect(formatWorldLine({ here: 0, elsewhere: 4 }, undefined, world)).toBe(
-            "0 others on this map · 4 elsewhere in this world"
-        );
+        expect(formatWorldLine({ here: 0, elsewhere: 4 }, undefined, world)).toBe("4 elsewhere in this world");
+        expect(formatWorldLine({ here: 0, elsewhere: 4 }, "Headquarters", world)).toBe("4 elsewhere in this world");
         expect(formatWorldLine({ here: 0, elsewhere: 0 }, "Headquarters", world)).toBe(
             "No one else is in this world right now"
         );

@@ -85,6 +85,10 @@ export class AreaChatRoomTracker<Room = unknown> {
     private entries: AreaChatRoomEntry<Room>[] = [];
     private settling = new Map<string, number>();
     private nextGeneration = 1;
+    /** First generation handed out in the current scene. Entries below it belong to a scene that was reset. */
+    private sceneStartGeneration = 1;
+    /** Bumped by reset(), so settles started in an earlier scene can't touch this one. */
+    private epoch = 0;
 
     private readonly hiddenStore = writable<ReadonlySet<string>>(new Set());
     private readonly rowsStore = writable<readonly AreaChatRoomEntry<Room>[]>([]);
@@ -143,6 +147,11 @@ export class AreaChatRoomTracker<Room = unknown> {
         return entry;
     }
 
+    /** False for an entry created before the last reset(), i.e. in a scene that is gone. */
+    public isFromCurrentScene(entry: AreaChatRoomEntry<Room>): boolean {
+        return entry.generation >= this.sceneStartGeneration;
+    }
+
     /** True if an active area (joining or joined) still uses this room. */
     public hasActiveRoom(roomId: string): boolean {
         return this.entries.some((entry) => entry.roomId === roomId);
@@ -159,10 +168,13 @@ export class AreaChatRoomTracker<Room = unknown> {
     public beginSettle(roomId: string): () => void {
         this.settling.set(roomId, (this.settling.get(roomId) ?? 0) + 1);
         this.publish();
+        const epoch = this.epoch;
         let done = false;
         return () => {
             if (done) return;
             done = true;
+            // The scene was reset since: this settle's count is already gone.
+            if (epoch !== this.epoch) return;
             const count = (this.settling.get(roomId) ?? 1) - 1;
             if (count <= 0) {
                 this.settling.delete(roomId);
@@ -175,6 +187,8 @@ export class AreaChatRoomTracker<Room = unknown> {
 
     /** Forgets everything, for a new scene. */
     public reset(): void {
+        this.epoch++;
+        this.sceneStartGeneration = this.nextGeneration;
         this.mapRoomIds = new Set();
         this.entries = [];
         this.settling = new Map();

@@ -220,6 +220,8 @@ export function formatWorldLine(
     templates: WorldLineTemplates
 ): string {
     if (presence.here === 0 && presence.elsewhere === 0) return templates.nobodyInWorld;
+    // Alone on this map: line one already says so, don't add "0 others in …".
+    if (presence.here === 0) return templates.elsewhere({ count: presence.elsewhere });
     const trimmedRoomName = roomName?.trim();
     const herePart = trimmedRoomName
         ? templates.othersInRoom({ count: presence.here, roomName: trimmedRoomName })

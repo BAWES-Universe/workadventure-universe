@@ -184,4 +184,22 @@ describe("AreaChatRoomTracker", () => {
         expect(rowRoomIds(tracker)).toEqual([]);
         expect(mainList(tracker, [room("!a"), room("!x")])).toEqual(["!a", "!x"]);
     });
+
+    it("a settle started before reset can't unhide a room settling in the new scene", () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        const oldSettle = tracker.beginSettle("!a");
+        tracker.reset();
+        tracker.beginSettle("!a");
+        oldSettle();
+        expect(mainList(tracker, [room("!a")])).toEqual([]);
+    });
+
+    it("tells entries of a previous scene apart", () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        const oldEntry = tracker.enter("area-a", "!a");
+        tracker.reset();
+        const newEntry = tracker.enter("area-a", "!a");
+        expect(tracker.isFromCurrentScene(oldEntry)).toBe(false);
+        expect(tracker.isFromCurrentScene(newEntry)).toBe(true);
+    });
 });

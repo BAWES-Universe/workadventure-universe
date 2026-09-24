@@ -959,7 +959,10 @@ export class AreasPropertiesListener {
                         // The avatar left (or left and came back) before the join finished: select nothing, open
                         // nothing, and leave the room again unless another active area still uses it.
                         if (!areaChatRooms.hasActiveRoom(matrixRoomId) && "leaveRoom" in room) {
-                            const leaveSettled = areaChatRooms.beginSettle(matrixRoomId);
+                            // A join from a previous map must not hide a room on the new map while it leaves.
+                            const leaveSettled = areaChatRooms.isFromCurrentScene(entry)
+                                ? areaChatRooms.beginSettle(matrixRoomId)
+                                : () => {};
                             (room as ChatRoom & ChatRoomMembershipManagement)
                                 .leaveRoom()
                                 .catch((error) => console.error(error))
