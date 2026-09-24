@@ -94,8 +94,22 @@ describe("GET /logout", () => {
         expect(res.redirectedTo).toBe(playUri);
     });
 
-    it("keeps the redirect flow for an empty token", async () => {
-        const res = await callLogout({ playUri, token: "", redirect: "http://auth.example.com/logout" });
+    it("ignores `redirect` for an empty token, so it can't be used to bounce people elsewhere", async () => {
+        const res = await callLogout({ playUri, token: "", redirect: "https://evil.example/phish" });
+
+        expect(res.redirectedTo).toBe(playUri);
+        expect(res.cookies.playUri).toBeUndefined();
+        expect(verifyJWTToken).not.toHaveBeenCalled();
+    });
+
+    it("keeps the redirect flow for a verified logout", async () => {
+        verifyJWTToken.mockReturnValue({ identifier: "u", accessToken: "access" });
+
+        const res = await callLogout({
+            playUri,
+            token: "header.payload.signature",
+            redirect: "http://auth.example.com/logout",
+        });
 
         expect(res.cookies.playUri).toBe(playUri);
         expect(res.redirectedTo).toBe("http://auth.example.com/logout");
