@@ -16,6 +16,7 @@ const customCursorPositionKey = "customCursorPosition";
 const requestedCameraStateKey = "requestedCameraStateKey";
 const requestedMicrophoneStateKey = "requestedMicrophoneStateKey";
 const characterTexturesKey = "characterTextures";
+const guestCharacterTexturesKey = "guestCharacterTextures";
 const companionKey = "companion";
 const audioPlayerVolumeKey = "audioVolume";
 const audioPlayerMuteKey = "audioMute";
@@ -137,6 +138,41 @@ class LocalUserStore {
     getCharacterTextures(): string[] | null {
         const value = JSON.parse(localStorage.getItem(characterTexturesKey) || "null");
         return areCharacterTexturesValid(value) ? value : null;
+    }
+
+    /**
+     * Keeps the guest's woka aside before login clears it, so a guest who logs in and then logs out
+     * (or abandons the login) comes back with the same woka instead of the woka picker.
+     */
+    backupGuestCharacterTextures(): void {
+        const current = this.getCharacterTextures();
+        if (current !== null) {
+            localStorage.setItem(guestCharacterTexturesKey, JSON.stringify(current));
+        }
+    }
+
+    /**
+     * Restores the guest woka kept by backupGuestCharacterTextures(), only when no valid woka is stored.
+     * A woka saved during the logged-in session (e.g. the account's own) always wins.
+     */
+    restoreGuestCharacterTextures(): boolean {
+        if (this.getCharacterTextures() !== null) {
+            return false;
+        }
+        let backup: unknown;
+        try {
+            backup = JSON.parse(localStorage.getItem(guestCharacterTexturesKey) || "null");
+        } catch {
+            return false;
+        }
+        if (!Array.isArray(backup) || !backup.every((id) => typeof id === "string")) {
+            return false;
+        }
+        if (!areCharacterTexturesValid(backup)) {
+            return false;
+        }
+        this.setCharacterTextures(backup);
+        return true;
     }
 
     setCompanionTextureId(textureId: string | null): void {
