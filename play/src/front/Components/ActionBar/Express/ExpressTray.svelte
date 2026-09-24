@@ -81,7 +81,11 @@
         }
         // Capture phase: runs before the game's keyboard shortcuts, which listen further down the chain.
         window.addEventListener("keydown", typeIntoInput, true);
-        return () => window.removeEventListener("keydown", typeIntoInput, true);
+        window.addEventListener("keydown", onWindowKeydown, true);
+        return () => {
+            window.removeEventListener("keydown", typeIntoInput, true);
+            window.removeEventListener("keydown", onWindowKeydown, true);
+        };
     });
 
     function deepActiveElement(): Element | null {
@@ -143,7 +147,6 @@
     // --- Edit mode: swap emotes with the emoji picker and rename phrases. ---
     let closePickerFn: (() => void) | undefined;
     let pickingSlot: number | undefined;
-    let pickerClosedAt = 0;
     let editingPhrase: number | undefined;
     let phraseDraft = "";
 
@@ -151,7 +154,6 @@
         closePickerFn?.();
         closePickerFn = undefined;
         pickingSlot = undefined;
-        pickerClosedAt = performance.now();
     }
 
     function toggleEditing() {
@@ -287,8 +289,11 @@
 
     function onWindowKeydown(event: KeyboardEvent) {
         if (event.key !== "Escape") return;
-        // The same Escape that closed the emoji picker doesn't also leave edit mode.
-        if (closePickerFn || performance.now() - pickerClosedAt < 100) return;
+        // Runs in the capture phase, before the emoji picker's own Escape handler: while the picker is open,
+        // this Escape is the picker's (it closes it), so it doesn't also leave edit mode. The next one does.
+        if (closePickerFn) return;
+        // The text fields handle their own Escape (cancel a phrase edit, close the tray).
+        if (isTextField(deepActiveElement())) return;
         if (editing) {
             expressTrayStore.open();
         } else {
@@ -327,7 +332,7 @@
     }
 </script>
 
-<svelte:window on:keydown={onWindowKeydown} on:pointermove={onPointerMove} on:pointerup={onPointerUp} />
+<svelte:window on:pointermove={onPointerMove} on:pointerup={onPointerUp} />
 
 <!-- The tray only stops pointer events from reaching the map and handles swipe-to-dismiss. -->
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
