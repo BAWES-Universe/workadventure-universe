@@ -4,6 +4,12 @@ import type { Emoji } from "../Stores/Utils/emojiSchema";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare let window: any;
 
+/** Where a say, think or emote was triggered from. */
+export type ExpressionSource = "keyboard" | "emoji_menu" | "express_tray";
+
+/** What caused the chat panel to open. Anything that sets the visibility store directly is "unknown". */
+export type ChatOpenSource = "button" | "bubble" | "area" | "notification" | "script" | "person" | "unknown";
+
 class AnalyticsClient {
     private posthogPromise: Promise<PostHog> | undefined;
 
@@ -60,10 +66,10 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    launchEmote(emote: Emoji): void {
+    launchEmote(emote: Emoji, source: ExpressionSource): void {
         this.posthogPromise
             ?.then((posthog) => {
-                posthog.capture("wa-emote-launch", { ...emote });
+                posthog.capture("wa-emote-launch", { ...emote, source });
             })
             .catch((e) => console.error(e));
     }
@@ -946,17 +952,41 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
-    openSayBubble(): void {
+    openSayBubble(source: ExpressionSource): void {
         this.posthogPromise
             ?.then((posthog) => {
-                posthog.capture("wa_say_bubble_open");
+                posthog.capture("wa_say_bubble_open", { source });
             })
             .catch((e) => console.error(e));
     }
-    openThinkBubble(): void {
+    openThinkBubble(source: ExpressionSource): void {
         this.posthogPromise
             ?.then((posthog) => {
-                posthog.capture("wa_think_bubble_open");
+                posthog.capture("wa_think_bubble_open", { source });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** A say or think bubble was actually sent (not just the popup opened). Never carries the text. */
+    saySent(type: "say" | "think", source: ExpressionSource): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_say_sent", { type, source });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The chat panel went from closed to open. Tab switches inside an open panel don't count. */
+    chatPanelOpened(source: ChatOpenSource): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_chat_panel_opened", { source });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The user submitted something from the chat composer. Never carries text, names or room ids. */
+    chatMessageSent(kind: "proximity" | "matrix"): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_chat_message_sent", { kind });
             })
             .catch((e) => console.error(e));
     }
