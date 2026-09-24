@@ -486,6 +486,27 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "المستخدم غير مصدق. لا يمكن إرسال الرسالة.", // User not authenticated. Cannot send message.
+    topRow: {
+        meeting: "اجتماع", // Meeting
+        twoNames: "{first} و{second}", // {first} & {second}
+        moreNames: "{first}، {second} +{count}", // {first}, {second} +{count}
+        typingOne: "{name} يكتب", // {name} is typing
+        typingTwo: "{first} و{second} يكتبان", // {first} & {second} are typing
+        typingMany: "{count} أشخاص يكتبون", // {count} people are typing
+        someone: "شخص ما", // Someone
+        you: "أنت", // You
+        live: "مباشر", // Live
+        noOneNearby: "لا أحد بالقرب منك", // No one nearby
+        onlyYouHere: "أنت وحدك هنا حتى الآن", // Only you here so far
+        othersInRoom: "{count} {{أشخاص آخرين|شخص آخر|شخصان آخران|أشخاص آخرين|شخصًا آخر|شخص آخر}} في {roomName}", // {count} others in {roomName}
+        othersOnThisMap: "{count} {{أشخاص آخرين|شخص آخر|شخصان آخران|أشخاص آخرين|شخصًا آخر|شخص آخر}} على هذه الخريطة", // {count} others on this map
+        elsewhereInWorld: "{count} في مكان آخر من هذا العالم", // {count} elsewhere in this world
+        nobodyInWorld: "لا أحد غيرك في هذا العالم الآن", // No one else is in this world right now
+        separator: " · ",
+        seeWhoIsHere: "من هنا؟", // See who's here
+        exploreWithOrbit: "استكشف مع Orbit", // Explore with Orbit
+        inviteSomeone: "ادعُ شخصًا", // Invite someone
+    },
 };
 
 export default chat;

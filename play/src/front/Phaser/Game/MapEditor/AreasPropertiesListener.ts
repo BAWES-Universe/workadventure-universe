@@ -87,6 +87,8 @@ import PopUpTab from "../../../Components/PopUp/PopUpTab.svelte";
 import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
 import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
 import type { SpaceInterface } from "../../../Space/SpaceInterface";
+import { areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
+import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 
 export class AreasPropertiesListener {
     private scene: GameScene;
@@ -232,7 +234,7 @@ export class AreasPropertiesListener {
                 break;
             }
             case "livekitRoomProperty": {
-                this.handleLivekitRoomPropertyOnEnter(property, abortController.signal).catch((e) => {
+                this.handleLivekitRoomPropertyOnEnter(property, abortController.signal, areaData.name).catch((e) => {
                     console.error(e);
                     Sentry.captureException(e);
                 });
@@ -277,6 +279,7 @@ export class AreasPropertiesListener {
                 break;
             }
             case "matrixRoomPropertyData": {
+                this.setMatrixRoomAreaPresence(property, areaData.name);
                 this.handleMatrixRoomAreaOnEnter(property);
                 break;
             }
@@ -341,7 +344,7 @@ export class AreasPropertiesListener {
                 this.handleLivekitRoomPropertyOnLeave(oldProperty)
                     .then(() => {
                         newProperty = newProperty as typeof oldProperty;
-                        return this.handleLivekitRoomPropertyOnEnter(newProperty, newAbortController.signal);
+                        return this.handleLivekitRoomPropertyOnEnter(newProperty, newAbortController.signal, area.name);
                     })
                     .catch((e) => {
                         console.error(e);
@@ -391,6 +394,8 @@ export class AreasPropertiesListener {
             case "matrixRoomPropertyData": {
                 newProperty = newProperty as typeof oldProperty;
                 this.handleMatrixRoomAreaOnLeave(oldProperty);
+                areaPresenceStore.delete(oldProperty.id);
+                this.setMatrixRoomAreaPresence(newProperty, area.name);
                 this.handleMatrixRoomAreaOnEnter(newProperty);
                 break;
             }
@@ -477,6 +482,7 @@ export class AreasPropertiesListener {
                 break;
             }
             case "matrixRoomPropertyData": {
+                areaPresenceStore.delete(property.id);
                 this.handleMatrixRoomAreaOnLeave(property);
                 break;
             }
@@ -856,9 +862,19 @@ export class AreasPropertiesListener {
         }
     }
 
+    private setMatrixRoomAreaPresence(property: MatrixRoomPropertyData, areaName: string | undefined): void {
+        // The chat top row names this area, and makes no claim about who is there: an area with only a Matrix room
+        // has no space listing its people.
+        areaPresenceStore.set(property.id, {
+            kind: "matrix",
+            name: resolveMeetingAreaName(areaName, property.displayName, get(LL).chat.topRow.meeting()),
+        });
+    }
+
     private async handleLivekitRoomPropertyOnEnter(
         property: LivekitRoomPropertyData,
-        abortSignal: AbortSignal
+        abortSignal: AbortSignal,
+        areaName: string | undefined
     ): Promise<void> {
         inLivekitStore.set(true);
 
@@ -899,10 +915,11 @@ export class AreasPropertiesListener {
             });
         }
 
-        //TODO : I18N the displayName
+        // The chat top row names the meeting after its area, then its LiveKit room name.
+        const displayName = resolveMeetingAreaName(areaName, property.roomName, get(LL).chat.topRow.meeting());
         if (!property.livekitRoomConfig?.disableChat) {
             const proximityRoom = this.scene.proximityChatRoom;
-            proximityRoom.setDisplayName(get(LL).mapEditor.properties.livekitRoomProperty.label());
+            proximityRoom.setDisplayName(displayName);
             await proximityRoom.joinSpace(
                 roomName,
                 ["cameraState", "microphoneState", "screenShareState"],
@@ -911,12 +928,16 @@ export class AreasPropertiesListener {
             );
         } else {
             const spaceRegistry = this.scene.spaceRegistry;
-            await spaceRegistry.joinSpace(
+            const space = await spaceRegistry.joinSpace(
                 roomName,
                 FilterType.ALL_USERS,
                 ["cameraState", "microphoneState", "screenShareState"],
                 abortSignal
             );
+            // Without chat, the proximity chat is not in this space: the top row counts video participants from it.
+            if (!abortSignal.aborted) {
+                areaPresenceStore.set(property.id, { kind: "video", name: displayName, usersStore: space.usersStore });
+            }
         }
 
         analyticsClient.enteredMeetingRoom(roomName, this.scene.roomUrl);
@@ -1155,6 +1176,7 @@ export class AreasPropertiesListener {
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
         const roomName = Jitsi.slugifyJitsiRoomName(roomID, this.scene.roomUrl, false);
 
+        areaPresenceStore.delete(property.id);
         if (!property.livekitRoomConfig?.disableChat) {
             proximityRoom.setDisplayName(get(LL).chat.proximity());
             await proximityRoom.leaveSpace(roomName, true);

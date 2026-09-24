@@ -170,7 +170,8 @@ import { isActivatedStore as isCalendarActiveStore, calendarEventsStore } from "
 import { isActivatedStore as isTodoListActiveStore, todoListsStore } from "../../Stores/TodoListStore";
 import { externalSvelteComponentService } from "../../Stores/Utils/externalSvelteComponentService";
 import type { ExtensionModule } from "../../ExternalModule/ExtensionModule";
-import type { SpaceInterface } from "../../Space/SpaceInterface";
+import type { SpaceInterface, SpaceUserExtended } from "../../Space/SpaceInterface";
+import { clearAreaPresence } from "../../Chat/Stores/AreaPresenceStore";
 import type { UserProviderInterface } from "../../Chat/UserProvider/UserProviderInterface";
 import { registerAdditionalMenuItem, unregisterAdditionalMenuItem } from "../../Stores/AdditionalItemsMenuStore";
 import { popupStore } from "../../Stores/PopupStore";
@@ -372,6 +373,10 @@ export class GameScene extends DirtyScene {
     private _proximityChatRoom: ProximityChatRoom | undefined;
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
+    // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
+    private _allUsersInWorldStore: ForwardableStore<Map<string, SpaceUserExtended> | undefined> = new ForwardableStore<
+        Map<string, SpaceUserExtended> | undefined
+    >(undefined);
     public extensionModule: ExtensionModule | undefined = undefined;
     public landingAreas: AreaData[] = [];
     // Listeners for when the player finishes moving
@@ -1158,6 +1163,8 @@ export class GameScene extends DirtyScene {
         followUsersStore.stopFollowing();
 
         audioManagerFileStore.unloadAudio();
+        // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
+        clearAreaPresence();
 
         this.connection?.closeConnection();
         this.outlineManager?.clear();
@@ -1784,6 +1791,7 @@ export class GameScene extends DirtyScene {
                         this.allUserSpace = space;
                         worldUserProvider = new WorldUserProvider(space);
                         this._worldUserCounter.forward(worldUserProvider.userCount);
+                        this._allUsersInWorldStore.forward(space.usersStore);
                         return gameManager.getChatConnection();
                     })
                     .then((chatConnection) => {
@@ -3999,6 +4007,14 @@ ${escapedMessage}
 
     get worldUserCounter(): Readable<number> {
         return this._worldUserCounter;
+    }
+
+    /**
+     * Everyone in the world space, unfiltered (the People tab's source before its search filter).
+     * Undefined until the world space is joined.
+     */
+    get allUsersInWorldStore(): Readable<Map<string, SpaceUserExtended> | undefined> {
+        return this._allUsersInWorldStore;
     }
 
     getStartPositionNames(): string[] {

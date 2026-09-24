@@ -503,6 +503,27 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "Utilisateur non connecté. Impossible d'envoyer un message.",
+    topRow: {
+        meeting: "Réunion",
+        twoNames: "{first} et {second}",
+        moreNames: "{first}, {second} +{count}",
+        typingOne: "{name} écrit",
+        typingTwo: "{first} et {second} écrivent",
+        typingMany: "{count} personnes écrivent",
+        someone: "Quelqu'un",
+        you: "Vous",
+        live: "En direct",
+        noOneNearby: "Personne à proximité",
+        onlyYouHere: "Vous êtes seul·e ici pour l'instant",
+        othersInRoom: "{count} autre{{s}} dans {roomName}",
+        othersOnThisMap: "{count} autre{{s}} sur cette carte",
+        elsewhereInWorld: "{count} ailleurs dans ce monde",
+        nobodyInWorld: "Personne d'autre dans ce monde pour l'instant",
+        separator: " · ",
+        seeWhoIsHere: "Voir qui est là",
+        exploreWithOrbit: "Explorer avec Orbit",
+        inviteSomeone: "Inviter quelqu'un",
+    },
 };
 
 export default chat;

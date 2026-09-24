@@ -54,6 +54,25 @@ const debug = Debug("ProximityChatRoom");
 // can never leave the indicator stuck. The sender re-emits "typing" on every keystroke.
 export const TYPING_EXPIRY_MS = 12000;
 
+/**
+ * A person in the space the proximity chat is currently connected to (bubble, meeting or zone).
+ * "Yourself" is this tab's own spaceUserId, so other tabs of the same account (clones) are participants.
+ */
+export interface ProximityChatParticipant {
+    readonly id: string;
+    readonly name: string;
+    readonly pictureStore: PictureStore;
+}
+
+/**
+ * What the proximity chat is currently connected to:
+ * - "none": no space (alone)
+ * - "bubble": a proximity bubble
+ * - "meeting": a meeting area space, where every member of the space is listed
+ * - "stream": a speaker/listener zone, where only the people streaming are listed
+ */
+export type ProximitySpaceKind = "none" | "bubble" | "meeting" | "stream";
+
 export class ProximityChatMessage implements ChatMessage {
     isQuotedMessage = undefined;
     quotedMessage = undefined;
@@ -119,6 +138,19 @@ export class ProximityChatRoom implements ChatRoom {
     isRoomFolder = false;
     lastMessageTimestamp = 0;
     hasUserInProximityChat = writable(false);
+    private readonly _participants: Writable<ProximityChatParticipant[]> = writable([]);
+    /**
+     * The other people in the current space, excluding only this tab's own avatar (never by account or uuid).
+     */
+    public readonly participants: Readable<ProximityChatParticipant[]> = { subscribe: this._participants.subscribe };
+    private readonly _spaceKind: Writable<ProximitySpaceKind> = writable("none");
+    public readonly spaceKind: Readable<ProximitySpaceKind> = { subscribe: this._spaceKind.subscribe };
+    private readonly _spaceJoinedAt: Writable<number | undefined> = writable(undefined);
+    /**
+     * When the current space was joined (ms since epoch), so that a message sent to an earlier group
+     * is never shown as the latest message of the current one.
+     */
+    public readonly spaceJoinedAt: Readable<number | undefined> = { subscribe: this._spaceJoinedAt.subscribe };
     currentMatrixRoom: ChatRoom | undefined;
     currentChatVisibility = false;
 
@@ -640,8 +672,20 @@ export class ProximityChatRoom implements ChatRoom {
 
         let hasUserInProximityChat = false;
 
+        if (isMeetingRoomChat) {
+            this._spaceKind.set(filterType === FilterType.LIVE_STREAMING_USERS ? "stream" : "meeting");
+        } else {
+            this._spaceKind.set("bubble");
+        }
+        this._spaceJoinedAt.set(Date.now());
+
         this.usersUnsubscriber = this._space.usersStore.subscribe((users) => {
             this.users = users;
+            this._participants.set(
+                Array.from(users.values())
+                    .filter((user) => user.spaceUserId !== this._spaceUserId)
+                    .map((user) => ({ id: user.spaceUserId, name: user.name, pictureStore: user.pictureStore }))
+            );
             if (!hasUserInProximityChat && users.size > 1) {
                 let name = "unknown";
                 // Let's find the first user that is not us
@@ -879,6 +923,9 @@ export class ProximityChatRoom implements ChatRoom {
                 });
             } catch (e) {
                 this.usersUnsubscriber?.();
+                this._participants.set([]);
+                this._spaceKind.set("none");
+                this._spaceJoinedAt.set(undefined);
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
@@ -1062,6 +1109,9 @@ export class ProximityChatRoom implements ChatRoom {
         }
         this.clearTypingMembers();
         this.hasUserInProximityChat.set(false);
+        this._participants.set([]);
+        this._spaceKind.set("none");
+        this._spaceJoinedAt.set(undefined);
 
         this.restoreChatState();
 
