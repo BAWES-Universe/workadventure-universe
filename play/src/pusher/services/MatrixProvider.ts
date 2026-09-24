@@ -259,27 +259,6 @@ class MatrixProvider {
         return this.kickUserFromRoom(ADMIN_CHAT_ID, roomID);
     }
 
-    /**
-     * Returns the Matrix ids of the members of the room that are joined or invited, without the admin account.
-     */
-    async getRoomMemberIds(roomID: string): Promise<string[]> {
-        const axiosInstance = await this.getAxios();
-        const response = await axiosInstance.get(`_matrix/client/r0/rooms/${roomID}/members`);
-
-        if (response.status !== 200) {
-            throw new Error(`Failed to fetch members for room: ${roomID}`);
-        }
-
-        const members: { state_key: string; content: { membership: string } }[] = response.data.chunk ?? [];
-        return members
-            .filter(
-                (member) =>
-                    member.state_key !== ADMIN_CHAT_ID &&
-                    (member.content.membership === "join" || member.content.membership === "invite")
-            )
-            .map((member) => member.state_key);
-    }
-
     async kickAllUsersFromRoom(roomID: string): Promise<void> {
         const axiosInstance = await this.getAxios();
         const response = await axiosInstance.get(`_matrix/client/r0/rooms/${roomID}/members`);

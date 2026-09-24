@@ -23,7 +23,7 @@ class FakeSocket implements MatrixAreaSocket {
             tags,
             currentChatRoomArea: [],
             spaces: new Set<string>(),
-            joinSpacesPromise: new Map<string, Promise<void>>(),
+            disconnecting: false,
         };
     }
     getUserData(): FakeSocketData {
@@ -63,6 +63,8 @@ class FakePusher {
     public readonly membership: MatrixAreaMembership<FakeSocket>;
     // When set, the removal reaches this pusher's copy only after the leave has been answered.
     public delayRemovalMs = 0;
+    // When set, leaving the space takes this long (the leave is still pending in the meantime).
+    public leaveLatencyMs = 0;
 
     constructor(private readonly back: FakeBack, matrix: MatrixAreaRoomClient) {
         back.pushers.push(this);
@@ -91,6 +93,9 @@ class FakePusher {
     }
 
     async leave(socket: FakeSocket, spaceName: string): Promise<void> {
+        if (this.leaveLatencyMs > 0) {
+            await sleep(this.leaveLatencyMs);
+        }
         const data = socket.getUserData();
         const space = this.space;
         const spaceUserId = data.spaceUserId;
@@ -114,6 +119,7 @@ class FakePusher {
 
     /** What SocketManager.cleanupSocket does: release the chat areas, then the generic space cleanup. */
     async close(socket: FakeSocket): Promise<void> {
+        socket.getUserData().disconnecting = true;
         const release = this.membership.leaveAll(socket);
         const leaveSpaces = Array.from(socket.getUserData().spaces).map((name) => this.leave(socket, name));
         socket.getUserData().currentChatRoomArea = [];
@@ -133,15 +139,15 @@ function createMatrix() {
             members.delete(userID);
             return Promise.resolve();
         }),
-        getRoomMemberIds: vi.fn(() => Promise.resolve(Array.from(members))),
     };
     return { matrix, members };
 }
 
-const flush = () =>
+const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
+        setTimeout(resolve, ms);
     });
+const flush = () => sleep(0);
 
 describe("MatrixAreaMembership", () => {
     it("keeps the account in the room while another tab of the same account is still in the area", async () => {
@@ -270,22 +276,6 @@ describe("MatrixAreaMembership", () => {
         expect(members.has(ALICE)).toBe(false);
     });
 
-    it("reconciles the room on enter: members with no tab left in the space are removed", async () => {
-        const back = new FakeBack();
-        const { matrix, members } = createMatrix();
-        const pusher = new FakePusher(back, matrix);
-        // Bob was left in the room by a pusher that died without kicking him.
-        members.add(BOB);
-        const tab1 = new FakeSocket("tab-1", ALICE);
-
-        await pusher.membership.enter(tab1, ROOM);
-        await flush();
-
-        expect(matrix.kickUserFromRoom).toHaveBeenCalledWith(BOB, ROOM);
-        expect(members.has(BOB)).toBe(false);
-        expect(members.has(ALICE)).toBe(true);
-    });
-
     it("keeps invite and admin promotion on enter", async () => {
         const back = new FakeBack();
         const { matrix } = createMatrix();
@@ -316,9 +306,86 @@ describe("MatrixAreaMembership", () => {
 
         await pusher.membership.enter(tab1, ROOM);
         expect(members.has(ALICE)).toBe(true);
-        expect(matrix.getRoomMemberIds).not.toHaveBeenCalled();
 
         await pusher.membership.leave(tab1, ROOM);
         expect(members.has(ALICE)).toBe(false);
+    });
+    it("keeps the room when a tab leaves and enters again back-to-back (area properties update)", async () => {
+        const back = new FakeBack();
+        const { matrix, members } = createMatrix();
+        const pusher = new FakePusher(back, matrix);
+        const tab1 = new FakeSocket("tab-1", ALICE);
+
+        await pusher.membership.enter(tab1, ROOM);
+
+        // The front sends the leave and the enter one right after the other, without waiting.
+        const leave = pusher.membership.leave(tab1, ROOM);
+        const enter = pusher.membership.enter(tab1, ROOM);
+        await Promise.all([leave, enter]);
+        await flush();
+
+        expect(matrix.kickUserFromRoom).not.toHaveBeenCalled();
+        expect(members.has(ALICE)).toBe(true);
+        expect(tab1.data.spaces.has(SPACE)).toBe(true);
+        expect(back.users.has("tab-1")).toBe(true);
+        expect(tab1.data.currentChatRoomArea).toEqual([ROOM]);
+
+        // And the tab can still leave for good afterwards.
+        await pusher.membership.leave(tab1, ROOM);
+        expect(members.has(ALICE)).toBe(false);
+        expect(back.users.has("tab-1")).toBe(false);
+    });
+
+    it("re-joins the space when a tab enters while its leave is still pending", async () => {
+        const back = new FakeBack();
+        const { matrix, members } = createMatrix();
+        const pusher = new FakePusher(back, matrix);
+        const tab1 = new FakeSocket("tab-1", ALICE);
+
+        await pusher.membership.enter(tab1, ROOM);
+
+        pusher.leaveLatencyMs = 30;
+        const leave = pusher.membership.leave(tab1, ROOM);
+        await sleep(10);
+        // The leave is still in flight: the tab is still registered in the space.
+        expect(tab1.data.spaces.has(SPACE)).toBe(true);
+        const enter = pusher.membership.enter(tab1, ROOM);
+        await Promise.all([leave, enter]);
+        await flush();
+
+        expect(matrix.kickUserFromRoom).not.toHaveBeenCalled();
+        expect(members.has(ALICE)).toBe(true);
+        expect(tab1.data.spaces.has(SPACE)).toBe(true);
+        expect(back.users.has("tab-1")).toBe(true);
+    });
+
+    it("still removes the account when its last two tabs leave at the same moment on different pushers", async () => {
+        const back = new FakeBack();
+        const { matrix, members } = createMatrix();
+        const pusherA = new FakePusher(back, matrix);
+        const pusherB = new FakePusher(back, matrix);
+        const tab1 = new FakeSocket("tab-1", ALICE);
+        const tab2 = new FakeSocket("tab-2", ALICE);
+
+        await pusherA.membership.enter(tab1, ROOM);
+        await pusherB.membership.enter(tab2, ROOM);
+
+        await Promise.all([pusherA.membership.leave(tab1, ROOM), pusherB.membership.leave(tab2, ROOM)]);
+        await flush();
+
+        expect(members.has(ALICE)).toBe(false);
+    });
+
+    it("does not join the space for an enter queued behind the close of the tab", async () => {
+        const back = new FakeBack();
+        const { matrix } = createMatrix();
+        const pusher = new FakePusher(back, matrix);
+        const tab1 = new FakeSocket("tab-1", ALICE);
+        tab1.data.disconnecting = true;
+
+        await pusher.membership.enter(tab1, ROOM);
+
+        expect(tab1.data.spaces.has(SPACE)).toBe(false);
+        expect(matrix.inviteUserToRoom).not.toHaveBeenCalled();
     });
 });

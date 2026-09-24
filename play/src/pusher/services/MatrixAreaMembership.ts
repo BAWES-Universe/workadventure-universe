@@ -8,9 +8,11 @@ import type { SocketData } from "../models/Websocket/SocketData";
  * area is joined (server-side) to a space named `matrix-area:{roomId}`. The back holds the authoritative user
  * list of that space across all pushers, and each pusher keeps a copy of it (Space.users).
  *
- * The account's Matrix user is kicked from the room only when no user left in the space has the same chatID.
- * On every enter and leave, the room is also reconciled: any Matrix member whose chatID has no user left in the
- * space is kicked (covers two last tabs leaving at the same moment on different pushers, or a pusher that died).
+ * When a tab leaves the area (or is closed), the account's Matrix user is kicked from the room only when no user
+ * left in the space has the same chatID.
+ *
+ * Enter and leave events of one tab for one room are handled one after the other (the front sends a leave
+ * immediately followed by an enter, e.g. when the area properties are updated).
  *
  * The space name has no world prefix, so a browser can never join it through a joinSpaceQuery
  * (those are always prefixed with "{world}.").
@@ -21,14 +23,14 @@ export function getMatrixAreaSpaceName(roomID: string): string {
     return `${MATRIX_AREA_SPACE_PREFIX}${roomID}`;
 }
 
+export function isMatrixAreaSpaceName(spaceName: string): boolean {
+    return spaceName.startsWith(MATRIX_AREA_SPACE_PREFIX);
+}
+
 export interface MatrixAreaRoomClient {
     inviteUserToRoom(userID: string, roomID: string): Promise<void>;
     promoteUserToModerator(userID: string, roomID: string): Promise<void>;
     kickUserFromRoom(userID: string, roomID: string): Promise<void>;
-    /**
-     * The Matrix ids of the members of the room that are joined or invited, without the admin account.
-     */
-    getRoomMemberIds(roomID: string): Promise<string[]>;
 }
 
 export interface MatrixAreaSpaceView {
@@ -37,7 +39,7 @@ export interface MatrixAreaSpaceView {
 
 type MatrixAreaSocketData = Pick<
     SocketData,
-    "chatID" | "spaceUserId" | "tags" | "currentChatRoomArea" | "spaces" | "joinSpacesPromise"
+    "chatID" | "spaceUserId" | "tags" | "currentChatRoomArea" | "spaces" | "disconnecting"
 >;
 
 export interface MatrixAreaSocket {
@@ -63,6 +65,8 @@ const DEFAULT_REMOVAL_POLL_INTERVAL_MS = 20;
 export class MatrixAreaMembership<S extends MatrixAreaSocket> {
     private readonly removalTimeoutMs: number;
     private readonly removalPollIntervalMs: number;
+    // Per socket and per room: the last queued enter / leave operation.
+    private readonly queues = new WeakMap<S, Map<string, Promise<void>>>();
 
     constructor(private readonly deps: MatrixAreaMembershipDependencies<S>) {
         this.removalTimeoutMs = deps.removalTimeoutMs ?? DEFAULT_REMOVAL_TIMEOUT_MS;
@@ -73,61 +77,56 @@ export class MatrixAreaMembership<S extends MatrixAreaSocket> {
      * A tab enters an area with a Matrix room.
      * Invite and admin promotion stay as they were; the tab is also joined to the area space.
      */
-    async enter(socket: S, roomID: string): Promise<void> {
+    enter(socket: S, roomID: string): Promise<void> {
         const socketData = socket.getUserData();
         const chatID = socketData.chatID;
         if (!chatID) {
-            throw new Error("Error: Chat ID not found");
+            return Promise.reject(new Error("Error: Chat ID not found"));
         }
 
+        // Recorded right away, so that a leave of this room still in progress knows this tab is back.
         if (!socketData.currentChatRoomArea.includes(roomID)) {
             socketData.currentChatRoomArea.push(roomID);
         }
 
-        // Join the space before inviting, so that another pusher reconciling the room sees this tab
-        // in the space by the time the invite is visible in Matrix.
-        const joined = await this.joinAreaSpace(socket, roomID);
-
-        await this.deps.matrix.inviteUserToRoom(chatID, roomID).catch((e) => console.error(e));
-
-        if (socketData.tags.includes("admin")) {
-            await this.deps.matrix.promoteUserToModerator(chatID, roomID).catch((e) => console.error(e));
-        }
-
-        if (joined) {
-            const space = this.deps.getSpace(getMatrixAreaSpaceName(roomID));
-            if (space) {
-                this.reconcile(roomID, space).catch((e) => {
-                    console.error("Error while reconciling Matrix area room", e);
-                    Sentry.captureException(e);
-                });
+        return this.enqueue(socket, roomID, async () => {
+            if (socketData.disconnecting || !socketData.currentChatRoomArea.includes(roomID)) {
+                // The tab was closed, or left again, before we got to this enter.
+                return;
             }
-        }
+
+            await this.joinAreaSpace(socket, roomID);
+
+            await this.deps.matrix.inviteUserToRoom(chatID, roomID).catch((e) => console.error(e));
+
+            if (socketData.tags.includes("admin")) {
+                await this.deps.matrix.promoteUserToModerator(chatID, roomID).catch((e) => console.error(e));
+            }
+        });
     }
 
     /**
      * A tab walks out of an area with a Matrix room.
      */
-    async leave(socket: S, roomID: string): Promise<void> {
+    leave(socket: S, roomID: string): Promise<void> {
         const socketData = socket.getUserData();
         if (!socketData.currentChatRoomArea.includes(roomID)) {
             // Duplicate leave (or leave without enter): this tab is not in the area, nothing to do.
-            return;
+            return Promise.resolve();
         }
         socketData.currentChatRoomArea = socketData.currentChatRoomArea.filter((id) => id !== roomID);
-
-        const spaceName = getMatrixAreaSpaceName(roomID);
         const { chatID, spaceUserId } = socketData;
-        const space = this.deps.getSpace(spaceName);
-        const wasMember = socketData.spaces.has(spaceName) || socketData.joinSpacesPromise.has(spaceName);
 
-        const leftPromise = wasMember
-            ? this.deps.leaveSpace(socket, spaceName).catch((e) => {
-                  console.error("Error while leaving Matrix area space", e);
-              })
-            : Promise.resolve();
-
-        await this.release(roomID, chatID, spaceUserId, wasMember ? space : undefined, leftPromise);
+        return this.enqueue(socket, roomID, async () => {
+            const spaceName = getMatrixAreaSpaceName(roomID);
+            const space = this.deps.getSpace(spaceName);
+            if (socketData.spaces.has(spaceName)) {
+                await this.deps.leaveSpace(socket, spaceName).catch((e) => {
+                    console.error("Error while leaving Matrix area space", e);
+                });
+            }
+            await this.release(socket, roomID, chatID, spaceUserId, space);
+        });
     }
 
     /**
@@ -139,57 +138,89 @@ export class MatrixAreaMembership<S extends MatrixAreaSocket> {
         const socketData = socket.getUserData();
         const { chatID, spaceUserId } = socketData;
         const releases = [...new Set(socketData.currentChatRoomArea)].map((roomID) => {
-            const spaceName = getMatrixAreaSpaceName(roomID);
-            const wasMember = socketData.spaces.has(spaceName) || socketData.joinSpacesPromise.has(spaceName);
-            const space = wasMember ? this.deps.getSpace(spaceName) : undefined;
-            return this.release(roomID, chatID, spaceUserId, space, Promise.resolve());
+            // Captured now: if this was the last local tab, the space is gone from this pusher once left.
+            const capturedSpace = this.deps.getSpace(getMatrixAreaSpaceName(roomID));
+            return this.enqueue(socket, roomID, () =>
+                this.release(
+                    socket,
+                    roomID,
+                    chatID,
+                    spaceUserId,
+                    capturedSpace ?? this.deps.getSpace(getMatrixAreaSpaceName(roomID))
+                )
+            );
         });
         return Promise.all(releases).then(() => undefined);
     }
 
-    private async joinAreaSpace(socket: S, roomID: string): Promise<boolean> {
-        const socketData = socket.getUserData();
+    /**
+     * Runs the operations of one socket for one room one after the other.
+     */
+    private enqueue(socket: S, roomID: string, operation: () => Promise<void>): Promise<void> {
+        let socketQueues = this.queues.get(socket);
+        if (!socketQueues) {
+            socketQueues = new Map<string, Promise<void>>();
+            this.queues.set(socket, socketQueues);
+        }
+        const queues = socketQueues;
+        const previous = queues.get(roomID) ?? Promise.resolve();
+        const result = previous.then(operation);
+        const tail = result.catch(() => undefined);
+        queues.set(roomID, tail);
+        tail.then(
+            () => {
+                if (queues.get(roomID) === tail) {
+                    queues.delete(roomID);
+                }
+            },
+            () => undefined
+        );
+        return result;
+    }
+
+    private async joinAreaSpace(socket: S, roomID: string): Promise<void> {
         const spaceName = getMatrixAreaSpaceName(roomID);
+        if (socket.getUserData().spaces.has(spaceName)) {
+            // Duplicate enter: already joined.
+            return;
+        }
         try {
-            const pendingJoin = socketData.joinSpacesPromise.get(spaceName);
-            if (socketData.spaces.has(spaceName) || pendingJoin) {
-                // Duplicate enter: already joined (or joining). Nothing to do.
-                await pendingJoin;
-                return socketData.spaces.has(spaceName);
-            }
             await this.deps.joinSpace(socket, spaceName);
-            return true;
         } catch (e) {
             console.error("Error while joining Matrix area space", e);
             Sentry.captureException(e);
-            return false;
         }
     }
 
     private async release(
+        socket: S,
         roomID: string,
         chatID: string | undefined,
         spaceUserId: string,
-        space: MatrixAreaSpaceView | undefined,
-        leftPromise: Promise<unknown>
+        space: MatrixAreaSpaceView | undefined
     ): Promise<void> {
-        await leftPromise;
-
         if (!chatID) {
             return;
         }
 
-        if (!space) {
-            // This tab never made it into the area space (e.g. the back was unreachable): we have no way to know
-            // about other tabs, so we keep the previous behaviour and remove the account from the room.
-            await this.kick(chatID, roomID);
+        if (space) {
+            // The leave answer is not proof that this pusher's copy of the space has caught up: wait until it no
+            // longer contains the leaving tab (the removal comes through the space stream). If it never does, the
+            // leaving tab is simply ignored below.
+            await this.waitForUserRemoval(space, spaceUserId);
+        }
+
+        if (socket.getUserData().currentChatRoomArea.includes(roomID)) {
+            // This tab entered the area again while it was leaving: it keeps the room.
             return;
         }
 
-        // The leave answer is not proof that this pusher's copy of the space has caught up: wait until it no longer
-        // contains the leaving tab (the removal comes through the space stream). If it never does, the leaving tab
-        // is simply ignored below.
-        await this.waitForUserRemoval(space, spaceUserId);
+        if (!space) {
+            // No copy of the area space on this pusher (e.g. the tab could not join it because the back was
+            // unreachable): we have no way to know about other tabs, so we keep the previous behaviour.
+            await this.kick(chatID, roomID);
+            return;
+        }
 
         const anotherTabIsStillThere = Array.from(space.users.values()).some(
             (user) => user.spaceUserId !== spaceUserId && user.chatID === chatID
@@ -197,33 +228,6 @@ export class MatrixAreaMembership<S extends MatrixAreaSocket> {
         if (!anotherTabIsStillThere) {
             await this.kick(chatID, roomID);
         }
-
-        // Only reconcile from a copy of the space that is still live on this pusher. When the last local tab left,
-        // this pusher no longer receives updates for the space and its copy could be outdated.
-        if (this.deps.getSpace(getMatrixAreaSpaceName(roomID)) === space) {
-            await this.reconcile(roomID, space, spaceUserId).catch((e) => {
-                console.error("Error while reconciling Matrix area room", e);
-                Sentry.captureException(e);
-            });
-        }
-    }
-
-    /**
-     * Kicks any member of the room whose chatID has no user left in the space.
-     */
-    async reconcile(roomID: string, space: MatrixAreaSpaceView, ignoredSpaceUserId?: string): Promise<void> {
-        const memberIds = await this.deps.matrix.getRoomMemberIds(roomID);
-        // Read the space after fetching the members: anyone invited before the fetch had joined the space before
-        // being invited.
-        const presentChatIds = new Set<string>();
-        for (const user of space.users.values()) {
-            if (user.chatID && user.spaceUserId !== ignoredSpaceUserId) {
-                presentChatIds.add(user.chatID);
-            }
-        }
-        await Promise.all(
-            memberIds.filter((memberId) => !presentChatIds.has(memberId)).map((memberId) => this.kick(memberId, roomID))
-        );
     }
 
     private async kick(chatID: string, roomID: string): Promise<void> {
