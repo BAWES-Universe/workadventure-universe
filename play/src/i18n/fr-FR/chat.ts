@@ -512,7 +512,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     guest: {
         title: "Faites de cet univers le vôtre",
         intro: "Vous explorez en invité·e. La bulle de discussion, les Personnes et Express marchent déjà. Connectez-vous pour :",
-        messageAnyone: "Écrire à n'importe qui, créer des groupes et garder chaque conversation",
+        messageAnyone: "Écrire à toute personne qui a un compte, créer des groupes et garder chaque conversation",
         keepWoka: "Retrouver votre woka et votre nom sur tous vos appareils",
         orbit: "Explorer tout l'univers avec Orbit et rejoindre les gens là où ils sont",
         build: "Construire des salles et des bots dans les mondes dont vous êtes membre",

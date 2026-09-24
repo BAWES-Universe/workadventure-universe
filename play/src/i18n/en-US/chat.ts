@@ -510,7 +510,7 @@ const chat: BaseTranslation = {
     guest: {
         title: "Make this universe yours",
         intro: "You're exploring as a guest. Proximity chat, People and Express already work. Sign in to:",
-        messageAnyone: "Message anyone, start groups and keep every conversation",
+        messageAnyone: "Message anyone with an account, start groups and keep every conversation",
         keepWoka: "Keep your woka and name on every device",
         orbit: "Explore the whole universe with Orbit and jump to where people are",
         build: "Build rooms and bots in worlds that make you a member",
