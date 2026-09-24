@@ -136,7 +136,7 @@
         type="button"
         bind:this={triggerRef}
         data-testid="openOptionToCreateRoomOrFolder"
-        class="chat-new-trigger m-0 p-0 h-11 w-11 shrink-0 rounded-full flex items-center justify-center text-white bg-gradient-to-br from-primary to-secondary shadow-md hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+        class="chat-new-trigger m-0 p-0 h-11 w-11 shrink-0 rounded-full flex items-center justify-center text-white bg-gradient-to-br from-primary to-secondary shadow-md hover:brightness-110 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
         class:is-open={open}
         aria-label={$LL.chat.header.newChat()}
         title={$LL.chat.header.newChat()}
@@ -155,7 +155,7 @@
             role="menu"
             tabindex="-1"
             aria-label={$LL.chat.header.newChat()}
-            class="chat-new-popover absolute top-full end-2 mt-1 z-50 p-1.5 rounded-2xl bg-contrast/90 backdrop-blur-xl border border-solid border-white/10 shadow-2xl"
+            class="chat-new-popover focus:outline-none absolute top-full end-2 mt-1 z-50 p-1.5 rounded-2xl bg-contrast/90 backdrop-blur-xl border border-solid border-white/10 shadow-2xl"
             on:keydown={onMenuKeyDown}
         >
             {#each options as option, index (option)}
@@ -165,16 +165,14 @@
                     tabindex="-1"
                     bind:this={itemRefs[index]}
                     data-testid={testIds[option]}
-                    class="chat-new-item m-0 w-full min-h-14 flex items-center gap-3 px-2 py-2 rounded-xl text-start text-white bg-transparent hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
+                    class="chat-new-item m-0 w-full min-h-14 flex items-center gap-3 px-2 py-2 rounded-xl text-start text-white bg-transparent hover:bg-white/10 focus:outline-none focus-visible:bg-white/10"
                     on:click={() => choose(option)}
                 >
                     <span
-                        class="h-10 w-10 shrink-0 rounded-xl p-[2px] bg-gradient-to-br from-primary/70 to-secondary/70"
+                        class="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-primary to-secondary text-white flex items-center justify-center"
                         aria-hidden="true"
                     >
-                        <span class="h-full w-full rounded-[10px] bg-contrast/80 flex items-center justify-center">
-                            <svelte:component this={icons[option]} font-size="20" />
-                        </span>
+                        <svelte:component this={icons[option]} font-size="20" />
                     </span>
                     <span class="flex flex-col min-w-0">
                         <span class="text-sm font-bold leading-5 truncate">{label(option)}</span>

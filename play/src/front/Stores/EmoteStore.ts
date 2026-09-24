@@ -61,6 +61,10 @@ function createEmoteMenuSubCurrentEmojiSelectedStore() {
 }
 
 export const emoteStore = writable<Emoji | null>(null);
+/** The last emote played and where it came from, so the Express button can echo shortcut plays. */
+export const emotePlayedStore = writable<{ emoji: string; source: ExpressionSource; at: number } | undefined>(
+    undefined
+);
 export const emoteMenuSubCurrentEmojiSelectedStore = createEmoteMenuSubCurrentEmojiSelectedStore();
 export const emoteMenuStore = createEmoteMenuStore();
 export const emoteDataStore = createEmoteDataStore();
@@ -83,6 +87,7 @@ export const displayEmote = (emoteIndex: EmoteIndex, source: ExpressionSource) =
     if (emoji) {
         analyticsClient.launchEmote(emoji, source);
         emoteStore.set(emoji);
+        emotePlayedStore.set({ emoji: emoji.emoji, source, at: Date.now() });
     }
 };
 

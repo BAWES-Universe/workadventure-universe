@@ -53,14 +53,18 @@ export interface PersonActionsInput {
     iAmAdmin: boolean;
 }
 
-export type MessageAction = "hidden" | "enabled" | "disabled";
+export type MessageAction = "hidden" | "enabled";
 
 export interface PersonActions {
     /** Visible "Walk to" button (same map, known position). */
     walkTo: boolean;
     /** Visible "Go to room" button (person on another map). */
     goToRoom: boolean;
-    /** Visible "Message" button. "disabled" when the person has no chat id. */
+    /**
+     * Visible "Message" button, only for people who can receive a direct message (they have a chat id).
+     * People without one (bots, guests) are reached by walking up to them, so no greyed-out button is shown;
+     * they get the button automatically once they have a chat id.
+     */
     message: MessageAction;
     /** Menu entries. Locate is listed on the same map; the menu greys it out until the person can be located. */
     locate: boolean;
@@ -89,7 +93,7 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
 
     let message: MessageAction = "hidden";
     if (!input.isSelf && input.isMatrixChatEnabled && !input.roomCreationInProgress) {
-        message = input.chatId ? "enabled" : "disabled";
+        message = input.chatId ? "enabled" : "hidden";
     }
 
     return {

@@ -73,7 +73,48 @@
         if (finePointer && sayEnabled && !editing) {
             input?.focus();
         }
+        // Capture phase: runs before the game's keyboard shortcuts, which listen further down the chain.
+        window.addEventListener("keydown", typeIntoInput, true);
+        return () => window.removeEventListener("keydown", typeIntoInput, true);
     });
+
+    function deepActiveElement(): Element | null {
+        let active = document.activeElement;
+        // The emoji picker keeps its search field in a shadow root.
+        while (active?.shadowRoot?.activeElement) {
+            active = active.shadowRoot.activeElement;
+        }
+        return active;
+    }
+
+    function isTextField(element: Element | null): boolean {
+        return (
+            element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement ||
+            element instanceof HTMLSelectElement ||
+            (element instanceof HTMLElement && element.isContentEditable)
+        );
+    }
+
+    /**
+     * While the tray is open, a printable key typed with the text field unfocused (e.g. after clicking the tray)
+     * goes into the field instead of reaching the game, where letters are shortcuts (E opens the map editor).
+     */
+    function typeIntoInput(event: KeyboardEvent) {
+        if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+        if (isTextField(deepActiveElement())) return;
+        // No letter reaches the game while the tray is open, even in edit mode or when say is off.
+        event.preventDefault();
+        event.stopPropagation();
+        if (editing || !sayEnabled || !input) return;
+        if (text.length < SAY_MAX_LENGTH) {
+            text += event.key;
+        }
+        input.focus();
+        tick()
+            .then(() => input?.setSelectionRange(text.length, text.length))
+            .catch((e) => console.error(e));
+    }
 
     onDestroy(() => {
         closePicker();

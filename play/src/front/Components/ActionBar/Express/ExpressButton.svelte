@@ -1,10 +1,11 @@
 <script lang="ts">
+    import { onDestroy } from "svelte";
     import { clickOutside } from "svelte-outside";
     import { chatVisibilityStore } from "../../../Stores/ChatStore";
     import { hideActionBarStoreBecauseOfChatBar } from "../../../Chat/ChatSidebarWidthStore";
     import { highlightFullScreen } from "../../../Stores/ActionsCamStore";
     import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
-    import { emoteDataStore } from "../../../Stores/EmoteStore";
+    import { emoteDataStore, emotePlayedStore } from "../../../Stores/EmoteStore";
     import { expressTrayStore } from "../../../Stores/ExpressStore";
     import { popupStore } from "../../../Stores/PopupStore";
     import { connectionManager } from "../../../Connection/ConnectionManager";
@@ -72,16 +73,29 @@
         expressTrayStore.close();
     }
 
+    function burst(glyph: string) {
+        const id = ++burstId;
+        bursts = [...bursts, { id, glyph }];
+        setTimeout(() => (bursts = bursts.filter((b) => b.id !== id)), 900);
+        pulse = false;
+        requestAnimationFrame(() => (pulse = true));
+    }
+
+    // Emotes played with the number keys (or elsewhere) get the same feedback as a tap in the tray.
+    // The tray's own plays already burst through onTrayClose.
+    const mountedAt = Date.now();
+    const unsubscribeEmotePlayed = emotePlayedStore.subscribe((played) => {
+        // Skip the value already in the store when the button mounts: only react to new plays.
+        if (!played || played.at < mountedAt || played.source === "express_tray" || !visible) return;
+        burst(played.emoji);
+    });
+    onDestroy(unsubscribeEmotePlayed);
+
     function onTrayClose(event: CustomEvent<{ sent?: ExpressSent }>) {
         expressTrayStore.close();
         const sent = event.detail.sent;
         if (sent) {
-            const glyph = sent.kind === "emote" ? sent.emoji : sent.kind === "say" ? "💬" : "💭";
-            const id = ++burstId;
-            bursts = [...bursts, { id, glyph }];
-            setTimeout(() => (bursts = bursts.filter((b) => b.id !== id)), 900);
-            pulse = false;
-            requestAnimationFrame(() => (pulse = true));
+            burst(sent.kind === "emote" ? sent.emoji : sent.kind === "say" ? "💬" : "💭");
         } else {
             button?.focus({ preventScroll: true });
         }

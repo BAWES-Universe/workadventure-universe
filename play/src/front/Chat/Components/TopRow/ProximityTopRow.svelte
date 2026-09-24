@@ -187,7 +187,7 @@
     data-state={state.kind}
 >
     <button
-        class="group relative flex items-center gap-3 w-full min-h-[3.25rem] m-0 px-3 py-2 rounded-xl text-start hover:bg-contrast-200/10 focus-visible:bg-contrast-200/10"
+        class="group relative flex items-center gap-3 w-full min-h-[3.25rem] m-0 px-3 py-2 rounded-xl text-start hover:bg-contrast-200/10 focus:outline-none focus-visible:bg-contrast-200/10"
         on:click={onOpen}
         data-testid="toggleDisplayProximityChat"
     >
@@ -226,7 +226,7 @@
                 </div>
             {/if}
             {#if isLive}
-                <span class="absolute -bottom-0.5 -end-0.5 flex h-3 w-3" title={$LL.chat.topRow.live()}>
+                <span class="absolute -bottom-0.5 -end-0.5 z-10 flex h-3 w-3" title={$LL.chat.topRow.live()}>
                     <span
                         class="top-row-live-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-60"
                     />

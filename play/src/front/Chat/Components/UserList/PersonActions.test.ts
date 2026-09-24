@@ -123,8 +123,11 @@ describe("getPersonActions", () => {
         expect(noPlayUri.goToRoom).toBe(false);
     });
 
-    it("disables Message for someone without a chat id", () => {
-        expect(getPersonActions(input({ chatId: "" })).message).toBe("disabled");
+    it("shows no Message button for someone without a chat id, but keeps Walk to", () => {
+        const actions = getPersonActions(input({ chatId: "" }));
+        expect(actions.message).toBe("hidden");
+        expect(actions.walkTo).toBe(true);
+        expect(getPersonActions(input({ chatId: undefined })).message).toBe("hidden");
     });
 
     it("hides Message when the Matrix chat is disabled or a room is being created", () => {
