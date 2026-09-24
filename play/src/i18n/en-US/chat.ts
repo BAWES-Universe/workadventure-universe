@@ -508,11 +508,12 @@ const chat: BaseTranslation = {
         encrypted: "End-to-end encrypted",
     },
     guest: {
-        title: "You're here as a guest",
-        intro: "Proximity chat works for everyone. With an account you can also:",
-        messageAnyone: "Message anyone in this world, even when they're far away",
-        keepChats: "Keep your conversations after you leave",
-        groups: "Start groups and join the ones you're invited to",
+        title: "Make this universe yours",
+        intro: "You're exploring as a guest. Proximity chat, People and Express already work. Sign in to:",
+        messageAnyone: "Message anyone, start groups and keep every conversation",
+        keepWoka: "Keep your woka and name on every device",
+        orbit: "Explore the whole universe with Orbit and jump to where people are",
+        build: "Build rooms and bots in worlds that make you a member",
         action: "Sign in or create an account",
     },
     here: {

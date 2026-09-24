@@ -510,11 +510,12 @@ const chat: DeepPartial<Translation["chat"]> = {
         encrypted: "Chiffré de bout en bout",
     },
     guest: {
-        title: "Vous êtes ici en tant qu'invité·e",
-        intro: "La bulle de discussion marche pour tout le monde. Avec un compte, vous pouvez aussi :",
-        messageAnyone: "Écrire à n'importe qui dans ce monde, même loin de vous",
-        keepChats: "Garder vos conversations après votre départ",
-        groups: "Créer des groupes et rejoindre ceux où l'on vous invite",
+        title: "Faites de cet univers le vôtre",
+        intro: "Vous explorez en invité·e. La bulle de discussion, les Personnes et Express marchent déjà. Connectez-vous pour :",
+        messageAnyone: "Écrire à n'importe qui, créer des groupes et garder chaque conversation",
+        keepWoka: "Retrouver votre woka et votre nom sur tous vos appareils",
+        orbit: "Explorer tout l'univers avec Orbit et rejoindre les gens là où ils sont",
+        build: "Construire des salles et des bots dans les mondes dont vous êtes membre",
         action: "Se connecter ou créer un compte",
     },
     here: {

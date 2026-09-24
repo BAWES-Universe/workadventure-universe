@@ -22,7 +22,15 @@
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
     import { resolveChatLayout } from "./ChatLayout";
-    import { IconChevronRight, IconClock, IconCloudLock, IconMessage, IconRefresh, IconUsersGroup } from "@wa-icons";
+    import {
+        IconChevronRight,
+        IconCloudLock,
+        IconMessage,
+        IconRefresh,
+        IconTools,
+        IconUserCircle,
+        IconWorldSearch,
+    } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
@@ -145,16 +153,24 @@
                                 <span>{$LL.chat.guest.messageAnyone()}</span>
                             </li>
                             <li class="flex items-start gap-2">
-                                <IconClock font-size="16" class="mt-px shrink-0 text-white/60" aria-hidden="true" />
-                                <span>{$LL.chat.guest.keepChats()}</span>
-                            </li>
-                            <li class="flex items-start gap-2">
-                                <IconUsersGroup
+                                <IconUserCircle
                                     font-size="16"
                                     class="mt-px shrink-0 text-white/60"
                                     aria-hidden="true"
                                 />
-                                <span>{$LL.chat.guest.groups()}</span>
+                                <span>{$LL.chat.guest.keepWoka()}</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <IconWorldSearch
+                                    font-size="16"
+                                    class="mt-px shrink-0 text-white/60"
+                                    aria-hidden="true"
+                                />
+                                <span>{$LL.chat.guest.orbit()}</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <IconTools font-size="16" class="mt-px shrink-0 text-white/60" aria-hidden="true" />
+                                <span>{$LL.chat.guest.build()}</span>
                             </li>
                         </ul>
                         <a
