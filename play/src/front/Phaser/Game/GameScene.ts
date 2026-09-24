@@ -170,6 +170,7 @@ import { isActivatedStore as isTodoListActiveStore, todoListsStore } from "../..
 import { externalSvelteComponentService } from "../../Stores/Utils/externalSvelteComponentService";
 import type { ExtensionModule } from "../../ExternalModule/ExtensionModule";
 import type { SpaceInterface, SpaceUserExtended } from "../../Space/SpaceInterface";
+import { clearAreaPresence } from "../../Chat/Stores/AreaPresenceStore";
 import type { UserProviderInterface } from "../../Chat/UserProvider/UserProviderInterface";
 import { registerAdditionalMenuItem, unregisterAdditionalMenuItem } from "../../Stores/AdditionalItemsMenuStore";
 import { popupStore } from "../../Stores/PopupStore";
@@ -1161,6 +1162,8 @@ export class GameScene extends DirtyScene {
         followUsersStore.stopFollowing();
 
         audioManagerFileStore.unloadAudio();
+        // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
+        clearAreaPresence();
 
         this.connection?.closeConnection();
         this.outlineManager?.clear();

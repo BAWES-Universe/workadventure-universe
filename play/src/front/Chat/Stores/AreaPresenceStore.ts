@@ -22,3 +22,11 @@ export type AreaPresence =
       };
 
 export const areaPresenceStore = new MapStore<string, AreaPresence>();
+
+/**
+ * Forgets every area. Called when the scene closes (exit, "Go to room"): area-leave handlers do not run then,
+ * and a "video" entry must not keep a destroyed space's users store alive on the next map.
+ */
+export function clearAreaPresence(): void {
+    areaPresenceStore.clear();
+}
