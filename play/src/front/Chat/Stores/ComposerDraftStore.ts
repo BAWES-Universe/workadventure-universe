@@ -1,9 +1,10 @@
 /**
- * Drafts of the message composer, kept per conversation in this tab's memory only, so two tabs of the
- * same account (clones) never overwrite each other's drafts.
+ * Drafts of the proximity chat's composer, kept in this tab's memory only, so two tabs of the same account
+ * (clones), each in its own bubble, never overwrite each other's drafts. Saved rooms and DMs keep their
+ * drafts in IndexedDB (DraftMessageService), as before.
  *
- * A draft written in the proximity chat is tied to the space it was written in: once that bubble or meeting
- * is left, the draft is dropped instead of showing up, ready to send, in the next group.
+ * A draft is tied to the space it was written in: once that bubble or meeting is left, the draft is dropped
+ * instead of showing up, ready to send, in the next group.
  */
 
 export interface ComposerDraft {

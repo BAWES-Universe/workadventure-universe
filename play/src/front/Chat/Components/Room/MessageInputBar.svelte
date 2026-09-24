@@ -39,6 +39,8 @@
     import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { composerDraftStore } from "../../Stores/ComposerDraftStore";
+    import { draftMessageService } from "../../Services/DraftMessageService";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import MessageInput from "./MessageInput.svelte";
@@ -100,15 +102,13 @@
 
     let applicationProperty: ApplicationProperty | undefined = undefined;
     let replyMessageId: string | null = null;
-    // Drafts are kept per conversation, in this tab's memory only (see ComposerDraftStore).
+    // Drafts are kept per conversation.
+    // - Saved rooms and DMs: in IndexedDB, as always, so they survive a reload.
+    // - The proximity chat: in this tab's memory only (ComposerDraftStore), tied to the space it was written in,
+    //   so clones never share it and it never shows up in a later bubble.
     const draftRoomId = room.id;
-    // The proximity space the draft was last edited in: a draft left behind in a bubble is not restored in the next.
-    let draftSpaceGeneration = spaceGenerationOf(room);
-    $: {
-        // Runs on every edit of the message.
-        void message;
-        draftSpaceGeneration = spaceGenerationOf(room);
-    }
+    const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
+    const hasSpaceDrafts = spaceGenerationOf(room) !== undefined;
 
     const selectedChatChatMessageToReplyUnsubscriber = selectedChatMessageToReply.subscribe((chatMessage) => {
         if (chatMessage !== null) {
@@ -405,7 +405,9 @@
         } else {
             fileAttachementEnabled = isUploadEnabled;
         }
-        const draft = composerDraftStore.load(draftRoomId, spaceGenerationOf(room));
+        const draft = hasSpaceDrafts
+            ? composerDraftStore.load(draftRoomId, spaceGenerationOf(room))
+            : await draftMessageService.loadDraft(draftId);
         if (draft) {
             message = draft.message ?? "";
             if (draft.replyingToMessageId) {
@@ -419,11 +421,23 @@
 
     onDestroy(() => {
         clearTimeout(uploadErrorTimeout);
-        composerDraftStore.save(draftRoomId, {
-            message,
-            replyingToMessageId: replyMessageId ?? null,
-            spaceGeneration: draftSpaceGeneration,
-        });
+        if (hasSpaceDrafts) {
+            // Stamped with the space the composer is in now: while the thread stayed open, the text was visible
+            // under that space's "Now" line.
+            composerDraftStore.save(draftRoomId, {
+                message,
+                replyingToMessageId: replyMessageId ?? null,
+                spaceGeneration: spaceGenerationOf(room),
+            });
+        } else {
+            draftMessageService.saveDraft({
+                id: draftId,
+                roomId: room.id,
+                userId: localUserStore.getChatId(),
+                message,
+                replyingToMessageId: replyMessageId ?? null,
+            });
+        }
         if (setTimeOutProperty) clearTimeout(setTimeOutProperty);
         closeEmojiPicker?.();
         closeEmojiPicker = undefined;

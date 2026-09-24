@@ -20,7 +20,7 @@
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
     import { resolveChatLayout } from "./ChatLayout";
-    import { IconChevronLeft, IconChevronRight, IconCloudLock, IconRefresh } from "@wa-icons";
+    import { IconChevronRight, IconCloudLock, IconRefresh } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
@@ -60,7 +60,6 @@
     $: displayTwoColumnLayout = layout.twoColumns;
 
     const isMatrixChatEnabled = gameManager.getCurrentGameScene().room.isMatrixChatEnabled;
-    const direction = document.documentElement.getAttribute("dir") || "ltr";
 </script>
 
 <div
@@ -117,11 +116,10 @@
                             on:click={() => analyticsClient.login()}
                         >
                             <span class="grow">{$LL.chat.thread.guestFooter()}</span>
-                            {#if direction === "rtl"}
-                                <IconChevronLeft font-size="16" class="shrink-0 opacity-60 group-hover:opacity-100" />
-                            {:else}
-                                <IconChevronRight font-size="16" class="shrink-0 opacity-60 group-hover:opacity-100" />
-                            {/if}
+                            <IconChevronRight
+                                font-size="16"
+                                class="shrink-0 opacity-60 group-hover:opacity-100 rtl:-scale-x-100"
+                            />
                         </a>
                     </div>
                 {/if}

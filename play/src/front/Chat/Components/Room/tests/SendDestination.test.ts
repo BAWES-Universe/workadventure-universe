@@ -4,6 +4,7 @@ import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from
 class FakeProximityRoom {
     id = "proximity";
     spaceGeneration = 1;
+    isJoiningSpace = false;
 }
 
 describe("send destination", () => {
@@ -40,5 +41,15 @@ describe("send destination", () => {
         expect(spaceGenerationOf(new FakeProximityRoom())).toBe(1);
         expect(spaceGenerationOf({ id: "!a" })).toBeUndefined();
         expect(spaceGenerationOf(undefined)).toBeUndefined();
+    });
+
+    it("drops a send while the space is being joined and not connected yet: it would reach nobody", () => {
+        const room = new FakeProximityRoom();
+        room.isJoiningSpace = true;
+        const destination = captureSendDestination(room);
+        expect(isSendDestinationOpen(destination)).toBe(false);
+
+        room.isJoiningSpace = false;
+        expect(isSendDestinationOpen(destination)).toBe(true);
     });
 });

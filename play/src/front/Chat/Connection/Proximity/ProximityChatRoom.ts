@@ -181,6 +181,13 @@ export class ProximityChatRoom implements ChatRoom {
         return this._spaceGeneration;
     }
 
+    /**
+     * True while a space is being joined and is not connected yet: a message sent now would reach nobody.
+     */
+    public get isJoiningSpace(): boolean {
+        return this._space === undefined && this.joinSpaceAbortController !== undefined;
+    }
+
     private unknownUser = {
         chatId: "0",
         uuid: "0",
@@ -439,9 +446,12 @@ export class ProximityChatRoom implements ChatRoom {
             "proximity",
             { notSent: true }
         );
-        // Insert it at the end of its own group: take the later messages off, then put them back after it.
-        const laterMessages = this.messages.splice(findNotSentInsertIndex(get(this.messages), submittedAt));
-        this.messages.push(message, ...laterMessages);
+        // Insert it at the end of its own group, in one update. SearchableArrayStore implements the inserting form
+        // of splice, but only declares the removing one.
+        const messages = this.messages as unknown as {
+            splice(start: number, deleteCount: number, ...items: ChatMessage[]): ChatMessage[];
+        };
+        messages.splice(findNotSentInsertIndex(get(this.messages), submittedAt), 0, message);
     }
 
     private addIncomingUser(spaceUser: SpaceUserExtended): void {

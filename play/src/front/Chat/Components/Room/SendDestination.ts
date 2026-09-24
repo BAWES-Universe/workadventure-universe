@@ -9,6 +9,8 @@
 /** A room whose destination changes over time (the proximity chat): each joined or left space is a new generation. */
 export interface SpaceGenerationSource {
     readonly spaceGeneration: number;
+    /** True while a space is being joined but not connected yet: nobody would receive a message. */
+    readonly isJoiningSpace?: boolean;
 }
 
 export interface SendDestination<R> {
@@ -36,9 +38,12 @@ export function captureSendDestination<R>(room: R): SendDestination<R> {
 
 /**
  * True when the message can still go to its destination: the room has no space generation (a saved
- * conversation), or it is still in the same space as when the message was submitted.
+ * conversation), or it is still in the same space as when the message was submitted and that space is
+ * connected (not halfway through being joined).
  */
 export function isSendDestinationOpen<R>(destination: SendDestination<R>): boolean {
     if (destination.spaceGeneration === undefined) return true;
-    return spaceGenerationOf(destination.room) === destination.spaceGeneration;
+    if (!hasSpaceGeneration(destination.room)) return false;
+    if (destination.room.isJoiningSpace === true) return false;
+    return destination.room.spaceGeneration === destination.spaceGeneration;
 }

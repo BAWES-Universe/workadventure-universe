@@ -207,4 +207,62 @@ describe("ProximityChatRoom sessions", () => {
         expect(notSent.isMyMessage).toBe(true);
         expect(fake.space.emitPublicMessage).not.toHaveBeenCalled();
     });
+
+    it("inserts a message that could not be sent in one update, with no intermediate state", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date(Date.UTC(2026, 8, 24, 10, 0)));
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        vi.setSystemTime(new Date(Date.UTC(2026, 8, 24, 10, 1)));
+        const submittedAt = new Date();
+        vi.setSystemTime(new Date(Date.UTC(2026, 8, 24, 10, 2)));
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        await room.leaveSpace("bubble", true);
+        vi.useRealTimers();
+
+        const seenLengths: number[] = [];
+        const unsubscribe = room.messages.subscribe((messages) => seenLengths.push(messages.length));
+        room.addNotSentMessage("hello", [], submittedAt);
+        unsubscribe();
+
+        // The initial value on subscribe, then exactly one update with the message in place.
+        expect(seenLengths).toEqual([2, 3]);
+        const kinds = (Array.from(get(room.messages)) as ProximityChatMessage[]).map((message) =>
+            message.notSent ? "notSent" : message.session?.kind
+        );
+        expect(kinds).toEqual(["start", "notSent", "end"]);
+    });
+
+    it("says when a space is being joined but not connected yet", async () => {
+        let resolveJoin: (space: SpaceInterface) => void = () => undefined;
+        const slowRegistry = {
+            joinSpace: () =>
+                new Promise<SpaceInterface>((resolve) => {
+                    resolveJoin = resolve;
+                }),
+            leaveSpace: () => Promise.resolve(),
+        } as unknown as SpaceRegistryInterface;
+        const slowRoom = new ProximityChatRoom(
+            "room_1",
+            slowRegistry,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+        expect(slowRoom.isJoiningSpace).toBe(false);
+
+        const joining = slowRoom.joinSpace("bubble", [], true);
+        expect(slowRoom.isJoiningSpace).toBe(true);
+
+        resolveJoin(fake.space as unknown as SpaceInterface);
+        await joining;
+        expect(slowRoom.isJoiningSpace).toBe(false);
+        slowRoom.destroy();
+    });
 });
