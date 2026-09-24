@@ -8,6 +8,7 @@
     import { expressTrayStore } from "../../../Stores/ExpressStore";
     import { popupStore } from "../../../Stores/PopupStore";
     import { connectionManager } from "../../../Connection/ConnectionManager";
+    import { longpress } from "../../../Utils/longpress";
     import LL from "../../../../i18n/i18n-svelte";
     import type { ExpressSent } from "./ExpressTray.svelte";
     import ExpressTray from "./ExpressTray.svelte";
@@ -21,7 +22,7 @@
     // or the map editor is in use.
     $: visible =
         !$chatVisibilityStore && !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorModeStore;
-    $: open = $expressTrayStore === "open";
+    $: open = $expressTrayStore !== "closed";
     $: if (!visible && open) {
         expressTrayStore.close();
     }
@@ -44,6 +45,26 @@
         expressTrayStore.open();
     }
 
+    /** Long-press (touch) or right-click (mouse): straight to edit mode. For advanced users; a tap never lands here. */
+    function openEditing() {
+        if (popupStore.hasPopup("say")) {
+            popupStore.removePopup("say");
+        }
+        try {
+            navigator.vibrate?.(12);
+        } catch {
+            // Not supported: no haptics.
+        }
+        expressTrayStore.edit();
+    }
+
+    function onClickOutside(event: Event) {
+        if (!open) return;
+        // The emoji picker of edit mode floats outside the tray: picking an emoji isn't a click outside.
+        if (event.composedPath().some((el) => el instanceof HTMLElement && el.tagName === "EMOJI-PICKER")) return;
+        expressTrayStore.close();
+    }
+
     function onTrayClose(event: CustomEvent<{ sent?: ExpressSent }>) {
         expressTrayStore.close();
         const sent = event.detail.sent;
@@ -61,13 +82,7 @@
 </script>
 
 {#if visible}
-    <div
-        class="relative pointer-events-auto"
-        data-testid="express"
-        use:clickOutside={() => {
-            if (open) expressTrayStore.close();
-        }}
-    >
+    <div class="relative pointer-events-auto" data-testid="express" use:clickOutside={onClickOutside}>
         {#if open}
             <ExpressTray {sayEnabled} on:close={onTrayClose} />
         {/if}
@@ -83,6 +98,7 @@
             aria-haspopup="dialog"
             title={open ? undefined : $LL.say.express.button()}
             data-testid="express-button"
+            use:longpress={openEditing}
             on:click|stopPropagation={toggle}
             on:animationend={() => (pulse = false)}
         >
@@ -106,6 +122,9 @@
 
 <style lang="scss">
     .express-button {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
         background: rgba(27, 42, 65, 0.8);
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);

@@ -6,14 +6,26 @@
     import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
     import { cubicOut } from "svelte/easing";
     import type { TransitionConfig } from "svelte/transition";
-    import { emoteDataStore, displayEmote, isEmoteIndex, quickPhrasesStore } from "../../../Stores/EmoteStore";
+    import type { Action } from "svelte/action";
+    import type { EmojiClickEvent } from "emoji-picker-element/shared";
+    import {
+        emoteDataStore,
+        emoteMenuSubCurrentEmojiSelectedStore,
+        displayEmote,
+        isEmoteIndex,
+        quickPhrasesStore,
+    } from "../../../Stores/EmoteStore";
+    import { QUICK_PHRASE_KEYS, QUICK_PHRASE_MAX_LENGTH } from "../../../Stores/Utils/quickPhraseSchema";
+    import { expressTrayStore } from "../../../Stores/ExpressStore";
+    import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
+    import LazyEmote from "../../EmoteMenu/LazyEmote.svelte";
     import { availabilityStatusStore } from "../../../Stores/MediaStore";
     import { inputFormFocusStore } from "../../../Stores/UserInputStore";
     import { popupJustClosed } from "../../../Phaser/Game/Say/SayManager";
     import type { SayType } from "../../../Phaser/Game/Say/sendSay";
     import { SAY_MAX_LENGTH, sayTypeForcedByStatus, sendSayBubble } from "../../../Phaser/Game/Say/sendSay";
     import LL from "../../../../i18n/i18n-svelte";
-    import { IconSend } from "@wa-icons";
+    import { IconCheck, IconPencil, IconSend } from "@wa-icons";
 
     /** Whether this room allows say and think bubbles. Emotes are always available. */
     export let sayEnabled = true;
@@ -33,37 +45,37 @@
         "key" in phrase ? $LL.say.quickPhrases[phrase.key]() : phrase.text
     );
 
-    // The phrases only show when all four fit on one line, measured with the real (translated or custom) text.
-    let phraseMeasure: HTMLDivElement | undefined;
+    $: editing = $expressTrayStore === "editing";
+
+    // The phrases only show when all four fit on one line, measured with the real (translated or custom) text
+    // on an invisible copy of the row.
     let phrasesFit = true;
-    function measurePhrases() {
-        if (!phraseMeasure) return;
-        phrasesFit = phraseMeasure.scrollWidth <= phraseMeasure.clientWidth + 1;
-    }
-    function remeasurePhrases(_phrases: string[]) {
-        tick()
-            .then(measurePhrases)
-            .catch((e) => console.error(e));
-    }
-    $: remeasurePhrases(phrases);
+    const measureFit: Action<HTMLElement, string[]> = (node) => {
+        const measure = () => {
+            phrasesFit = node.scrollWidth <= node.clientWidth + 1;
+        };
+        const remeasure = () => {
+            tick()
+                .then(measure)
+                .catch((e) => console.error(e));
+        };
+        const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : undefined;
+        resizeObserver?.observe(node);
+        remeasure();
+        return { update: remeasure, destroy: () => resizeObserver?.disconnect() };
+    };
 
     const finePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches;
 
-    let resizeObserver: ResizeObserver | undefined;
-
     onMount(() => {
-        if (phraseMeasure && typeof ResizeObserver !== "undefined") {
-            resizeObserver = new ResizeObserver(measurePhrases);
-            resizeObserver.observe(phraseMeasure);
-        }
         // On desktop, type straight away. On touch screens, don't pop the keyboard until the field is tapped.
-        if (finePointer && sayEnabled) {
+        if (finePointer && sayEnabled && !editing) {
             input?.focus();
         }
     });
 
     onDestroy(() => {
-        resizeObserver?.disconnect();
+        closePicker();
         // Firefox doesn't fire "blur" when the focused input is removed from the DOM.
         inputFormFocusStore.set(false);
     });
@@ -77,6 +89,103 @@
             navigator.vibrate?.(8);
         } catch {
             // Not supported: no haptics.
+        }
+    }
+
+    // --- Edit mode: swap emotes with the emoji picker and rename phrases. ---
+    let closePickerFn: (() => void) | undefined;
+    let pickingSlot: number | undefined;
+    let pickerClosedAt = 0;
+    let editingPhrase: number | undefined;
+    let phraseDraft = "";
+
+    function closePicker() {
+        closePickerFn?.();
+        closePickerFn = undefined;
+        pickingSlot = undefined;
+        pickerClosedAt = performance.now();
+    }
+
+    function toggleEditing() {
+        closePicker();
+        editingPhrase = undefined;
+        if (editing) {
+            expressTrayStore.open();
+        } else {
+            expressTrayStore.edit();
+        }
+    }
+
+    function pickEmote(index: number, anchor: HTMLElement) {
+        if (pickingSlot === index) {
+            closePicker();
+            return;
+        }
+        closePicker();
+        editingPhrase = undefined;
+        pickingSlot = index;
+        // Same flow as the action bar's emoji menu: the picker replaces the selected slot.
+        emoteMenuSubCurrentEmojiSelectedStore.select(index);
+        closePickerFn = showFloatingUi(
+            anchor,
+            LazyEmote,
+            {
+                onEmojiClick: (event: EmojiClickEvent) => {
+                    const emojiObj = event.detail.emoji;
+                    emoteDataStore.pushNewEmoji({
+                        name: "annotation" in emojiObj ? emojiObj.annotation : emojiObj.name,
+                        emoji: event.detail.unicode ?? "",
+                    });
+                    vibrate();
+                    closePicker();
+                },
+                onClose: closePicker,
+            },
+            { placement: "top" },
+            12,
+            true
+        );
+    }
+
+    function startEditingPhrase(index: number) {
+        closePicker();
+        const phrase = $quickPhrasesStore[index];
+        phraseDraft = phrase && "text" in phrase ? phrase.text : phrases[index] ?? "";
+        editingPhrase = index;
+    }
+
+    function savePhrase() {
+        if (editingPhrase === undefined) return;
+        const index = editingPhrase;
+        const phrase = $quickPhrasesStore[index];
+        const unchangedDefault = phrase && "key" in phrase && phraseDraft.trim() === phrases[index];
+        if (!unchangedDefault) {
+            quickPhrasesStore.setPhrase(index, phraseDraft);
+        }
+        editingPhrase = undefined;
+    }
+
+    function onPhraseKeydown(event: KeyboardEvent) {
+        if (event.key === "Enter" && !event.isComposing) {
+            event.preventDefault();
+            savePhrase();
+        } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            editingPhrase = undefined;
+        }
+    }
+
+    const focusOnMount: Action<HTMLInputElement> = (node) => {
+        node.focus();
+        node.select();
+    };
+
+    function onEmoteClick(event: MouseEvent, index: number, emoji: string) {
+        if (editing) {
+            pickEmote(index, event.currentTarget as HTMLElement);
+        } else {
+            playEmote(index, emoji);
         }
     }
 
@@ -121,7 +230,12 @@
     }
 
     function onWindowKeydown(event: KeyboardEvent) {
-        if (event.key === "Escape") {
+        if (event.key !== "Escape") return;
+        // The same Escape that closed the emoji picker doesn't also leave edit mode.
+        if (closePickerFn || performance.now() - pickerClosedAt < 100) return;
+        if (editing) {
+            expressTrayStore.open();
+        } else {
             close();
         }
     }
@@ -173,9 +287,37 @@
     on:click|stopPropagation
     on:wheel|stopPropagation
 >
-    <div class="mx-auto mb-3 h-1 w-9 rounded-full bg-white/20 mobile:block hidden" aria-hidden="true" />
+    <div class="relative mb-2 flex h-7 items-center justify-center">
+        {#if editing}
+            <p class="m-0 text-sm font-semibold text-white" data-testid="express-edit-title">
+                {$LL.say.express.editTitle()}
+            </p>
+        {:else}
+            <div class="h-1 w-9 rounded-full bg-white/20" aria-hidden="true" />
+        {/if}
+        <button
+            type="button"
+            class="edit-toggle absolute end-0 top-0 m-0 flex h-7 w-7 items-center justify-center rounded-lg p-0 text-white/60"
+            class:is-editing={editing}
+            aria-pressed={editing}
+            aria-label={editing ? $LL.say.express.done() : $LL.say.express.edit()}
+            title={editing ? $LL.say.express.done() : $LL.say.express.edit()}
+            data-testid="express-edit"
+            on:click={toggleEditing}
+        >
+            {#if editing}
+                <IconCheck font-size="16" />
+            {:else}
+                <IconPencil font-size="15" />
+            {/if}
+        </button>
+    </div>
 
-    {#if sayEnabled}
+    {#if editing}
+        <p class="mb-2 mt-0 px-1 text-center text-xs text-white/55">{$LL.say.express.editHint()}</p>
+    {/if}
+
+    {#if sayEnabled && !editing}
         <div
             class="composer flex items-center gap-1.5 rounded-xl bg-white/[0.07] p-1 ring-1 ring-white/10 transition-shadow focus-within:ring-2"
             class:think={effectiveType === "think"}
@@ -263,7 +405,7 @@
 
         <!-- Invisible copy of the phrase row, used to check that the four phrases fit on one line. -->
         <div
-            bind:this={phraseMeasure}
+            use:measureFit={phrases}
             class="phrase-row pointer-events-none invisible absolute inset-x-3 top-0 flex gap-1.5 overflow-hidden"
             aria-hidden="true"
         >
@@ -292,9 +434,49 @@
         {/if}
     {/if}
 
+    {#if sayEnabled && editing}
+        <div class="grid grid-cols-2 gap-1.5" role="group" aria-label={$LL.say.express.phrases()}>
+            {#each phrases as phrase, i (i)}
+                {#if editingPhrase === i}
+                    <input
+                        use:focusOnMount
+                        bind:value={phraseDraft}
+                        type="text"
+                        maxlength={QUICK_PHRASE_MAX_LENGTH}
+                        enterkeyhint="done"
+                        autocomplete="off"
+                        class="phrase-chip phrase-input m-0 min-w-0 border-none text-center text-white focus:outline-none focus:ring-0"
+                        placeholder={$LL.say.quickPhrases[QUICK_PHRASE_KEYS[i]]()}
+                        aria-label={$LL.say.express.editPhrase({ phrase })}
+                        data-testid="express-phrase-input-{i}"
+                        on:focus={() => inputFormFocusStore.set(true)}
+                        on:blur={() => {
+                            inputFormFocusStore.set(false);
+                            savePhrase();
+                        }}
+                        on:keydown|stopPropagation={onPhraseKeydown}
+                        on:keyup|stopPropagation
+                    />
+                {:else}
+                    <button
+                        type="button"
+                        class="phrase-chip is-editable m-0 min-w-0"
+                        aria-label={$LL.say.express.editPhrase({ phrase })}
+                        data-testid="express-phrase-{i}"
+                        on:click={() => startEditingPhrase(i)}
+                    >
+                        <span class="truncate">{phrase}</span>
+                        <IconPencil font-size="12" class="shrink-0 opacity-60" />
+                    </button>
+                {/if}
+            {/each}
+        </div>
+    {/if}
+
     <div
         class="mt-3 grid grid-cols-6 gap-1"
-        class:mt-0={!sayEnabled}
+        class:mt-0={!sayEnabled && !editing}
+        class:is-editing={editing}
         role="group"
         aria-label={$LL.say.express.emotes()}
         data-testid="express-emotes"
@@ -303,13 +485,22 @@
             <button
                 type="button"
                 class="emote-button group relative m-0 flex aspect-square items-center justify-center rounded-xl p-0"
+                class:is-picking={pickingSlot === index}
                 style="--i: {i}"
-                aria-label={$LL.say.express.emote({ emoji: emote.name })}
+                aria-label={editing
+                    ? $LL.say.express.changeEmote({ emoji: emote.name })
+                    : $LL.say.express.emote({ emoji: emote.name })}
                 data-testid="express-emote-{index}"
-                on:click={() => playEmote(index, emote.emoji)}
+                on:click={(event) => onEmoteClick(event, index, emote.emoji)}
             >
                 <span class="emote-glyph text-[1.75rem] leading-none">{emote.emoji}</span>
-                {#if finePointer}
+                {#if editing}
+                    <span
+                        class="edit-badge absolute -top-0.5 end-0 flex h-4 w-4 items-center justify-center rounded-full"
+                    >
+                        <IconPencil font-size="9" />
+                    </span>
+                {:else if finePointer}
                     <kbd
                         class="absolute bottom-0.5 end-1 font-sans text-[0.625rem] font-semibold text-white/35 group-hover:text-white/70"
                         >{index}</kbd
@@ -403,6 +594,66 @@
         transition-duration: 80ms;
     }
 
+    .edit-toggle {
+        cursor: pointer;
+        transition: background 150ms ease, color 150ms ease, transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .edit-toggle:hover,
+    .edit-toggle:focus-visible {
+        color: white;
+        background: rgba(255, 255, 255, 0.1);
+    }
+    .edit-toggle.is-editing {
+        color: white;
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+        box-shadow: 0 4px 14px -4px rgba(134, 41, 252, 0.8);
+    }
+    .edit-toggle:active {
+        transform: scale(0.9);
+    }
+
+    .phrase-chip.is-editable {
+        gap: 0.375rem;
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22) inset;
+        background: rgba(255, 255, 255, 0.05);
+        border: 0;
+    }
+    .phrase-input {
+        font-size: 1rem;
+        background: rgba(0, 0, 0, 0.25);
+        box-shadow: 0 0 0 2px rgba(134, 41, 252, 0.75) inset;
+    }
+
+    .edit-badge {
+        color: white;
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+        box-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.5);
+    }
+    .is-editing .emote-button {
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14) inset;
+    }
+    .is-editing .emote-glyph {
+        animation: jiggle 280ms ease-in-out infinite alternate;
+        animation-delay: calc(var(--i) * -70ms);
+    }
+    .emote-button.is-picking {
+        background: linear-gradient(135deg, rgba(134, 41, 252, 0.4), rgba(65, 86, 246, 0.4));
+        box-shadow: 0 0 0 2px rgba(134, 41, 252, 0.85) inset;
+    }
+    .is-editing .emote-button.is-picking .emote-glyph {
+        animation: none;
+        transform: scale(1.12);
+    }
+    @keyframes jiggle {
+        from {
+            transform: rotate(-4deg);
+        }
+        to {
+            transform: rotate(4deg);
+        }
+    }
+
     .emote-button {
         cursor: pointer;
         transition: background 150ms ease;
@@ -439,6 +690,8 @@
 
     @media (prefers-reduced-motion: reduce) {
         .emote-button,
+        .is-editing .emote-glyph,
+        .edit-toggle,
         button.phrase-chip,
         .toggle-thumb,
         .send-button,
