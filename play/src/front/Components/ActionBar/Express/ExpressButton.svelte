@@ -57,8 +57,12 @@
         } catch {
             // Not supported: no haptics.
         }
+        const wasClosed = !open;
         expressTrayStore.edit();
-        analyticsClient.expressTrayOpened("edit");
+        // Only count a closed-to-open transition, not a switch into edit mode.
+        if (wasClosed) {
+            analyticsClient.expressTrayOpened("edit");
+        }
     }
 
     function onClickOutside(event: Event) {
