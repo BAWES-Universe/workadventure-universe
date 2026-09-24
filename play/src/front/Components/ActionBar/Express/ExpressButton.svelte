@@ -9,6 +9,7 @@
     import { popupStore } from "../../../Stores/PopupStore";
     import { connectionManager } from "../../../Connection/ConnectionManager";
     import { longpress } from "../../../Utils/longpress";
+    import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import LL from "../../../../i18n/i18n-svelte";
     import type { ExpressSent } from "./ExpressTray.svelte";
     import ExpressTray from "./ExpressTray.svelte";
@@ -43,6 +44,7 @@
             popupStore.removePopup("say");
         }
         expressTrayStore.open();
+        analyticsClient.expressTrayOpened("tap");
     }
 
     /** Long-press (touch) or right-click (mouse): straight to edit mode. For advanced users; a tap never lands here. */
@@ -55,7 +57,12 @@
         } catch {
             // Not supported: no haptics.
         }
+        const wasClosed = !open;
         expressTrayStore.edit();
+        // Only count a closed-to-open transition, not a switch into edit mode.
+        if (wasClosed) {
+            analyticsClient.expressTrayOpened("edit");
+        }
     }
 
     function onClickOutside(event: Event) {
