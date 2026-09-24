@@ -1,6 +1,13 @@
 import type { BaseTranslation } from "../i18n-types";
 
 const say: BaseTranslation = {
+    /** Default Express phrases. Keep them tiny: the four must fit on one line. */
+    quickPhrases: {
+        hi: "Hi 👋",
+        brb: "Brb",
+        thanks: "Thanks",
+        ok: "OK",
+    },
     type: {
         say: "Say",
         think: "Think",
@@ -21,6 +28,7 @@ const say: BaseTranslation = {
         sayHint: "Everyone who can see you reads it for 5 seconds",
         thinkHint: "Stays above you until you move",
         enterToSend: "Enter to send",
+        phrases: "Quick phrases",
     },
     tooltip: {
         description: {

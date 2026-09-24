@@ -3,10 +3,10 @@
 </script>
 
 <script lang="ts">
-    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
     import { cubicOut } from "svelte/easing";
     import type { TransitionConfig } from "svelte/transition";
-    import { emoteDataStore, displayEmote, isEmoteIndex } from "../../../Stores/EmoteStore";
+    import { emoteDataStore, displayEmote, isEmoteIndex, quickPhrasesStore } from "../../../Stores/EmoteStore";
     import { availabilityStatusStore } from "../../../Stores/MediaStore";
     import { inputFormFocusStore } from "../../../Stores/UserInputStore";
     import { popupJustClosed } from "../../../Phaser/Game/Say/SayManager";
@@ -29,10 +29,33 @@
     $: remaining = SAY_MAX_LENGTH - text.length;
     $: canSend = text.trim().length > 0;
     $: emotes = [...$emoteDataStore.entries()].sort(([a], [b]) => a - b);
+    $: phrases = $quickPhrasesStore.map((phrase) =>
+        "key" in phrase ? $LL.say.quickPhrases[phrase.key]() : phrase.text
+    );
+
+    // The phrases only show when all four fit on one line, measured with the real (translated or custom) text.
+    let phraseMeasure: HTMLDivElement | undefined;
+    let phrasesFit = true;
+    function measurePhrases() {
+        if (!phraseMeasure) return;
+        phrasesFit = phraseMeasure.scrollWidth <= phraseMeasure.clientWidth + 1;
+    }
+    function remeasurePhrases(_phrases: string[]) {
+        tick()
+            .then(measurePhrases)
+            .catch((e) => console.error(e));
+    }
+    $: remeasurePhrases(phrases);
 
     const finePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches;
 
+    let resizeObserver: ResizeObserver | undefined;
+
     onMount(() => {
+        if (phraseMeasure && typeof ResizeObserver !== "undefined") {
+            resizeObserver = new ResizeObserver(measurePhrases);
+            resizeObserver.observe(phraseMeasure);
+        }
         // On desktop, type straight away. On touch screens, don't pop the keyboard until the field is tapped.
         if (finePointer && sayEnabled) {
             input?.focus();
@@ -40,6 +63,7 @@
     });
 
     onDestroy(() => {
+        resizeObserver?.disconnect();
         // Firefox doesn't fire "blur" when the focused input is removed from the DOM.
         inputFormFocusStore.set(false);
     });
@@ -74,6 +98,16 @@
         text = "";
         input?.blur();
         close({ kind });
+    }
+
+    function sendPhrase(index: number) {
+        const phrase = phrases[index];
+        if (!phrase) return;
+        // A phrase is a Say bubble, unless your status only allows thinking.
+        const type = forcedType ?? "say";
+        sendSayBubble(phrase, type, "express_tray");
+        vibrate();
+        close({ kind: type });
     }
 
     function onInputKeydown(event: KeyboardEvent) {
@@ -226,6 +260,36 @@
                 {forcedType === "say" ? $LL.say.express.forcedSay() : $LL.say.express.forcedThink()}
             </p>
         {/if}
+
+        <!-- Invisible copy of the phrase row, used to check that the four phrases fit on one line. -->
+        <div
+            bind:this={phraseMeasure}
+            class="phrase-row pointer-events-none invisible absolute inset-x-3 top-0 flex gap-1.5 overflow-hidden"
+            aria-hidden="true"
+        >
+            {#each phrases as phrase, i (i)}
+                <span class="phrase-chip">{phrase}</span>
+            {/each}
+        </div>
+
+        {#if phrasesFit}
+            <div
+                class="phrase-row mt-2.5 flex gap-1.5"
+                role="group"
+                aria-label={$LL.say.express.phrases()}
+                data-testid="express-phrases"
+            >
+                {#each phrases as phrase, i (i)}
+                    <button
+                        type="button"
+                        class="phrase-chip m-0"
+                        style="--i: {i}"
+                        data-testid="express-phrase-{i}"
+                        on:click={() => sendPhrase(i)}>{phrase}</button
+                    >
+                {/each}
+            </div>
+        {/if}
     {/if}
 
     <div
@@ -307,6 +371,38 @@
         transform: scale(0.9);
     }
 
+    .phrase-chip {
+        display: inline-flex;
+        flex: 1 1 0%;
+        align-items: center;
+        justify-content: center;
+        height: 2.25rem;
+        padding: 0 0.75rem;
+        border-radius: 9999px;
+        white-space: nowrap;
+        font-size: 0.875rem;
+        font-weight: 500;
+        line-height: 1;
+        color: rgba(255, 255, 255, 0.92);
+        background: rgba(255, 255, 255, 0.07);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+    }
+    button.phrase-chip {
+        cursor: pointer;
+        transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), background 150ms ease, box-shadow 150ms ease;
+        animation: emote-in 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        animation-delay: calc(var(--i) * 28ms + 40ms);
+    }
+    button.phrase-chip:hover,
+    button.phrase-chip:focus-visible {
+        background: linear-gradient(135deg, rgba(134, 41, 252, 0.35), rgba(65, 86, 246, 0.35));
+        box-shadow: 0 0 0 1px rgba(134, 41, 252, 0.6) inset, 0 6px 16px -8px rgba(134, 41, 252, 0.8);
+    }
+    button.phrase-chip:active {
+        transform: scale(0.94);
+        transition-duration: 80ms;
+    }
+
     .emote-button {
         cursor: pointer;
         transition: background 150ms ease;
@@ -343,6 +439,7 @@
 
     @media (prefers-reduced-motion: reduce) {
         .emote-button,
+        button.phrase-chip,
         .toggle-thumb,
         .send-button,
         .emote-glyph {
