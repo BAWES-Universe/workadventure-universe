@@ -44,6 +44,7 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     private propertiesIcon: GameObjects.Image[] = [];
 
     private speechDomElement: SpeechDomElement | null = null;
+    private playTextTimeout: ReturnType<typeof setTimeout> | null = null;
 
     constructor(
         scene: Phaser.Scene,
@@ -198,6 +199,10 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     }
 
     public destroy(): void {
+        if (this.playTextTimeout) {
+            clearTimeout(this.playTextTimeout);
+            this.playTextTimeout = null;
+        }
         super.destroy();
         this.squares.forEach((square) => square.destroy());
         this.destroyText();
@@ -571,7 +576,9 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     // Play text on the Image entity
     public playText() {
         if (this.speechDomElement) this.destroyText();
-        setTimeout(() => {
+        this.playTextTimeout = setTimeout(() => {
+            this.playTextTimeout = null;
+            if (!this.scene || !this.scene.sys) return;
             if (this.areaData.name === undefined || this.areaData.name === "") return;
             const x = this.x;
             this.speechDomElement = new SpeechDomElement(
