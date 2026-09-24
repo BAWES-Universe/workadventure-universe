@@ -689,6 +689,14 @@ export class AuthenticateController extends BaseHttpController {
                 return;
             }
 
+            // An empty token means the browser no longer holds a session (e.g. another tab already logged
+            // out): there is nothing to revoke. Send the user back to the (domain-checked) world and ignore
+            // `redirect`: without a verified token it must not become a way to bounce anyone to any site.
+            if (query.token === "") {
+                res.redirect(query.playUri);
+                return;
+            }
+
             const authTokenData: AuthTokenData = jwtTokenManager.verifyJWTToken(query.token, false);
             if (authTokenData.accessToken == undefined) {
                 throw Error("Cannot log out, no access token found.");
