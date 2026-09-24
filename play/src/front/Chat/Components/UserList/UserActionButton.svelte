@@ -2,7 +2,6 @@
     import { onDestroy, onMount } from "svelte";
     import { computePosition, flip, shift, offset, autoUpdate } from "@floating-ui/dom";
     import type { Readable } from "svelte/store";
-    import { AskPositionMessage_AskType } from "@workadventure/messages";
     import businessCard from "../../images/business-cards.svg";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -13,6 +12,7 @@
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import PersonActionButton from "./PersonActionButton.svelte";
+    import { locatePerson } from "./PersonNavigation";
     import { IconForbid, IconDots, IconMapPin } from "@wa-icons";
 
     export let user: ChatUser;
@@ -141,26 +141,9 @@
         // Track the open woka menu action
         analyticsClient.openWokaMenu();
 
-        const currentScerne = gameManager.getCurrentGameScene();
-
-        // Il user is in view port and represented by remote player, use it to activate the woka menu
-        const remotePlayerData = currentScerne.getRemotePlayersRepository().getPlayerByUuid(userToLocate.uuid);
-        if (remotePlayerData != undefined) {
-            // Get the actual RemotePlayer sprite from MapPlayersByKey using userId
-            const remotePlayer = currentScerne.MapPlayersByKey.get(remotePlayerData.userId);
-            if (remotePlayer != undefined) {
-                remotePlayer.activate();
-                closeChatUserMenu();
-                return;
-            }
-        }
-
-        // If the user isn't in the view port, emit the ask position message to the server
-        currentScerne.connection?.emitAskPosition(
-            userToLocate.uuid ?? "",
-            userToLocate.playUri ?? "",
-            AskPositionMessage_AskType.LOCATE
-        );
+        // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
+        // otherwise asks the server for the position.
+        locatePerson(userToLocate);
         closeChatUserMenu();
     }
 </script>

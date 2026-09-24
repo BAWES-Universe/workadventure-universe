@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { AskPositionMessage_AskType, AvailabilityStatus } from "@workadventure/messages";
+    import { AvailabilityStatus } from "@workadventure/messages";
     import * as Sentry from "@sentry/svelte";
     import highlightWords from "highlight-words";
     import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -12,11 +12,11 @@
     import { openDirectChatRoom } from "../../Utils";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
-    import { scriptUtils } from "../../../Api/ScriptUtils";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
     import { getPersonActions, isSelf } from "./PersonActions";
+    import { goToPersonRoom, locatePerson, walkToPerson } from "./PersonNavigation";
     import { IconDoorIn, IconLoader, IconMessage, IconWalk } from "@wa-icons";
 
     export let user: ChatUser;
@@ -65,13 +65,13 @@
     function walkTo() {
         if (!user.uuid || !user.playUri) return;
         analyticsClient.goToUser();
-        connection?.emitAskPosition(user.uuid, user.playUri);
+        walkToPerson(user);
     }
 
     function goToRoom() {
         if (!user.playUri) return;
         analyticsClient.goToUser();
-        scriptUtils.goToPage(`${user.playUri}#moveToUser=${user.uuid ?? ""}`);
+        goToPersonRoom(user);
     }
 
     function sendMessage() {
@@ -119,26 +119,9 @@
         if (user.uuid == undefined) return;
         // Track the open woka menu action
         analyticsClient.openWokaMenu();
-
-        const currentScerne = gameManager.getCurrentGameScene();
-
-        // Il user is in view port and represented by remote player, use it to activate the woka menu
-        const remotePlayerData = currentScerne.getRemotePlayersRepository().getPlayerByUuid(user.uuid);
-        if (remotePlayerData != undefined) {
-            // Get the actual RemotePlayer sprite from MapPlayersByKey using userId
-            const remotePlayer = currentScerne.MapPlayersByKey.get(remotePlayerData.userId);
-            if (remotePlayer != undefined) {
-                remotePlayer.activate();
-                return;
-            }
-        }
-
-        // If the user isn't in the view port, emit the ask position message to the server
-        currentScerne.connection?.emitAskPosition(
-            user.uuid ?? "",
-            user.playUri ?? "",
-            AskPositionMessage_AskType.LOCATE
-        );
+        // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
+        // otherwise asks the server for the position.
+        locatePerson(user);
     }
 </script>
 
