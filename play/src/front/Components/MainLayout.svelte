@@ -253,7 +253,9 @@
 
             <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
                  directly above the menu button. -->
-            <div class="absolute bottom-2 right-2 flex flex-col items-end gap-2 pointer-events-none">
+            <div
+                class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
+            >
                 <ExplorerMenu />
                 <ExpressButton />
             </div>
