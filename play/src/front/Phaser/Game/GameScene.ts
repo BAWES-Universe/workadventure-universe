@@ -182,6 +182,7 @@ import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
 import { videoStreamStore, screenShareStreamStore } from "../../Stores/PeerStore";
 import type { ChatConnectionInterface, ChatUser } from "../../Chat/Connection/ChatConnection";
 import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
+import { areaChatRooms, areaPresenceStore } from "../../Chat/Stores/AreaPresenceStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
@@ -1177,6 +1178,9 @@ export class GameScene extends DirtyScene {
         });
         this.proximitySpaceManager?.destroy();
         this._proximityChatRoom?.destroy();
+        // Area chat rooms and area presence are per scene: a new map starts with none.
+        areaChatRooms.reset();
+        areaPresenceStore.clear();
         this.mapEditorModeStoreUnsubscriber?.();
         this.emoteUnsubscriber?.();
         this.followUsersColorStoreUnsubscriber?.();

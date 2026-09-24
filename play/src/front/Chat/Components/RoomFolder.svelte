@@ -4,6 +4,7 @@
     import LL from "../../../i18n/i18n-svelte";
     import { chatSearchBarValue } from "../Stores/ChatStore";
     import { localUserStore } from "../../Connection/LocalUserStore";
+    import { areaChatRooms, withoutAreaChatRooms } from "../Stores/AreaPresenceStore";
     import Room from "./Room/Room.svelte";
     import CreateRoomOrFolderOption from "./Room/CreateRoomOrFolderOption.svelte";
     import ShowMore from "./ShowMore.svelte";
@@ -18,7 +19,11 @@
     let joinableRoomsOpen = false;
     const isFoldersOpen: { [key: string]: boolean } = {};
 
-    $: filteredRoom = $rooms
+    // Area chat rooms have their own row under the top row and never show in a folder either.
+    const hiddenAreaRoomIds = areaChatRooms.hiddenRoomIds;
+
+    $: visibleRooms = withoutAreaChatRooms($rooms, $hiddenAreaRoomIds);
+    $: filteredRoom = visibleRooms
         .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
         .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
 
@@ -28,9 +33,11 @@
         }
     });
 
-    $: filteredJoinableRooms = $joinableRooms.filter(
+    $: filteredJoinableRooms = withoutAreaChatRooms($joinableRooms, $hiddenAreaRoomIds).filter(
         (joinable) => !$suggestedRooms.some((suggested) => suggested.id === joinable.id)
     );
+    $: visibleSuggestedRooms = withoutAreaChatRooms($suggestedRooms, $hiddenAreaRoomIds);
+    $: visibleInvitations = withoutAreaChatRooms($invitations, $hiddenAreaRoomIds);
 
     function toggleFolder() {
         isOpen = !isOpen;
@@ -79,7 +86,7 @@
     <div class="flex flex-col">
         {#if isOpen}
             <div class="flex flex-col">
-                {#if $suggestedRooms.length > 0 || filteredJoinableRooms.length > 0}
+                {#if visibleSuggestedRooms.length > 0 || filteredJoinableRooms.length > 0}
                     <div class="mx-2 p-1 bg-secondary/30 rounded-lg mb-4 border border-solid border-secondary/80">
                         <div
                             class="group relative px-3 m-0 rounded-md text-white/75 hover:text-white h-8 hover:bg-contrast-200/10 w-full flex space-x-2 items-center"
@@ -107,12 +114,17 @@
                         </div>
                         {#if joinableRoomsOpen}
                             <div class="flex flex-col overflow-auto ps-3 pe-4 pb-3">
-                                {#if $suggestedRooms.length > 0}
+                                {#if visibleSuggestedRooms.length > 0}
                                     <div class="bg-white/10 rounded-md">
                                         <span class="text-sm opacity-80 p-2">
                                             {$LL.chat.suggestedRooms()} :
                                         </span>
-                                        <ShowMore items={$suggestedRooms} maxNumber={8} idKey="id" let:item={room}>
+                                        <ShowMore
+                                            items={visibleSuggestedRooms}
+                                            maxNumber={8}
+                                            idKey="id"
+                                            let:item={room}
+                                        >
                                             <RoomSuggested roomInformation={room} />
                                         </ShowMore>
                                     </div>
@@ -128,9 +140,9 @@
                 {/if}
             </div>
             <div class="flex flex-col overflow-visible">
-                {#if $invitations.length > 0}
+                {#if visibleInvitations.length > 0}
                     <div class="flex flex-col overflow-auto ps-3 pe-4 pb-3">
-                        <ShowMore items={$invitations} maxNumber={8} idKey="id" let:item={room}>
+                        <ShowMore items={visibleInvitations} maxNumber={8} idKey="id" let:item={room}>
                             <RoomInvitation {room} />
                         </ShowMore>
                     </div>
@@ -147,7 +159,7 @@
                 >
                     <Room {room} />
                 </ShowMore>
-                {#if $rooms.length === 0 && $folders.length === 0 && $suggestedRooms.length === 0}
+                {#if visibleRooms.length === 0 && $folders.length === 0 && visibleSuggestedRooms.length === 0}
                     <p
                         class={`${
                             rootFolder

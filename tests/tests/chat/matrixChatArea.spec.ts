@@ -136,6 +136,56 @@ test.describe("matrix chat area property @matrix @nowebit @nomobile", () => {
     await page.context().close();
   });
 
+  test("the area chat room has its own row under the top row while inside the area, and never shows in the list", async ({
+    browser,
+    browserName,
+  }) => {
+    await using page = await getPage(browser, 'Alice', Map.url("empty"));
+    await oidcMatrixUserLogin(page);
+
+    await hideNoCameraIfWebkit(page, browserName);
+
+    await Map.teleportToPosition(page, 5 * 32, 5 * 32);
+
+    await Menu.openMapEditor(page);
+
+    await MapEditor.openAreaEditor(page);
+    await AreaEditor.drawArea(
+      page,
+      { x: 1 * 32 * 1.5, y: 2 * 32 * 1.5 },
+      { x: 9 * 32 * 1.5, y: 4 * 32 * 1.5 }
+    );
+    await AreaEditor.addProperty(page, "matrixRoomPropertyData");
+    await AreaEditor.setMatrixChatRoomProperty(page, true, "name of new room");
+
+    await Menu.closeMapEditor(page);
+    await Map.walkToPosition(page, 4 * 32, 3 * 32);
+
+    await expect(page.getByTestId("closeChatButton")).toBeVisible();
+    await page.getByTestId("chatBackward").click();
+
+    const areaRow = page.getByTestId("areaChatRow");
+    await expect(areaRow).toBeVisible();
+    await expect(areaRow.getByTestId("areaChatRowInThisArea")).toBeVisible();
+    await expect(areaRow.getByTestId("name of new room")).toBeVisible();
+
+    // Not in the main list: the only element for this room is the area row.
+    await chatUtils.openRoomAreaList(page);
+    await expect(page.getByTestId("name of new room")).toHaveCount(1);
+
+    // Tapping the row opens the room.
+    await areaRow.getByTestId("areaChatRowOpen").click();
+    await expect(page.getByTestId("roomName")).toHaveText("name of new room");
+    await page.getByTestId("chatBackward").click();
+
+    // Leaving the area removes the row, and the room does not show up in the list.
+    await Map.walkToPosition(page, 1, 1);
+    await expect(page.getByTestId("areaChatRow")).toBeHidden();
+    await expect(page.getByTestId("name of new room")).toHaveCount(0);
+
+    await page.context().close();
+  });
+
   test("it should be moderator in room when he have a admin tag (access to manage participants / can delete other message)", async ({
     browser,
     browserName,

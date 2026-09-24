@@ -515,6 +515,10 @@ const chat: BaseTranslation = {
         exploreWithOrbit: "Explore with Orbit",
         inviteSomeone: "Invite someone",
     },
+    areaRow: {
+        inThisArea: "In this area",
+        unread: "{count} unread message{{s}}",
+    },
 };
 
 export default chat;

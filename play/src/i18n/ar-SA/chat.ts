@@ -500,6 +500,10 @@ const chat: DeepPartial<Translation["chat"]> = {
         exploreWithOrbit: "استكشف مع Orbit", // Explore with Orbit
         inviteSomeone: "ادعُ شخصًا", // Invite someone
     },
+    areaRow: {
+        inThisArea: "في هذه المنطقة", // In this area
+        unread: "{count} {{رسائل غير مقروءة|رسالة غير مقروءة|رسالتان غير مقروءتين|رسائل غير مقروءة|رسالة غير مقروءة|رسالة غير مقروءة}}", // {count} unread messages
+    },
 };
 
 export default chat;

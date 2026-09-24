@@ -77,7 +77,7 @@ import type { MessageUserJoined } from "../../../Connection/ConnexionModels";
 import { navChat } from "../../../Chat/Stores/ChatStore";
 import type { Area } from "../../Entity/Area";
 import { extensionModuleStore } from "../../../Stores/GameSceneStore";
-import type { ChatRoom } from "../../../Chat/Connection/ChatConnection";
+import type { ChatRoom, ChatRoomMembershipManagement } from "../../../Chat/Connection/ChatConnection";
 import { userIsConnected } from "../../../Stores/MenuStore";
 import { popupStore } from "../../../Stores/PopupStore";
 import PopupCowebsite from "../../../Components/PopUp/PopupCowebsite.svelte";
@@ -86,7 +86,7 @@ import PopUpTab from "../../../Components/PopUp/PopUpTab.svelte";
 import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
 import FilePopup from "../../../Components/PopUp/FilePopup.svelte";
 import type { SpaceInterface } from "../../../Space/SpaceInterface";
-import { areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
+import { areaChatRooms, areaPresenceStore } from "../../../Chat/Stores/AreaPresenceStore";
 import { resolveMeetingAreaName } from "../../../Chat/Components/TopRow/TopRowSummary";
 
 export class AreasPropertiesListener {
@@ -279,7 +279,7 @@ export class AreasPropertiesListener {
             }
             case "matrixRoomPropertyData": {
                 this.setMatrixRoomAreaPresence(property, areaData.name);
-                this.handleMatrixRoomAreaOnEnter(property);
+                this.handleMatrixRoomAreaOnEnter(property, areaData.name);
                 break;
             }
             case "tooltipPropertyData": {
@@ -395,7 +395,7 @@ export class AreasPropertiesListener {
                 this.handleMatrixRoomAreaOnLeave(oldProperty);
                 areaPresenceStore.delete(oldProperty.id);
                 this.setMatrixRoomAreaPresence(newProperty, area.name);
-                this.handleMatrixRoomAreaOnEnter(newProperty);
+                this.handleMatrixRoomAreaOnEnter(newProperty, area.name);
                 break;
             }
             case "tooltipPropertyData": {
@@ -942,27 +942,40 @@ export class AreasPropertiesListener {
         analyticsClient.enteredMeetingRoom(roomName, this.scene.roomUrl);
     }
 
-    private handleMatrixRoomAreaOnEnter(property: MatrixRoomPropertyData) {
+    private handleMatrixRoomAreaOnEnter(property: MatrixRoomPropertyData, areaName?: string) {
         const isConnected = get(userIsConnected);
-        if (this.scene.connection && property.serverData?.matrixRoomId && isConnected) {
+        const matrixRoomId = property.serverData?.matrixRoomId;
+        if (this.scene.connection && matrixRoomId && isConnected) {
+            // The area row and the main list follow this entry: the room is hidden from the list from now on, and
+            // only shows as the area row once the join below has completed while the avatar is still here.
+            const entry = areaChatRooms.enter(property.id, matrixRoomId, areaName);
+            const joinSettled = areaChatRooms.beginSettle(matrixRoomId);
             this.scene.connection
-                .queryEnterChatRoomArea(property.serverData.matrixRoomId)
-                .then(() => {
-                    if (!property.serverData?.matrixRoomId) {
-                        throw new Error("Failed to join room : roomId is undefined");
-                    }
-                    return gameManager.chatConnection.joinRoom(property.serverData.matrixRoomId);
-                })
+                .queryEnterChatRoomArea(matrixRoomId)
+                .then(() => gameManager.chatConnection.joinRoom(matrixRoomId))
                 .then((room: ChatRoom | undefined) => {
                     if (!room) return;
+                    if (!areaChatRooms.markJoined(entry, room)) {
+                        // The avatar left (or left and came back) before the join finished: select nothing, open
+                        // nothing, and leave the room again unless another active area still uses it.
+                        if (!areaChatRooms.hasActiveRoom(matrixRoomId) && "leaveRoom" in room) {
+                            const leaveSettled = areaChatRooms.beginSettle(matrixRoomId);
+                            (room as ChatRoom & ChatRoomMembershipManagement)
+                                .leaveRoom()
+                                .catch((error) => console.error(error))
+                                .finally(leaveSettled);
+                        }
+                        return;
+                    }
                     selectedRoomStore.set(room);
                     navChat.switchToChat();
                     chatZoneLiveStore.set(true);
                     if (property.shouldOpenAutomatically) chatVisibilityStore.set(true);
                 })
                 .catch((error) => {
-                    console.error("Failed to confirm emojis validation", error);
-                });
+                    console.error("Failed to join the area chat room", error);
+                })
+                .finally(joinSettled);
             return;
         }
 
@@ -1235,24 +1248,37 @@ export class AreasPropertiesListener {
     }
 
     private handleMatrixRoomAreaOnLeave(property: MatrixRoomPropertyData) {
+        areaChatRooms.leave(property.id);
+
         if (!get(userIsConnected)) {
             chatVisibilityStore.set(false);
             return;
         }
 
-        const actualRoom = get(selectedRoomStore);
-        const chatVisibility = get(chatVisibilityStore);
+        const matrixRoomId = property.serverData?.matrixRoomId;
 
-        if (actualRoom?.id === property.serverData?.matrixRoomId && chatVisibility) {
-            chatVisibilityStore.set(false);
+        // Deselect the room of the area left, whether the panel is open or closed, before the async leave, so
+        // reopening the chat never shows a room the avatar has left. Another area still active is not selected
+        // for the user.
+        const actualRoom = get(selectedRoomStore);
+        if (matrixRoomId && actualRoom?.id === matrixRoomId && !areaChatRooms.hasActiveRoom(matrixRoomId)) {
+            if (get(chatVisibilityStore)) {
+                chatVisibilityStore.set(false);
+            }
             selectedRoomStore.set(undefined);
         }
-        chatZoneLiveStore.set(false);
+        if (areaChatRooms.activeCount === 0) {
+            chatZoneLiveStore.set(false);
+        }
 
-        get(gameManager.chatConnection.rooms)
-            .find((room) => room.id === property.serverData?.matrixRoomId)
-            ?.leaveRoom()
-            .catch((error) => console.error(error));
+        const roomToLeave = get(gameManager.chatConnection.rooms).find((room) => room.id === matrixRoomId);
+        if (roomToLeave && matrixRoomId && !areaChatRooms.hasActiveRoom(matrixRoomId)) {
+            const leaveSettled = areaChatRooms.beginSettle(matrixRoomId);
+            roomToLeave
+                .leaveRoom()
+                .catch((error) => console.error(error))
+                .finally(leaveSettled);
+        }
 
         if (this.scene.connection && property.serverData?.matrixRoomId) {
             this.scene.connection.emitLeaveChatRoomArea(property.serverData.matrixRoomId);

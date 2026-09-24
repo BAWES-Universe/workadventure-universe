@@ -1,5 +1,7 @@
 import { MapStore } from "@workadventure/store-utils";
+import { writable } from "svelte/store";
 import type { Readable } from "svelte/store";
+import type { ChatRoom } from "../Connection/ChatConnection";
 import type { SpaceUserExtended } from "../../Space/SpaceInterface";
 
 /**
@@ -22,3 +24,180 @@ export type AreaPresence =
       };
 
 export const areaPresenceStore = new MapStore<string, AreaPresence>();
+
+/**
+ * One Matrix area this tab's avatar is standing in.
+ * - `generation` changes every time the area is entered again, so a join that resolves after the avatar left
+ *   (or left and came back) can tell it is stale.
+ * - `room` is set once the join has completed. Until then the row is not shown and the room cannot be selected.
+ */
+export interface AreaChatRoomEntry<Room = unknown> {
+    readonly areaId: string;
+    readonly roomId: string;
+    readonly areaName: string | undefined;
+    readonly generation: number;
+    readonly room: Room | undefined;
+}
+
+/**
+ * Collects the Matrix room id of every area of the map that has one, so the chat list can hide them at all times.
+ */
+export function collectAreaChatRoomIds(
+    areas: Iterable<{ properties: ReadonlyArray<{ type: string; serverData?: unknown }> }>
+): Set<string> {
+    const roomIds = new Set<string>();
+    for (const area of areas) {
+        for (const property of area.properties) {
+            if (property.type !== "matrixRoomPropertyData") continue;
+            const serverData = property.serverData;
+            if (typeof serverData !== "object" || serverData === null || !("matrixRoomId" in serverData)) continue;
+            const matrixRoomId = serverData.matrixRoomId;
+            if (typeof matrixRoomId === "string" && matrixRoomId !== "") {
+                roomIds.add(matrixRoomId);
+            }
+        }
+    }
+    return roomIds;
+}
+
+/**
+ * Removes area chat rooms from a list of rooms (main list, folders, invitations, search results).
+ */
+export function withoutAreaChatRooms<T extends { id: string }>(
+    rooms: readonly T[],
+    hiddenRoomIds: ReadonlySet<string>
+): T[] {
+    if (hiddenRoomIds.size === 0) return [...rooms];
+    return rooms.filter((room) => !hiddenRoomIds.has(room.id));
+}
+
+/**
+ * The Matrix area chat rooms of this tab, per tab and in memory only.
+ *
+ * - `hiddenRoomIds`: every room the main chat list must never show. It is the union of the area rooms known on the
+ *   map, the areas the avatar is in (joining or joined) and the rooms whose join or leave has not settled yet, so an
+ *   area room never flashes into the list while Matrix membership catches up.
+ * - `rows`: the area rows under the top row. Only areas whose join has completed, the most recently entered first,
+ *   one row per room. When the most recent area is left, the previous one still active is on top again.
+ */
+export class AreaChatRoomTracker<Room = unknown> {
+    private mapRoomIds = new Set<string>();
+    private entries: AreaChatRoomEntry<Room>[] = [];
+    private settling = new Map<string, number>();
+    private nextGeneration = 1;
+
+    private readonly hiddenStore = writable<ReadonlySet<string>>(new Set());
+    private readonly rowsStore = writable<readonly AreaChatRoomEntry<Room>[]>([]);
+
+    public readonly hiddenRoomIds: Readable<ReadonlySet<string>> = { subscribe: this.hiddenStore.subscribe };
+    public readonly rows: Readable<readonly AreaChatRoomEntry<Room>[]> = { subscribe: this.rowsStore.subscribe };
+
+    /** Replaces the set of area room ids known on the map. */
+    public setMapRoomIds(roomIds: Iterable<string>): void {
+        this.mapRoomIds = new Set(roomIds);
+        this.publish();
+    }
+
+    /** The avatar entered an area with a Matrix room. Entering the same area again replaces its entry. */
+    public enter(areaId: string, roomId: string, areaName?: string): AreaChatRoomEntry<Room> {
+        const entry: AreaChatRoomEntry<Room> = {
+            areaId,
+            roomId,
+            areaName: areaName?.trim() || undefined,
+            generation: this.nextGeneration++,
+            room: undefined,
+        };
+        this.entries = [...this.entries.filter((existing) => existing.areaId !== areaId), entry];
+        this.publish();
+        return entry;
+    }
+
+    /** True while this exact entry (same area, same generation) is still active. */
+    public isCurrent(entry: AreaChatRoomEntry<Room>): boolean {
+        return this.entries.some(
+            (existing) => existing.areaId === entry.areaId && existing.generation === entry.generation
+        );
+    }
+
+    /**
+     * The join of this entry completed. Returns false, and changes nothing, if the entry is stale: the avatar left
+     * the area (or left and entered again) before the join resolved.
+     */
+    public markJoined(entry: AreaChatRoomEntry<Room>, room: Room): boolean {
+        if (!this.isCurrent(entry)) return false;
+        this.entries = this.entries.map((existing) =>
+            existing.areaId === entry.areaId && existing.generation === entry.generation
+                ? { ...existing, room }
+                : existing
+        );
+        this.publish();
+        return true;
+    }
+
+    /** The avatar left an area. Removes that entry only and returns it. */
+    public leave(areaId: string): AreaChatRoomEntry<Room> | undefined {
+        const entry = this.entries.find((existing) => existing.areaId === areaId);
+        if (!entry) return undefined;
+        this.entries = this.entries.filter((existing) => existing !== entry);
+        this.publish();
+        return entry;
+    }
+
+    /** True if an active area (joining or joined) still uses this room. */
+    public hasActiveRoom(roomId: string): boolean {
+        return this.entries.some((entry) => entry.roomId === roomId);
+    }
+
+    public get activeCount(): number {
+        return this.entries.length;
+    }
+
+    /**
+     * Keeps a room hidden from the main list while a join or a leave is in flight, even if its area is no longer on
+     * the map or active. Call the returned function once it has settled; calling it more than once is harmless.
+     */
+    public beginSettle(roomId: string): () => void {
+        this.settling.set(roomId, (this.settling.get(roomId) ?? 0) + 1);
+        this.publish();
+        let done = false;
+        return () => {
+            if (done) return;
+            done = true;
+            const count = (this.settling.get(roomId) ?? 1) - 1;
+            if (count <= 0) {
+                this.settling.delete(roomId);
+            } else {
+                this.settling.set(roomId, count);
+            }
+            this.publish();
+        };
+    }
+
+    /** Forgets everything, for a new scene. */
+    public reset(): void {
+        this.mapRoomIds = new Set();
+        this.entries = [];
+        this.settling = new Map();
+        this.publish();
+    }
+
+    private publish(): void {
+        const hidden = new Set<string>(this.mapRoomIds);
+        for (const entry of this.entries) hidden.add(entry.roomId);
+        for (const roomId of this.settling.keys()) hidden.add(roomId);
+        this.hiddenStore.set(hidden);
+
+        const rows: AreaChatRoomEntry<Room>[] = [];
+        const seen = new Set<string>();
+        for (let i = this.entries.length - 1; i >= 0; i--) {
+            const entry = this.entries[i];
+            if (entry.room === undefined || seen.has(entry.roomId)) continue;
+            seen.add(entry.roomId);
+            rows.push(entry);
+        }
+        this.rowsStore.set(rows);
+    }
+}
+
+/** This tab's area chat rooms. */
+export const areaChatRooms = new AreaChatRoomTracker<ChatRoom>();
