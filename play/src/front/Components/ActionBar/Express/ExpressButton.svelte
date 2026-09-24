@@ -7,12 +7,13 @@
     import { emoteDataStore } from "../../../Stores/EmoteStore";
     import { expressTrayStore } from "../../../Stores/ExpressStore";
     import { popupStore } from "../../../Stores/PopupStore";
-    import { gameManager } from "../../../Phaser/Game/GameManager";
+    import { connectionManager } from "../../../Connection/ConnectionManager";
     import LL from "../../../../i18n/i18n-svelte";
     import type { ExpressSent } from "./ExpressTray.svelte";
     import ExpressTray from "./ExpressTray.svelte";
 
-    const sayEnabled = gameManager.getCurrentGameScene().room.isSayEnabled;
+    // Same source as the action bar's emoji menu; never throws while a scene is loading.
+    const sayEnabled = connectionManager.currentRoom?.isSayEnabled ?? true;
 
     let button: HTMLButtonElement;
 
