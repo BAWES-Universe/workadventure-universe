@@ -43,6 +43,31 @@ test.describe("Express button @nowebkit", () => {
         await expect(page.getByTestId("express-tray")).toBeHidden();
     });
 
+    test("should send a quick phrase as a say bubble", async ({ browser }) => {
+        await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
+
+        await page.getByTestId("express-button").click();
+        await expect(page.getByTestId("express-phrases")).toBeVisible();
+        await page.getByTestId("express-phrase-2").click();
+
+        await expect(page.getByTestId("express-tray")).toBeHidden();
+        await expect(page.locator(".say-bubble")).toHaveText("Thanks");
+    });
+
+    test("should hide the phrases when custom ones don't fit on one line", async ({ browser }) => {
+        await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
+
+        await page.evaluate(() => {
+            const long = { text: "A rather long phrase!!!" };
+            localStorage.setItem("quickPhrases", JSON.stringify([long, long, long, long]));
+        });
+        await page.reload();
+
+        await page.getByTestId("express-button").click();
+        await expect(page.getByTestId("express-tray")).toBeVisible();
+        await expect(page.getByTestId("express-phrases")).toBeHidden();
+    });
+
     test("should hide the Express button while the chat is open", async ({ browser }) => {
         await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
 

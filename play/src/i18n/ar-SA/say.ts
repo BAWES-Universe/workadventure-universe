@@ -2,6 +2,12 @@ import type { DeepPartial } from "../DeepPartial";
 import type { Translation } from "../i18n-types";
 
 const say: DeepPartial<Translation["say"]> = {
+    quickPhrases: {
+        hi: "مرحبًا 👋",
+        brb: "سأعود حالًا",
+        thanks: "شكرًا",
+        ok: "حسنًا",
+    },
     type: {
         say: "قل",
         think: "فكر",
@@ -22,6 +28,7 @@ const say: DeepPartial<Translation["say"]> = {
         sayHint: "يراها كل من يراك لمدة 5 ثوانٍ",
         thinkHint: "تبقى فوقك حتى تتحرك",
         enterToSend: "Enter للإرسال",
+        phrases: "عبارات سريعة",
     },
     tooltip: {
         description: {

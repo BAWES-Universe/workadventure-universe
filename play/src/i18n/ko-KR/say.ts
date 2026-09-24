@@ -2,6 +2,12 @@ import type { DeepPartial } from "../DeepPartial";
 import type { Translation } from "../i18n-types";
 
 const say: DeepPartial<Translation["say"]> = {
+    quickPhrases: {
+        hi: "안녕하세요 👋",
+        brb: "곧 돌아올게요",
+        thanks: "감사합니다",
+        ok: "좋아요",
+    },
     type: {
         say: "말하기",
         think: "생각하기",

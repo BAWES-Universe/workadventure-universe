@@ -1,6 +1,12 @@
 import type { BaseTranslation } from "../i18n-types";
 
 const say: BaseTranslation = {
+    quickPhrases: {
+        hi: "Oi 👋",
+        brb: "Já volto",
+        thanks: "Valeu",
+        ok: "OK",
+    },
     type: {
         say: "Falar",
         think: "Pensar",
