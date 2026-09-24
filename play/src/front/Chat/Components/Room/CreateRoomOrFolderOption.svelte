@@ -12,14 +12,11 @@
     import CreateFolderModal from "./CreateFolderModal.svelte";
     import CreateRoomModal from "./CreateRoomModal.svelte";
     import RoomOption from "./RoomMenu/RoomOption.svelte";
-    import { IconDots, IconFolder, IconLogout, IconMessage, IconPlus, IconUserEdit } from "@wa-icons";
+    import { IconDots, IconFolder, IconLogout, IconMessage, IconUserEdit } from "@wa-icons";
 
     export let parentID: string | undefined = undefined;
     export let parentName = "";
     export let folder: (RoomFolder & ChatRoomModeration) | undefined;
-    /** "plus" is the list-level entry point (create a room or folder at the root); "dots" is a folder's menu. */
-    export let trigger: "dots" | "plus" = "dots";
-    export let triggerLabel: string | undefined = undefined;
     let optionButtonRef: HTMLButtonElement | undefined = undefined;
     let hideFolderOptions = true;
 
@@ -84,22 +81,14 @@
 
 <button
     data-testid={`openOptionToCreateRoomOrFolder${parentName}`}
-    class="m-0 {trigger === 'plus'
-        ? 'p-2'
-        : 'p-1'} rounded-lg hover:bg-white/10 aspect-square flex items-center justify-center {hideFolderOptions
+    class="m-0 p-1 rounded-lg hover:bg-white/10 aspect-square flex items-center justify-center {hideFolderOptions
         ? 'bg-transparent'
         : 'bg-secondary'}"
     bind:this={optionButtonRef}
     on:click|preventDefault|stopPropagation={toggleSpaceOption}
-    aria-label={triggerLabel}
-    title={triggerLabel}
     aria-expanded={!hideFolderOptions}
 >
-    {#if trigger === "plus"}
-        <IconPlus font-size="20" />
-    {:else}
-        <IconDots />
-    {/if}
+    <IconDots />
 </button>
 <div
     class="bg-contrast/50 backdrop-blur-md rounded-md overflow-hidden z-50 w-max end-4 top-10 p-1"

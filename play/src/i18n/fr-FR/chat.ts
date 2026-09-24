@@ -531,8 +531,19 @@ const chat: DeepPartial<Translation["chat"]> = {
         folderRooms: "{count} salon{{s}}",
         empty: "Aucune conversation pour l'instant",
         noResults: "Aucune conversation ne correspond à votre recherche",
-        newRoomOrFolder: "Nouveau salon ou dossier",
         muted: "Muet",
+    },
+    header: {
+        newChat: "Nouveau message, salon ou dossier",
+        newMessage: "Nouveau message",
+        newMessageHint: "Choisissez à qui écrire",
+        newRoom: "Nouveau salon",
+        newRoomHint: "Un endroit pour discuter en groupe",
+        newFolder: "Nouveau dossier",
+        newFolderHint: "Regroupez vos salons",
+        searchChat: "Rechercher salons et personnes",
+        searchPeople: "Rechercher des personnes",
+        clearSearch: "Effacer la recherche",
     },
 };
 

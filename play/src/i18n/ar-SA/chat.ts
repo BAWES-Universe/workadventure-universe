@@ -514,8 +514,19 @@ const chat: DeepPartial<Translation["chat"]> = {
         folderRooms: "{count} {{غرف|غرفة|غرفتان|غرف|غرفة|غرفة}}", // {count} rooms
         empty: "لا توجد محادثات بعد", // No conversations yet
         noResults: "لا توجد محادثات تطابق بحثك", // No conversations match your search
-        newRoomOrFolder: "غرفة أو مجلد جديد", // New room or folder
         muted: "مكتوم", // Muted
+    },
+    header: {
+        newChat: "رسالة أو غرفة أو مجلد جديد", // New message, room or folder
+        newMessage: "رسالة جديدة", // New message
+        newMessageHint: "اختر من تريد مراسلته", // Pick someone to write to
+        newRoom: "غرفة جديدة", // New room
+        newRoomHint: "مكان للتحدث كمجموعة", // A place to talk as a group
+        newFolder: "مجلد جديد", // New folder
+        newFolderHint: "اجمع الغرف معًا", // Keep rooms together
+        searchChat: "ابحث عن الغرف والأشخاص", // Search rooms and people
+        searchPeople: "ابحث عن الأشخاص", // Search people
+        clearSearch: "مسح البحث", // Clear search
     },
 };
 
