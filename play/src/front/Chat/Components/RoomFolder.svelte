@@ -1,7 +1,7 @@
 <script lang="ts">
     import { get } from "svelte/store";
     import type { RoomFolder, ChatRoom, ChatRoomModeration } from "../Connection/ChatConnection";
-    import LL from "../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../i18n/i18n-svelte";
     import { chatSearchBarValue } from "../Stores/ChatStore";
     import { localUserStore } from "../../Connection/LocalUserStore";
     import { areaChatRooms, withoutAreaChatRooms } from "../Stores/AreaPresenceStore";
@@ -10,10 +10,15 @@
     import ShowMore from "./ShowMore.svelte";
     import RoomInvitation from "./Room/RoomInvitation.svelte";
     import RoomSuggested from "./Room/RoomSuggested.svelte";
-    import { IconChevronUp } from "@wa-icons";
+    import { formatRowTime, formatUnreadCount } from "./OneList/OneListOrder";
+    import type { ActivitySummary } from "./OneList/OneListOrder";
+    import { minuteClock } from "./OneList/MinuteClock";
+    import { IconChevronUp, IconFolder } from "@wa-icons";
 
     export let rootFolder: boolean;
     export let folder: RoomFolder & ChatRoomModeration;
+    /** In the one list: the newest message and the unread count across the folder's rooms. */
+    export let summary: ActivitySummary | undefined = undefined;
     $: ({ name, folders, invitations, rooms, id, suggestedRooms, joinableRooms } = folder);
     let isOpen: boolean = localUserStore.hasFolderOpened(folder.id) ?? false;
     let joinableRoomsOpen = false;
@@ -39,6 +44,14 @@
     $: visibleSuggestedRooms = withoutAreaChatRooms($suggestedRooms, $hiddenAreaRoomIds);
     $: visibleInvitations = withoutAreaChatRooms($invitations, $hiddenAreaRoomIds);
 
+    $: timeLabel = summary
+        ? formatRowTime(summary.timestamp, $minuteClock, $locale, {
+              justNow: $LL.chat.oneList.justNow(),
+              minutes: (count) => $LL.chat.oneList.minutesShort({ count }),
+              yesterday: $LL.chat.oneList.yesterday(),
+          })
+        : "";
+
     function toggleFolder() {
         isOpen = !isOpen;
         if (isOpen) {
@@ -53,37 +66,103 @@
     }
 </script>
 
-<div class={`${!rootFolder ? "mx-2 p-1 bg-contrast-300/10 rounded-lg mb-4" : ""}`}>
-    <div
-        class={`group relative px-3 m-0 rounded-md text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center ${
-            rootFolder ? "border-solid border-x-0 border-t border-b-0 border-white/10 rounded-none" : "rounded-md"
-        }`}
-        class:mb-2={isOpen || rootFolder}
-    >
-        <div class="flex items-center space-x-2 grow m-0 p-0">
-            <button class="flex items-center space-x-2 grow m-0 p-0" on:click={toggleFolder}>
+<div class={`${!rootFolder ? "mx-2 p-1 bg-contrast-300/10 rounded-lg mb-4" : ""}`} data-testid="roomFolder">
+    {#if rootFolder}
+        <!-- A folder in the one list: a row like the others, expanding in place. -->
+        <div
+            class="group relative flex items-center gap-1 min-h-14 pe-1 rounded-xl hover:bg-white/10 transition-colors"
+            class:mb-1={isOpen}
+        >
+            <button
+                class="flex min-w-0 grow items-center gap-3 m-0 ps-2 py-2 text-start"
+                on:click={toggleFolder}
+                aria-expanded={isOpen}
+            >
                 <div
-                    class={`${
-                        rootFolder
-                            ? "text-white/75 group-hover:text-white text-sm font-bold tracking-widest uppercase grow text-start"
-                            : "text-sm font-bold tracking-widest uppercase grow text-start"
-                    }`}
+                    class="h-10 w-10 shrink-0 rounded-xl p-[2px] bg-gradient-to-br from-primary/70 to-secondary/70"
+                    aria-hidden="true"
                 >
-                    {$name}
+                    <div class="h-full w-full rounded-[10px] bg-contrast flex items-center justify-center">
+                        <IconFolder font-size="18" class="text-white/85" />
+                    </div>
+                </div>
+                <div class="flex min-w-0 grow flex-col">
+                    <div class="flex min-w-0 items-baseline gap-2">
+                        <span
+                            class="min-w-0 grow truncate text-sm {summary?.hasUnread
+                                ? 'text-white font-bold'
+                                : 'text-white/85'}">{$name}</span
+                        >
+                        {#if timeLabel}
+                            <span
+                                class="shrink-0 text-[11px] {summary?.hasUnread
+                                    ? 'text-secondary-400 font-semibold'
+                                    : 'text-white/50'}">{timeLabel}</span
+                            >
+                        {/if}
+                    </div>
+                    <div class="flex min-w-0 items-center gap-2 text-xs text-white/60">
+                        <span class="min-w-0 grow truncate"
+                            >{$LL.chat.oneList.folderRooms({ count: visibleRooms.length })}</span
+                        >
+                        {#if summary?.hasUnread}
+                            {#if summary.unreadCount > 0}
+                                <span
+                                    class="shrink-0 min-w-5 h-5 px-1.5 rounded-full bg-secondary text-white text-[11px] font-bold flex items-center justify-center"
+                                    data-testid="folderUnread"
+                                    aria-label={$LL.chat.areaRow.unread({ count: summary.unreadCount })}
+                                    >{formatUnreadCount(summary.unreadCount)}</span
+                                >
+                            {:else}
+                                <span class="flex shrink-0 items-center justify-center h-5 w-5 relative">
+                                    <span
+                                        class="rounded-full bg-secondary-200 h-2 w-2 motion-safe:animate-ping absolute"
+                                    />
+                                    <span class="rounded-full bg-secondary-200 h-1.5 w-1.5 absolute" />
+                                </span>
+                            {/if}
+                        {/if}
+                    </div>
                 </div>
             </button>
             <CreateRoomOrFolderOption {folder} parentID={id} parentName={$name} />
+            <button
+                class="transition-all group-hover:bg-white/10 p-1 m-0 rounded-lg aspect-square flex items-center justify-center text-white"
+                data-testid={`toggleFolder${$name}`}
+                aria-expanded={isOpen}
+                on:click={toggleFolder}
+            >
+                <IconChevronUp class={`transform transition ${!isOpen ? "" : "rotate-180"}`} />
+            </button>
         </div>
-
-        <button
-            class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
-            data-testid={`toggleFolder${$name}`}
-            on:click={toggleFolder}
+    {:else}
+        <div
+            class="group relative px-3 m-0 rounded-md text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center"
+            class:mb-2={isOpen}
         >
-            <IconChevronUp class={`transform transition ${!isOpen ? "" : "rotate-180"}`} />
-        </button>
-    </div>
-    <div class="flex flex-col">
+            <div class="flex items-center space-x-2 grow m-0 p-0">
+                <button class="flex items-center space-x-2 grow m-0 p-0" on:click={toggleFolder}>
+                    <div class="text-sm font-bold tracking-widest uppercase grow text-start">
+                        {$name}
+                    </div>
+                </button>
+                <CreateRoomOrFolderOption {folder} parentID={id} parentName={$name} />
+            </div>
+
+            <button
+                class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
+                data-testid={`toggleFolder${$name}`}
+                on:click={toggleFolder}
+            >
+                <IconChevronUp class={`transform transition ${!isOpen ? "" : "rotate-180"}`} />
+            </button>
+        </div>
+    {/if}
+    <div
+        class="flex flex-col {rootFolder && isOpen
+            ? 'ms-7 ps-2 mb-2 border-solid border-0 border-s border-white/10'
+            : ''}"
+    >
         {#if isOpen}
             <div class="flex flex-col">
                 {#if visibleSuggestedRooms.length > 0 || filteredJoinableRooms.length > 0}

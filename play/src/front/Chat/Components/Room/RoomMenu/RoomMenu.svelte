@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { getContext, onDestroy, onMount } from "svelte";
     import { openModal } from "svelte-modals";
     import { get } from "svelte/store";
     import type { Readable } from "svelte/store";
@@ -19,6 +19,9 @@
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
     import { scriptUtils } from "../../../../Api/ScriptUtils";
     import type { UserProviderMerger } from "../../../UserProviderMerger/UserProviderMerger";
+    import type { OrderFreeze } from "../../OneList/OneListStore";
+    import { ONE_LIST_FREEZE_CONTEXT } from "../../OneList/OneListStore";
+    import { openChatMenuStore } from "../../../Stores/OpenChatMenuStore";
     import RoomOption from "./RoomOption.svelte";
     import { IconDots, IconLogout, IconUserEdit, IconMute, IconUnMute, IconMapPin, IconCamera } from "@wa-icons";
 
@@ -36,7 +39,17 @@
 
     const { connection } = gameManager.getCurrentGameScene();
 
+    // Inside the one chat list, the list holds its order still while this menu is open.
+    const orderFreeze = getContext<OrderFreeze | undefined>(ONE_LIST_FREEZE_CONTEXT);
+    const freezeHolder = {};
+    $: orderFreeze?.setHeld(freezeHolder, !hideOptions);
+
     $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
+
+    // Opening another chat menu closes this one.
+    const unsubscribeOpenMenu = openChatMenuStore.subscribe((openMenu) => {
+        if (openMenu !== freezeHolder) hideOptions = true;
+    });
 
     onMount(() => {
         document.addEventListener("click", closeRoomOptionsOnClickOutside);
@@ -53,6 +66,9 @@
 
     onDestroy(() => {
         document.removeEventListener("click", closeRoomOptionsOnClickOutside);
+        orderFreeze?.release(freezeHolder);
+        unsubscribeOpenMenu();
+        openChatMenuStore.update((openMenu) => (openMenu === freezeHolder ? undefined : openMenu));
     });
 
     function toggleRoomOptions() {
@@ -60,6 +76,7 @@
             return;
         }
         hideOptions = !hideOptions;
+        if (!hideOptions) openChatMenuStore.set(freezeHolder);
     }
 
     function closeRoomOptionsOnClickOutside(e: MouseEvent) {

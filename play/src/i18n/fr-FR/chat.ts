@@ -528,6 +528,19 @@ const chat: DeepPartial<Translation["chat"]> = {
         inThisArea: "Dans cette zone",
         unread: "{count} message{{s}} non lu{{s}}",
     },
+    oneList: {
+        label: "Conversations",
+        invitedYou: "{name} vous a invité",
+        invited: "Vous êtes invité",
+        justNow: "à l'instant",
+        minutesShort: "{count} min",
+        yesterday: "Hier",
+        folderRooms: "{count} salon{{s}}",
+        empty: "Aucune conversation pour l'instant",
+        noResults: "Aucune conversation ne correspond à votre recherche",
+        newRoomOrFolder: "Nouveau salon ou dossier",
+        muted: "Muet",
+    },
 };
 
 export default chat;

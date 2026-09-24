@@ -128,7 +128,8 @@ test.describe("matrix chat area property @matrix @nowebit @nomobile", () => {
 
     await page.goto(Map.url("empty"));
     await chatUtils.openChat(page);
-    await chatUtils.openRoomAreaList(page);
+    // One list: no Rooms section to open first.
+    await expect(page.getByTestId("oneChatList")).toBeAttached();
 
     await expect(page.getByText("name of new room")).toBeHidden();
 
@@ -169,8 +170,8 @@ test.describe("matrix chat area property @matrix @nowebit @nomobile", () => {
     await expect(areaRow.getByTestId("areaChatRowInThisArea")).toBeVisible();
     await expect(areaRow.getByTestId("name of new room")).toBeVisible();
 
-    // Not in the main list: the only element for this room is the area row.
-    await chatUtils.openRoomAreaList(page);
+    // Not in the one list: the only element for this room is the area row.
+    await expect(page.getByTestId("oneChatList").getByTestId("name of new room")).toHaveCount(0);
     await expect(page.getByTestId("name of new room")).toHaveCount(1);
 
     // Tapping the row opens the room.

@@ -517,7 +517,6 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByPlaceholder('Users').click();
     await page.getByPlaceholder('Users').press('Enter');
     await page.getByTestId("createFolderButton").click();
-    await page.getByTestId("roomAccordeon").click();
     await expect(page.getByText(publicFolder)).toBeAttached();
     await page.close();
     await page.context().close();
@@ -534,7 +533,6 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByPlaceholder('Users').click();
     await page.getByPlaceholder('Users').press('Enter');
     await page.getByTestId("createFolderButton").click();
-    await page.getByTestId("roomAccordeon").click();
     await expect(page.getByText(privateFolder)).toBeAttached();
     await page.close();
     await page.context().close();
@@ -552,7 +550,6 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByPlaceholder('Users').click();
     await page.getByPlaceholder('Users').press('Enter');
     await page.getByTestId("createFolderButton").click();
-    await page.getByTestId("roomAccordeon").click();
     await expect(page.getByText(privateFolder1)).toBeAttached();
 
     const privateFolder2 = ChatUtils.getRandomName();
@@ -585,7 +582,6 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByPlaceholder('Users').click();
     await page.getByPlaceholder('Users').press('Enter');
     await page.getByTestId("createFolderButton").click();
-    await page.getByTestId("roomAccordeon").click();
     await expect(page.getByText(privateFolder1)).toBeAttached();
 
     const room = ChatUtils.getRandomName();
@@ -614,7 +610,6 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByPlaceholder('Users').click();
     await page.getByPlaceholder('Users').press('Enter');
     await page.getByTestId("createFolderButton").click();
-    await page.getByTestId("roomAccordeon").click();
     await expect(page.getByText(privateFolder1)).toBeAttached();
     const room = ChatUtils.getRandomName();
     await ChatUtils.openCreateRoomDialog(page, privateFolder1);
@@ -625,6 +620,48 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
 
     await expect(page.getByText(room)).toBeAttached();
     await page.close();
+    await page.context().close();
+  });
+
+  test("Rooms and folders share one list, newest first, with no sections to open", async ({ browser }) => {
+    await using page = await getPage(browser, 'Alice', Map.url("empty"));
+    await oidcMatrixUserLogin(page);
+    await ChatUtils.openChat(page);
+
+    const olderRoom = ChatUtils.getRandomName();
+    await ChatUtils.openCreateRoomDialog(page);
+    await page.getByTestId("createRoomName").fill(olderRoom);
+    await page.getByTestId("createRoomButton").click();
+    await expect(page.getByText(olderRoom)).toBeAttached();
+
+    const newerRoom = ChatUtils.getRandomName();
+    await ChatUtils.openCreateRoomDialog(page);
+    await page.getByTestId("createRoomName").fill(newerRoom);
+    await page.getByTestId("createRoomButton").click();
+    await expect(page.getByText(newerRoom)).toBeAttached();
+
+    const folder = ChatUtils.getRandomName();
+    await ChatUtils.openCreateFolderDialog(page);
+    await page.getByTestId("createFolderName").fill(folder);
+    await page.getByTestId("createFolderButton").click();
+
+    const list = page.getByTestId("oneChatList");
+    const items = list.getByTestId("oneChatListItem");
+    // No accordion: the rooms and the folder are all in the one list straight away.
+    await expect(page.getByTestId("roomAccordeon")).toHaveCount(0);
+    await expect(list.getByTestId(olderRoom)).toBeVisible();
+    await expect(list.getByTestId(newerRoom)).toBeVisible();
+    await expect(list.getByText(folder)).toBeVisible();
+    await expect(items.filter({ has: page.getByTestId(newerRoom) })).toHaveCount(1);
+
+    // A new message moves its room to the top.
+    await list.getByTestId(olderRoom).click();
+    await page.getByTestId("messageInput").fill("Bump to the top");
+    await page.getByTestId("sendMessageButton").click();
+    await expect(page.getByText("Bump to the top")).toBeAttached();
+    await page.getByTestId("chatBackward").click();
+    await expect(items.first().getByTestId(olderRoom)).toBeVisible();
+
     await page.context().close();
   });
 
