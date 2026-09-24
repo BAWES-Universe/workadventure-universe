@@ -12,6 +12,7 @@
     import getCloseImg from "../images/get-close.png";
     import ExternalComponents from "../../Components/ExternalModules/ExternalComponents.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { areaChatRooms, withoutAreaChatRooms } from "../Stores/AreaPresenceStore";
     import Room from "./Room/Room.svelte";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import RoomInvitation from "./Room/RoomInvitation.svelte";
@@ -25,6 +26,7 @@
     import RequireConnection from "./requireConnection.svelte";
     import RefreshChat from "./RefreshChat.svelte";
     import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
+    import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import { IconChevronUp, IconCloudLock, IconRefresh } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
@@ -40,6 +42,8 @@
     let rooms = chat.rooms;
     let roomInvitations = chat.invitations;
     let roomFolders = chat.folders;
+    // Area chat rooms have their own row under the top row and never show in the list, even while joining or leaving.
+    const hiddenAreaRoomIds = areaChatRooms.hiddenRoomIds;
 
     let displayDirectRooms = false;
     let displayRooms = false;
@@ -107,15 +111,17 @@
         proximityChatRoom.unreadNotificationCount.set(0);
     }
 
-    $: filteredDirectRoom = $directRooms
+    $: filteredDirectRoom = withoutAreaChatRooms($directRooms, $hiddenAreaRoomIds)
         .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
         .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
-    $: filteredRooms = $rooms
+    $: filteredRooms = withoutAreaChatRooms($rooms, $hiddenAreaRoomIds)
         .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
         .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
-    $: filteredRoomInvitations = $roomInvitations
+    $: filteredRoomInvitations = withoutAreaChatRooms($roomInvitations, $hiddenAreaRoomIds)
         .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
         .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
+
+    $: visibleJoignableRooms = withoutAreaChatRooms($joignableRoom, $hiddenAreaRoomIds);
 
     $: displayTwoColumnLayout = sideBarWidth >= CHAT_LAYOUT_LIMIT;
 </script>
@@ -165,12 +171,13 @@
 
                 <div class="px-2 py-2 border border-solid border-x-0 border-t border-y-0 border-b-0 border-white/10">
                     <ProximityTopRow {proximityChatRoom} onOpen={toggleDisplayProximityChat} />
+                    <AreaChatRows />
                 </div>
                 {#if $chatConnectionStatus === "ONLINE"}
-                    {#if $joignableRoom.length > 0 && $chatSearchBarValue.trim() !== ""}
+                    {#if visibleJoignableRooms.length > 0 && $chatSearchBarValue.trim() !== ""}
                         <p class="p-0 m-0 text-gray-400">{$LL.chat.availableRooms()}</p>
                         <div class="flex flex-col">
-                            {#each $joignableRoom as room (room.id)}
+                            {#each visibleJoignableRooms as room (room.id)}
                                 <JoignableRooms {room} />
                             {/each}
                         </div>

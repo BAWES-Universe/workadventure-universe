@@ -524,6 +524,10 @@ const chat: DeepPartial<Translation["chat"]> = {
         exploreWithOrbit: "Explorer avec Orbit",
         inviteSomeone: "Inviter quelqu'un",
     },
+    areaRow: {
+        inThisArea: "Dans cette zone",
+        unread: "{count} message{{s}} non lu{{s}}",
+    },
 };
 
 export default chat;
