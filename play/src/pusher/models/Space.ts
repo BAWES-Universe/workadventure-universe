@@ -37,6 +37,8 @@ const debug = Debug("space");
 export interface SpaceInterface {
     forwarder: SpaceToBackForwarderInterface;
     dispatcher: SpaceToFrontDispatcherInterface;
+    // This pusher's copy of the users of the space (sent by the back, across all pushers)
+    readonly users: ReadonlyMap<string, SpaceUserExtended>;
     initSpace(): void;
     name: string;
     handleWatch(watcher: Socket): Promise<void>;
