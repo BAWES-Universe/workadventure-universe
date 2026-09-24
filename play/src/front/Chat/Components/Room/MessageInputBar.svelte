@@ -431,7 +431,11 @@
 
     onDestroy(() => {
         clearTimeout(uploadErrorTimeout);
-        if (room instanceof ProximityChatRoom && room.currentSessionId !== mountSessionId) {
+        if (
+            room instanceof ProximityChatRoom &&
+            mountSessionId !== undefined &&
+            room.currentSessionId !== mountSessionId
+        ) {
             // The stay ended while the composer was open: what it still holds belongs to that stay.
             room.keepUnsentDraft(mountSessionId, message);
         } else if (hasSpaceDrafts) {

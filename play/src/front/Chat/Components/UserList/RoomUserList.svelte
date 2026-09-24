@@ -39,13 +39,16 @@
 
     function sortPeople(users: ChatUser[]): ChatUser[] {
         const mySpaceUserId = gameScene.connection?.getSpaceUserId();
-        return [...users]
-            .sort((a, b) => {
-                if (a.spaceUserId === mySpaceUserId) return -1;
-                if (b.spaceUserId === mySpaceUserId) return 1;
-                return a.username?.localeCompare(b.username || "") || -1;
-            })
-            .slice(0, USERS_BY_ROOM_LIMITATION);
+        return [...users].sort((a, b) => {
+            if (a.spaceUserId === mySpaceUserId) return -1;
+            if (b.spaceUserId === mySpaceUserId) return 1;
+            return a.username?.localeCompare(b.username || "") || -1;
+        });
+    }
+
+    // Search first, then cap what is rendered: someone past the first 200 can still be found, and counts stay true.
+    function shown(users: ChatUser[]): ChatUser[] {
+        return users.filter(matches).slice(0, USERS_BY_ROOM_LIMITATION);
     }
 
     function roomNameOf(playUri: string, roomName: string | undefined): string {
@@ -60,7 +63,7 @@
     // Everyone, split by where they are. Counts are of everyone in the section, before the search filters it.
     $: hereEntry = $usersByRoom.get(currentRoomUrl);
     $: hereAll = hereEntry ? sortPeople(hereEntry.users) : [];
-    $: hereShown = hereAll.filter(matches);
+    $: hereShown = shown(hereAll);
     $: hereName = hereEntry?.roomName?.trim() || mapRoomName || $LL.chat.peopleTab.thisRoom();
 
     $: elsewhereGroups = Array.from($usersByRoom.entries())
@@ -73,11 +76,11 @@
         .sort((a, b) => a.name.localeCompare(b.name));
     $: elsewhereCount = elsewhereGroups.reduce((total, group) => total + group.users.length, 0);
     $: elsewhereShown = elsewhereGroups
-        .map((group) => ({ ...group, users: group.users.filter(matches) }))
+        .map((group) => ({ ...group, users: shown(group.users) }))
         .filter((group) => group.users.length > 0);
 
     $: offlineAll = sortPeople($usersByRoom.get(undefined)?.users ?? []);
-    $: offlineShown = offlineAll.filter(matches);
+    $: offlineShown = shown(offlineAll);
 
     // Searching unfolds the sections that match; clearing the search goes back to what you had unfolded.
     $: elsewhereOpen = isSearching ? elsewhereShown.length > 0 : $peopleSectionsOpenStore.elsewhere;

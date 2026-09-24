@@ -712,6 +712,36 @@ export class ProximityChatRoom implements ChatRoom {
      * Called by the scene right before it destroys this room.
      */
     public stashHistoryForNextScene(): void {
+        // Leaving the map ends the stay you're in: close it here, so the next map never receives an open stay
+        // that its own messages would fall into.
+        const openSessionId = this._currentSessionId;
+        if (openSessionId !== undefined) {
+            const draft = composerDraftStore.load(this.id, this._spaceGeneration);
+            if (draft) {
+                composerDraftStore.clear(this.id);
+                this.keepUnsentDraft(openSessionId, draft.message);
+            }
+            for (const streaming of this.streamMessages.values()) {
+                streaming.stoppedOnLeave = true;
+            }
+            const others = this.users
+                ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
+                : [];
+            const isArea = this.meetingSessionLabel !== undefined;
+            this.addSessionMarker(
+                isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
+                "outcoming",
+                {
+                    kind: "end",
+                    label: isArea ? this.meetingSessionLabel ?? "" : "",
+                    participants: isArea ? [] : others.map((user) => user.name),
+                    participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
+                    isArea,
+                    sessionId: openSessionId,
+                }
+            );
+            this._currentSessionId = undefined;
+        }
         stashProximityHistory({
             messages: Array.from(get(this.messages)),
             unreadBySession: new Map(get(this._unreadBySession)),

@@ -259,6 +259,38 @@ describe("ProximityChatRoom sessions", () => {
         expect(listableSessions(all).map((session) => session.label)).toEqual(["Other room"]);
     });
 
+    it("closes the open stay before handing the timeline to the next map", async () => {
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const stayId = room.currentSessionId;
+        room.stashHistoryForNextScene();
+
+        expect(room.currentSessionId).toBeUndefined();
+        const next = new ProximityChatRoom(
+            "room_9",
+            {
+                joinSpace: () => Promise.resolve(fake.space),
+                leaveSpace: () => Promise.resolve(),
+            } as unknown as SpaceRegistryInterface,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+        const carried = get(next.sessions);
+        expect(carried.map((session) => session.id)).toEqual([stayId]);
+        expect(carried[0].isLive).toBe(false);
+        expect(carried[0].endedAt).toBeDefined();
+        next.destroy();
+    });
+
     it("marks a bot reply still streaming as stopped when you leave, in its own stay", async () => {
         room.setDisplayName("Design room");
         await room.joinSpace("bubble", [], true);
