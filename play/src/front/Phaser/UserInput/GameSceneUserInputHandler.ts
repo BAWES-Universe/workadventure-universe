@@ -12,6 +12,7 @@ import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { navChat } from "../../Chat/Stores/ChatStore";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { openChat } from "../../Chat/openChat";
+import { expressTrayStore } from "../../Stores/ExpressStore";
 import { popupStore } from "../../Stores/PopupStore";
 import SayPopUp from "../../Components/PopUp/SayPopUp.svelte";
 import { isPopupJustClosed } from "../Game/Say/SayManager";
@@ -257,8 +258,8 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
         if (!this.gameScene.room.isSayEnabled) {
             return;
         }
-        // Don't open if we just closed.
-        if (isPopupJustClosed() || popupStore.hasPopup("say")) {
+        // Don't open if we just closed, or while the Express tray is open.
+        if (isPopupJustClosed() || popupStore.hasPopup("say") || get(expressTrayStore) !== "closed") {
             return;
         }
         popupStore.addPopup(SayPopUp, { type: this.controlKeyisPressed ? "think" : "say", source: "keyboard" }, "say");

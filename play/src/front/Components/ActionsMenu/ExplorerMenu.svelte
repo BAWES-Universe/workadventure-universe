@@ -36,7 +36,7 @@
 </script>
 
 <div
-    class="absolute bottom-2 right-2 bg-contrast/80 rounded pointer-events-auto p-1 backdrop-blur hover:bg-contrast/100"
+    class="relative bg-contrast/80 rounded pointer-events-auto p-1 backdrop-blur hover:bg-contrast/100"
     data-testid="actions-explorer"
 >
     <div class="flex flex-col justify-center gap-2">
