@@ -5,7 +5,7 @@ import {resetWamMaps} from "../utils/map-editor/uploader";
 import MapEditor from "../utils/mapeditor";
 import Menu from "../utils/menu";
 import {evaluateScript} from "../utils/scripting";
-import {map_storage_url} from "../utils/urls";
+import {e2e_wam_directory, map_storage_url} from "../utils/urls";
 import {getPage} from "../utils/auth";
 import {isMobile} from "../utils/isMobile";
 
@@ -50,7 +50,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await MapEditor.openAreaEditor(page);
         await AreaEditor.drawArea(page, { x: 8 * 32 * 1.5, y: 8 * 32 * 1.5 }, { x: 10 * 32 * 1.5, y: 10 * 32 * 1.5 });
         await AreaEditor.addProperty(page, "exitAreaProperty");
-        await AreaEditor.setExitProperty(page, "maps/start_defined.wam", "MyStartZone");
+        await AreaEditor.setExitProperty(page, `${e2e_wam_directory}/maps/start_defined.wam`, "MyStartZone");
         await Menu.closeMapEditor(page);
 
         try {

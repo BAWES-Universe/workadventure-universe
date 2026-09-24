@@ -35,3 +35,7 @@ export function publicTestMapUrl(
 export const matrix_server_url = process.env.MATRIX_PUBLIC_URI || "http://matrix.workadventure.localhost";
 
 export const matrix_domain = process.env.MATRIX_DOMAIN || "matrix.workadventure.localhost";
+
+// Universe requires map-storage WAM files to live under universe/world/room/map.wam.
+// E2E maps are uploaded under this universe/world so the game accepts them.
+export const e2e_wam_directory = "e2e/tests";
