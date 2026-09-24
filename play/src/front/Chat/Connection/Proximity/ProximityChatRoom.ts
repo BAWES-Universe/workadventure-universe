@@ -50,6 +50,10 @@ import { BubbleNotification as BasicNotification } from "../../../Notification/B
 
 const debug = Debug("ProximityChatRoom");
 
+// A typing entry expires on its own if no new "typing" event refreshes it, so a lost "stopped typing" event
+// can never leave the indicator stuck. The sender re-emits "typing" on every keystroke.
+export const TYPING_EXPIRY_MS = 12000;
+
 export class ProximityChatMessage implements ChatMessage {
     isQuotedMessage = undefined;
     quotedMessage = undefined;
@@ -97,6 +101,8 @@ export class ProximityChatRoom implements ChatRoom {
     private _spacePromise: Promise<SpaceInterface | undefined> = Promise.resolve(undefined);
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
+    // Expiry timers of the typing entries, by spaceUserId of the sender
+    private typingExpiryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private spaceStreamMessageSubscription: Subscription | undefined;
     // Active stream messages by responseId — updated incrementally as tokens arrive
     private streamMessages: Map<string, ProximityChatMessage> = new Map();
@@ -533,6 +539,13 @@ export class ProximityChatRoom implements ChatRoom {
         characterTextures: CharacterTextureMessage[],
         name: string | undefined
     ): void {
+        const existingTimer = this.typingExpiryTimers.get(senderUserId);
+        if (existingTimer) clearTimeout(existingTimer);
+        this.typingExpiryTimers.set(
+            senderUserId,
+            setTimeout(() => this.removeTypingUserbyID(senderUserId), TYPING_EXPIRY_MS)
+        );
+
         this.typingMembers.update((typingMembers) => {
             if (typingMembers.find((user) => user.id === senderUserId) == undefined) {
                 typingMembers.push({
@@ -554,23 +567,23 @@ export class ProximityChatRoom implements ChatRoom {
         });
     }
 
-    private removeTypingUser(senderUserId: string): void {
-        const sender = this.users?.get(senderUserId);
-        if (sender === undefined) {
-            return;
+    private removeTypingUserbyID(id: string) {
+        const timer = this.typingExpiryTimers.get(id);
+        if (timer) {
+            clearTimeout(timer);
+            this.typingExpiryTimers.delete(id);
         }
-
-        const id = sender.spaceUserId.toString();
-
         this.typingMembers.update((typingMembers) => {
             return typingMembers.filter((user) => user.id !== id);
         });
     }
 
-    private removeTypingUserbyID(id: string) {
-        this.typingMembers.update((typingMembers) => {
-            return typingMembers.filter((user) => user.id !== id);
-        });
+    private clearTypingMembers() {
+        for (const timer of this.typingExpiryTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.typingExpiryTimers.clear();
+        this.typingMembers.set([]);
     }
 
     addExternalTypingUser(id: string, name: string, avatarUrl: string | null): void {
@@ -661,6 +674,9 @@ export class ProximityChatRoom implements ChatRoom {
                 return;
             }
 
+            // The message has arrived, so its sender is no longer typing it.
+            this.removeTypingUserbyID(event.sender);
+
             this.addNewMessage(
                 event.spaceMessage.message,
                 event.sender,
@@ -686,7 +702,7 @@ export class ProximityChatRoom implements ChatRoom {
             if (event.spaceIsTyping.isTyping) {
                 this.addTypingUser(event.sender, event.spaceIsTyping.characterTextures, event.spaceIsTyping.name);
             } else {
-                this.removeTypingUser(event.sender);
+                this.removeTypingUserbyID(event.sender);
             }
         });
 
@@ -1043,8 +1059,8 @@ export class ProximityChatRoom implements ChatRoom {
                     }
                 }
             }
-            this.typingMembers.set([]);
         }
+        this.clearTypingMembers();
         this.hasUserInProximityChat.set(false);
 
         this.restoreChatState();
@@ -1114,6 +1130,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceIsTypingSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
+        this.clearTypingMembers();
 
         this.scriptingOutputAudioStreamManager?.close();
         this.scriptingInputAudioStreamManager?.close();
