@@ -12,7 +12,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     users: "wužiwar",
     userList: {
         disconnected: "dźěleny",
-        isHere: "Je na tutej karće",
+        isHere: "Na tutej karće",
         inAnotherMap: "W druhej karće",
         in: "w ",
         teleport: "teleport",

@@ -116,4 +116,18 @@ test.describe("Express button @nowebkit", () => {
         await page.getByTestId("chat-btn").click();
         await expect(page.getByTestId("express-button")).toBeVisible();
     });
+    test("should type into the tray instead of triggering game shortcuts", async ({ browser }) => {
+        await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
+
+        await page.getByTestId("express-button").click();
+        await expect(page.getByTestId("express-input")).toBeFocused();
+        // As after clicking the tray itself: the text field is no longer focused.
+        await page.getByTestId("express-input").blur();
+        await page.keyboard.type("hey");
+
+        // "e" is the map editor shortcut: it must land in the field, not open the editor.
+        await expect(page.getByTestId("express-input")).toHaveValue("hey");
+        await expect(page.locator("#map-editor-container")).toBeHidden();
+        await expect(page.getByTestId("express-tray")).toBeVisible();
+    });
 });

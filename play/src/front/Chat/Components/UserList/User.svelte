@@ -227,14 +227,9 @@
                 {/if}
                 {#if actions.message !== "hidden"}
                     <PersonActionButton
-                        label={actions.message === "disabled"
-                            ? $LL.chat.remoteUserNotConnected()
-                            : $LL.chat.userList.message()}
-                        ariaLabel={actions.message === "disabled"
-                            ? $LL.chat.remoteUserNotConnected()
-                            : $LL.chat.userList.messageUser({ userName: displayName })}
+                        label={$LL.chat.userList.message()}
+                        ariaLabel={$LL.chat.userList.messageUser({ userName: displayName })}
                         testId={`send-message-${user.username}`}
-                        disabled={actions.message === "disabled"}
                         on:click={sendMessage}
                     >
                         <IconMessage font-size="20" />
