@@ -17,6 +17,7 @@
     } from "../../../Stores/EmoteStore";
     import { QUICK_PHRASE_KEYS, QUICK_PHRASE_MAX_LENGTH } from "../../../Stores/Utils/quickPhraseSchema";
     import { expressTrayStore } from "../../../Stores/ExpressStore";
+    import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
     import LazyEmote from "../../EmoteMenu/LazyEmote.svelte";
     import { availabilityStatusStore } from "../../../Stores/MediaStore";
@@ -215,6 +216,7 @@
         // A phrase is a Say bubble, unless your status only allows thinking.
         const type = forcedType ?? "say";
         sendSayBubble(phrase, type, "express_tray");
+        analyticsClient.quickPhraseSent(index);
         vibrate();
         close({ kind: type });
     }

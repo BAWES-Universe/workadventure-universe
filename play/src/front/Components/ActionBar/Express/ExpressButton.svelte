@@ -9,6 +9,7 @@
     import { popupStore } from "../../../Stores/PopupStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { longpress } from "../../../Utils/longpress";
+    import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import LL from "../../../../i18n/i18n-svelte";
     import type { ExpressSent } from "./ExpressTray.svelte";
     import ExpressTray from "./ExpressTray.svelte";
@@ -42,6 +43,7 @@
             popupStore.removePopup("say");
         }
         expressTrayStore.open();
+        analyticsClient.expressTrayOpened("tap");
     }
 
     /** Long-press (touch) or right-click (mouse): straight to edit mode. For advanced users; a tap never lands here. */
@@ -55,6 +57,7 @@
             // Not supported: no haptics.
         }
         expressTrayStore.edit();
+        analyticsClient.expressTrayOpened("edit");
     }
 
     function onClickOutside(event: Event) {
