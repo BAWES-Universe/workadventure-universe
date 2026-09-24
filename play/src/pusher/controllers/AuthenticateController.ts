@@ -673,7 +673,7 @@ export class AuthenticateController extends BaseHttpController {
                 res,
                 z.object({
                     playUri: z.string(),
-                    token: z.string(),
+                    token: z.string().min(1),
                     redirect: z.string().optional(),
                 })
             );
