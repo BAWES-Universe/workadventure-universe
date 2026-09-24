@@ -131,7 +131,7 @@ test.describe("#Scripting chat functions @nowebkit @nomobile", () => {
 
     // Check that bob received the message
     //await bob.pause();
-    await expect(bob.getByText('New discussion with Alice')).toBeVisible();
+    await expect(bob.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Alice");
 
     // Check that bob received the message
     await expect(bob.locator("#chat")).toContainText("Test message sent", {
@@ -139,7 +139,7 @@ test.describe("#Scripting chat functions @nowebkit @nomobile", () => {
     });
 
     // Check that bob received the message
-    await expect(alice.getByText('New discussion with Bob')).toBeVisible();
+    await expect(alice.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Bob");
 
     // Check that alice also received the message
     await expect(alice.locator("#chat")).toContainText("Test message sent", {

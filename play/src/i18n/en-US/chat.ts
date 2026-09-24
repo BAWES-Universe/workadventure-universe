@@ -501,6 +501,15 @@ const chat: BaseTranslation = {
         },
     },
     remoteUserNotConnected: "User not authenticated. Cannot send message.",
+    thread: {
+        now: "Now: {label}",
+        nobodyNearby: "nobody nearby",
+        withPeople: "With {names}",
+        currentGroup: "Current group",
+        notSent: "Not sent, the conversation ended",
+        encrypted: "End-to-end encrypted",
+        guestFooter: "Sign in to message people later",
+    },
     topRow: {
         meeting: "Meeting",
         twoNames: "{first} & {second}",

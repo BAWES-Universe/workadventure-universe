@@ -39,11 +39,13 @@
     import tldrawJpeg from "../../../Components/images/applications/icon_tldraw.jpeg";
     import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
+    import { composerDraftStore } from "../../Stores/ComposerDraftStore";
     import { draftMessageService } from "../../Services/DraftMessageService";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
-    import { localUserStore } from "../../../Connection/LocalUserStore";
     import MessageInput from "./MessageInput.svelte";
+    import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
     import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
     import { IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
@@ -101,7 +103,13 @@
 
     let applicationProperty: ApplicationProperty | undefined = undefined;
     let replyMessageId: string | null = null;
+    // Drafts are kept per conversation.
+    // - Saved rooms and DMs: in IndexedDB, as always, so they survive a reload.
+    // - The proximity chat: in this tab's memory only (ComposerDraftStore), tied to the space it was written in,
+    //   so clones never share it and it never shows up in a later bubble.
+    const draftRoomId = room.id;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
+    const hasSpaceDrafts = spaceGenerationOf(room) !== undefined;
 
     const selectedChatChatMessageToReplyUnsubscriber = selectedChatMessageToReply.subscribe((chatMessage) => {
         if (chatMessage !== null) {
@@ -156,6 +164,11 @@
         // Every send path (Enter, the Send button, files, application link) ends the typing status.
         stopTypingNow();
 
+        // Where this message is meant to go, captured now: an upload may finish after the bubble has changed.
+        const destination = captureSendDestination(room);
+        const submittedAt = new Date();
+        const submittedDraft = message;
+
         const hasSomethingToSend =
             (applicationProperty !== undefined && applicationProperty.link.length !== 0) ||
             files.length > 0 ||
@@ -172,8 +185,9 @@
 
         // send files
         if (files && files.length > 0) {
-            if (room instanceof ProximityChatRoom) {
+            if (destination.room instanceof ProximityChatRoom) {
                 // Proximity chat: upload files to uploader, then send URL as message
+                const proximityRoom = destination.room;
                 const pendingFiles = files;
                 let userToken: string | undefined;
                 try {
@@ -202,6 +216,20 @@
                             return { location: data[0].location, name: data[0].name, type: file.type };
                         })
                     );
+                    if (!isSendDestinationOpen(destination)) {
+                        // The conversation ended while uploading: nothing goes to the next bubble.
+                        // The message is shown, marked as not sent, at the end of the group it was written in.
+                        proximityRoom.addNotSentMessage(
+                            messageToSend.trim(),
+                            pendingFiles.map(({ file }) => file.name),
+                            submittedAt
+                        );
+                        // eslint-disable-next-line require-atomic-updates
+                        files = [];
+                        filesPreview = [];
+                        clearComposerIfUnchanged(submittedDraft);
+                        return;
+                    }
                     // Separate successes from failures
                     const succeeded: { location: string; name: string; type: string }[] = [];
                     const failedIds: string[] = [];
@@ -234,7 +262,6 @@
                     // Send files + text as a SINGLE message to prevent multiple bot responses.
                     // First file goes in the url field (backwards compatible), additional files
                     // go in galleryUrls. User's typed text becomes the message body.
-                    const proximityRoom = room;
                     const messageText = messageToSend.trim();
                     if (succeeded.length === 1 && messageText) {
                         // 1 file + text: merge into one message
@@ -250,8 +277,7 @@
                             first.name
                         );
                         messageToSend = "";
-                        messageInput.innerText = "";
-                        message = "";
+                        clearComposerIfUnchanged(submittedDraft);
                     } else if (succeeded.length === 1) {
                         // 1 file, no text: send file with filename only (no duplicate caption)
                         const first = succeeded[0];
@@ -282,8 +308,7 @@
                             allNames
                         );
                         messageToSend = "";
-                        messageInput.innerText = "";
-                        message = "";
+                        clearComposerIfUnchanged(submittedDraft);
                     } else if (succeeded.length > 1) {
                         // Multiple files, no text: gallery message with empty body
                         const first = succeeded[0];
@@ -316,7 +341,8 @@
                 }, new DataTransfer()).files;
 
                 isUploading = true;
-                room.sendFiles(fileList)
+                destination.room
+                    .sendFiles(fileList)
                     .then(() => {
                         files = [];
                         filesPreview = [];
@@ -333,10 +359,28 @@
 
         // send message
         if (messageToSend.trim().length !== 0) {
-            room?.sendMessage(messageToSend);
-            messageInput.innerText = "";
+            if (!isSendDestinationOpen(destination)) {
+                // Only reachable after an await: the conversation it was written in has ended.
+                if (destination.room instanceof ProximityChatRoom) {
+                    destination.room.addNotSentMessage(messageToSend.trim(), [], submittedAt);
+                }
+            } else {
+                destination.room.sendMessage(messageToSend);
+            }
+            clearComposerIfUnchanged(submittedDraft);
+        }
+    }
+
+    /**
+     * Empties the composer once its message is sent (or dropped), unless something new was typed meanwhile.
+     * The composer may already be gone (thread closed during an upload): its saved draft is cleared too.
+     */
+    function clearComposerIfUnchanged(submittedDraft: string) {
+        if (message === submittedDraft) {
+            if (messageInput) messageInput.innerText = "";
             message = "";
         }
+        composerDraftStore.clearIfUnchanged(draftRoomId, submittedDraft);
     }
 
     function unselectChatMessageToReply() {
@@ -369,7 +413,9 @@
         } else {
             fileAttachementEnabled = isUploadEnabled;
         }
-        const draft = await draftMessageService.loadDraft(draftId);
+        const draft = hasSpaceDrafts
+            ? composerDraftStore.load(draftRoomId, spaceGenerationOf(room))
+            : await draftMessageService.loadDraft(draftId);
         if (draft) {
             message = draft.message ?? "";
             if (draft.replyingToMessageId) {
@@ -383,13 +429,23 @@
 
     onDestroy(() => {
         clearTimeout(uploadErrorTimeout);
-        draftMessageService.saveDraft({
-            id: draftId,
-            roomId: room.id,
-            userId: localUserStore.getChatId(),
-            message,
-            replyingToMessageId: replyMessageId ?? null,
-        });
+        if (hasSpaceDrafts) {
+            // Stamped with the space the composer is in now: while the thread stayed open, the text was visible
+            // under that space's "Now" line.
+            composerDraftStore.save(draftRoomId, {
+                message,
+                replyingToMessageId: replyMessageId ?? null,
+                spaceGeneration: spaceGenerationOf(room),
+            });
+        } else {
+            draftMessageService.saveDraft({
+                id: draftId,
+                roomId: room.id,
+                userId: localUserStore.getChatId(),
+                message,
+                replyingToMessageId: replyMessageId ?? null,
+            });
+        }
         if (setTimeOutProperty) clearTimeout(setTimeOutProperty);
         closeEmojiPicker?.();
         closeEmojiPicker = undefined;

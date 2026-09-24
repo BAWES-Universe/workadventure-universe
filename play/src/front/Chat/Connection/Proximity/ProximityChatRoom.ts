@@ -47,6 +47,9 @@ import { screenWakeLock } from "../../../Utils/ScreenWakeLock";
 import type { PictureStore } from "../../../Stores/PictureStore";
 import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerManager";
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
+import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
+import type { ProximitySessionMarker } from "./ProximitySessions";
+import { findNotSentInsertIndex } from "./ProximitySessions";
 
 const debug = Debug("ProximityChatRoom");
 
@@ -80,14 +83,28 @@ export class ProximityChatMessage implements ChatMessage {
     isModified = writable(false);
     canDelete = writable(false);
     reactions: MapStore<string, ChatMessageReaction> = new MapStore();
+    /**
+     * Set on the local markers written when this tab joins or leaves a group, so the timeline can draw
+     * session dividers without ever matching translated text. Local and in memory only.
+     */
+    session?: ProximitySessionMarker;
+    /**
+     * Set on a message that was never sent because its conversation ended before its upload finished.
+     * Local and in memory only.
+     */
+    notSent?: boolean;
     constructor(
         public id: string,
         public sender: AnyKindOfUser,
         public content: Readable<ChatMessageContent>,
         public date: Date,
         public isMyMessage: boolean,
-        public type: ChatMessageType
-    ) {}
+        public type: ChatMessageType,
+        options: { session?: ProximitySessionMarker; notSent?: boolean } = {}
+    ) {
+        this.session = options.session;
+        this.notSent = options.notSent;
+    }
 
     remove(): void {
         console.info("Function not implemented.");
@@ -153,6 +170,24 @@ export class ProximityChatRoom implements ChatRoom {
     public readonly spaceJoinedAt: Readable<number | undefined> = { subscribe: this._spaceJoinedAt.subscribe };
     currentMatrixRoom: ChatRoom | undefined;
     currentChatVisibility = false;
+    private _spaceGeneration = 0;
+    // The name of the meeting area joined, for its end marker: the display name is reset before leaving.
+    private meetingSessionLabel: string | undefined;
+
+    /**
+     * Changes every time a space is joined or left. A send captures it at submit time and is dropped
+     * if it changed before the send could complete, so a message never goes to a later group.
+     */
+    public get spaceGeneration(): number {
+        return this._spaceGeneration;
+    }
+
+    /**
+     * True while a space is being joined and is not connected yet: a message sent now would reach nobody.
+     */
+    public get isJoiningSpace(): boolean {
+        return this._space === undefined && this.joinSpaceAbortController !== undefined;
+    }
 
     private unknownUser = {
         chatId: "0",
@@ -361,7 +396,63 @@ export class ProximityChatRoom implements ChatRoom {
             // For old browsers
             userNames = users.map((user) => user.name).join(", ");
         }
-        this.sendMessage(get(LL).chat.timeLine.newDiscussion({ userNames }), "incoming", false);
+        const participants = users.map((user) => user.name);
+        const label = formatPeopleNames(participants, {
+            two: get(LL).chat.topRow.twoNames,
+            more: get(LL).chat.topRow.moreNames,
+        });
+        this.addSessionMarker(get(LL).chat.timeLine.newDiscussion({ userNames }), "incoming", {
+            kind: "start",
+            label,
+            participants,
+        });
+    }
+
+    /**
+     * Writes a local session marker (joined or left a group). Never sent over the network.
+     */
+    private addSessionMarker(body: string, type: "incoming" | "outcoming", session: ProximitySessionMarker): void {
+        const spaceUser = this.users?.get(this._spaceUserId);
+        const marker = new ProximityChatMessage(
+            uuidv4(),
+            spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser,
+            writable({ body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined }),
+            new Date(),
+            true,
+            type,
+            { session }
+        );
+        this.messages.push(marker);
+        this.lastMessageTimestamp = marker.date.getTime();
+    }
+
+    /**
+     * Puts back a message that was never sent because its conversation ended before its upload finished.
+     * It goes at the end of the group it was written in, marked as not sent, and is never broadcast.
+     */
+    public addNotSentMessage(body: string, fileNames: string[], submittedAt: Date): void {
+        const spaceUser = this.users?.get(this._spaceUserId);
+        const message = new ProximityChatMessage(
+            uuidv4(),
+            spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser,
+            writable({
+                body,
+                url: undefined,
+                urls: undefined,
+                filename: undefined,
+                fileNames: fileNames.length > 0 ? fileNames : undefined,
+            }),
+            submittedAt,
+            true,
+            "proximity",
+            { notSent: true }
+        );
+        // Insert it at the end of its own group, in one update. SearchableArrayStore implements the inserting form
+        // of splice, but only declares the removing one.
+        const messages = this.messages as unknown as {
+            splice(start: number, deleteCount: number, ...items: ChatMessage[]): ChatMessage[];
+        };
+        messages.splice(findNotSentInsertIndex(get(this.messages), submittedAt), 0, message);
     }
 
     private addIncomingUser(spaceUser: SpaceUserExtended): void {
@@ -658,6 +749,7 @@ export class ProximityChatRoom implements ChatRoom {
             });
         }
         this.joinSpaceAbortController = new AbortController();
+        this._spaceGeneration++;
         this._space = await this.spaceRegistry.joinSpace(
             spaceName,
             filterType,
@@ -678,6 +770,15 @@ export class ProximityChatRoom implements ChatRoom {
             this._spaceKind.set("bubble");
         }
         this._spaceJoinedAt.set(Date.now());
+        if (isMeetingRoomChat) {
+            // A meeting area or zone: the divider names the place (its name was set just before joining).
+            this.meetingSessionLabel = get(this.name);
+            this.addSessionMarker(get(LL).chat.timeLine.youJoinedMeetingRoom(), "incoming", {
+                kind: "start",
+                label: this.meetingSessionLabel,
+                participants: [],
+            });
+        }
 
         this.usersUnsubscriber = this._space.usersStore.subscribe((users) => {
             this.users = users;
@@ -922,6 +1023,7 @@ export class ProximityChatRoom implements ChatRoom {
                     signal: this.joinSpaceAbortController.signal,
                 });
             } catch (e) {
+                this._spaceGeneration++;
                 this.usersUnsubscriber?.();
                 this._participants.set([]);
                 this._spaceKind.set("none");
@@ -965,11 +1067,7 @@ export class ProximityChatRoom implements ChatRoom {
                 statusChanger.applyInteractionRules();
             }
 
-            if (!isMeetingRoomChat) {
-                this.addEnteringChatWithUsers(users);
-            } else {
-                this.sendMessage(get(LL).chat.timeLine.youJoinedMeetingRoom(), "incoming", false);
-            }
+            this.addEnteringChatWithUsers(users);
         }
 
         this.spaceWatcherUserJoinedObserver = this._space.observeUserJoined.subscribe((spaceUser) => {
@@ -1077,6 +1175,7 @@ export class ProximityChatRoom implements ChatRoom {
             return;
         }
         this._space = undefined;
+        this._spaceGeneration++;
 
         hideBubbleConfirmationModal();
         iframeListener.sendLeaveProximityMeetingEvent();
@@ -1088,11 +1187,24 @@ export class ProximityChatRoom implements ChatRoom {
         }
 
         if (this.users) {
+            const leftPeople = Array.from(this.users.values())
+                .filter((user) => user.spaceUserId !== this._spaceUserId)
+                .map((user) => user.name);
+            const endMarker: ProximitySessionMarker = {
+                kind: "end",
+                label: isMeetingRoomChat
+                    ? this.meetingSessionLabel ?? get(this.name)
+                    : formatPeopleNames(leftPeople, {
+                          two: get(LL).chat.topRow.twoNames,
+                          more: get(LL).chat.topRow.moreNames,
+                      }),
+                participants: isMeetingRoomChat ? [] : leftPeople,
+            };
             if (this.users.size > 2) {
                 if (isMeetingRoomChat) {
-                    this.sendMessage(get(LL).chat.timeLine.youleftMeetingRoom(), "outcoming", false);
+                    this.addSessionMarker(get(LL).chat.timeLine.youleftMeetingRoom(), "outcoming", endMarker);
                 } else {
-                    this.sendMessage(get(LL).chat.timeLine.youLeft(), "outcoming", false);
+                    this.addSessionMarker(get(LL).chat.timeLine.youLeft(), "outcoming", endMarker);
                 }
             } else {
                 for (const user of this.users.values()) {
@@ -1100,13 +1212,18 @@ export class ProximityChatRoom implements ChatRoom {
                         continue;
                     }
                     if (isMeetingRoomChat) {
-                        this.sendMessage(get(LL).chat.timeLine.youleftMeetingRoom(), "outcoming", false);
+                        this.addSessionMarker(get(LL).chat.timeLine.youleftMeetingRoom(), "outcoming", endMarker);
                     } else {
-                        this.sendMessage(get(LL).chat.timeLine.outcoming({ userName: user.name }), "outcoming", false);
+                        this.addSessionMarker(
+                            get(LL).chat.timeLine.outcoming({ userName: user.name }),
+                            "outcoming",
+                            endMarker
+                        );
                     }
                 }
             }
         }
+        this.meetingSessionLabel = undefined;
         this.clearTypingMembers();
         this.hasUserInProximityChat.set(false);
         this._participants.set([]);

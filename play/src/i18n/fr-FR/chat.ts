@@ -503,6 +503,15 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "Utilisateur non connecté. Impossible d'envoyer un message.",
+    thread: {
+        now: "Maintenant : {label}",
+        nobodyNearby: "personne à proximité",
+        withPeople: "Avec {names}",
+        currentGroup: "Groupe actuel",
+        notSent: "Non envoyé, la conversation est terminée",
+        encrypted: "Chiffré de bout en bout",
+        guestFooter: "Connectez-vous pour écrire aux gens plus tard",
+    },
     topRow: {
         meeting: "Réunion",
         twoNames: "{first} et {second}",

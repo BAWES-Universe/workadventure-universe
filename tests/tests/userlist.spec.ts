@@ -30,9 +30,8 @@ test.describe("Walk to @nomobile @nowebkit", () => {
       "Proximity Chat"
     );
 
-    await expect(page.locator(".messageTextBody")).toContainText(
-      "New discussion with Bob"
-    );
+    // The bubble's start marker is a session divider naming the group.
+    await expect(page.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Bob");
 
 
     await userBob.context().close();
