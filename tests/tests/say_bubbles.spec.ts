@@ -4,21 +4,20 @@ import { getPage } from "./utils/auth";
 import { publicTestMapUrl } from "./utils/urls";
 import { isMobile } from "./utils/isMobile";
 import Map from "./utils/map";
-import menu from "./utils/menu";
 
 /**
- * Opens the Say popup with Enter (Ctrl+Enter for a Think), types a line and sends it.
- * The game ignores Enter for 500ms after the popup closes, so Enter is retried every 100ms
- * until the popup shows. That keeps one send well under a second, since lines only live 5s.
+ * Opens the Express tray with Enter (Ctrl+Enter for a Think), types a line and sends it with Enter.
+ * The game ignores Enter for 500ms after the tray closes, so Enter is retried every 100ms
+ * until the tray shows. That keeps one send well under a second, since lines only live 5s.
  */
 async function sendLine(page: Page, text: string, think = false) {
     await expect(async () => {
         await page.keyboard.press(think ? "Control+Enter" : "Enter");
-        await expect(page.getByTestId("say-popup")).toBeVisible({ timeout: 150 });
+        await expect(page.getByTestId("express-input")).toBeFocused({ timeout: 150 });
     }).toPass({ intervals: [100], timeout: 10_000 });
     await page.keyboard.type(text);
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("say-popup")).toBeHidden();
+    await expect(page.getByTestId("express-tray")).toBeHidden();
 }
 
 async function sendSay(page: Page, text: string) {
@@ -190,20 +189,26 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
         await bobPage.context().close();
     });
 
-    test("should display a Say and Think bubble via action menu", async ({ browser }) => {
-        // Create two browser contexts for Alice and Bob
+    test("should toggle the Express tray with Enter and open it in Think mode with Ctrl+Enter", async ({ browser }) => {
         await using alicePage = await getPage(browser, 'Alice',
             publicTestMapUrl("tests/E2E/empty.json", "say_bubbles")
         );
 
-        // Click on the emoji button to open the action menu
-        await menu.openEmoji(alicePage);
-        // Open say popup
-        await menu.clickOnSayBubble(alicePage);
-        // Close the Say popup
-        await menu.closeSayPopup(alicePage);
-        // Open think popup
-        await menu.clickOnThinkBubble(alicePage);
+        // Enter opens the tray, ready to type a Say
+        await alicePage.keyboard.press("Enter");
+        await expect(alicePage.getByTestId("express-input")).toBeFocused();
+        await expect(alicePage.getByTestId("express-say-toggle")).toHaveAttribute("aria-checked", "true");
+
+        // Enter on an empty field closes it again
+        await alicePage.keyboard.press("Enter");
+        await expect(alicePage.getByTestId("express-tray")).toBeHidden();
+
+        // Ctrl+Enter opens it in Think mode (retried: Enter is ignored for a moment after closing)
+        await expect(async () => {
+            await alicePage.keyboard.press("Control+Enter");
+            await expect(alicePage.getByTestId("express-input")).toBeFocused({ timeout: 150 });
+        }).toPass({ intervals: [100], timeout: 10_000 });
+        await expect(alicePage.getByTestId("express-think-toggle")).toHaveAttribute("aria-checked", "true");
 
         await alicePage.context().close();
     });

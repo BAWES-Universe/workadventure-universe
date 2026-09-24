@@ -983,7 +983,7 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
     /** The Express tray was opened: "tap" to express, "edit" by long-press or right-click. */
-    expressTrayOpened(mode: "tap" | "edit"): void {
+    expressTrayOpened(mode: "tap" | "edit" | "keyboard"): void {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_express_tray_opened", { mode });

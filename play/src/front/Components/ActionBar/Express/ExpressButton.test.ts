@@ -15,7 +15,6 @@ vi.mock("../../../Stores/ChatStore", () => ({
 vi.mock("../../../Chat/ChatSidebarWidthStore", () => ({ hideActionBarStoreBecauseOfChatBar: writable(false) }));
 vi.mock("../../../Stores/ActionsCamStore", () => ({ highlightFullScreen: writable(false) }));
 vi.mock("../../../Stores/MapEditorStore", () => ({ mapEditorModeStore: writable(false) }));
-vi.mock("../../../Stores/PopupStore", () => ({ popupStore: { hasPopup: () => false, removePopup: () => {} } }));
 vi.mock("../../../Connection/ConnectionManager", () => ({
     connectionManager: { currentRoom: { isSayEnabled: true } },
 }));

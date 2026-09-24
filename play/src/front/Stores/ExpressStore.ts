@@ -7,11 +7,24 @@ import { writable } from "svelte/store";
  */
 export type ExpressTrayState = "closed" | "open" | "editing";
 
+export interface ExpressTrayOpenOptions {
+    /** Start in Think mode (Ctrl+Enter). */
+    think?: boolean;
+    /** Focus the text field even on touch screens (opened from a keyboard). */
+    focusInput?: boolean;
+}
+
+/** How the tray was last opened; read by the tray when it mounts. */
+export const expressTrayOpenOptions = writable<ExpressTrayOpenOptions>({});
+
 function createExpressTrayStore() {
     const { subscribe, set } = writable<ExpressTrayState>("closed");
     return {
         subscribe,
-        open: () => set("open"),
+        open: (options: ExpressTrayOpenOptions = {}) => {
+            expressTrayOpenOptions.set(options);
+            set("open");
+        },
         edit: () => set("editing"),
         close: () => set("closed"),
     };

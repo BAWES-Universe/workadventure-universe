@@ -4,6 +4,7 @@
 
 <script lang="ts">
     import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+    import { get } from "svelte/store";
     import { cubicOut } from "svelte/easing";
     import type { TransitionConfig } from "svelte/transition";
     import type { Action } from "svelte/action";
@@ -16,7 +17,7 @@
         quickPhrasesStore,
     } from "../../../Stores/EmoteStore";
     import { QUICK_PHRASE_KEYS, QUICK_PHRASE_MAX_LENGTH } from "../../../Stores/Utils/quickPhraseSchema";
-    import { expressTrayStore } from "../../../Stores/ExpressStore";
+    import { expressTrayOpenOptions, expressTrayStore } from "../../../Stores/ExpressStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
     import LazyEmote from "../../EmoteMenu/LazyEmote.svelte";
@@ -69,8 +70,13 @@
     const finePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches;
 
     onMount(() => {
-        // On desktop, type straight away. On touch screens, don't pop the keyboard until the field is tapped.
-        if (finePointer && sayEnabled && !editing) {
+        const options = get(expressTrayOpenOptions);
+        if (options.think) {
+            chosenType = "think";
+        }
+        // On desktop, or when opened from a keyboard (Enter), type straight away.
+        // On touch screens, don't pop the keyboard until the field is tapped.
+        if ((finePointer || options.focusInput) && sayEnabled && !editing) {
             input?.focus();
         }
         // Capture phase: runs before the game's keyboard shortcuts, which listen further down the chain.
@@ -265,7 +271,14 @@
     function onInputKeydown(event: KeyboardEvent) {
         if (event.key === "Enter" && !event.isComposing) {
             event.preventDefault();
-            send();
+            if (canSend) {
+                send();
+            } else {
+                // Enter on an empty field closes, so Enter alone toggles the tray.
+                // The released Enter must not reopen it.
+                popupJustClosed();
+                close();
+            }
         } else if (event.key === "Escape") {
             event.preventDefault();
             close();

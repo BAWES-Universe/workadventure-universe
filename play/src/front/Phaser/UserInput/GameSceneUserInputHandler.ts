@@ -13,8 +13,6 @@ import { navChat } from "../../Chat/Stores/ChatStore";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { openChat } from "../../Chat/openChat";
 import { expressTrayStore } from "../../Stores/ExpressStore";
-import { popupStore } from "../../Stores/PopupStore";
-import SayPopUp from "../../Components/PopUp/SayPopUp.svelte";
 import { isPopupJustClosed } from "../Game/Say/SayManager";
 import LL from "../../../i18n/i18n-svelte";
 import type { Shortcut } from "./UserInputManager";
@@ -254,16 +252,19 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
         return event;
     }
 
-    private openSayPopup(): void {
+    /** Enter opens the Express tray ready to type; Ctrl+Enter opens it in Think mode. */
+    private openExpress(): void {
         if (!this.gameScene.room.isSayEnabled) {
             return;
         }
-        // Don't open if we just closed, or while the Express tray is open.
-        if (isPopupJustClosed() || popupStore.hasPopup("say") || get(expressTrayStore) !== "closed") {
+        // Don't reopen with the Enter that just sent or closed the tray, nor while it is open.
+        if (isPopupJustClosed() || get(expressTrayStore) !== "closed") {
             return;
         }
-        popupStore.addPopup(SayPopUp, { type: this.controlKeyisPressed ? "think" : "say", source: "keyboard" }, "say");
-        if (this.controlKeyisPressed) {
+        const think = this.controlKeyisPressed;
+        expressTrayStore.open({ think, focusInput: true });
+        analyticsClient.expressTrayOpened("keyboard");
+        if (think) {
             analyticsClient.openThinkBubble("keyboard");
         } else {
             analyticsClient.openSayBubble("keyboard");
@@ -282,7 +283,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
                 break;
             }
             case "Enter": {
-                this.openSayPopup();
+                this.openExpress();
                 this.controlKeyisPressed = false;
                 break;
             }
