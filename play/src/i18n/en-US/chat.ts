@@ -494,6 +494,27 @@ const chat: BaseTranslation = {
         },
     },
     remoteUserNotConnected: "User not authenticated. Cannot send message.",
+    topRow: {
+        meeting: "Meeting",
+        twoNames: "{first} & {second}",
+        moreNames: "{first}, {second} +{count}",
+        typingOne: "{name} is typing",
+        typingTwo: "{first} & {second} are typing",
+        typingMany: "{count} people are typing",
+        someone: "Someone",
+        you: "You",
+        live: "Live",
+        noOneNearby: "No one nearby",
+        onlyYouHere: "Only you here so far",
+        othersInRoom: "{count} other{{s}} in {roomName}",
+        othersOnThisMap: "{count} other{{s}} on this map",
+        elsewhereInWorld: "{count} elsewhere in this world",
+        nobodyInWorld: "No one else is in this world right now",
+        separator: " · ",
+        seeWhoIsHere: "See who's here",
+        exploreWithOrbit: "Explore with Orbit",
+        inviteSomeone: "Invite someone",
+    },
 };
 
 export default chat;

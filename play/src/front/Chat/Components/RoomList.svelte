@@ -9,7 +9,6 @@
     import type { ChatRoom } from "../Connection/ChatConnection";
     import { INITIAL_SIDEBAR_WIDTH, loginTokenErrorStore } from "../../Stores/ChatStore";
     import { userIsConnected } from "../../Stores/MenuStore";
-    import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
     import getCloseImg from "../images/get-close.png";
     import ExternalComponents from "../../Components/ExternalModules/ExternalComponents.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
@@ -25,6 +24,7 @@
     import ChatHeader from "./ChatHeader.svelte";
     import RequireConnection from "./requireConnection.svelte";
     import RefreshChat from "./RefreshChat.svelte";
+    import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
     import { IconChevronUp, IconCloudLock, IconRefresh } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
@@ -40,29 +40,13 @@
     let rooms = chat.rooms;
     let roomInvitations = chat.invitations;
     let roomFolders = chat.folders;
-    let proximityHasUnreadMessages = proximityChatRoom.hasUnreadMessages;
 
     let displayDirectRooms = false;
     let displayRooms = false;
     let displayRoomInvitations = false;
 
-    //let proximityChatRoomHasUserInProximityChatSubscribtion: Unsubscriber | undefined;
-    //let _hasUserInProximityChat = false;
-    //let proximityChatRoomHasUnreadMessagesSubscribtion: Unsubscriber | undefined;
-    //let _hasUnreadMessages = false;
-
     onMount(() => {
         expandOrCollapseRoomsIfEmpty();
-        /*proximityChatRoomHasUserInProximityChatSubscribtion = proximityChatRoom.hasUserInProximityChat.subscribe(
-            (hasUserInProximityChat) => {
-                _hasUserInProximityChat = hasUserInProximityChat;
-            }
-        );
-        proximityChatRoomHasUnreadMessagesSubscribtion = proximityChatRoom.hasUnreadMessages.subscribe(
-            (hasUnreadMessages) => {
-                _hasUnreadMessages = hasUnreadMessages;
-            }
-        );*/
     });
 
     const directRoomsUnsubscriber = rooms.subscribe((rooms) => openRoomsIfCollapsedBeforeNewRoom(rooms));
@@ -73,8 +57,6 @@
     onDestroy(() => {
         directRoomsUnsubscriber();
         roomInvitationsUnsubscriber();
-        //if (proximityChatRoomHasUserInProximityChatSubscribtion) proximityChatRoomHasUserInProximityChatSubscribtion();
-        //if (proximityChatRoomHasUnreadMessagesSubscribtion) proximityChatRoomHasUnreadMessagesSubscribtion();
     });
 
     async function initChatConnectionEncryption() {
@@ -181,47 +163,8 @@
                     </RequireConnection>
                 {/if}
 
-                <div class="px-2 py-3 border border-solid border-x-0 border-t border-y-0 border-b-0 border-white/10">
-                    <div
-                        class="group relative px-3 rounded h-11 w-full flex space-x-2 items-center {$proximityHasUnreadMessages
-                            ? 'hover:bg-contrast-200/20 bg-contrast-200/10'
-                            : 'hover:bg-contrast-200/10'}"
-                    >
-                        <button
-                            class="flex items-center space-x-2 grow m-0 p-0"
-                            on:click={toggleDisplayProximityChat}
-                            data-testid="toggleDisplayProximityChat"
-                        >
-                            <div class="relative">
-                                <div
-                                    class="rounded-full bg-white/10 h-7 w-7 border border-solid text-white flex items-center justify-center p-[1px] relative {$proximityHasUnreadMessages
-                                        ? 'border-white'
-                                        : 'border-white/70'}"
-                                >
-                                    <div class="absolute overflow-hidden w-full h-full rounded-full">
-                                        <div
-                                            class=" flex items-center justify-center translate-y-[3px] group-hover:translate-y-[0] transition-all"
-                                        >
-                                            <WokaFromUserId userId={-1} customWidth="32px" placeholderSrc="" />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div
-                                class="cursor-default text-sm grow text-start ps-1 {$proximityHasUnreadMessages
-                                    ? 'text-white font-bold'
-                                    : 'text-white/75'}"
-                            >
-                                {$LL.chat.proximity()}
-                            </div>
-                            {#if $proximityHasUnreadMessages}
-                                <div class="flex items-center justify-center h-7 w-7 relative">
-                                    <div class="rounded-full bg-secondary-200 h-2 w-2 animate-ping absolute" />
-                                    <div class="rounded-full bg-secondary-200 h-1.5 w-1.5 absolute" />
-                                </div>
-                            {/if}
-                        </button>
-                    </div>
+                <div class="px-2 py-2 border border-solid border-x-0 border-t border-y-0 border-b-0 border-white/10">
+                    <ProximityTopRow {proximityChatRoom} onOpen={toggleDisplayProximityChat} />
                 </div>
                 {#if $chatConnectionStatus === "ONLINE"}
                     {#if $joignableRoom.length > 0 && $chatSearchBarValue.trim() !== ""}
