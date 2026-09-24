@@ -5,6 +5,7 @@ import Debug from "debug";
 import { merge } from "lodash";
 import { applyFieldMask } from "protobuf-fieldmask";
 import type { Socket } from "../services/SocketManager";
+import { isMatrixAreaSpaceName } from "../services/MatrixAreaMembership";
 import type { BackSpaceConnection } from "./Websocket/SocketData";
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceToBackForwarderInterface } from "./SpaceToBackForwarder";
@@ -37,6 +38,8 @@ const debug = Debug("space");
 export interface SpaceInterface {
     forwarder: SpaceToBackForwarderInterface;
     dispatcher: SpaceToFrontDispatcherInterface;
+    // This pusher's copy of the users of the space (sent by the back, across all pushers)
+    readonly users: ReadonlyMap<string, SpaceUserExtended>;
     initSpace(): void;
     name: string;
     handleWatch(watcher: Socket): Promise<void>;
@@ -166,14 +169,17 @@ export class Space implements SpaceForSpaceConnectionInterface {
                 // We notify the listeners and the users that the space has suffered an unexpected disconnection
                 // For normal cleanups, the list of people connected to the space is empty, so no one will receive this notification.
                 // In case cleanup() is called because of a back disconnection, the message will tell the users that the space is no longer available.
-                this.dispatcher.notifyAllIncludingNonWatchers({
-                    message: {
-                        $case: "spaceDestroyedMessage",
-                        spaceDestroyedMessage: {
-                            spaceName: this.localName,
+                // Matrix area spaces are joined by the pusher itself: the browser does not know about them.
+                if (!isMatrixAreaSpaceName(this.name)) {
+                    this.dispatcher.notifyAllIncludingNonWatchers({
+                        message: {
+                            $case: "spaceDestroyedMessage",
+                            spaceDestroyedMessage: {
+                                spaceName: this.localName,
+                            },
                         },
-                    },
-                });
+                    });
+                }
             } finally {
                 try {
                     // Unregister the space from all local users (in case some users are still connected)
