@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import type { ExpressionSource } from "../Administration/AnalyticsClient";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { localUserStore } from "../Connection/LocalUserStore";
 import type { Emoji } from "./Utils/emojiSchema";
@@ -75,10 +76,10 @@ export const isEmoteIndex = (value: number): value is EmoteIndex => {
     return value >= 1 && value <= 6;
 };
 
-export const displayEmote = (emoteIndex: EmoteIndex) => {
+export const displayEmote = (emoteIndex: EmoteIndex, source: ExpressionSource) => {
     const emoji: Emoji | null | undefined = get(emoteDataStore).get(emoteIndex);
     if (emoji) {
-        analyticsClient.launchEmote(emoji);
+        analyticsClient.launchEmote(emoji, source);
         emoteStore.set(emoji);
     }
 };

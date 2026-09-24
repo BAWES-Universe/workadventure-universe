@@ -11,6 +11,7 @@ import { displayEmote, isEmoteIndex } from "../../Stores/EmoteStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { navChat } from "../../Chat/Stores/ChatStore";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
+import { openChat } from "../../Chat/openChat";
 import { popupStore } from "../../Stores/PopupStore";
 import SayPopUp from "../../Components/PopUp/SayPopUp.svelte";
 import { isPopupJustClosed } from "../Game/Say/SayManager";
@@ -157,7 +158,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
             navChat.switchToChat();
         } else if (!isChatVisible && !isInMapEditor) {
             navChat.switchToChat();
-            chatVisibilityStore.set(true);
+            openChat("button");
         } else if (isChatVisible) {
             chatVisibilityStore.set(false);
         }
@@ -171,7 +172,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
             navChat.switchToUserList();
         } else if (!isChatVisible && !isInMapEditor) {
             navChat.switchToUserList();
-            chatVisibilityStore.set(true);
+            openChat("button");
         } else if (isChatVisible) {
             chatVisibilityStore.set(false);
         }
@@ -227,7 +228,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
                 const emoteIndex = Number.parseInt(digit, 10);
 
                 if (isEmoteIndex(emoteIndex)) {
-                    displayEmote(emoteIndex);
+                    displayEmote(emoteIndex, "keyboard");
                 } else {
                     console.warn(`Invalid emote index: ${emoteIndex}`);
                     Sentry.captureException(new Error(`Invalid emote index: ${emoteIndex}`));
@@ -260,11 +261,11 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
         if (isPopupJustClosed() || popupStore.hasPopup("say")) {
             return;
         }
-        popupStore.addPopup(SayPopUp, { type: this.controlKeyisPressed ? "think" : "say" }, "say");
+        popupStore.addPopup(SayPopUp, { type: this.controlKeyisPressed ? "think" : "say", source: "keyboard" }, "say");
         if (this.controlKeyisPressed) {
-            analyticsClient.openThinkBubble();
+            analyticsClient.openThinkBubble("keyboard");
         } else {
-            analyticsClient.openSayBubble();
+            analyticsClient.openSayBubble("keyboard");
         }
     }
 
