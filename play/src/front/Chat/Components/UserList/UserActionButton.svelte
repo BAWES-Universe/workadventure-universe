@@ -3,24 +3,27 @@
     import { computePosition, flip, shift, offset, autoUpdate } from "@floating-ui/dom";
     import type { Readable } from "svelte/store";
     import { AskPositionMessage_AskType } from "@workadventure/messages";
-    import teleport from "../../images/teleport.svg";
     import businessCard from "../../images/business-cards.svg";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import { scriptUtils } from "../../../Api/ScriptUtils";
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
     import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { showReportScreenStore } from "../../../Stores/ShowReportScreenStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
-    import { IconForbid, IconDots, IconCamera, IconMapPin } from "@wa-icons";
+    import PersonActionButton from "./PersonActionButton.svelte";
+    import { IconForbid, IconDots, IconMapPin } from "@wa-icons";
 
     export let user: ChatUser;
+    /** Locate (follow) the person, listed when they are on this map. */
+    export let showLocate = false;
+    export let showBusinessCard = false;
+    export let showBan = false;
 
     let popoversElement: HTMLDivElement;
 
-    let buttonElement: HTMLButtonElement;
+    let buttonElement: HTMLButtonElement | undefined;
 
     let chatMenuActive = false;
 
@@ -47,23 +50,10 @@
         }
         return usersList;
     })();
-    $: userToLocate = usersWithRoomPlayUri.find((u) => u.uuid === user.uuid);
-
-    const { connection, roomUrl } = gameManager.getCurrentGameScene();
-
-    const isInTheSameMap = user.playUri === roomUrl;
-
-    const iAmAdmin = connection?.hasTag("admin");
-
-    const goTo = (type: string, playUri: string, uuid: string) => {
-        analyticsClient.goToUser();
-
-        if (type === "room") {
-            scriptUtils.goToPage(`${playUri}#moveToUser=${uuid}`);
-        } else if (type === "user") {
-            if (user.uuid && connection && user.playUri) connection.emitAskPosition(user.uuid, user.playUri);
-        }
-    };
+    // Match by space user id when known, so another tab of the same account is located, not the first one found.
+    $: userToLocate = usersWithRoomPlayUri.find((u) =>
+        user.spaceUserId ? u.spaceUserId === user.spaceUserId : u.uuid === user.uuid
+    );
 
     function repositionIfOverflowing() {
         if (!buttonElement || !popoversElement) return;
@@ -90,7 +80,12 @@
     };
 
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
-        if (event.target && popoversElement && !popoversElement.contains(event.target as Node)) {
+        if (
+            event.target &&
+            popoversElement &&
+            !popoversElement.contains(event.target as Node) &&
+            !buttonElement?.contains(event.target as Node)
+        ) {
             closeChatUserMenu();
         }
     };
@@ -110,7 +105,7 @@
         if (cleanup) cleanup();
     });
 
-    const showBusinessCard = (visitCardUrl: string | undefined) => {
+    const openBusinessCard = (visitCardUrl: string | undefined) => {
         analyticsClient.showBusinessCard();
 
         // If woka menu is open, close it
@@ -128,6 +123,12 @@
         }
         closeChatUserMenu();
     };
+
+    function banUser() {
+        if (user.username && user.uuid) {
+            showReportScreenStore.set({ userUuid: user.uuid, userName: user.username });
+        }
+    }
 
     function locateUser() {
         if (userToLocate == undefined || userToLocate.uuid == undefined) return;
@@ -166,89 +167,72 @@
 
 <svelte:window on:click={handleClickOutside} on:touchstart={handleClickOutside} />
 <div class="wa-dropdown">
-    <button
-        class="m-0 p-2 flex items-center rounded-md hover:bg-white/10 bg-transparent !text-white"
-        bind:this={buttonElement}
-        on:click|stopPropagation={toggleChatUSerMenu}
+    <PersonActionButton
+        label={$LL.chat.userList.moreActions({ userName: user.username ?? "" })}
+        testId={`more-actions-${user.username}`}
+        expanded={chatMenuActive}
+        hasPopup
+        bind:buttonElement
+        on:click={toggleChatUSerMenu}
     >
-        <IconDots font-size="16" />
-    </button>
-    <!-- on:mouseleave={closeChatUserMenu} -->
+        <IconDots font-size="18" />
+    </PersonActionButton>
     {#if chatMenuActive}
         <div
             bind:this={popoversElement}
+            role="menu"
             class="wa-dropdown-menu z-10 mr-1 fixed bg-contrast/80 backdrop-blur-md rounded-md p-1"
         >
-            {#if isInTheSameMap}
+            {#if showLocate}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <!-- svelte-ignore a11y-no-static-element-interactions -->
                 <span
-                    class="walk-to wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded"
-                    on:click|stopPropagation={() => {
-                        goTo("user", user.playUri ?? "", user.uuid ?? "");
-                        closeChatUserMenu();
-                    }}
-                >
-                    <IconCamera class="w-4" />
-                    {$LL.chat.userList.TalkTo()}</span
-                >
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <!-- svelte-ignore a11y-no-static-element-interactions -->
-                <span
-                    class={`follow wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded ${
+                    role="menuitem"
+                    tabindex={userToLocate == undefined ? -1 : 0}
+                    aria-disabled={userToLocate == undefined}
+                    class={`follow wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer ${
                         userToLocate == undefined ? "opacity-50 cursor-not-allowed pointer-events-none" : ""
                     }`}
                     on:click|stopPropagation={locateUser}
+                    on:keydown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            locateUser();
+                        }
+                    }}
                 >
                     <IconMapPin class="w-4" />
                     {$LL.chat.userList.follow()}
                 </span>
-            {:else if user.playUri}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <!-- svelte-ignore a11y-no-static-element-interactions -->
-                <span
-                    class="teleport wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded"
-                    on:click|stopPropagation={() => {
-                        goTo("room", user.playUri ?? "", user.uuid ?? "");
-                        closeChatUserMenu();
-                    }}
-                    ><img
-                        class="noselect"
-                        src={teleport}
-                        alt="Teleport to logo"
-                        height="13"
-                        width="13"
-                        draggable="false"
-                    />
-                    {$LL.chat.userList.teleport()}</span
-                >
             {/if}
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <!-- svelte-ignore a11y-no-static-element-interactions -->
-            {#if user.visitCardUrl}
+            {#if showBusinessCard}
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
                 <span
-                    class="businessCard wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded"
-                    on:click|stopPropagation={() => showBusinessCard(user.visitCardUrl)}
-                    ><img
-                        class="noselect"
-                        src={businessCard}
-                        alt="Business card"
-                        height="13"
-                        width="13"
-                        draggable="false"
-                    />
+                    role="menuitem"
+                    tabindex="0"
+                    class="businessCard wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
+                    on:click|stopPropagation={() => openBusinessCard(user.visitCardUrl)}
+                    on:keydown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openBusinessCard(user.visitCardUrl);
+                        }
+                    }}
+                    ><img class="noselect" src={businessCard} alt="" height="13" width="13" draggable="false" />
                     {$LL.chat.userList.businessCard()}</span
                 >
             {/if}
 
-            {#if iAmAdmin}
+            {#if showBan}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <!-- svelte-ignore a11y-no-static-element-interactions -->
                 <span
-                    class="ban wa-dropdown-item text-pop-red text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded"
-                    on:click|stopPropagation={() => {
-                        if (user.username && user.uuid) {
-                            showReportScreenStore.set({ userUuid: user.uuid, userName: user.username });
+                    role="menuitem"
+                    tabindex="0"
+                    class="ban wa-dropdown-item text-pop-red text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
+                    on:click|stopPropagation={banUser}
+                    on:keydown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            banUser();
                         }
                     }}><IconForbid font-size="13" /> {$LL.chat.ban.title()}</span
                 >

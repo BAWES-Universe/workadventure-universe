@@ -12,9 +12,12 @@
     import { openDirectChatRoom } from "../../Utils";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
+    import { scriptUtils } from "../../../Api/ScriptUtils";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
-    import { IconLoader, IconSend } from "@wa-icons";
+    import PersonActionButton from "./PersonActionButton.svelte";
+    import { getPersonActions, isSelf } from "./PersonActions";
+    import { IconDoorIn, IconLoader, IconMessage, IconWalk } from "@wa-icons";
 
     export let user: ChatUser;
 
@@ -24,16 +27,67 @@
 
     $: ({ chatId, availabilityStatus, username = "", color, isAdmin, pictureStore } = user);
 
-    $: isMe = user.chatId === localUserStore.getChatId() || user.uuid === localUserStore.getLocalUser()?.uuid;
+    const currentGameScene = gameManager.getCurrentGameScene();
+    const connection = currentGameScene.connection;
+    const iAmAdmin = connection?.hasTag("admin") ?? false;
+
+    // "Yourself" is this tab's own avatar: other tabs of the same account are other people here.
+    $: isMe = isSelf(user, {
+        spaceUserId: connection?.getSpaceUserId(),
+        chatId: localUserStore.getChatId() ?? undefined,
+        uuid: localUserStore.getLocalUser()?.uuid,
+    });
 
     $: userStatus = isMe ? availabilityStatusStore : availabilityStatus;
 
     $: chunks = highlightWords({
-        text: username.match(/\[\d*]/) ? username.substring(0, username.search(/\[\d*]/)) : username,
+        text: displayName,
         query: $chatSearchBarValue,
     });
 
     const roomCreationInProgress = gameManager.chatConnection.roomCreationInProgress;
+
+    $: actions = getPersonActions({
+        isSelf: isMe,
+        status: $userStatus,
+        uuid: user.uuid,
+        chatId: user.chatId,
+        playUri: user.playUri,
+        currentRoomUrl: currentGameScene.roomUrl,
+        visitCardUrl: user.visitCardUrl,
+        isMatrixChatEnabled,
+        roomCreationInProgress: showRoomCreationInProgress,
+        iAmAdmin,
+    });
+
+    $: displayName = username.match(/\[\d*]/) ? username.substring(0, username.search(/\[\d*]/)) : username;
+
+    function walkTo() {
+        if (!user.uuid || !user.playUri) return;
+        analyticsClient.goToUser();
+        connection?.emitAskPosition(user.uuid, user.playUri);
+    }
+
+    function goToRoom() {
+        if (!user.playUri) return;
+        analyticsClient.goToUser();
+        scriptUtils.goToPage(`${user.playUri}#moveToUser=${user.uuid ?? ""}`);
+    }
+
+    function sendMessage() {
+        openDirectChatRoom(chatId).catch((error) => {
+            console.error("Error opening direct chat room:", error);
+            Sentry.captureException(error, {
+                extra: {
+                    userId: user.uuid,
+                    chatId: chatId,
+                    playUri: user.playUri,
+                    username: user.username,
+                },
+            });
+        });
+        analyticsClient.sendMessageFromUserList();
+    }
 
     function getNameOfAvailabilityStatus(status: AvailabilityStatus) {
         switch (status) {
@@ -117,16 +171,16 @@
             <!-- svelte-ignore a11y-click-events-have-key-events -->
             <!-- svelte-ignore a11y-no-static-element-interactions -->
             <div
-                class={`flex-auto ms-1 ${!$userStatus && "opacity-50"} cursor-pointer`}
+                class={`flex-auto min-w-0 ms-1 ${!$userStatus && "opacity-50"} cursor-pointer`}
                 on:click|stopPropagation={openWokaMenu}
             >
-                <div class="flex items-center h-4">
-                    <div class="text-sm font-bold mb-0 flex items-center text-nowrap">
-                        {#each chunks as chunk (chunk.key)}
-                            <div class={`${chunk.match ? "text-light-blue" : ""}`}>
-                                {chunk.text}
-                            </div>
-                        {/each}
+                <div class="flex items-center h-4 min-w-0">
+                    <div class="text-sm font-bold mb-0 flex items-center text-nowrap min-w-0">
+                        <span class="truncate" title={displayName}>
+                            {#each chunks as chunk (chunk.key)}
+                                <span class={`${chunk.match ? "text-light-blue" : ""}`}>{chunk.text}</span>
+                            {/each}
+                        </span>
                         {#if username && username.match(/\[\d*]/)}
                             <div class="font-light text-xs text-gray">
                                 #{username
@@ -164,51 +218,56 @@
                     {/if}
                 </div>
             </div>
-            <div class="flex flex-wrap justify-start items-start content-start">
-                <div class="transition-all">
-                    {#if !isMe && $userStatus != 0}
-                        <UserActionButton {user} />
-                    {/if}
-                </div>
-                {#if !isMe && !showRoomCreationInProgress && isMatrixChatEnabled}
-                    <div class="relative group">
-                        <div
-                            class="bg-contrast/90 backdrop-blur-xl text-white tooltip absolute text-nowrap p-2 opacity-0 transition-all group-hover:opacity-100 rounded top-1/2 -translate-y-1/2 start-[130%]"
-                        >
-                            {#if user.chatId === undefined}
-                                {$LL.chat.remoteUserNotConnected()}
-                            {:else}
-                                {$LL.chat.userList.sendMessage()}
-                            {/if}
-                        </div>
-                        <button
-                            class="transition-all hover:bg-white/10 p-2 rounded-md aspect-square flex items-center justify-center m-0"
-                            class:text-white={user.chatId !== undefined}
-                            class:text-gray-400={user.chatId === undefined}
-                            data-testId={`send-message-${user.username}`}
-                            disabled={user.chatId === undefined}
-                            on:click|stopPropagation={() => {
-                                openDirectChatRoom(chatId).catch((error) => {
-                                    console.error("Error opening direct chat room:", error);
-                                    Sentry.captureException(error, {
-                                        extra: {
-                                            userId: user.uuid,
-                                            chatId: chatId,
-                                            playUri: user.playUri,
-                                            username: user.username,
-                                        },
-                                    });
-                                });
-                                analyticsClient.sendMessageFromUserList();
-                            }}
-                        >
-                            <IconSend font-size="16" />
-                        </button>
-                    </div>
+            <div class="flex shrink-0 items-center gap-1">
+                {#if actions.walkTo}
+                    <PersonActionButton
+                        class="walk-to"
+                        primary
+                        label={$LL.chat.userList.walkTo()}
+                        ariaLabel={$LL.chat.userList.walkToUser({ userName: displayName })}
+                        testId={`walk-to-${user.username}`}
+                        on:click={walkTo}
+                    >
+                        <IconWalk font-size="20" />
+                    </PersonActionButton>
+                {:else if actions.goToRoom}
+                    <PersonActionButton
+                        class="teleport"
+                        primary
+                        label={$LL.chat.userList.goToRoom()}
+                        ariaLabel={$LL.chat.userList.goToRoomOfUser({ userName: displayName })}
+                        testId={`go-to-room-${user.username}`}
+                        on:click={goToRoom}
+                    >
+                        <IconDoorIn font-size="20" />
+                    </PersonActionButton>
+                {/if}
+                {#if actions.message !== "hidden"}
+                    <PersonActionButton
+                        label={actions.message === "disabled"
+                            ? $LL.chat.remoteUserNotConnected()
+                            : $LL.chat.userList.message()}
+                        ariaLabel={actions.message === "disabled"
+                            ? $LL.chat.remoteUserNotConnected()
+                            : $LL.chat.userList.messageUser({ userName: displayName })}
+                        testId={`send-message-${user.username}`}
+                        disabled={actions.message === "disabled"}
+                        on:click={sendMessage}
+                    >
+                        <IconMessage font-size="20" />
+                    </PersonActionButton>
                 {:else if $roomCreationInProgress && showRoomCreationInProgress}
                     <div class="min-h-[30px] text-md flex gap-2 justify-center flex-row items-center p-1">
                         <IconLoader class="animate-spin" />
                     </div>
+                {/if}
+                {#if actions.hasMenu}
+                    <UserActionButton
+                        {user}
+                        showLocate={actions.locate}
+                        showBusinessCard={actions.businessCard}
+                        showBan={actions.ban}
+                    />
                 {/if}
             </div>
         </div>
