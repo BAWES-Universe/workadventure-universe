@@ -7,30 +7,26 @@ import Map from "./utils/map";
 import menu from "./utils/menu";
 
 /**
- * Opens the Say popup with Enter, types a line and sends it.
- * The game ignores Enter for 500ms after the popup closes, so opening is retried until the popup shows.
+ * Opens the Say popup with Enter (Ctrl+Enter for a Think), types a line and sends it.
+ * The game ignores Enter for 500ms after the popup closes, so Enter is retried every 100ms
+ * until the popup shows. That keeps one send well under a second, since lines only live 5s.
  */
-async function sendSay(page: Page, text: string) {
+async function sendLine(page: Page, text: string, think = false) {
     await expect(async () => {
-        await page.keyboard.press("Enter");
-        await expect(page.getByTestId("say-popup")).toBeVisible({ timeout: 1_000 });
-    }).toPass({ timeout: 10_000 });
+        await page.keyboard.press(think ? "Control+Enter" : "Enter");
+        await expect(page.getByTestId("say-popup")).toBeVisible({ timeout: 150 });
+    }).toPass({ intervals: [100], timeout: 10_000 });
     await page.keyboard.type(text);
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("say-popup")).toBeHidden();
 }
 
-/** Same as {@link sendSay}, for a Think (Ctrl+Enter). */
+async function sendSay(page: Page, text: string) {
+    await sendLine(page, text);
+}
+
 async function sendThink(page: Page, text: string) {
-    await expect(async () => {
-        await page.keyboard.down("Control");
-        await page.keyboard.press("Enter");
-        await page.keyboard.up("Control");
-        await expect(page.getByTestId("say-popup")).toBeVisible({ timeout: 1_000 });
-    }).toPass({ timeout: 10_000 });
-    await page.keyboard.type(text);
-    await page.keyboard.press("Enter");
-    await expect(page.getByTestId("say-popup")).toBeHidden();
+    await sendLine(page, text, true);
 }
 
 test.describe("Say bubbles @nomobile @nowebkit", () => {
@@ -123,8 +119,10 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
         await sendSay(alicePage, "Second line");
 
         // Both lines are visible, oldest on top, newest at the bottom
-        await expect(alicePage.locator(".say-bubble")).toHaveText(["First line", "Second line"]);
-        await expect(bobPage.locator(".say-bubble")).toHaveText(["First line", "Second line"]);
+        await Promise.all([
+            expect(alicePage.locator(".say-bubble")).toHaveText(["First line", "Second line"], { timeout: 2_000 }),
+            expect(bobPage.locator(".say-bubble")).toHaveText(["First line", "Second line"], { timeout: 2_000 }),
+        ]);
 
         await alicePage.context().close();
         await bobPage.context().close();
@@ -146,9 +144,12 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
         await sendSay(alicePage, "Line 3");
         await sendSay(alicePage, "Line 4");
 
-        // The 4th line removes the oldest one
-        await expect(alicePage.locator(".say-bubble")).toHaveText(["Line 2", "Line 3", "Line 4"]);
-        await expect(bobPage.locator(".say-bubble")).toHaveText(["Line 2", "Line 3", "Line 4"]);
+        // The 4th line removes the oldest one. "Line 2" is only about two sends old here, well inside
+        // its 5s lifetime; both pages are checked at once so the check itself doesn't eat that margin.
+        await Promise.all([
+            expect(alicePage.locator(".say-bubble")).toHaveText(["Line 2", "Line 3", "Line 4"], { timeout: 2_000 }),
+            expect(bobPage.locator(".say-bubble")).toHaveText(["Line 2", "Line 3", "Line 4"], { timeout: 2_000 }),
+        ]);
 
         // Every line fades on its own 5s timer
         await expect(alicePage.locator(".say-bubble")).toHaveCount(0, { timeout: 10_000 });
@@ -172,16 +173,18 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
         await sendSay(alicePage, "Said out loud");
         await sendThink(alicePage, "Thought quietly");
 
-        await expect(bobPage.locator(".say-bubble")).toHaveText(["Said out loud"]);
-        await expect(bobPage.locator(".thinking-cloud")).toHaveText("Thought quietly");
+        await expect(bobPage.locator(".thinking-cloud")).toHaveText("Thought quietly", { timeout: 2_000 });
 
-        // Moving clears the Think only
-        await Map.walkTo(alicePage, "ArrowRight", 300);
+        // Moving clears the Think only. The Say line is about one send old, well inside its 5s lifetime;
+        // everything is checked at once so the checks don't eat that margin.
+        await Map.walkTo(alicePage, "ArrowRight", 100);
 
-        await expect(alicePage.locator(".thinking-cloud")).toHaveCount(0);
-        await expect(bobPage.locator(".thinking-cloud")).toHaveCount(0);
-        await expect(alicePage.locator(".say-bubble")).toHaveText(["Said out loud"]);
-        await expect(bobPage.locator(".say-bubble")).toHaveText(["Said out loud"]);
+        await Promise.all([
+            expect(alicePage.locator(".thinking-cloud")).toHaveCount(0, { timeout: 2_000 }),
+            expect(bobPage.locator(".thinking-cloud")).toHaveCount(0, { timeout: 2_000 }),
+            expect(alicePage.locator(".say-bubble")).toHaveText(["Said out loud"], { timeout: 2_000 }),
+            expect(bobPage.locator(".say-bubble")).toHaveText(["Said out loud"], { timeout: 2_000 }),
+        ]);
 
         await alicePage.context().close();
         await bobPage.context().close();

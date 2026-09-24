@@ -40,9 +40,15 @@ export class SayStackDomView implements SayStackView {
         return this.root;
     }
 
-    /** Height of the visible stack in layout pixels, 0 when empty. */
+    /**
+     * Height of the stack in layout pixels, from its bottom to the top of the highest item that is not
+     * fading out; 0 when nothing stays.
+     */
     public getHeight(): number {
-        return this.column.childElementCount > 0 ? this.column.offsetHeight : 0;
+        const highest = Array.from(this.column.children).find(
+            (child): child is HTMLElement => child instanceof HTMLElement && !child.classList.contains("is-leaving")
+        );
+        return highest ? this.column.offsetHeight - highest.offsetTop : 0;
     }
 
     public addLine(line: SayStackLine): void {
