@@ -39,12 +39,20 @@ export const searchChatMembersRule = () => {
             if (chatUsers === undefined) {
                 return [];
             }
-            return chatUsers.map((user) => ({
-                value: user.chatId,
-                label: user.username ?? user.spaceUserId?.toString(),
-                verified: true,
-                created: false,
-            }));
+            // Several tabs of one account are listed as separate people; offer each account once.
+            const seenChatIds = new Set<string>();
+            return chatUsers
+                .filter((user) => {
+                    if (seenChatIds.has(user.chatId)) return false;
+                    seenChatIds.add(user.chatId);
+                    return true;
+                })
+                .map((user) => ({
+                    value: user.chatId,
+                    label: user.username ?? user.spaceUserId?.toString(),
+                    verified: true,
+                    created: false,
+                }));
         } catch (error) {
             console.error(error);
         }
