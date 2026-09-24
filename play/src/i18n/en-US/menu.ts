@@ -163,8 +163,8 @@ const menu: BaseTranslation = {
         emote4: "Emote 4",
         emote5: "Emote 5",
         emote6: "Emote 6",
-        openSayPopup: "Open Say Popup",
-        openThinkPopup: "Open Think Popup",
+        openSayPopup: "Express yourself: say something",
+        openThinkPopup: "Express yourself: think something",
         walkMyDesk: "Walk to My Desk",
     },
 };

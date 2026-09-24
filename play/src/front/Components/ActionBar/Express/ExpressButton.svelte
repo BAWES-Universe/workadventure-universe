@@ -7,7 +7,6 @@
     import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
     import { emoteDataStore, emotePlayedStore } from "../../../Stores/EmoteStore";
     import { expressTrayStore } from "../../../Stores/ExpressStore";
-    import { popupStore } from "../../../Stores/PopupStore";
     import { connectionManager } from "../../../Connection/ConnectionManager";
     import { longpress } from "../../../Utils/longpress";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
@@ -44,19 +43,12 @@
             expressTrayStore.close();
             return;
         }
-        // The Express tray and the say popup are never open at the same time.
-        if (popupStore.hasPopup("say")) {
-            popupStore.removePopup("say");
-        }
         expressTrayStore.open();
         analyticsClient.expressTrayOpened("tap");
     }
 
     /** Long-press (touch) or right-click (mouse): straight to edit mode. For advanced users; a tap never lands here. */
     function openEditing() {
-        if (popupStore.hasPopup("say")) {
-            popupStore.removePopup("say");
-        }
         try {
             navigator.vibrate?.(12);
         } catch {
