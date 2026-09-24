@@ -504,6 +504,19 @@ const chat: DeepPartial<Translation["chat"]> = {
         inThisArea: "في هذه المنطقة", // In this area
         unread: "{count} {{رسائل غير مقروءة|رسالة غير مقروءة|رسالتان غير مقروءتين|رسائل غير مقروءة|رسالة غير مقروءة|رسالة غير مقروءة}}", // {count} unread messages
     },
+    oneList: {
+        label: "المحادثات", // Conversations
+        invitedYou: "{name} دعاك", // {name} invited you
+        invited: "لديك دعوة", // You're invited
+        justNow: "الآن", // now
+        minutesShort: "{count} د", // {count}m
+        yesterday: "أمس", // Yesterday
+        folderRooms: "{count} {{غرف|غرفة|غرفتان|غرف|غرفة|غرفة}}", // {count} rooms
+        empty: "لا توجد محادثات بعد", // No conversations yet
+        noResults: "لا توجد محادثات تطابق بحثك", // No conversations match your search
+        newRoomOrFolder: "غرفة أو مجلد جديد", // New room or folder
+        muted: "مكتوم", // Muted
+    },
 };
 
 export default chat;

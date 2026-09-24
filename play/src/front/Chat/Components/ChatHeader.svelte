@@ -11,6 +11,7 @@
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
     import OnlineUsersCount from "./OnlineUsersCount.svelte";
     import ChatActionMenu from "./ChatActionMenu.svelte";
+    import CreateRoomOrFolderOption from "./Room/CreateRoomOrFolderOption.svelte";
     import { IconMessageCircle2, IconUsers } from "@wa-icons";
 
     const gameScene = gameManager.getCurrentGameScene();
@@ -111,6 +112,18 @@
             <OnlineUsersCount {searchActive} />
         {/if}
     </div>
+    {#if $navChat.key === "chat" && $chatStatusStore === "ONLINE" && !searchActive}
+        <!-- Create a room or folder at the root. It lived in the Rooms section's menu, which the one list replaced. -->
+        <div class="relative" data-testid="chatListCreateEntry">
+            <CreateRoomOrFolderOption
+                parentID={undefined}
+                parentName=""
+                folder={undefined}
+                trigger="plus"
+                triggerLabel={$LL.chat.oneList.newRoomOrFolder()}
+            />
+        </div>
+    {/if}
     <div class="relative">
         <ChatActionMenu
             {searchActive}

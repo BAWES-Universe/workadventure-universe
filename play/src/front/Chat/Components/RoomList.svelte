@@ -1,33 +1,25 @@
 <script lang="ts">
-    import { get } from "svelte/store";
-
-    import { onDestroy, onMount } from "svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import LL from "../../../i18n/i18n-svelte";
     import { chatSearchBarValue, joignableRoom, navChat } from "../Stores/ChatStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
-    import type { ChatRoom } from "../Connection/ChatConnection";
     import { INITIAL_SIDEBAR_WIDTH, loginTokenErrorStore } from "../../Stores/ChatStore";
     import { userIsConnected } from "../../Stores/MenuStore";
     import getCloseImg from "../images/get-close.png";
     import ExternalComponents from "../../Components/ExternalModules/ExternalComponents.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { areaChatRooms, withoutAreaChatRooms } from "../Stores/AreaPresenceStore";
-    import Room from "./Room/Room.svelte";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
-    import RoomInvitation from "./Room/RoomInvitation.svelte";
     import JoignableRooms from "./Room/JoignableRooms.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
-    import RoomFolder from "./RoomFolder.svelte";
-    import CreateRoomOrFolderOption from "./Room/CreateRoomOrFolderOption.svelte";
-    import ShowMore from "./ShowMore.svelte";
     import ChatHeader from "./ChatHeader.svelte";
     import RequireConnection from "./requireConnection.svelte";
     import RefreshChat from "./RefreshChat.svelte";
     import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
-    import { IconChevronUp, IconCloudLock, IconRefresh } from "@wa-icons";
+    import OneList from "./OneList/OneList.svelte";
+    import { IconCloudLock, IconRefresh } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
@@ -38,30 +30,8 @@
     const chatConnectionStatus = chat.connectionStatus;
     const CHAT_LAYOUT_LIMIT = INITIAL_SIDEBAR_WIDTH * 2;
 
-    let directRooms = chat.directRooms;
-    let rooms = chat.rooms;
-    let roomInvitations = chat.invitations;
-    let roomFolders = chat.folders;
     // Area chat rooms have their own row under the top row and never show in the list, even while joining or leaving.
     const hiddenAreaRoomIds = areaChatRooms.hiddenRoomIds;
-
-    let displayDirectRooms = false;
-    let displayRooms = false;
-    let displayRoomInvitations = false;
-
-    onMount(() => {
-        expandOrCollapseRoomsIfEmpty();
-    });
-
-    const directRoomsUnsubscriber = rooms.subscribe((rooms) => openRoomsIfCollapsedBeforeNewRoom(rooms));
-    const roomInvitationsUnsubscriber = roomInvitations.subscribe((roomInvitations) =>
-        openRoomInvitationsIfCollapsedBeforeNewRoom(roomInvitations)
-    );
-
-    onDestroy(() => {
-        directRoomsUnsubscriber();
-        roomInvitationsUnsubscriber();
-    });
 
     async function initChatConnectionEncryption() {
         try {
@@ -75,51 +45,11 @@
     const isEncryptionRequiredAndNotSet = chat.isEncryptionRequiredAndNotSet;
     const isGuest = chat.isGuest;
 
-    function openRoomsIfCollapsedBeforeNewRoom(rooms: ChatRoom[]) {
-        if (rooms.length !== 0 && displayRooms === false) {
-            displayRooms = true;
-        }
-    }
-
-    function openRoomInvitationsIfCollapsedBeforeNewRoom(roomInvitations: ChatRoom[]) {
-        if (roomInvitations.length !== 0 && displayRoomInvitations === false) {
-            displayRoomInvitations = true;
-        }
-    }
-
-    function expandOrCollapseRoomsIfEmpty() {
-        displayDirectRooms = $directRooms.length > 0;
-        displayRooms = $rooms.length > 0;
-        displayRoomInvitations = $roomInvitations.length > 0;
-    }
-
-    function toggleDisplayDirectRooms() {
-        displayDirectRooms = !displayDirectRooms;
-    }
-
-    function toggleDisplayRooms() {
-        displayRooms = !displayRooms;
-    }
-
-    function toggleDisplayRoomInvitations() {
-        displayRoomInvitations = !displayRoomInvitations;
-    }
-
     function toggleDisplayProximityChat() {
         selectedRoomStore.set(proximityChatRoom);
         proximityChatRoom.hasUnreadMessages.set(false);
         proximityChatRoom.unreadNotificationCount.set(0);
     }
-
-    $: filteredDirectRoom = withoutAreaChatRooms($directRooms, $hiddenAreaRoomIds)
-        .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
-        .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
-    $: filteredRooms = withoutAreaChatRooms($rooms, $hiddenAreaRoomIds)
-        .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
-        .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
-    $: filteredRoomInvitations = withoutAreaChatRooms($roomInvitations, $hiddenAreaRoomIds)
-        .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
-        .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
 
     $: visibleJoignableRooms = withoutAreaChatRooms($joignableRoom, $hiddenAreaRoomIds);
 
@@ -182,90 +112,10 @@
                             {/each}
                         </div>
                     {/if}
-                    {#if filteredRoomInvitations.length > 0}
-                        <button
-                            class="group relative m-0 px-3 rounded-none text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center border border-solid border-x-0 border-t border-b-0 border-white/10"
-                            on:click={toggleDisplayRoomInvitations}
-                        >
-                            <div class="text-sm font-bold tracking-widest uppercase grow text-start">
-                                {$LL.chat.invitations()}
-                            </div>
-                            <button
-                                class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
-                            >
-                                <IconChevronUp
-                                    class={`transform transition ${!displayRoomInvitations ? "" : "rotate-180"}`}
-                                />
-                            </button>
-                        </button>
-                        {#if displayRoomInvitations}
-                            <div class="flex flex-col overflow-auto ps-3 pr-4 pb-3">
-                                <ShowMore items={filteredRoomInvitations} maxNumber={8} idKey="id" let:item={room}>
-                                    <RoomInvitation {room} />
-                                </ShowMore>
-                            </div>
-                        {/if}
-                    {/if}
-
-                    <button
-                        class="group relative px-3 m-0 rounded-none text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center border border-solid border-x-0 border-t border-b-0 border-white/10"
-                        on:click={toggleDisplayDirectRooms}
-                    >
-                        <div class="flex items-center space-x-2 m-0 p-0 grow">
-                            <div class="text-sm font-bold tracking-widest uppercase grow text-start">
-                                {$LL.chat.people()}
-                            </div>
-                            <button
-                                class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
-                            >
-                                <IconChevronUp
-                                    class={`transform transition ${!displayDirectRooms ? "" : "rotate-180"}`}
-                                />
-                            </button>
-                        </div>
-                    </button>
-
-                    {#if displayDirectRooms}
-                        <div class="flex flex-col px-2 pb-2">
-                            <ShowMore items={filteredDirectRoom} maxNumber={8} idKey="id" let:item={room}>
-                                <Room {room} />
-                            </ShowMore>
-                        </div>
-                    {/if}
-
-                    <div class="flex items-center space-x-2 grow m-0 p-0">
-                        <!-- TODO : use div instead of button to avoid focus issues try to find a better solution -->
-                        <!-- svelte-ignore a11y-click-events-have-key-events -->
-                        <!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div
-                            class="group relative px-3 m-0 mb-2 rounded-none text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center border border-solid border-x-0 border-t border-b-0 border-white/10"
-                            on:click={toggleDisplayRooms}
-                            data-testid="roomAccordeon"
-                        >
-                            <div class="flex items-center space-x-2 grow m-0 p-0">
-                                <div class="text-sm font-bold tracking-widest uppercase grow text-start">
-                                    {$LL.chat.rooms()}
-                                </div>
-                            </div>
-                            <CreateRoomOrFolderOption parentID={undefined} parentName="" folder={undefined} />
-                            <button
-                                class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
-                            >
-                                <IconChevronUp class={`transform transition ${!displayRooms ? "" : "rotate-180"}`} />
-                            </button>
-                        </div>
+                    <!-- One list: DMs, rooms, invitations and folders together, newest first. -->
+                    <div class="px-2 pb-2">
+                        <OneList />
                     </div>
-                    {#if displayRooms}
-                        <div class="px-2 pb-2">
-                            <ShowMore items={filteredRooms} maxNumber={8} idKey="id" let:item={room}>
-                                <Room {room} />
-                            </ShowMore>
-                        </div>
-                    {/if}
-                    <!--roomBySpace-->
-                    {#each Array.from($roomFolders.values()) as rootRoomFolder (rootRoomFolder.id)}
-                        <RoomFolder folder={rootRoomFolder} rootFolder={true} />
-                    {/each}
                 {/if}
             </div>
         </div>

@@ -519,6 +519,19 @@ const chat: BaseTranslation = {
         inThisArea: "In this area",
         unread: "{count} unread message{{s}}",
     },
+    oneList: {
+        label: "Conversations",
+        invitedYou: "{name} invited you",
+        invited: "You're invited",
+        justNow: "now",
+        minutesShort: "{count}m",
+        yesterday: "Yesterday",
+        folderRooms: "{count} room{{s}}",
+        empty: "No conversations yet",
+        noResults: "No conversations match your search",
+        newRoomOrFolder: "New room or folder",
+        muted: "Muted",
+    },
 };
 
 export default chat;

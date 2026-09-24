@@ -1,19 +1,25 @@
 <script lang="ts">
+    import { getContext, onDestroy, onMount } from "svelte";
     import { readable } from "svelte/store";
     import { openModal } from "svelte-modals";
     import { EventType } from "matrix-js-sdk";
     import LL from "../../../../i18n/i18n-svelte";
     import { notificationPlayingStore } from "../../../Stores/NotificationStore";
     import type { RoomFolder, ChatRoomModeration } from "../../Connection/ChatConnection";
+    import type { OrderFreeze } from "../OneList/OneListStore";
+    import { ONE_LIST_FREEZE_CONTEXT } from "../OneList/OneListStore";
     import ManageParticipantsModal from "./ManageParticipantsModal.svelte";
     import CreateFolderModal from "./CreateFolderModal.svelte";
     import CreateRoomModal from "./CreateRoomModal.svelte";
     import RoomOption from "./RoomMenu/RoomOption.svelte";
-    import { IconDots, IconFolder, IconLogout, IconMessage, IconUserEdit } from "@wa-icons";
+    import { IconDots, IconFolder, IconLogout, IconMessage, IconPlus, IconUserEdit } from "@wa-icons";
 
     export let parentID: string | undefined = undefined;
     export let parentName = "";
     export let folder: (RoomFolder & ChatRoomModeration) | undefined;
+    /** "plus" is the list-level entry point (create a room or folder at the root); "dots" is a folder's menu. */
+    export let trigger: "dots" | "plus" = "dots";
+    export let triggerLabel: string | undefined = undefined;
     let optionButtonRef: HTMLButtonElement | undefined = undefined;
     let hideFolderOptions = true;
 
@@ -21,6 +27,23 @@
     const hasPermissionToInvite = folder?.hasPermissionTo("invite") ?? readable(false);
     const hasPermissionToKick = folder?.hasPermissionTo("kick") ?? readable(false);
     const hasPermissionToBan = folder?.hasPermissionTo("ban") ?? readable(false);
+
+    // Inside the one chat list, the list holds its order still while this menu is open.
+    const orderFreeze = getContext<OrderFreeze | undefined>(ONE_LIST_FREEZE_CONTEXT);
+    const freezeHolder = {};
+    $: orderFreeze?.setHeld(freezeHolder, !hideFolderOptions);
+    onDestroy(() => orderFreeze?.release(freezeHolder));
+
+    // Close on a click anywhere else, like the room menu does, so an open menu never holds the list still.
+    function closeOnClickOutside(event: MouseEvent) {
+        if (hideFolderOptions || optionButtonRef === undefined) return;
+        if (event.target instanceof Node && optionButtonRef.contains(event.target)) return;
+        hideFolderOptions = true;
+    }
+    onMount(() => {
+        document.addEventListener("click", closeOnClickOutside);
+        return () => document.removeEventListener("click", closeOnClickOutside);
+    });
 
     $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
 
@@ -61,13 +84,22 @@
 
 <button
     data-testid={`openOptionToCreateRoomOrFolder${parentName}`}
-    class="m-0 p-1 rounded-lg hover:bg-white/10 aspect-square flex items-center justify-center {hideFolderOptions
+    class="m-0 {trigger === 'plus'
+        ? 'p-2'
+        : 'p-1'} rounded-lg hover:bg-white/10 aspect-square flex items-center justify-center {hideFolderOptions
         ? 'bg-transparent'
         : 'bg-secondary'}"
     bind:this={optionButtonRef}
     on:click|preventDefault|stopPropagation={toggleSpaceOption}
+    aria-label={triggerLabel}
+    title={triggerLabel}
+    aria-expanded={!hideFolderOptions}
 >
-    <IconDots />
+    {#if trigger === "plus"}
+        <IconPlus font-size="20" />
+    {:else}
+        <IconDots />
+    {/if}
 </button>
 <div
     class="bg-contrast/50 backdrop-blur-md rounded-md overflow-hidden z-50 w-max end-4 top-10 p-1"

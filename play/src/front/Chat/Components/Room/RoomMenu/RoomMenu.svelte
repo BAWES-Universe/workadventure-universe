@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
+    import { getContext, onDestroy, onMount } from "svelte";
     import { openModal } from "svelte-modals";
     import { get } from "svelte/store";
     import type { Readable } from "svelte/store";
@@ -19,6 +19,8 @@
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
     import { scriptUtils } from "../../../../Api/ScriptUtils";
     import type { UserProviderMerger } from "../../../UserProviderMerger/UserProviderMerger";
+    import type { OrderFreeze } from "../../OneList/OneListStore";
+    import { ONE_LIST_FREEZE_CONTEXT } from "../../OneList/OneListStore";
     import RoomOption from "./RoomOption.svelte";
     import { IconDots, IconLogout, IconUserEdit, IconMute, IconUnMute, IconMapPin, IconCamera } from "@wa-icons";
 
@@ -35,6 +37,11 @@
     const hasPermissionToBan = room.hasPermissionTo("ban");
 
     const { connection } = gameManager.getCurrentGameScene();
+
+    // Inside the one chat list, the list holds its order still while this menu is open.
+    const orderFreeze = getContext<OrderFreeze | undefined>(ONE_LIST_FREEZE_CONTEXT);
+    const freezeHolder = {};
+    $: orderFreeze?.setHeld(freezeHolder, !hideOptions);
 
     $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
 
@@ -53,6 +60,7 @@
 
     onDestroy(() => {
         document.removeEventListener("click", closeRoomOptionsOnClickOutside);
+        orderFreeze?.release(freezeHolder);
     });
 
     function toggleRoomOptions() {
