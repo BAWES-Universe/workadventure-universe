@@ -34,7 +34,7 @@ async function init() {
                 buttons: ["Install and Restart", "Install Later"],
                 defaultId: 0,
                 title: "Universe \u2014 Update Ready",
-                message: process.platform === "win32" ? releaseNotes : releaseName,
+                message: (process.platform === "win32" ? releaseNotes : releaseName) as string,
                 detail: "A new version has been downloaded. Restart the app to apply the update.",
             });
             if (response === 0) {

@@ -39,7 +39,7 @@ function offlinePageHtml(): string {
   <button onclick="location.reload()" style="padding:10px 24px;background:#4f98a3;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">Reload Now</button>
   <script>
     setTimeout(() => location.reload(), 10000);
-  <\/script>
+  </script>
 </body></html>`;
 }
 
