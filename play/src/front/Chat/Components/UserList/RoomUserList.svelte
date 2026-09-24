@@ -1,102 +1,182 @@
 <script lang="ts">
-    import { onMount } from "svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { LL } from "../../../../i18n/i18n-svelte";
-    import { chatSearchBarValue, shownRoomListStore } from "../../Stores/ChatStore";
+    import { chatSearchBarValue, peopleSectionsOpenStore } from "../../Stores/ChatStore";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import ChatHeader from "../ChatHeader.svelte";
     import UserList from "./UserList.svelte";
-    import { IconChevronUp } from "@wa-icons";
+    import { IconChevronDown } from "@wa-icons";
 
+    /**
+     * The People tab, in three parts: the room you're in first ("Test · 3 here", you at the top), then everyone
+     * else online in this world under the name of their room, then the world's members who aren't online,
+     * folded shut with a line saying who they are. Searching unfolds whatever matches.
+     */
     export let userProviderMerger: UserProviderMerger;
 
     const USERS_BY_ROOM_LIMITATION = 200;
 
+    interface RoomGroup {
+        key: string;
+        name: string;
+        users: ChatUser[];
+    }
+
     const gameScene = gameManager.getCurrentGameScene();
     const isMatrixChatEnabled = gameScene.room.isMatrixChatEnabled;
-
-    onMount(() => {
-        if ($shownRoomListStore === "") shownRoomListStore.set($LL.chat.userList.isHere());
-    });
+    const currentRoomUrl = gameScene.roomUrl;
+    const mapRoomName = gameScene.room.roomName?.trim();
 
     $: usersByRoom = userProviderMerger.usersByRoomStore;
+    $: query = $chatSearchBarValue.trim().toLocaleLowerCase();
+    $: isSearching = query !== "";
 
-    $: roomsWithUsers = Array.from($usersByRoom.entries())
-        .reduce((roomsWithUsersAcc, [currentPlayUri, currentRoomWithUsers]) => {
-            let roomName =
-                currentRoomWithUsers.roomName ??
-                (currentPlayUri
-                    ? new URL(currentPlayUri, window.location.href).pathname
-                    : $LL.chat.userList.disconnected());
+    function matches(user: ChatUser): boolean {
+        if (!isSearching) return true;
+        return user.username ? user.username.toLocaleLowerCase().includes(query) : false;
+    }
 
-            if (currentPlayUri === gameManager?.getCurrentGameScene()?.roomUrl) roomName = $LL.chat.userList.isHere();
+    function sortPeople(users: ChatUser[]): ChatUser[] {
+        const mySpaceUserId = gameScene.connection?.getSpaceUserId();
+        return [...users]
+            .sort((a, b) => {
+                if (a.spaceUserId === mySpaceUserId) return -1;
+                if (b.spaceUserId === mySpaceUserId) return 1;
+                return a.username?.localeCompare(b.username || "") || -1;
+            })
+            .slice(0, USERS_BY_ROOM_LIMITATION);
+    }
 
-            const mySpaceUserId = gameManager.getCurrentGameScene().connection?.getSpaceUserId();
+    function roomNameOf(playUri: string, roomName: string | undefined): string {
+        if (roomName?.trim()) return roomName.trim();
+        try {
+            return new URL(playUri, window.location.href).pathname;
+        } catch {
+            return playUri;
+        }
+    }
 
-            const users = currentRoomWithUsers.users
-                .filter(({ username }) => {
-                    return username
-                        ? username.toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase())
-                        : false;
-                })
-                .sort((chatUserA: ChatUser, chatUserB: ChatUser) => {
-                    if (chatUserA.spaceUserId === mySpaceUserId) return -1;
-                    if (chatUserB.spaceUserId === mySpaceUserId) return 1;
-                    return chatUserA.username?.localeCompare(chatUserB.username || "") || -1;
-                })
-                .slice(0, USERS_BY_ROOM_LIMITATION);
+    // Everyone, split by where they are. Counts are of everyone in the section, before the search filters it.
+    $: hereEntry = $usersByRoom.get(currentRoomUrl);
+    $: hereAll = hereEntry ? sortPeople(hereEntry.users) : [];
+    $: hereShown = hereAll.filter(matches);
+    $: hereName = hereEntry?.roomName?.trim() || mapRoomName || $LL.chat.peopleTab.thisRoom();
 
-            if (users.length > 0) roomsWithUsersAcc.push([roomName, users]);
+    $: elsewhereGroups = Array.from($usersByRoom.entries())
+        .filter(([playUri]) => playUri !== undefined && playUri !== currentRoomUrl)
+        .map(([playUri, entry]): RoomGroup => {
+            const uri = playUri ?? "";
+            return { key: uri, name: roomNameOf(uri, entry.roomName), users: sortPeople(entry.users) };
+        })
+        .filter((group) => group.users.length > 0)
+        .sort((a, b) => a.name.localeCompare(b.name));
+    $: elsewhereCount = elsewhereGroups.reduce((total, group) => total + group.users.length, 0);
+    $: elsewhereShown = elsewhereGroups
+        .map((group) => ({ ...group, users: group.users.filter(matches) }))
+        .filter((group) => group.users.length > 0);
 
-            return roomsWithUsersAcc;
-        }, [] as [string, ChatUser[]][])
-        .sort(([aKey, _aValue]: [string, ChatUser[]], [bKey, _bValue]: [string, ChatUser[]]) => {
-            if (aKey === $LL.chat.userList.disconnected()) return 1;
-            if (bKey === $LL.chat.userList.disconnected()) return -1;
+    $: offlineAll = sortPeople($usersByRoom.get(undefined)?.users ?? []);
+    $: offlineShown = offlineAll.filter(matches);
 
-            if (aKey === $LL.chat.userList.isHere()) return -1;
-            if (bKey === $LL.chat.userList.isHere()) return 1;
+    // Searching unfolds the sections that match; clearing the search goes back to what you had unfolded.
+    $: elsewhereOpen = isSearching ? elsewhereShown.length > 0 : $peopleSectionsOpenStore.elsewhere;
+    $: offlineOpen = isSearching ? offlineShown.length > 0 : $peopleSectionsOpenStore.offline;
+    $: nothingMatches =
+        isSearching && hereShown.length === 0 && elsewhereShown.length === 0 && offlineShown.length === 0;
 
-            return aKey.localeCompare(bKey);
-        });
+    function toggle(section: "elsewhere" | "offline") {
+        peopleSectionsOpenStore.update((open) => ({ ...open, [section]: !open[section] }));
+    }
 </script>
 
 <div class="flex flex-col h-full">
     <ChatHeader />
-    <div class="max-h-full overflow-x-hidden overflow-y-auto">
-        {#each roomsWithUsers as [roomName, userInRoom] (roomName)}
-            <div class=" users flex flex-col shrink-0 relative first:pt-[12px]">
-                <button
-                    class="group relative px-3 gap-2 rounded-none text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center border border-solid border-x-0 border-t border-b-0 border-white/10 text-white outline-none focus:outline-none focus-visible:bg-contrast-200/10 border-y-0 appearance-none m-0"
-                    on:click={() => shownRoomListStore.set($shownRoomListStore === roomName ? "" : roomName)}
+    <div class="max-h-full overflow-x-hidden overflow-y-auto pb-2" data-testid="peopleList">
+        {#if hereAll.length > 0 && (!isSearching || hereShown.length > 0)}
+            <section class="flex flex-col" data-testid="peopleHere">
+                <h3
+                    class="m-0 flex h-11 items-center gap-2 px-4 text-sm font-bold text-white"
+                    data-testid="peopleHereTitle"
                 >
-                    {#if roomName !== $LL.chat.userList.disconnected()}
-                        <div
-                            class="{roomName !== $LL.chat.userList.disconnected()
-                                ? 'bg-white/10'
-                                : 'bg-gray'} text-white min-w-[20px] h-5 text-sm font-semibold flex items-center justify-center rounded-sm"
-                        >
-                            {userInRoom.length}
-                        </div>
-                    {/if}
-                    <div class="text-white text-sm font-bold tracking-widest uppercase grow text-start">
-                        {roomName}
-                    </div>
-                    <div
-                        class="transition-all group-hover:bg-white/10 p-1 rounded aspect-square flex items-center justify-center text-white"
+                    <span class="truncate">{hereName}</span>
+                    <span class="shrink-0 font-normal text-white/50"
+                        >{$LL.chat.topRow.separator()}{$LL.chat.peopleTab.countHere({ count: hereAll.length })}</span
                     >
-                        <IconChevronUp
-                            class={`transform transition ${$shownRoomListStore === roomName ? "" : "rotate-180"}`}
-                        />
-                    </div>
+                </h3>
+                <UserList userList={hereShown} {isMatrixChatEnabled} />
+            </section>
+        {/if}
+
+        {#if elsewhereCount > 0 && (!isSearching || elsewhereShown.length > 0)}
+            <section class="flex flex-col" data-testid="peopleElsewhere">
+                <button
+                    type="button"
+                    class="people-section-toggle group m-0 flex h-11 w-full items-center gap-2 rounded-none px-4 text-start text-sm font-bold text-white/85 hover:bg-white/5 hover:text-white focus:outline-none focus-visible:bg-white/5"
+                    aria-expanded={elsewhereOpen}
+                    aria-label={(elsewhereOpen ? $LL.chat.peopleTab.collapse : $LL.chat.peopleTab.expand)({
+                        section: $LL.chat.peopleTab.elsewhere(),
+                    })}
+                    data-testid="peopleElsewhereToggle"
+                    on:click={() => toggle("elsewhere")}
+                >
+                    <span class="truncate">{$LL.chat.peopleTab.elsewhere()}</span>
+                    <span class="shrink-0 font-normal text-white/50">{$LL.chat.topRow.separator()}{elsewhereCount}</span
+                    >
+                    <span class="grow" />
+                    <IconChevronDown
+                        font-size="18"
+                        class="shrink-0 text-white/60 transition-transform {elsewhereOpen
+                            ? ''
+                            : '-rotate-90 rtl:rotate-90'}"
+                    />
                 </button>
-                {#if $shownRoomListStore === roomName}
-                    <div class="flex flex-col flex-1 h-fit">
-                        <UserList userList={userInRoom} {isMatrixChatEnabled} />
-                    </div>
+                {#if elsewhereOpen}
+                    {#each elsewhereShown as group (group.key)}
+                        <div class="px-4 pt-1 pb-0.5 text-xs font-bold uppercase tracking-wide text-white/45">
+                            {group.name}
+                        </div>
+                        <UserList userList={group.users} {isMatrixChatEnabled} />
+                    {/each}
                 {/if}
-            </div>
-        {/each}
+            </section>
+        {/if}
+
+        {#if offlineAll.length > 0 && (!isSearching || offlineShown.length > 0)}
+            <section class="flex flex-col" data-testid="peopleOffline">
+                <button
+                    type="button"
+                    class="people-section-toggle group m-0 flex h-11 w-full items-center gap-2 rounded-none px-4 text-start text-sm font-bold text-white/85 hover:bg-white/5 hover:text-white focus:outline-none focus-visible:bg-white/5"
+                    aria-expanded={offlineOpen}
+                    aria-label={(offlineOpen ? $LL.chat.peopleTab.collapse : $LL.chat.peopleTab.expand)({
+                        section: $LL.chat.peopleTab.offline(),
+                    })}
+                    data-testid="peopleOfflineToggle"
+                    on:click={() => toggle("offline")}
+                >
+                    <span class="truncate">{$LL.chat.peopleTab.offline()}</span>
+                    <span class="shrink-0 font-normal text-white/50"
+                        >{$LL.chat.topRow.separator()}{offlineAll.length}</span
+                    >
+                    <span class="grow" />
+                    <IconChevronDown
+                        font-size="18"
+                        class="shrink-0 text-white/60 transition-transform {offlineOpen
+                            ? ''
+                            : '-rotate-90 rtl:rotate-90'}"
+                    />
+                </button>
+                {#if offlineOpen}
+                    <p class="m-0 px-4 pb-2 text-xs text-white/50">{$LL.chat.peopleTab.offlineHint()}</p>
+                    <UserList userList={offlineShown} {isMatrixChatEnabled} />
+                {/if}
+            </section>
+        {/if}
+
+        {#if nothingMatches}
+            <p class="m-0 px-4 py-6 text-center text-sm text-white/50" data-testid="peopleNoResults">
+                {$LL.chat.oneList.noResultsPeople()}
+            </p>
+        {/if}
     </div>
 </div>

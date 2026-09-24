@@ -208,14 +208,14 @@ const chat: DeepPartial<Translation["chat"]> = {
     showLess: "عرض أقل",
     addRoomToFolderError: "لا يمكن إضافة الغرفة إلى المجلد",
     createRoom: {
-        title: "إنشاء غرفة جديدة",
+        title: "إنشاء مجموعة جديدة",
         name: "الاسم",
         visibility: {
             label: "الرؤية",
             private: "خاص",
-            privateDescription: "سيتمكن الضيوف المدعوون فقط من العثور على الغرفة والانضمام إليها.",
+            privateDescription: "سيتمكن الضيوف المدعوون فقط من العثور على المجموعة والانضمام إليها.",
             public: "عام",
-            publicDescription: "يمكن لأي شخص العثور على الغرفة والانضمام إليها.",
+            publicDescription: "يمكن لأي شخص العثور على المجموعة والانضمام إليها.",
             restricted: "عضو المجلد",
             restrictedDescription: "مرئي فقط لأعضاء المجلد",
         },
@@ -223,8 +223,8 @@ const chat: DeepPartial<Translation["chat"]> = {
             label: "تفعيل التشفير من طرف إلى طرف",
             description: "لن تتمكن من تعطيله لاحقًا.",
         },
-        suggested: "الغرفة المقترحة",
-        suggestedDescription: "سيتم اقتراح هذه الغرفة للمستخدمين الذين في نفس المساحة.",
+        suggested: "المجموعة المقترحة",
+        suggestedDescription: "سيتم اقتراح هذه المجموعة للمستخدمين الذين في نفس المساحة.",
         users: "المستخدمون",
         historyVisibility: {
             label: "من يمكنه قراءة السجل؟",
@@ -237,9 +237,9 @@ const chat: DeepPartial<Translation["chat"]> = {
             create: "إنشاء",
             cancel: "إلغاء",
         },
-        error: "خطأ في إنشاء الغرفة",
-        loadingCreation: "جار إنشاء الغرفة",
-        creationSuccessNotification: "تم إنشاء الغرفة",
+        error: "خطأ في إنشاء المجموعة",
+        loadingCreation: "جار إنشاء المجموعة",
+        creationSuccessNotification: "تم إنشاء المجموعة",
     },
     createFolder: {
         title: "إنشاء مجلد جديد",
@@ -287,7 +287,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         ban: "محظور",
         kick: "تم طرده",
         leave: "غادر",
-        roomID: "معرف الغرفة : {roomId}",
+        roomID: "معرف المجموعة : {roomId}",
         membership: "العضوية",
         permissionLevel: "الأدوار",
         actions: "الإجراءات",
@@ -308,11 +308,11 @@ const chat: DeepPartial<Translation["chat"]> = {
     },
     roomMenu: {
         leaveRoom: {
-            label: "مغادرة الغرفة",
-            notification: "لقد غادرت الغرفة",
+            label: "مغادرة المجموعة",
+            notification: "لقد غادرت المجموعة",
         },
-        muteRoom: "كتم الغرفة",
-        unmuteRoom: "إلغاء كتم الغرفة",
+        muteRoom: "كتم المجموعة",
+        unmuteRoom: "إلغاء كتم المجموعة",
     },
     folderMenu: {
         leaveFolder: {
@@ -502,15 +502,11 @@ const chat: DeepPartial<Translation["chat"]> = {
         action: "سجّل الدخول أو أنشئ حسابًا",
     },
     here: {
-        thisMap: "هذه الغرفة",
-        countHere: "{count} هنا",
-        onlyYou: "أنت وحدك هنا",
-        hint: "اقترب من أحدهم لبدء دردشة القرب",
-        seeWhoIsHere: "شاهد من في {mapName}",
+        hint: "اقترب من أحدهم لبدء دردشة القرب.",
+        seeWhoIsHere: "شاهد من هنا",
     },
     nearby: {
         title: "دردشة القرب",
-        withNames: "دردشة القرب · {names}",
         talkingNow: "تتحدث الآن",
         idle: "اقترب من أحدهم للتحدث",
     },
@@ -525,10 +521,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         you: "أنت", // You
         live: "مباشر", // Live
         onlyYouHere: "أنت وحدك هنا حتى الآن", // Only you here so far
-        elsewhereInWorld: "{count} في مكان آخر من هذا العالم", // {count} elsewhere in this world
         separator: " · ",
-        exploreWithOrbit: "استكشف مع Orbit", // Explore with Orbit
-        inviteSomeone: "ادعُ شخصًا", // Invite someone
     },
     areaRow: {
         inThisArea: "في هذه المنطقة", // In this area
@@ -541,22 +534,66 @@ const chat: DeepPartial<Translation["chat"]> = {
         justNow: "الآن", // now
         minutesShort: "{count} د", // {count}m
         yesterday: "أمس", // Yesterday
-        folderRooms: "{count} {{غرف|غرفة|غرفتان|غرف|غرفة|غرفة}}", // {count} rooms
+        folderRooms: "{count} {{مجموعات|مجموعة|مجموعتان|مجموعات|مجموعة|مجموعة}}", // {count} rooms
         empty: "لا توجد محادثات بعد", // No conversations yet
         noResults: "لا توجد محادثات تطابق بحثك", // No conversations match your search
         muted: "مكتوم", // Muted
+        noResultsPeople: "لا يوجد أشخاص مطابقون.",
+    },
+    findGroup: {
+        title: "ابحث عن مجموعة",
+        back: "العودة إلى المحادثات",
+        search: "ابحث في المجموعات العامة",
+        hint: "مجموعات عامة يمكن لأي شخص الانضمام إليها. المجموعات التي أنت فيها بالفعل لا تظهر.",
+        empty: "لا توجد مجموعات عامة مطابقة.",
+        error: "تعذّر تحميل المجموعات العامة.",
+        retry: "إعادة المحاولة",
+    },
+    peopleTab: {
+        thisRoom: "هذه الغرفة",
+        countHere: "{count} هنا",
+        elsewhere: "في مكان آخر من هذا العالم",
+        offline: "الأعضاء غير المتصلين",
+        offlineHint: "أعضاء هذا العالم غير المتصلين الآن.",
+        collapse: "طيّ {section}",
+        expand: "توسيع {section}",
+    },
+    session: {
+        live: "مباشر",
+        endedAt: "انتهت {time}",
+        endedFooter: "انتهت دردشة القرب هذه عندما ابتعدت.",
+        startedNotice: "بدأت دردشة قرب",
+        open: "افتح",
+        unsentDraft: "مسودة غير مرسلة",
+        copy: "نسخ",
+        copied: "تم النسخ",
+        stopped: "توقف عند مغادرتك",
+        roomMessages: "رسائل الغرفة",
+        roomMessagesHint: "رسائل من سكربتات هذه الغرفة",
+        findPeople: "ابحث عن هؤلاء الأشخاص",
+        goTo: "اذهب إلى {room}",
+        goToRoom: "اذهب إلى الغرفة",
+        explainer:
+            "لا يرى رسالتك إلا من كان هنا عند إرسالها. من ينضم لاحقًا يرى فقط ما يُرسل بعد وصوله. لا يُحفظ شيء على أي خادم.",
+        empty: "لا توجد رسائل في دردشة القرب هذه.",
     },
     header: {
-        newChat: "رسالة أو غرفة أو مجلد جديد", // New message, room or folder
-        newMessage: "رسالة جديدة", // New message
-        newMessageHint: "اختر من تريد مراسلته", // Pick someone to write to
-        newRoom: "غرفة جديدة", // New room
-        newRoomHint: "مكان للتحدث كمجموعة", // A place to talk as a group
-        newFolder: "مجلد جديد", // New folder
-        newFolderHint: "اجمع الغرف معًا", // Keep rooms together
-        searchChat: "ابحث عن الغرف والأشخاص", // Search rooms and people
-        searchPeople: "ابحث عن الأشخاص", // Search people
-        clearSearch: "مسح البحث", // Clear search
+        newChat: "رسالة أو مجموعة أو مجلد جديد",
+        newMessage: "رسالة جديدة",
+        newMessageHint: "اختر من تريد مراسلته",
+        newGroup: "مجموعة جديدة",
+        newGroupHint: "محادثة محفوظة لعدة أشخاص",
+        findGroup: "ابحث عن مجموعة",
+        findGroupHint: "تصفح المجموعات العامة",
+        newFolder: "مجلد جديد",
+        newFolderHint: "اجمع المجموعات معًا",
+        searchChat: "ابحث في المحادثات",
+        searchPeople: "ابحث عن الأشخاص",
+        clearSearch: "مسح البحث",
+        tabChats: "المحادثات",
+        tabPeople: "الأشخاص",
+        peopleOnline: "{count} شخصًا متصلًا في هذا العالم",
+        unreadChats: "رسائل غير مقروءة",
     },
 };
 

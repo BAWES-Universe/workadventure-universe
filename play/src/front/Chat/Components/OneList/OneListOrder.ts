@@ -3,7 +3,8 @@
  * No stores, no Matrix and no translations in here, so every rule can be unit tested.
  */
 
-export type OneListKind = "direct" | "room" | "invitation" | "folder";
+/** "proximity" is a proximity chat you had (an ended stay), shown as its own row among the saved conversations. */
+export type OneListKind = "direct" | "room" | "invitation" | "folder" | "proximity";
 
 /** A room as the list needs to see it at one moment. */
 export interface RoomSnapshot {

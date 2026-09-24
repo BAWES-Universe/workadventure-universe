@@ -1185,6 +1185,8 @@ export class GameScene extends DirtyScene {
             Sentry.captureException(e);
         });
         this.proximitySpaceManager?.destroy();
+        // The chats you had come along to the next map.
+        this._proximityChatRoom?.stashHistoryForNextScene();
         this._proximityChatRoom?.destroy();
         // Area chat rooms are per scene: a new map starts with none. Area-leave handlers don't run when the scene
         // closes, so the rooms of the areas still active are left here, and stay hidden until that leave completes.

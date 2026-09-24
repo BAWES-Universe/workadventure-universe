@@ -49,8 +49,16 @@ function createNavChatStore() {
 
 export const navChat = createNavChatStore();
 
-export const shownRoomListStore = writable<string>("");
 export const chatSearchBarValue = writable<string>("");
+
+/** The "Find a group" page (the public Matrix directory), shown over the chat list when true. */
+export const findGroupOpenStore = writable(false);
+
+/** Which sections of the People tab are unfolded. Per tab and in memory. */
+export const peopleSectionsOpenStore = writable<{ elsewhere: boolean; offline: boolean }>({
+    elsewhere: true,
+    offline: false,
+});
 
 export function initializeChatVisibilitySubscription() {
     const unsubscriber = chatVisibilityStore.subscribe((visible) => {
@@ -77,8 +85,6 @@ export function initializeChatVisibilitySubscription() {
 export const selectedChatMessageToReply = writable<NewChatMessage | null>(null);
 
 export const selectedChatMessageToEdit = writable<NewChatMessage | null>(null);
-
-export const joignableRoom = writable<{ id: string; name: string | undefined }[]>([]);
 
 export const shouldRestoreChatStateStore = writable(false);
 

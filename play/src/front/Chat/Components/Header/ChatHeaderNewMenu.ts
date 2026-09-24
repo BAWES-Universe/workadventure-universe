@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
 
-/** The choices behind the chat header's "+". */
-export type NewChatOption = "newMessage" | "newRoom" | "newFolder";
+/** The choices behind the chat header's "+", in menu order. "newFolder" sits last, after a separator. */
+export type NewChatOption = "newMessage" | "newGroup" | "findGroup" | "newFolder";
 
 export interface NewChatOptionsInput {
     /** Signed in to Universe (not a guest). */
@@ -16,13 +16,14 @@ export interface NewChatOptionsInput {
 
 /**
  * Which "+" choices to show. Saved conversations need an account, as they do today, so guests get none and
- * the "+" is hidden for them. New message needs the People tab to pick a person from.
+ * the "+" is hidden for them. New message needs the People tab to pick a person from. New folder is always
+ * there for the rest: hiding it until a folder exists would make the first one impossible to create.
  */
 export function getNewChatOptions(input: NewChatOptionsInput): NewChatOption[] {
     if (!input.isSignedIn || input.isMatrixGuest || input.chatStatus !== "ONLINE") return [];
     const options: NewChatOption[] = [];
     if (input.isPeopleListEnabled) options.push("newMessage");
-    options.push("newRoom", "newFolder");
+    options.push("newGroup", "findGroup", "newFolder");
     return options;
 }
 

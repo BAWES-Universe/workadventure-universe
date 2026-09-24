@@ -1,7 +1,9 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
+    import { derived } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import { chatInputFocusStore } from "../../Stores/ChatStore";
-    import { chatSearchBarValue, navChat, joignableRoom } from "../Stores/ChatStore";
+    import { chatSearchBarValue, navChat } from "../Stores/ChatStore";
     import LoadingSmall from "../images/loading-small.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
@@ -9,38 +11,64 @@
     import { hideActionBarStoreBecauseOfChatBar } from "../ChatSidebarWidthStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
     import { userIsConnected } from "../../Stores/MenuStore";
-    import OnlineUsersCount from "./OnlineUsersCount.svelte";
     import ChatActionMenu from "./ChatActionMenu.svelte";
     import ChatHeaderNewMenu from "./Header/ChatHeaderNewMenu.svelte";
     import { focusChatSearchRequest, getNewChatOptions } from "./Header/ChatHeaderNewMenu";
-    import { IconMessageCircle2, IconSearch, IconUsers, IconX } from "@wa-icons";
+    import { IconSearch, IconX } from "@wa-icons";
 
+    /**
+     * The top of the chat: two tabs, Chats and People, one search field for the open tab and the "+".
+     * The only presence number is on the People tab: everyone online in this world, this tab and its clones
+     * included. Nothing here repeats it.
+     */
     const gameScene = gameManager.getCurrentGameScene();
     const chat = gameManager.chatConnection;
-    const showChatButton = gameScene.room.isChatEnabled;
-    const showUserListButton = gameScene.room.isChatOnlineListEnabled;
-    const showNavBar = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
+    const hasChatsTab = gameScene.room.isChatEnabled;
+    const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
+    const showPeopleCount = gameScene.room.isChatOnlineListEnabled;
+    const worldUserCount = gameScene.worldUserCounter;
     const userProviderMergerPromise = gameScene.userProviderMerger;
     const chatStatusStore = chat.connectionStatus;
     const isMatrixGuest = chat.isGuest;
+    const proximityChatRoom = gameScene.proximityChatRoom;
+    const proximityUnread = proximityChatRoom.hasUnreadMessages;
     let typingTimer: ReturnType<typeof setTimeout>;
     let searchLoader = false;
     let searchInput: HTMLInputElement | undefined;
     const DONE_TYPING_INTERVAL = 2000;
 
-    $: isInSpecificDiscussion = $selectedRoomStore !== undefined;
+    // A dot on the Chats tab when any saved conversation or the proximity chat has something unread.
+    const savedUnread: Readable<boolean> = derived(
+        [chat.rooms, chat.directRooms],
+        ([$rooms, $directRooms], set) => {
+            const all = [...$rooms, ...$directRooms];
+            if (all.length === 0) {
+                set(false);
+                return;
+            }
+            return derived(
+                all.map((room) => room.hasUnreadMessages),
+                ($flags) => $flags.some(Boolean)
+            ).subscribe(set);
+        },
+        false
+    );
 
-    // Search is always visible: rooms and people on the Chat tab while the chat is up, people on the People tab.
+    $: isInSpecificDiscussion = $selectedRoomStore !== undefined;
+    $: hasUnreadChats = $savedUnread || $proximityUnread;
+    $: activeTab = $navChat.key === "users" ? "people" : $navChat.key === "chat" ? "chats" : undefined;
+
+    // Search is always visible: the open tab's own list only. People search reaches the world's members too.
     $: showSearch = $navChat.key === "users" || ($navChat.key === "chat" && $chatStatusStore !== "OFFLINE");
 
-    // One "+" for New message, New room and New folder. Hidden for guests: saved conversations need an account.
+    // One "+" for New message, New group, Find a group and New folder. Hidden for guests: saved chat needs an account.
     $: newChatOptions =
         $navChat.key === "chat"
             ? getNewChatOptions({
                   isSignedIn: $userIsConnected,
                   isMatrixGuest: $isMatrixGuest,
                   chatStatus: $chatStatusStore,
-                  isPeopleListEnabled: showUserListButton,
+                  isPeopleListEnabled: gameScene.room.isChatOnlineListEnabled,
               })
             : [];
 
@@ -55,7 +83,6 @@
             }
             return;
         }
-        if ($chatSearchBarValue === "") joignableRoom.set([]);
         clearTimeout(typingTimer);
     };
 
@@ -64,10 +91,6 @@
         clearTimeout(typingTimer);
         typingTimer = setTimeout(() => {
             searchLoader = true;
-            if ($navChat.key === "chat" && $chatSearchBarValue.trim() !== "") {
-                searchAccessibleRooms();
-            }
-
             userProviderMerger
                 .setFilter($chatSearchBarValue)
                 .catch((e) => console.error(e))
@@ -77,23 +100,10 @@
         }, DONE_TYPING_INTERVAL);
     };
 
-    const searchAccessibleRooms = () => {
-        chat.searchAccessibleRooms($chatSearchBarValue)
-            .then((chatRooms: { id: string; name: string | undefined }[]) => {
-                joignableRoom.set(chatRooms);
-            })
-            .catch((e) => console.error(e))
-            .finally(() => {
-                searchLoader = false;
-            });
-        return;
-    };
-
     function clearSearch(refocus: boolean) {
         clearTimeout(typingTimer);
         searchLoader = false;
         chatSearchBarValue.set("");
-        joignableRoom.set([]);
         userProviderMergerPromise
             .then((userProviderMerger) => userProviderMerger.setFilter(""))
             .catch((e) => console.error(e));
@@ -109,6 +119,15 @@
         chatInputFocusStore.set(false);
     }
 
+    function onTabKeyDown(event: KeyboardEvent) {
+        // Left and right move between the two tabs; the arrows never reach the game.
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (activeTab === "chats" && hasPeopleTab) navChat.switchToUserList();
+        else if (activeTab === "people" && hasChatsTab) navChat.switchToChat();
+    }
+
     // New message switches to the People tab; its header takes the focus request and focuses search.
     onMount(() => {
         if ($navChat.key !== "users" || !$focusChatSearchRequest) return;
@@ -121,39 +140,60 @@
 </script>
 
 <div class="relative z-40 w-full">
-    <div class="p-2 flex items-center w-full">
-        <div>
-            {#if showNavBar}
-                {#if $navChat.key === "chat" && showUserListButton}
-                    <button
-                        class="userList p-3 hover:bg-white/10 rounded aspect-square w-12 h-12 !text-white"
-                        on:click={() => navChat.switchToUserList()}
-                    >
-                        <IconUsers font-size="20" />
-                    </button>
-                {:else if showChatButton}
-                    <button
-                        class="p-3 hover:bg-white/10 rounded aspect-square w-12 h-12 !text-white"
-                        on:click={() => navChat.switchToChat()}
-                    >
-                        <IconMessageCircle2 font-size="20" />
-                    </button>
-                {/if}
-            {/if}
-        </div>
-        <div class="flex flex-col items-center justify-center grow">
-            <div class="text-md font-bold h-5">
-                {#if $navChat.key === "chat"}
-                    {$LL.chat.chat()}
+    <div class="flex items-center gap-2 ps-2 pe-2 pt-2 pb-1">
+        {#if hasChatsTab && hasPeopleTab}
+            <div class="chat-tabs flex grow min-w-0 gap-1 rounded-xl bg-white/5 p-1" role="tablist">
+                <button
+                    type="button"
+                    role="tab"
+                    class="chat-tab {activeTab === 'chats' ? 'is-active' : ''}"
+                    aria-selected={activeTab === "chats"}
+                    tabindex={activeTab === "chats" ? 0 : -1}
+                    data-testid="chatTabChats"
+                    on:click={() => navChat.switchToChat()}
+                    on:keydown={onTabKeyDown}
+                >
+                    <span class="truncate">{$LL.chat.header.tabChats()}</span>
+                    {#if hasUnreadChats}
+                        <span
+                            class="chat-tab-dot h-2 w-2 shrink-0 rounded-full bg-secondary-200"
+                            role="img"
+                            aria-label={$LL.chat.header.unreadChats()}
+                            data-testid="chatTabChatsUnread"
+                        />
+                    {/if}
+                </button>
+                <button
+                    type="button"
+                    role="tab"
+                    class="chat-tab userList {activeTab === 'people' ? 'is-active' : ''}"
+                    aria-selected={activeTab === "people"}
+                    tabindex={activeTab === "people" ? 0 : -1}
+                    data-testid="chatTabPeople"
+                    on:click={() => navChat.switchToUserList()}
+                    on:keydown={onTabKeyDown}
+                >
+                    <span class="truncate">{$LL.chat.header.tabPeople()}</span>
+                    {#if showPeopleCount && $worldUserCount > 0}
+                        <span
+                            class="chat-tab-count shrink-0 rounded-full px-1.5 text-[11px] font-bold tabular-nums leading-4"
+                            aria-label={$LL.chat.header.peopleOnline({ count: $worldUserCount })}
+                            title={$LL.chat.header.peopleOnline({ count: $worldUserCount })}
+                            data-testid="chatTabPeopleCount">{$worldUserCount}</span
+                        >
+                    {/if}
+                </button>
+            </div>
+        {:else}
+            <div class="grow min-w-0 px-2 text-md font-bold truncate">
+                {#if $navChat.key === "users"}
+                    {$LL.chat.header.tabPeople()}
                 {:else}
-                    {$LL.chat.users()}
+                    {$LL.chat.header.tabChats()}
                 {/if}
             </div>
-            {#if gameScene.room.isChatOnlineListEnabled}
-                <OnlineUsersCount />
-            {/if}
-        </div>
-        <div class="relative">
+        {/if}
+        <div class="relative shrink-0">
             <ChatActionMenu hasCloseChat={$hideActionBarStoreBecauseOfChatBar && !isInSpecificDiscussion} />
         </div>
     </div>
@@ -222,6 +262,50 @@
 </div>
 
 <style>
+    .chat-tab {
+        margin: 0;
+        display: flex;
+        flex: 1 1 0;
+        min-width: 0;
+        align-items: center;
+        justify-content: center;
+        gap: 0.375rem;
+        height: 2.25rem;
+        padding: 0 0.75rem;
+        border-radius: 0.625rem;
+        font-size: 0.875rem;
+        font-weight: 700;
+        color: rgb(255 255 255 / 0.65);
+        background: transparent;
+        transition: background-color 150ms ease, color 150ms ease;
+    }
+
+    .chat-tab:hover {
+        color: #fff;
+        background: rgb(255 255 255 / 0.08);
+    }
+
+    .chat-tab:focus-visible {
+        outline: 2px solid rgb(255 255 255 / 0.6);
+        outline-offset: -2px;
+    }
+
+    .chat-tab.is-active {
+        color: #fff;
+        background: rgb(255 255 255 / 0.14);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+    }
+
+    .chat-tab-count {
+        background: rgb(255 255 255 / 0.12);
+        color: rgb(255 255 255 / 0.85);
+    }
+
+    .chat-tab.is-active .chat-tab-count {
+        background: linear-gradient(135deg, rgb(134 41 252 / 0.85), rgb(65 86 246 / 0.85));
+        color: #fff;
+    }
+
     /* The field has its own clear button; hide the browser's. */
     .chat-search-input::-webkit-search-cancel-button,
     .chat-search-input::-webkit-search-decoration {

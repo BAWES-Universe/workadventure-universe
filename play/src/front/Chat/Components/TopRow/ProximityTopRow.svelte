@@ -16,8 +16,8 @@
     /** Opens the proximity chat timeline, exactly as the row always did. */
     export let onOpen: () => void;
     /**
-     * Whether the card shows: in a bubble, a meeting or a zone. When you're alone the "Here" strip says who is
-     * on the map and the nearby chat you had sits in the list, so the card stays out of the way.
+     * Whether the card shows: in a bubble, a meeting or a zone. When you're alone there is no card: the proximity
+     * chats you had sit in the list as rows of their own, and the People tab says who is around.
      */
     export let visible = false;
 
