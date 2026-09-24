@@ -107,7 +107,7 @@
         <button
             bind:this={button}
             type="button"
-            class="express-button relative m-0 flex h-16 w-16 sm:h-14 sm:w-14 xl:h-16 xl:w-16 items-center justify-center rounded-lg p-0 bg-contrast/80 backdrop-blur"
+            class="express-button relative m-0 flex h-16 w-16 sm:h-14 sm:w-14 xl:h-16 xl:w-16 items-center justify-center rounded-lg p-0 bg-contrast/80 backdrop-blur hover:bg-contrast/100"
             class:is-open={open}
             class:pulse
             aria-label={open ? $LL.say.express.close() : $LL.say.express.button()}
