@@ -10,7 +10,8 @@
     "AllowedScopes": ["openid", "profile", "email", "tags-scope", "some-app-scope-1", "offline_access"],
     "IdentityTokenLifetime": 3600,
     "AccessTokenLifetime": 300,
-    "RequireClientSecret": false
+    "RequireClientSecret": false,
+    "AllowOfflineAccess": true
   },
   {
     "ClientId": "authorization-code-with-pkce-client-id",
@@ -23,6 +24,7 @@
     "AllowedScopes": ["openid", "profile", "email", "tags-scope", "some-app-scope-1", "offline_access"],
     "IdentityTokenLifetime": 3600,
     "AccessTokenLifetime": 300,
-    "RequireClientSecret": false
+    "RequireClientSecret": false,
+    "AllowOfflineAccess": true
   }
 ]
