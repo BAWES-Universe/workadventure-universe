@@ -479,6 +479,15 @@ const chat: DeepPartial<Translation["chat"]> = {
         },
     },
     remoteUserNotConnected: "المستخدم غير مصدق. لا يمكن إرسال الرسالة.", // User not authenticated. Cannot send message.
+    thread: {
+        now: "الآن: {label}",
+        nobodyNearby: "لا أحد بالقرب",
+        withPeople: "مع {names}",
+        currentGroup: "المجموعة الحالية",
+        notSent: "لم تُرسل، انتهت المحادثة",
+        encrypted: "مشفّرة من طرف إلى طرف",
+        guestFooter: "سجّل الدخول لمراسلة الأشخاص لاحقًا",
+    },
     topRow: {
         meeting: "اجتماع", // Meeting
         twoNames: "{first} و{second}", // {first} & {second}

@@ -19,7 +19,8 @@
     import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
-    import { IconCloudLock, IconRefresh } from "@wa-icons";
+    import { resolveChatLayout } from "./ChatLayout";
+    import { IconChevronLeft, IconChevronRight, IconCloudLock, IconRefresh } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
@@ -53,16 +54,21 @@
 
     $: visibleJoignableRooms = withoutAreaChatRooms($joignableRoom, $hiddenAreaRoomIds);
 
-    $: displayTwoColumnLayout = sideBarWidth >= CHAT_LAYOUT_LIMIT;
+    // One rule for both the columns and the list: at 670px and wider, list and thread sit side by side.
+    // Below that, an open thread takes the whole panel, and the list (with the Chat / People tabs) hides.
+    $: layout = resolveChatLayout(sideBarWidth, CHAT_LAYOUT_LIMIT, $selectedRoomStore !== undefined);
+    $: displayTwoColumnLayout = layout.twoColumns;
+
+    const isMatrixChatEnabled = gameManager.getCurrentGameScene().room.isMatrixChatEnabled;
+    const direction = document.documentElement.getAttribute("dir") || "ltr";
 </script>
 
 <div
-    class="overflow-auto h-full grid grid-rows-[1fr_auto] {sideBarWidth > INITIAL_SIDEBAR_WIDTH * 2 &&
-    $navChat.key === 'chat'
+    class="overflow-auto h-full grid grid-rows-[1fr_auto] {displayTwoColumnLayout && $navChat.key === 'chat'
         ? 'grid-cols-[auto_1fr]'
         : 'grid-cols-[1fr]'}"
 >
-    {#if $selectedRoomStore === undefined || displayTwoColumnLayout}
+    {#if layout.showList}
         <div
             class="w-full flex flex-col border border-solid border-y-0 border-l-0 border-white/10 relative overflow-y-auto overflow-x-none"
             style={displayTwoColumnLayout ? `width:335px ;flex : 0 0 auto` : ``}
@@ -83,9 +89,7 @@
                     <ChatError />
                 {/if}
 
-                {#if !$userIsConnected && gameManager.getCurrentGameScene().room.isMatrixChatEnabled}
-                    <RequireConnection />
-                {:else if $loginTokenErrorStore}
+                {#if $loginTokenErrorStore && !(!$userIsConnected && isMatrixChatEnabled)}
                     <RequireConnection>
                         <span slot="emoji">
                             <IconRefresh font-size="50" />
@@ -103,6 +107,24 @@
                     <ProximityTopRow {proximityChatRoom} onOpen={toggleDisplayProximityChat} />
                     <AreaChatRows />
                 </div>
+                {#if !$userIsConnected && isMatrixChatEnabled}
+                    <!-- Guests: saved conversations need an account. One quiet line instead of a blocking panel. -->
+                    <div class="px-2 pb-2">
+                        <a
+                            class="group flex items-center gap-2 min-h-11 px-3 rounded-xl text-sm text-white/70 no-underline hover:no-underline hover:text-white hover:bg-white/5 focus-visible:bg-white/5"
+                            href="/login"
+                            data-testid="chatGuestSignIn"
+                            on:click={() => analyticsClient.login()}
+                        >
+                            <span class="grow">{$LL.chat.thread.guestFooter()}</span>
+                            {#if direction === "rtl"}
+                                <IconChevronLeft font-size="16" class="shrink-0 opacity-60 group-hover:opacity-100" />
+                            {:else}
+                                <IconChevronRight font-size="16" class="shrink-0 opacity-60 group-hover:opacity-100" />
+                            {/if}
+                        </a>
+                    </div>
+                {/if}
                 {#if $chatConnectionStatus === "ONLINE"}
                     {#if visibleJoignableRooms.length > 0 && $chatSearchBarValue.trim() !== ""}
                         <p class="p-0 m-0 text-gray-400">{$LL.chat.availableRooms()}</p>

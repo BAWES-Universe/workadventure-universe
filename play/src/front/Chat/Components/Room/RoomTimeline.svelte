@@ -1,20 +1,24 @@
 <script lang="ts">
     import { afterUpdate, beforeUpdate, onMount } from "svelte";
-    import { get } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import type { ChatRoom } from "../../Connection/ChatConnection";
+    import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
     import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
     import { matrixSecurity } from "../../Connection/Matrix/MatrixSecurity";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
+    import type { ProximitySessionMarker } from "../../Connection/Proximity/ProximitySessions";
+    import { buildTimelineEntries } from "../../Connection/Proximity/ProximitySessions";
     import LL from "../../../../i18n/i18n-svelte";
     import Message from "./Message.svelte";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
-    import { IconChevronLeft, IconChevronRight, IconLoader, IconMailBox } from "@wa-icons";
+    import SessionDivider from "./Thread/SessionDivider.svelte";
+    import ThreadNowLine from "./Thread/ThreadNowLine.svelte";
+    import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
 
@@ -42,6 +46,15 @@
     $: messages = room?.messages;
     $: roomName = room?.name;
     $: typingMembers = room.typingMembers;
+    $: isEncrypted = room.isEncrypted;
+    $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
+    // The proximity chat is one timeline across every group: split it into sessions with dividers,
+    // and highlight the group this tab is in now. Other rooms have no session markers.
+    $: spaceJoinedAt = proximityRoom ? proximityRoom.spaceJoinedAt : readable(undefined);
+    $: timelineEntries = buildTimelineEntries(
+        $messages as (ChatMessage & { session?: ProximitySessionMarker })[],
+        $spaceJoinedAt
+    );
 
     onMount(() => {
         initMessages()
@@ -225,8 +238,25 @@
                 {:else}
                     <div class="p-3 rounded-2xl aspect-square w-12" />
                 {/if}
-                <div class="text-md font-bold h-5 grow text-center" data-testid="roomName">
-                    {$roomName}
+                <div class="flex min-w-0 grow flex-col items-center gap-0.5">
+                    <div class="flex max-w-full items-center justify-center gap-1.5">
+                        <div class="text-md font-bold h-5 truncate text-center" data-testid="roomName">
+                            {proximityRoom ? $LL.chat.proximity() : $roomName}
+                        </div>
+                        {#if $isEncrypted}
+                            <span
+                                class="shrink-0 text-white/50"
+                                title={$LL.chat.thread.encrypted()}
+                                data-testid="threadEncryptedLock"
+                            >
+                                <IconLock font-size="14" />
+                                <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
+                            </span>
+                        {/if}
+                    </div>
+                    {#if proximityRoom}
+                        <ThreadNowLine room={proximityRoom} />
+                    {/if}
                 </div>
 
                 <div class="p-3 rounded-2xl aspect-square w-12" />
@@ -287,12 +317,18 @@
                         </li>
                     {/if}
                 {/if}
-                {#each $messages as message (message.id)}
-                    <li class="last:pb-3" data-event-id={message.id}>
-                        {#if message.type === "outcoming" || message.type === "incoming"}
-                            <MessageSystem {message} />
+                {#each timelineEntries as entry (entry.message.id)}
+                    <li class="last:pb-3" data-event-id={entry.message.id}>
+                        {#if entry.role === "start" && entry.message.session}
+                            <SessionDivider
+                                marker={entry.message.session}
+                                date={entry.message.date}
+                                isCurrent={entry.isCurrentSession}
+                            />
+                        {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
+                            <MessageSystem message={entry.message} />
                         {:else}
-                            <Message on:updateMessageBody={onUpdateMessageBody} {message} />
+                            <Message on:updateMessageBody={onUpdateMessageBody} message={entry.message} />
                         {/if}
                     </li>
                 {/each}
@@ -303,6 +339,9 @@
             <TypingUsers typingMembers={$typingMembers} />
         {/if}
 
-        <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
+        <!-- One composer per conversation: its draft, files and pending sends belong to this room only. -->
+        {#key room}
+            <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
+        {/key}
     {/if}
 </div>

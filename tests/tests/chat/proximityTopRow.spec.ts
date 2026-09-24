@@ -41,7 +41,10 @@ test.describe("Chat top row @chat @nomobile @nowebkit", () => {
     // Tapping the row opens the same proximity timeline as before.
     await alice.getByTestId("toggleDisplayProximityChat").click();
     await expect(alice.getByTestId("roomName")).toHaveText("Proximity Chat");
-    await expect(alice.locator(".messageTextBody")).toContainText("New discussion with Bob");
+    await expect(alice.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Bob");
+    // The thread says who you're with now, so older messages are never mistaken for this group's.
+    await expect(alice.getByTestId("threadNowLabel")).toHaveText("Now: Bob");
+    await expect(alice.getByTestId("threadSessionDivider").last()).toHaveAttribute("data-current", "true");
 
     await bob.context().close();
     await alice.context().close();
