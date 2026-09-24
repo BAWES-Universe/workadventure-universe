@@ -24,9 +24,13 @@
     // or the map editor is in use.
     $: visible =
         !$chatVisibilityStore && !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorModeStore;
-    $: open = $expressTrayStore !== "closed";
-    $: if (!visible && open) {
-        expressTrayStore.close();
+    // The tray only shows while the button does, whatever the store says.
+    $: open = visible && $expressTrayStore !== "closed";
+    // Close the store once the button hides. Deferred to after this update: setting the store while Svelte is
+    // computing reactive values left `open` stale at true, so after the map editor (which hides the button)
+    // the tray came back and could no longer be closed.
+    $: if (!visible && $expressTrayStore !== "closed") {
+        queueMicrotask(() => expressTrayStore.close());
     }
     $: faceEmoji = $emoteDataStore.get(1)?.emoji ?? "👍";
 
