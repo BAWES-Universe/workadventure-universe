@@ -67,4 +67,54 @@ describe("UserProviderMerger", () => {
             AvailabilityStatus.UNCHANGED
         );
     });
+    it("keeps each tab of the same account (clones) as a separate person", () => {
+        const worldProvider: UserProviderInterface = {
+            users: writable<PartialChatUser[]>([
+                {
+                    chatId: "@me:matrix",
+                    uuid: "uuid-me",
+                    username: "Me",
+                    playUri: "playUri1",
+                    roomName: "Room1",
+                    spaceUserId: "space-1",
+                },
+                {
+                    chatId: "@me:matrix",
+                    uuid: "uuid-me",
+                    username: "Me",
+                    playUri: "playUri2",
+                    roomName: "Room2",
+                    spaceUserId: "space-2",
+                },
+                {
+                    chatId: "@bob:matrix",
+                    uuid: "uuid-bob",
+                    username: "Bob",
+                    playUri: "playUri1",
+                    spaceUserId: "space-3",
+                },
+            ]),
+            setFilter: () => Promise.resolve(),
+        };
+        const chatProvider: UserProviderInterface = {
+            users: writable<PartialChatUser[]>([
+                { chatId: "@me:matrix", username: "Me", isAdmin: true },
+                { chatId: "@bob:matrix", username: "Bob" },
+            ]),
+            setFilter: () => Promise.resolve(),
+        };
+
+        const usersByRoom = get(new UserProviderMerger([worldProvider, chatProvider]).usersByRoomStore);
+
+        const room1 = usersByRoom.get("playUri1")?.users ?? [];
+        const room2 = usersByRoom.get("playUri2")?.users ?? [];
+        expect(room1.map((user) => user.spaceUserId).sort()).toEqual(["space-1", "space-3"]);
+        expect(room2.map((user) => user.spaceUserId)).toEqual(["space-2"]);
+        // Chat-only data (no space user id) is merged into every clone.
+        expect(room1.find((user) => user.spaceUserId === "space-1")?.isAdmin).toBe(true);
+        expect(room2[0].isAdmin).toBe(true);
+        expect(room2[0].chatId).toBe("@me:matrix");
+        // Nobody ends up in the "disconnected" group.
+        expect(usersByRoom.get(undefined)).toBeUndefined();
+    });
 });

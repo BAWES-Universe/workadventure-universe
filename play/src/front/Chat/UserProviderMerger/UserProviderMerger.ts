@@ -43,46 +43,12 @@ export class UserProviderMerger {
                 }
 
                 // Step 2: merge users with same chatId
-                const mergedUsers = new Map<ChatId | UserUuid, AnyKindOfUser>();
-                for (const chatUserList of usersByChatId.values()) {
-                    const mergedUser = chatUserList.reduce((acc, user) => {
-                        return {
-                            chatId: user.chatId || acc.chatId,
-                            uuid: user.uuid || acc.uuid,
-                            username: user.username || acc.username,
-                            availabilityStatus: user.availabilityStatus || acc.availabilityStatus,
-                            pictureStore: user.pictureStore || acc.pictureStore,
-                            roomName: user.roomName || acc.roomName,
-                            playUri: user.playUri || acc.playUri,
-                            isAdmin: user.isAdmin || acc.isAdmin,
-                            isMember: user.isMember || acc.isMember,
-                            visitCardUrl: user.visitCardUrl || acc.visitCardUrl,
-                            color: user.color || acc.color,
-                            spaceUserId: user.spaceUserId || acc.spaceUserId,
-                        } as AnyKindOfUser;
-                    });
-
-                    const defaultUser = {
-                        chatId: undefined,
-                        username: "",
-                        pictureStore: writable(undefined),
-                        roomName: undefined,
-                        playUri: undefined,
-                        color: undefined,
-                        spaceUserId: undefined,
-                    };
-
-                    const fullUser = {
-                        ...defaultUser,
-                        ...mergedUser,
-                        username: mergedUser.username ?? "",
-                        availabilityStatus: mergedUser.availabilityStatus ?? writable(AvailabilityStatus.UNCHANGED),
-                    };
-
-                    mergedUsers.set(
-                        (mergedUser.chatId as ChatId | undefined) ?? (mergedUser.uuid as UserUuid),
-                        fullUser
-                    );
+                // Keyed by chat id or uuid, suffixed with the space user id for extra tabs of the same account.
+                const mergedUsers = new Map<string, AnyKindOfUser>();
+                for (const [uniqueId, chatUserList] of usersByChatId.entries()) {
+                    for (const [key, entries] of splitBySpaceUser(uniqueId, chatUserList)) {
+                        mergedUsers.set(key, mergeEntries(entries));
+                    }
                 }
 
                 // Step 3: sort users by room
@@ -115,4 +81,70 @@ export class UserProviderMerger {
     setFilter(searchText: string): Promise<void[]> {
         return Promise.all(this.userProviders.map((userProvider) => userProvider.setFilter(searchText)));
     }
+}
+
+/**
+ * One account can be in the world several times, once per open tab (a "clone"). Each tab has its own space user id.
+ * Entries sharing a chat id or uuid are merged into one person, except that each distinct space user id stays a
+ * separate person, so clones see and can reach each other. Entries without a space user id (chat or admin data)
+ * are merged into every clone.
+ */
+function splitBySpaceUser(
+    uniqueId: ChatId | UserUuid,
+    entries: PartialAnyKindOfUser[]
+): [string, PartialAnyKindOfUser[]][] {
+    const spaceUserIds = new Set<string>();
+    for (const entry of entries) {
+        if (entry.spaceUserId) spaceUserIds.add(entry.spaceUserId);
+    }
+    if (spaceUserIds.size <= 1) {
+        return [[uniqueId, entries]];
+    }
+    const result: [string, PartialAnyKindOfUser[]][] = [];
+    let first = true;
+    for (const spaceUserId of spaceUserIds) {
+        // The first clone keeps the plain id so that lookups by chat id or uuid behave as before.
+        const key = first ? uniqueId : `${uniqueId}#${spaceUserId}`;
+        first = false;
+        result.push([key, entries.filter((entry) => !entry.spaceUserId || entry.spaceUserId === spaceUserId)]);
+    }
+    return result;
+}
+
+function mergeEntries(chatUserList: PartialAnyKindOfUser[]): AnyKindOfUser {
+    const mergedUser = chatUserList.reduce((acc, user) => {
+        return {
+            chatId: user.chatId || acc.chatId,
+            uuid: user.uuid || acc.uuid,
+            username: user.username || acc.username,
+            availabilityStatus: user.availabilityStatus || acc.availabilityStatus,
+            pictureStore: user.pictureStore || acc.pictureStore,
+            roomName: user.roomName || acc.roomName,
+            playUri: user.playUri || acc.playUri,
+            isAdmin: user.isAdmin || acc.isAdmin,
+            isMember: user.isMember || acc.isMember,
+            visitCardUrl: user.visitCardUrl || acc.visitCardUrl,
+            color: user.color || acc.color,
+            spaceUserId: user.spaceUserId || acc.spaceUserId,
+        } as AnyKindOfUser;
+    });
+
+    const defaultUser = {
+        chatId: undefined,
+        username: "",
+        pictureStore: writable(undefined),
+        roomName: undefined,
+        playUri: undefined,
+        color: undefined,
+        spaceUserId: undefined,
+    };
+
+    const fullUser = {
+        ...defaultUser,
+        ...mergedUser,
+        username: mergedUser.username ?? "",
+        availabilityStatus: mergedUser.availabilityStatus ?? writable(AvailabilityStatus.UNCHANGED),
+    };
+
+    return fullUser;
 }

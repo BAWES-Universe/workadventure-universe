@@ -5,7 +5,6 @@ export class SpeechBubble {
         this.element = document.createElement("div");
         this.element.textContent = text;
         this.element.classList.add(
-            "absolute",
             "bg-white/80",
             "backdrop-blur-[1px]",
             "rounded-full",

@@ -665,6 +665,46 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.context().close();
   });
 
+  test("Header: search is always visible and one + offers New message, New room and New folder", async ({ browser }) => {
+    await using page = await getPage(browser, 'Alice', Map.url("empty"));
+    await oidcMatrixUserLogin(page);
+    await ChatUtils.openChat(page);
+
+    // Search sits in the header, no menu to open first.
+    await expect(page.getByTestId("chatSearchInput")).toBeVisible();
+
+    const plus = page.getByTestId("openOptionToCreateRoomOrFolder");
+    await plus.click();
+    await expect(page.getByTestId("openNewMessageButton")).toBeVisible();
+    await expect(page.getByTestId("openCreateRoomModalButton")).toBeVisible();
+    await expect(page.getByTestId("openCreateFolderModalButton")).toBeVisible();
+
+    // Escape closes the menu and gives focus back to the +.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("openNewMessageButton")).toBeHidden();
+    await expect(plus).toBeFocused();
+
+    // New message: People tab, search focused, ready to pick someone.
+    await plus.click();
+    await page.getByTestId("openNewMessageButton").click();
+    await expect(page.getByTestId("chatSearchInput")).toBeFocused();
+    await expect(page.getByTestId("openOptionToCreateRoomOrFolder")).toHaveCount(0);
+
+    await page.context().close();
+  });
+
+  test("Header: guests keep search on People and get no +", async ({ browser }) => {
+    await using page = await getPage(browser, 'Alice', Map.url("empty"));
+    await ChatUtils.openChat(page);
+    await expect(page.getByTestId("openOptionToCreateRoomOrFolder")).toHaveCount(0);
+
+    await page.locator(".userList").click();
+    await expect(page.getByTestId("chatSearchInput")).toBeVisible();
+    await expect(page.getByTestId("openOptionToCreateRoomOrFolder")).toHaveCount(0);
+
+    await page.context().close();
+  });
+
   test("Verify a session with emoji", async ({ browser }) => {
     await using page = await getPage(browser, 'Alice', Map.url("empty"));
     await Menu.openMenuIfMobile(page);
