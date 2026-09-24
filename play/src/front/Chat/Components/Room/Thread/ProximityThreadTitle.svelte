@@ -6,8 +6,8 @@
     import { IconMessageCircle2 } from "@wa-icons";
 
     /**
-     * Header title of the nearby (proximity) chat: the wokas and names of who you're with, and a live line while
-     * the bubble lasts. One timeline across every group, so it always names who a message sent now goes to.
+     * Header title of the proximity chat: labelled as such, with the wokas and names of who you're with on a live
+     * line while the bubble lasts. People come and go in one timeline, so the line names who a message sent now goes to.
      */
     export let room: ProximityChatRoom;
 
@@ -31,16 +31,10 @@
         { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames }
     );
     $: isLive = state.kind === "withPeople";
-    $: title =
-        state.kind === "withPeople"
-            ? state.areaName ?? names
-            : state.kind === "alone"
-            ? $LL.chat.nearby.title()
-            : state.areaName;
+    // The title always says what this chat is; who is in it right now goes on the line underneath.
+    $: title = ("areaName" in state && state.areaName) || $LL.chat.nearby.title();
     $: subtitle = isLive
-        ? $LL.chat.nearby.talkingNow() +
-          $LL.chat.topRow.separator() +
-          (state.kind === "withPeople" && state.areaName ? names : $LL.chat.nearby.title())
+        ? $LL.chat.nearby.talkingNow() + $LL.chat.topRow.separator() + $LL.chat.thread.withPeople({ names })
         : state.kind === "meetingAlone"
         ? $LL.chat.topRow.onlyYouHere()
         : state.kind === "alone"

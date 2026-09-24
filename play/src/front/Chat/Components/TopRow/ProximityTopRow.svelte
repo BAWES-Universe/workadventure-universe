@@ -87,12 +87,8 @@
         { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames }
     );
 
-    $: title =
-        state.kind === "withPeople"
-            ? state.areaName ?? peopleNames
-            : state.kind === "alone"
-            ? $LL.chat.nearby.title()
-            : state.areaName;
+    // The title always says what this is ("Proximity Chat", or the meeting's name); the people go underneath.
+    $: title = ("areaName" in state && state.areaName) || $LL.chat.nearby.title();
 
     $: typingLine = formatTypingLine(
         $typingMembers.map((member) => member.name),
@@ -125,11 +121,9 @@
 
     $: subtitle =
         state.kind === "withPeople"
-            ? state.areaName
-                ? peopleNames
-                : latestMessageText
+            ? latestMessageText
                 ? `${latestMessageSender}: ${latestMessageText}`
-                : undefined
+                : $LL.chat.thread.withPeople({ names: peopleNames })
             : state.kind === "meetingAlone"
             ? $LL.chat.topRow.onlyYouHere()
             : undefined;
@@ -151,7 +145,9 @@
             on:click={onOpen}
             data-testid="toggleDisplayProximityChat"
         >
-            <span class="sr-only">{$LL.chat.proximity()}</span>
+            {#if title !== $LL.chat.nearby.title()}
+                <span class="sr-only">{$LL.chat.proximity()}</span>
+            {/if}
             <div class="relative flex shrink-0 items-center" aria-hidden="true">
                 {#if stackedPeople.length > 0}
                     <div class="flex items-center">

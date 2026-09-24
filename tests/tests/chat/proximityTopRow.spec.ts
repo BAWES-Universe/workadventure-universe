@@ -30,19 +30,25 @@ test.describe("Chat top row @chat @nomobile @nowebkit", () => {
     await expect(subtitle).toHaveText("You & Bob", { timeout: 20_000 });
     await expect(topRow).toBeHidden();
 
-    // Bob walks over: the live card appears, named after him.
+    // Bob walks over. Joining the bubble opens the proximity chat on its own, and in a one-column chat
+    // the open chat replaces the list, so the card is checked after going back to the list.
     await chatUtils.openUserList(bob, false);
     await chatUtils.UL_walkTo(bob, "Alice");
-    await expect(topRow).toHaveAttribute("data-state", "withPeople", { timeout: 20_000 });
-    await expect(alice.getByTestId("proximityTopRowTitle")).toHaveText("Bob");
-    await expect(alice.getByTestId("nearbyHint")).toBeHidden();
-
-    // Tapping the card opens the same proximity timeline as before, titled with who you're with.
-    await alice.getByTestId("toggleDisplayProximityChat").click();
-    await expect(alice.getByTestId("roomName")).toHaveText("Bob");
-    await expect(alice.getByTestId("threadNowLabel")).toContainText("Talking now");
+    await expect(alice.getByTestId("roomName")).toHaveText("Proximity Chat", { timeout: 20_000 });
+    await expect(alice.getByTestId("threadNowLabel")).toHaveText("Talking now · With Bob");
     await expect(alice.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Bob");
     await expect(alice.getByTestId("threadSessionDivider").last()).toHaveAttribute("data-current", "true");
+
+    // Back on the list: the live card is labelled as the proximity chat, with who you're with underneath.
+    await chatUtils.closeTimeline(alice);
+    await expect(topRow).toHaveAttribute("data-state", "withPeople");
+    await expect(alice.getByTestId("proximityTopRowTitle")).toHaveText("Proximity Chat");
+    await expect(alice.getByTestId("proximityTopRowSubtitle")).toHaveText("With Bob");
+    await expect(alice.getByTestId("nearbyHint")).toBeHidden();
+
+    // Tapping the card opens the same proximity chat again.
+    await alice.getByTestId("toggleDisplayProximityChat").click();
+    await expect(alice.getByTestId("roomName")).toHaveText("Proximity Chat");
 
     await bob.context().close();
     await alice.context().close();

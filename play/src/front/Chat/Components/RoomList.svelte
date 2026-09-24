@@ -22,7 +22,7 @@
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
     import { resolveChatLayout } from "./ChatLayout";
-    import { IconChevronRight, IconCloudLock, IconRefresh } from "@wa-icons";
+    import { IconChevronRight, IconClock, IconCloudLock, IconMessage, IconRefresh, IconUsersGroup } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
@@ -131,21 +131,42 @@
                     </div>
                 {/if}
                 {#if !$userIsConnected && isMatrixChatEnabled}
-                    <!-- Guests: saved conversations need an account. One quiet line instead of a blocking panel. -->
-                    <div class="px-2 pb-2">
+                    <!-- Guests: say what they have, what an account adds, and how to get one. Never blocks the list. -->
+                    <section
+                        class="mx-2 mb-2 rounded-xl bg-white/5 p-3 text-sm text-white/80"
+                        aria-labelledby="chatGuestTitle"
+                        data-testid="chatGuestCard"
+                    >
+                        <h3 id="chatGuestTitle" class="m-0 text-sm font-bold text-white">{$LL.chat.guest.title()}</h3>
+                        <p class="m-0 mt-1 text-xs text-white/60">{$LL.chat.guest.intro()}</p>
+                        <ul class="m-0 mt-2 flex list-none flex-col gap-1.5 p-0 text-xs">
+                            <li class="flex items-start gap-2">
+                                <IconMessage font-size="16" class="mt-px shrink-0 text-white/60" aria-hidden="true" />
+                                <span>{$LL.chat.guest.messageAnyone()}</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <IconClock font-size="16" class="mt-px shrink-0 text-white/60" aria-hidden="true" />
+                                <span>{$LL.chat.guest.keepChats()}</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <IconUsersGroup
+                                    font-size="16"
+                                    class="mt-px shrink-0 text-white/60"
+                                    aria-hidden="true"
+                                />
+                                <span>{$LL.chat.guest.groups()}</span>
+                            </li>
+                        </ul>
                         <a
-                            class="group flex items-center gap-2 min-h-11 px-3 rounded-xl text-sm text-white/70 no-underline hover:no-underline hover:text-white hover:bg-white/5 focus-visible:bg-white/5"
+                            class="group mt-3 flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-secondary px-3 text-sm font-bold text-white no-underline hover:no-underline hover:bg-secondary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
                             href="/login"
                             data-testid="chatGuestSignIn"
                             on:click={() => analyticsClient.login()}
                         >
-                            <span class="grow">{$LL.chat.thread.guestFooter()}</span>
-                            <IconChevronRight
-                                font-size="16"
-                                class="shrink-0 opacity-60 group-hover:opacity-100 rtl:-scale-x-100"
-                            />
+                            <span>{$LL.chat.guest.action()}</span>
+                            <IconChevronRight font-size="16" class="shrink-0 rtl:-scale-x-100" aria-hidden="true" />
                         </a>
-                    </div>
+                    </section>
                 {/if}
                 {#if $chatConnectionStatus === "ONLINE"}
                     {#if visibleJoignableRooms.length > 0 && $chatSearchBarValue.trim() !== ""}
