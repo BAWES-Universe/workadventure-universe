@@ -536,8 +536,19 @@ const chat: BaseTranslation = {
         folderRooms: "{count} room{{s}}",
         empty: "No conversations yet",
         noResults: "No conversations match your search",
-        newRoomOrFolder: "New room or folder",
         muted: "Muted",
+    },
+    header: {
+        newChat: "New message, room or folder",
+        newMessage: "New message",
+        newMessageHint: "Pick someone to write to",
+        newRoom: "New room",
+        newRoomHint: "A place to talk as a group",
+        newFolder: "New folder",
+        newFolderHint: "Keep rooms together",
+        searchChat: "Search rooms and people",
+        searchPeople: "Search people",
+        clearSearch: "Clear search",
     },
 };
 
