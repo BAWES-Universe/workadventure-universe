@@ -17,7 +17,7 @@
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
     import SessionDivider from "./Thread/SessionDivider.svelte";
-    import ThreadNowLine from "./Thread/ThreadNowLine.svelte";
+    import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -239,23 +239,24 @@
                     <div class="p-3 rounded-2xl aspect-square w-12" />
                 {/if}
                 <div class="flex min-w-0 grow flex-col items-center gap-0.5">
-                    <div class="flex max-w-full items-center justify-center gap-1.5">
-                        <div class="text-md font-bold h-5 truncate text-center" data-testid="roomName">
-                            {proximityRoom ? $LL.chat.proximity() : $roomName}
-                        </div>
-                        {#if $isEncrypted}
-                            <span
-                                class="shrink-0 text-white/50"
-                                title={$LL.chat.thread.encrypted()}
-                                data-testid="threadEncryptedLock"
-                            >
-                                <IconLock font-size="14" />
-                                <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
-                            </span>
-                        {/if}
-                    </div>
                     {#if proximityRoom}
-                        <ThreadNowLine room={proximityRoom} />
+                        <ProximityThreadTitle room={proximityRoom} />
+                    {:else}
+                        <div class="flex max-w-full items-center justify-center gap-1.5">
+                            <div class="text-md font-bold h-5 truncate text-center" data-testid="roomName">
+                                {$roomName}
+                            </div>
+                            {#if $isEncrypted}
+                                <span
+                                    class="shrink-0 text-white/50"
+                                    title={$LL.chat.thread.encrypted()}
+                                    data-testid="threadEncryptedLock"
+                                >
+                                    <IconLock font-size="14" />
+                                    <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
+                                </span>
+                            {/if}
+                        </div>
                     {/if}
                 </div>
 

@@ -198,34 +198,45 @@ export function countWorldPresence(
     return { here, elsewhere };
 }
 
-export interface WorldLineTemplates {
-    /** "3 others in Headquarters" */
-    othersInRoom: (params: { count: number; roomName: string }) => string;
-    /** "3 others on this map", when the map has no name */
-    othersOnThisMap: (params: { count: number }) => string;
+/**
+ * Everyone on this map except this tab's own avatar, in the order the world lists them.
+ * Other tabs (clones) of the same account count, as in `countWorldPresence`.
+ */
+export function peopleOnThisMap<U extends WorldUser>(
+    users: Iterable<U>,
+    mySpaceUserId: string | undefined,
+    currentRoomUrl: string
+): U[] {
+    const currentRoom = normalizePlayUri(currentRoomUrl);
+    const people: U[] = [];
+    for (const user of users) {
+        if (mySpaceUserId !== undefined && user.spaceUserId === mySpaceUserId) continue;
+        if (user.playUri && normalizePlayUri(user.playUri) === currentRoom) people.push(user);
+    }
+    return people;
+}
+
+export interface HereLineTemplates extends NameTemplates {
+    /** "You" */
+    you: string;
+    /** "Only you here" */
+    onlyYou: string;
     /** "12 elsewhere in this world" */
     elsewhere: (params: { count: number }) => string;
-    /** "No one else is in this world right now" */
-    nobodyInWorld: string;
     /** Joins the two parts: " · " */
     separator: string;
 }
 
 /**
- * The second line of the alone state: "3 others in Headquarters · 12 elsewhere in this world".
+ * The second line of the "Here" strip: who is on this map with you ("You & Omar", "You, Omar +2"),
+ * or "Only you here · 12 elsewhere in this world".
  */
-export function formatWorldLine(
-    presence: WorldPresence,
-    roomName: string | undefined,
-    templates: WorldLineTemplates
+export function formatHereLine(
+    namesHere: readonly string[],
+    elsewhereCount: number,
+    templates: HereLineTemplates
 ): string {
-    if (presence.here === 0 && presence.elsewhere === 0) return templates.nobodyInWorld;
-    // Alone on this map: line one already says so, don't add "0 others in …".
-    if (presence.here === 0) return templates.elsewhere({ count: presence.elsewhere });
-    const trimmedRoomName = roomName?.trim();
-    const herePart = trimmedRoomName
-        ? templates.othersInRoom({ count: presence.here, roomName: trimmedRoomName })
-        : templates.othersOnThisMap({ count: presence.here });
-    if (presence.elsewhere === 0) return herePart;
-    return herePart + templates.separator + templates.elsewhere({ count: presence.elsewhere });
+    if (namesHere.length > 0) return formatPeopleNames([templates.you, ...namesHere], templates);
+    if (elsewhereCount === 0) return templates.onlyYou;
+    return templates.onlyYou + templates.separator + templates.elsewhere({ count: elsewhereCount });
 }

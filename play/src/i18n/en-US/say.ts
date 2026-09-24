@@ -35,6 +35,15 @@ const say: BaseTranslation = {
         editHint: "Tap an emote or a phrase to change it",
         changeEmote: "Change {emoji}",
         editPhrase: "Edit “{phrase}”",
+        shortcuts: {
+            title: "Shortcuts",
+            say: "Say something",
+            think: "Think something",
+            emote: "Play an emote",
+            edit: "Edit emotes and phrases",
+            rightClick: "Right-click",
+            longPress: "Long-press",
+        },
     },
     tooltip: {
         description: {
