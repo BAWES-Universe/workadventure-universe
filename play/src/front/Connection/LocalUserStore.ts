@@ -2,6 +2,8 @@ import { z } from "zod";
 import { PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH, PEER_VIDEO_RECOMMENDED_BANDWIDTH } from "../Enum/EnvironmentVariable";
 import type { Emoji } from "../Stores/Utils/emojiSchema";
 import { arrayEmoji } from "../Stores/Utils/emojiSchema";
+import type { QuickPhrase } from "../Stores/Utils/quickPhraseSchema";
+import { arrayQuickPhrase } from "../Stores/Utils/quickPhraseSchema";
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { requestedStatusFactory } from "../Rules/StatusRules/StatusFactory/RequestedStatusFactory";
 import { INITIAL_SIDEBAR_WIDTH } from "../Stores/ChatStore";
@@ -36,6 +38,7 @@ const userProperties = "user-properties";
 const cameraPrivacySettings = "cameraPrivacySettings";
 const microphonePrivacySettings = "microphonePrivacySettings";
 const emojiFavorite = "emojiFavorite";
+const quickPhrases = "quickPhrases";
 const speakerDeviceId = "speakerDeviceId";
 const matrixUserId = "matrixUserId";
 const matrixAccessToken = "matrixAccessToken";
@@ -514,6 +517,21 @@ class LocalUserStore {
         } catch (e) {
             localStorage.removeItem(emojiFavorite);
             console.error("The localStorage key 'emojiFavorite' format is incorrect:", e);
+            return null;
+        }
+    }
+
+    setQuickPhrases(value: QuickPhrase[]) {
+        localStorage.setItem(quickPhrases, JSON.stringify(value));
+    }
+    getQuickPhrases(): QuickPhrase[] | null {
+        const value = localStorage.getItem(quickPhrases);
+        if (value == undefined) return null;
+        try {
+            return arrayQuickPhrase.parse(JSON.parse(value));
+        } catch (e) {
+            localStorage.removeItem(quickPhrases);
+            console.error("The localStorage key 'quickPhrases' format is incorrect:", e);
             return null;
         }
     }

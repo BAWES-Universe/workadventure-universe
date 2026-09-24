@@ -64,9 +64,9 @@ class Chat {
     }
 
     async UL_walkTo(page: Page, nickname: string){
-        await page.locator('.user', {hasText: nickname}).locator('.wa-dropdown').click();
-        await expect(page.locator('.user', {hasText: nickname}).locator('span:has-text("Talk to")')).toBeVisible();
-        await page.locator('.user', {hasText: nickname}).locator('span:has-text("Talk to")').click({ timeout: 5_000 });
+        // "Walk to" is a visible button on each person of the People tab (it used to be "Talk to" in the menu).
+        await expect(page.getByTestId('walk-to-'+nickname)).toBeVisible();
+        await page.getByTestId('walk-to-'+nickname).click({ timeout: 5_000 });
     }
 
     async UL_sendMessage(page: Page, nickname: string){

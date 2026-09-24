@@ -974,6 +974,22 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    /** A quick phrase was sent from the Express tray. Only its slot index, never its text. */
+    quickPhraseSent(index: number): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_quick_phrase_sent", { index });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The Express tray was opened: "tap" to express, "edit" by long-press or right-click. */
+    expressTrayOpened(mode: "tap" | "edit"): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_express_tray_opened", { mode });
+            })
+            .catch((e) => console.error(e));
+    }
     /** The chat panel went from closed to open. Tab switches inside an open panel don't count. */
     chatPanelOpened(source: ChatOpenSource): void {
         this.posthogPromise
