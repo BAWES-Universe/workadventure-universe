@@ -109,6 +109,17 @@
         }
     });
 
+    function isEmptyMessage(value: string | undefined): boolean {
+        // The input only allows <br> tags (new lines), so a message made of line breaks and spaces is empty.
+        return value == undefined || value.replace(/<br\s*\/?>/gi, "").trim().length === 0;
+    }
+
+    function stopTypingNow() {
+        if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
+        stopTypingTimeOutID = undefined;
+        room.stopTyping().catch((error) => console.error(error));
+    }
+
     function sendMessageOrEscapeLine(keyDownEvent: KeyboardEvent) {
         if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
         room.startTyping()
@@ -120,7 +131,7 @@
             })
             .catch((error) => console.error(error));
 
-        if (keyDownEvent.key === "Enter" || message == "" || message == undefined) {
+        if (keyDownEvent.key === "Enter" || isEmptyMessage(message)) {
             if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
             room.stopTyping().catch((error) => console.error(error));
         }
@@ -141,6 +152,9 @@
     }
 
     async function sendMessage(messageToSend: string) {
+        // Every send path (Enter, the Send button, files, application link) ends the typing status.
+        stopTypingNow();
+
         if (applicationProperty && applicationProperty.link.length !== 0) {
             room?.sendMessage(applicationProperty.link);
         }
@@ -314,9 +328,6 @@
             room?.sendMessage(messageToSend);
             messageInput.innerText = "";
             message = "";
-            if (stopTypingTimeOutID) {
-                clearTimeout(stopTypingTimeOutID);
-            }
         }
     }
 
@@ -326,7 +337,7 @@
     }
 
     function onInputHandler() {
-        if (message == "" || message == undefined) {
+        if (isEmptyMessage(message)) {
             if (stopTypingTimeOutID) clearTimeout(stopTypingTimeOutID);
             room.stopTyping().catch((error) => console.error(error));
         }
