@@ -35,6 +35,15 @@ const say: DeepPartial<Translation["say"]> = {
         editHint: "المس رمزًا تعبيريًا أو عبارة لتغييرها",
         changeEmote: "تغيير {emoji}",
         editPhrase: "تعديل «{phrase}»",
+        shortcuts: {
+            title: "الاختصارات",
+            say: "قل شيئًا",
+            think: "فكّر في شيء",
+            emote: "تشغيل تعبير",
+            edit: "تعديل التعبيرات والعبارات",
+            rightClick: "نقر بزر الفأرة الأيمن",
+            longPress: "ضغط مطوّل",
+        },
     },
     tooltip: {
         description: {

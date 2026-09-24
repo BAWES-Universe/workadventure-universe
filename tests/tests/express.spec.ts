@@ -107,14 +107,26 @@ test.describe("Express button @nowebkit", () => {
         await expect(page.getByTestId("express-tray")).toBeVisible();
     });
 
-    test("should hide the Express button while the chat is open", async ({ browser }) => {
+    test("should keep the Express button beside the chat on a desktop", async ({ browser }) => {
         await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
 
         await expect(page.getByTestId("express-button")).toBeVisible();
         await page.getByTestId("chat-btn").click();
-        await expect(page.getByTestId("express-button")).toBeHidden();
-        await page.getByTestId("chat-btn").click();
+        // The chat opens beside the game: nothing covers the button, so it stays.
         await expect(page.getByTestId("express-button")).toBeVisible();
+    });
+
+    test("should show the shortcuts when hovering the Express button", async ({ browser }) => {
+        await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
+
+        await page.getByTestId("express-button").hover();
+        await expect(page.getByTestId("express-shortcuts")).toBeVisible();
+        await expect(page.getByTestId("express-shortcuts")).toContainText("Enter");
+
+        // Opening the tray replaces the card.
+        await page.getByTestId("express-button").click();
+        await expect(page.getByTestId("express-tray")).toBeVisible();
+        await expect(page.getByTestId("express-shortcuts")).toBeHidden();
     });
     test("should type into the tray instead of triggering game shortcuts", async ({ browser }) => {
         await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));

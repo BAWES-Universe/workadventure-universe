@@ -4,12 +4,19 @@
 
     export let pictureStore: Readable<string | undefined>;
     export let name: string;
+    /** "sm" is 32px (top row stacks), "lg" is 40px (chat list rows). */
+    export let size: "sm" | "lg" = "sm";
+    /** Ring drawn around the avatar, in the colour of what's behind it, so stacked avatars separate. */
+    export let ring = true;
 
     $: initial = name.trim().charAt(0) || "?";
 </script>
 
 <div
-    class="top-row-avatar relative h-8 w-8 shrink-0 rounded-full overflow-hidden ring-2 ring-contrast bg-contrast-600 flex items-center justify-center"
+    class="top-row-avatar relative shrink-0 rounded-full overflow-hidden bg-contrast-600 flex items-center justify-center {size ===
+    'lg'
+        ? 'h-10 w-10'
+        : 'h-8 w-8'} {ring ? 'ring-2 ring-contrast' : ''}"
     style:background-color={$pictureStore ? undefined : getColorByString(name) ?? undefined}
     title={name}
 >
@@ -21,6 +28,8 @@
             draggable="false"
         />
     {:else}
-        <span class="text-xs font-bold uppercase text-white" aria-hidden="true">{initial}</span>
+        <span class="{size === 'lg' ? 'text-base' : 'text-xs'} font-bold uppercase text-white" aria-hidden="true"
+            >{initial}</span
+        >
     {/if}
 </div>

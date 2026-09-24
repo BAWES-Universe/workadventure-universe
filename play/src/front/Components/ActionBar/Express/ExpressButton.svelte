@@ -1,7 +1,6 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
     import { clickOutside } from "svelte-outside";
-    import { chatVisibilityStore } from "../../../Stores/ChatStore";
     import { hideActionBarStoreBecauseOfChatBar } from "../../../Chat/ChatSidebarWidthStore";
     import { highlightFullScreen } from "../../../Stores/ActionsCamStore";
     import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
@@ -19,10 +18,9 @@
 
     let button: HTMLButtonElement;
 
-    // Hidden whenever the chat panel is open, the action bar is hidden, a video is full screen,
-    // or the map editor is in use.
-    $: visible =
-        !$chatVisibilityStore && !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorModeStore;
+    // Hidden when the chat covers the game (phones: the action bar hides too), a video is full screen,
+    // or the map editor is in use. With the chat open beside the game on a desktop, it stays.
+    $: visible = !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorModeStore;
     // The tray only shows while the button does, whatever the store says.
     $: open = visible && $expressTrayStore !== "closed";
     // Close the store once the button hides. Deferred to after this update: setting the store while Svelte is
@@ -32,6 +30,23 @@
         queueMicrotask(() => expressTrayStore.close());
     }
     $: faceEmoji = $emoteDataStore.get(1)?.emoji ?? "👍";
+    $: emotes = [...$emoteDataStore.entries()].sort(([a], [b]) => a - b);
+
+    // Shortcut card: on devices with a mouse, after a short hover (or keyboard focus), while the tray is closed.
+    const finePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches;
+    let hintVisible = false;
+    let hintTimer: ReturnType<typeof setTimeout> | undefined;
+    function showHintSoon() {
+        if (!finePointer) return;
+        clearTimeout(hintTimer);
+        hintTimer = setTimeout(() => (hintVisible = true), 350);
+    }
+    function hideHint() {
+        clearTimeout(hintTimer);
+        hintVisible = false;
+    }
+    onDestroy(() => clearTimeout(hintTimer));
+    $: if (open) hideHint();
 
     type Burst = { id: number; glyph: string };
     let bursts: Burst[] = [];
@@ -102,6 +117,42 @@
     <div class="relative pointer-events-auto" data-testid="express" use:clickOutside={onClickOutside}>
         {#if open}
             <ExpressTray {sayEnabled} on:close={onTrayClose} />
+        {:else if hintVisible}
+            <div
+                class="express-hint absolute bottom-full right-0 mb-2 w-72 rounded-lg bg-contrast/90 backdrop-blur p-3 text-sm text-white pointer-events-none"
+                role="tooltip"
+                id="express-shortcuts"
+                data-testid="express-shortcuts"
+            >
+                <div class="mb-1.5 flex items-baseline justify-between gap-2">
+                    <span class="font-bold">{$LL.say.express.button()}</span>
+                    <span class="text-xs text-white/50">{$LL.say.express.shortcuts.title()}</span>
+                </div>
+                {#if sayEnabled}
+                    <div class="express-hint-row">
+                        <span>{$LL.say.express.shortcuts.say()}</span>
+                        <span class="flex gap-1"><kbd>Enter</kbd></span>
+                    </div>
+                    <div class="express-hint-row">
+                        <span>{$LL.say.express.shortcuts.think()}</span>
+                        <span class="flex gap-1"><kbd>Ctrl</kbd><kbd>Enter</kbd></span>
+                    </div>
+                {/if}
+                <div class="express-hint-row">
+                    <span>{$LL.say.express.shortcuts.emote()}</span>
+                    <span class="flex gap-2">
+                        {#each emotes as [index, emote] (index)}
+                            <span class="relative text-lg leading-none"
+                                >{emote.emoji}<kbd class="express-hint-digit">{index}</kbd></span
+                            >
+                        {/each}
+                    </span>
+                </div>
+                <div class="express-hint-row">
+                    <span>{$LL.say.express.shortcuts.edit()}</span>
+                    <span class="flex gap-1"><kbd>{$LL.say.express.shortcuts.rightClick()}</kbd></span>
+                </div>
+            </div>
         {/if}
 
         <button
@@ -113,10 +164,17 @@
             aria-label={open ? $LL.say.express.close() : $LL.say.express.button()}
             aria-expanded={open}
             aria-haspopup="dialog"
-            title={open ? undefined : $LL.say.express.button()}
+            title={open || finePointer ? undefined : $LL.say.express.button()}
             data-testid="express-button"
+            aria-describedby={hintVisible ? "express-shortcuts" : undefined}
             use:longpress={openEditing}
             on:click|stopPropagation={toggle}
+            on:mouseenter={showHintSoon}
+            on:mouseleave={hideHint}
+            on:focus={(event) => {
+                if (event.currentTarget.matches(":focus-visible")) showHintSoon();
+            }}
+            on:blur={hideHint}
             on:animationend={() => (pulse = false)}
         >
             <span class="express-halo" aria-hidden="true" />
@@ -138,6 +196,55 @@
 {/if}
 
 <style lang="scss">
+    .express-hint {
+        box-shadow: 0 18px 48px -12px rgba(0, 0, 0, 0.55);
+    }
+    .express-hint-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.375rem 0;
+        color: rgba(255, 255, 255, 0.75);
+    }
+    .express-hint-row + .express-hint-row {
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .express-hint kbd {
+        display: inline-grid;
+        place-items: center;
+        min-width: 1.375rem;
+        height: 1.375rem;
+        padding: 0 0.375rem;
+        border-radius: 0.375rem;
+        font: 600 0.6875rem / 1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+        color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+        box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+    .express-hint .express-hint-digit {
+        position: absolute;
+        right: -0.45rem;
+        bottom: -0.5rem;
+        min-width: 0.875rem;
+        height: 0.875rem;
+        padding: 0 0.1875rem;
+        border-radius: 0.25rem;
+        font-size: 0.5625rem;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+        .express-hint {
+            animation: express-hint-in 140ms cubic-bezier(0.2, 0, 0, 1);
+            transform-origin: bottom right;
+        }
+    }
+    @keyframes express-hint-in {
+        from {
+            opacity: 0;
+            transform: translateY(4px) scale(0.98);
+        }
+    }
+
     .express-button {
         -webkit-touch-callout: none;
         -webkit-user-select: none;

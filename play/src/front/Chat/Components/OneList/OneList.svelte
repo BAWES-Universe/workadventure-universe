@@ -13,6 +13,7 @@
     } from "../../Connection/ChatConnection";
     import { chatSearchBarValue } from "../../Stores/ChatStore";
     import { areaChatRooms } from "../../Stores/AreaPresenceStore";
+    import { WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore } from "../../Stores/ChatUserWokaStore";
     import Room from "../Room/Room.svelte";
     import RoomInvitation from "../Room/RoomInvitation.svelte";
     import RoomFolder from "../RoomFolder.svelte";
@@ -40,6 +41,8 @@
     // Per tab and in memory, like everything else in the list.
     const orderFreeze = new OrderFreeze();
     setContext(ONE_LIST_FREEZE_CONTEXT, orderFreeze);
+    // One lookup for every row: direct chats show the other person's woka when the room has no picture.
+    setContext(WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger));
     const displayed = freezeWhileHeld(entries, orderFreeze.held);
     const pointerHolder = {};
 

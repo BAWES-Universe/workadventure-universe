@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { NameTemplates, TopRowArea, TopRowPerson, TypingTemplates, WorldLineTemplates } from "../TopRowSummary";
+import type { NameTemplates, TopRowArea, TopRowPerson, TypingTemplates } from "../TopRowSummary";
 import {
     countWorldPresence,
+    formatHereLine,
     formatPeopleNames,
     formatTypingLine,
-    formatWorldLine,
+    peopleOnThisMap,
     resolveMeetingAreaName,
     resolveTopRowState,
 } from "../TopRowSummary";
@@ -19,14 +20,6 @@ const typing: TypingTemplates = {
     two: ({ first, second }) => `${first} & ${second} are typing`,
     many: ({ count }) => `${count} people are typing`,
     someone: "Someone",
-};
-
-const world: WorldLineTemplates = {
-    othersInRoom: ({ count, roomName }) => `${count} others in ${roomName}`,
-    othersOnThisMap: ({ count }) => `${count} others on this map`,
-    elsewhere: ({ count }) => `${count} elsewhere in this world`,
-    nobodyInWorld: "No one else is in this world right now",
-    separator: " · ",
 };
 
 const sara: TopRowPerson = { id: "s", name: "Sara" };
@@ -158,16 +151,40 @@ describe("countWorldPresence", () => {
     });
 });
 
-describe("formatWorldLine", () => {
-    it("builds the alone line", () => {
-        expect(formatWorldLine({ here: 3, elsewhere: 12 }, "Headquarters", world)).toBe(
-            "3 others in Headquarters · 12 elsewhere in this world"
-        );
-        expect(formatWorldLine({ here: 3, elsewhere: 0 }, "Headquarters", world)).toBe("3 others in Headquarters");
-        expect(formatWorldLine({ here: 0, elsewhere: 4 }, undefined, world)).toBe("4 elsewhere in this world");
-        expect(formatWorldLine({ here: 0, elsewhere: 4 }, "Headquarters", world)).toBe("4 elsewhere in this world");
-        expect(formatWorldLine({ here: 0, elsewhere: 0 }, "Headquarters", world)).toBe(
-            "No one else is in this world right now"
-        );
+describe("peopleOnThisMap", () => {
+    const here = "http://play.test/_/global/maps.test/map.json";
+    const there = "http://play.test/_/global/maps.test/other.json";
+
+    it("lists everyone on this map except this tab, clones included", () => {
+        const users = [
+            { spaceUserId: "me", playUri: here },
+            { spaceUserId: "omar", playUri: here },
+            { spaceUserId: "me-clone", playUri: here },
+            { spaceUserId: "sara", playUri: there },
+            { spaceUserId: "nowhere", playUri: undefined },
+        ];
+        expect(peopleOnThisMap(users, "me", here).map((user) => user.spaceUserId)).toEqual(["omar", "me-clone"]);
+    });
+});
+
+describe("formatHereLine", () => {
+    const templates = {
+        you: "You",
+        onlyYou: "Only you here",
+        elsewhere: ({ count }: { count: number }) => `${count} elsewhere in this world`,
+        separator: " · ",
+        two: ({ first, second }: { first: string; second: string }) => `${first} & ${second}`,
+        more: ({ first, second, count }: { first: string; second: string; count: number }) =>
+            `${first}, ${second} +${count}`,
+    };
+
+    it("names who is here with you", () => {
+        expect(formatHereLine(["Omar"], 0, templates)).toBe("You & Omar");
+        expect(formatHereLine(["Omar", "Sara", "Lea"], 4, templates)).toBe("You, Omar +2");
+    });
+
+    it("says you're alone, and how many are elsewhere", () => {
+        expect(formatHereLine([], 0, templates)).toBe("Only you here");
+        expect(formatHereLine([], 12, templates)).toBe("Only you here · 12 elsewhere in this world");
     });
 });

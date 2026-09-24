@@ -17,6 +17,8 @@
     import RequireConnection from "./requireConnection.svelte";
     import RefreshChat from "./RefreshChat.svelte";
     import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
+    import HereStrip from "./TopRow/HereStrip.svelte";
+    import NearbyChatRow from "./TopRow/NearbyChatRow.svelte";
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
     import { resolveChatLayout } from "./ChatLayout";
@@ -25,6 +27,7 @@
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
     const proximityChatRoom = gameManager.getCurrentGameScene().proximityChatRoom;
+    const proximityMessages = proximityChatRoom.messages;
     const chat = gameManager.chatConnection;
     const shouldRetrySendingEvents = chat.shouldRetrySendingEvents;
 
@@ -51,6 +54,10 @@
         proximityChatRoom.hasUnreadMessages.set(false);
         proximityChatRoom.unreadNotificationCount.set(0);
     }
+
+    // The live card shows while you're in a bubble, a meeting or a zone; otherwise the nearby chat you had is a row.
+    let liveCardVisible = false;
+    $: hasNearbyHistory = $proximityMessages.some((message) => message.type === "proximity");
 
     $: visibleJoignableRooms = withoutAreaChatRooms($joignableRoom, $hiddenAreaRoomIds);
 
@@ -102,10 +109,27 @@
                     </RequireConnection>
                 {/if}
 
-                <div class="px-2 py-2 border border-solid border-x-0 border-t border-y-0 border-b-0 border-white/10">
-                    <ProximityTopRow {proximityChatRoom} onOpen={toggleDisplayProximityChat} />
-                    <AreaChatRows />
+                <div class="border border-solid border-x-0 border-t border-y-0 border-b-0 border-white/10">
+                    <HereStrip />
+                    <div class="flex flex-col px-2 pb-2 empty:hidden">
+                        <ProximityTopRow
+                            {proximityChatRoom}
+                            onOpen={toggleDisplayProximityChat}
+                            bind:visible={liveCardVisible}
+                        />
+                        <AreaChatRows />
+                    </div>
+                    {#if !liveCardVisible && !hasNearbyHistory}
+                        <p class="m-0 px-4 pb-3 text-xs text-white/45" data-testid="nearbyHint">
+                            {$LL.chat.here.hint()}
+                        </p>
+                    {/if}
                 </div>
+                {#if !liveCardVisible}
+                    <div class="px-2 empty:hidden">
+                        <NearbyChatRow {proximityChatRoom} onOpen={toggleDisplayProximityChat} />
+                    </div>
+                {/if}
                 {#if !$userIsConnected && isMatrixChatEnabled}
                     <!-- Guests: saved conversations need an account. One quiet line instead of a blocking panel. -->
                     <div class="px-2 pb-2">

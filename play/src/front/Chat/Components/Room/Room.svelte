@@ -1,4 +1,7 @@
 <script lang="ts">
+    import { getContext, hasContext } from "svelte";
+    import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import highlightWords from "highlight-words";
     import type {
         ChatRoom,
@@ -10,6 +13,10 @@
     import { chatSearchBarValue } from "../../Stores/ChatStore";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
     import Avatar from "../Avatar.svelte";
+    import TopRowAvatar from "../TopRow/TopRowAvatar.svelte";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
+    import type { PictureStore } from "../../../Stores/PictureStore";
+    import { WOKA_BY_CHAT_ID_CONTEXT } from "../../Stores/ChatUserWokaStore";
     import EncryptionBadge from "../EncryptionBadge.svelte";
     import { formatTypingLine } from "../TopRow/TopRowSummary";
     import { formatRowTime, formatUnreadCount, normalizeTimestamp, toPlainText } from "../OneList/OneListOrder";
@@ -26,6 +33,16 @@
     const unreadCount = room.unreadNotificationCount;
     const typingMembers = room.typingMembers;
     const messages = room.messages;
+    const members = room.members;
+    const roomPicture = room.pictureStore;
+
+    // Direct chats without a room picture show the other person's woka, when we know it.
+    const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
+        ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
+        : readable(new Map<string, PictureStore>());
+    const myChatId = localUserStore.getChatId();
+    $: partnerId = room.type === "direct" ? $members.find((member) => member.id !== myChatId)?.id : undefined;
+    $: partnerWoka = partnerId && !$roomPicture ? $wokaByChatId.get(partnerId) : undefined;
 
     $: chunks = highlightWords({
         text: $roomName.match(/\[\d*]/) ? $roomName.substring(0, $roomName.search(/\[\d*]/)) : $roomName,
@@ -85,7 +102,16 @@
     data-testid={$roomName}
 >
     <div class="relative shrink-0">
-        <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="lg" round={room.type === "direct"} />
+        {#if partnerWoka}
+            <TopRowAvatar pictureStore={partnerWoka} name={$roomName} size="lg" ring={false} />
+        {:else}
+            <Avatar
+                pictureStore={room.pictureStore}
+                fallbackName={$roomName}
+                size="lg"
+                round={room.type === "direct"}
+            />
+        {/if}
 
         {#if $isEncrypted}
             <EncryptionBadge />
