@@ -130,6 +130,7 @@ import { highlightedEmbedScreen } from "../../Stores/HighlightedEmbedScreenStore
 import type { AddPlayerEvent } from "../../Api/Events/AddPlayerEvent";
 import type { AskPositionEvent } from "../../Api/Events/AskPositionEvent";
 import { chatVisibilityStore, forceRefreshChatStore } from "../../Stores/ChatStore";
+import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
 import { myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
@@ -2237,7 +2238,7 @@ export class GameScene extends DirtyScene {
                         externalRestrictedMapEditorProperties: mapEditorRestrictedPropertiesStore,
                         showComponentInChat(component: ComponentType, props: Record<string, unknown>) {
                             navChat.switchToCustomComponent(component, props);
-                            chatVisibilityStore.set(true);
+                            openChat("script");
                         },
                         openErrorScreen: (error: Error) => {
                             errorScreenStore.setException(error);
@@ -2531,7 +2532,7 @@ ${escapedMessage}
 
         this.iframeSubscriptionList.push(
             iframeListener.openChatStream.subscribe(() => {
-                chatVisibilityStore.set(true);
+                openChat("script");
             })
         );
 
@@ -2596,14 +2597,14 @@ ${escapedMessage}
                             case "local": {
                                 room.addExternalMessage("local", chatMessage.message, chatMessage.options.author);
                                 selectedRoomStore.set(room);
-                                chatVisibilityStore.set(true);
+                                openChat("script");
 
                                 break;
                             }
                             case "bubble": {
                                 room.addExternalMessage("bubble", chatMessage.message);
                                 selectedRoomStore.set(room);
-                                chatVisibilityStore.set(true);
+                                openChat("script");
                             }
                         }
                     })

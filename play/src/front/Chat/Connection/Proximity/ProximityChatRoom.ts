@@ -24,6 +24,7 @@ import { iframeListener } from "../../../Api/IframeListener";
 import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../Space/SpaceRegistry/SpaceRegistryInterface";
 import { chatVisibilityStore } from "../../../Stores/ChatStore";
+import { openChat } from "../../openChat";
 import { isAChatRoomIsVisible, navChat, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
@@ -689,7 +690,7 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.fileNames
             );
             // if the proximity chat is not open, open it to see the message
-            chatVisibilityStore.set(true);
+            openChat("bubble");
             if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
         });
 
@@ -799,7 +800,7 @@ export class ProximityChatRoom implements ChatRoom {
                     this.messages.push(errorMessage);
                     this.lastMessageTimestamp = errorMessage.date.getTime();
                     this.notifyNewMessage(errorMessage);
-                    chatVisibilityStore.set(true);
+                    openChat("bubble");
                     if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
                     return;
                 }
@@ -846,7 +847,7 @@ export class ProximityChatRoom implements ChatRoom {
                     this.streamMessages.delete(stream.responseId);
                 }
 
-                chatVisibilityStore.set(true);
+                openChat("bubble");
                 if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
             });
 
@@ -864,7 +865,7 @@ export class ProximityChatRoom implements ChatRoom {
                 // If the user is not on the mobile, open the chat
                 // The user experience is disrupted by the chat on mobile
                 if (!isMediaBreakpointUp("md")) {
-                    chatVisibilityStore.set(true);
+                    openChat("bubble");
                 }
             }
         }
