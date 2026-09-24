@@ -689,16 +689,20 @@ export class AuthenticateController extends BaseHttpController {
                 return;
             }
 
-            const authTokenData: AuthTokenData = jwtTokenManager.verifyJWTToken(query.token, false);
-            if (authTokenData.accessToken == undefined) {
-                throw Error("Cannot log out, no access token found.");
-            }
-            // TODO: change that to use end session endpoint
-            // Use post logout redirect and id token hint to redirect on the logut session endpoint of the OpenId provider
-            // https://openid.net/specs/openid-connect-session-1_0.html#RPLogout
-            await openIDClient.logoutUser(authTokenData.accessToken);
-            if (authTokenData.refreshToken) {
-                await openIDClient.logoutUser(authTokenData.refreshToken);
+            // An empty token means the browser no longer holds a session (e.g. another tab already logged
+            // out): there is nothing to revoke, so finish the logout as if it had succeeded.
+            if (query.token !== "") {
+                const authTokenData: AuthTokenData = jwtTokenManager.verifyJWTToken(query.token, false);
+                if (authTokenData.accessToken == undefined) {
+                    throw Error("Cannot log out, no access token found.");
+                }
+                // TODO: change that to use end session endpoint
+                // Use post logout redirect and id token hint to redirect on the logut session endpoint of the OpenId provider
+                // https://openid.net/specs/openid-connect-session-1_0.html#RPLogout
+                await openIDClient.logoutUser(authTokenData.accessToken);
+                if (authTokenData.refreshToken) {
+                    await openIDClient.logoutUser(authTokenData.refreshToken);
+                }
             }
 
             // if no redirect, redirect to playUri and connect user to the world
