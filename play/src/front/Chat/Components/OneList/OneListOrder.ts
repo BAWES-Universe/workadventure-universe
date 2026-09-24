@@ -37,6 +37,11 @@ export interface OneListCandidate<T> {
     unreadCount: number;
     hasUnread: boolean;
     item: T;
+    /**
+     * For a folder: the names of the rooms and folders inside it (nested too). While searching, a folder stays
+     * only if its own name or one of these matches.
+     */
+    searchNames?: readonly string[];
 }
 
 /** Matrix reports `Number.MIN_SAFE_INTEGER` for a room with no events; the list treats that as "never". */
@@ -93,10 +98,54 @@ export function matchesSearch(name: string, search: string): boolean {
     return name.toLocaleLowerCase().includes(query);
 }
 
+export function candidateMatchesSearch<T>(candidate: OneListCandidate<T>, search: string): boolean {
+    if (matchesSearch(candidate.name, search)) return true;
+    return candidate.searchNames?.some((name) => matchesSearch(name, search)) ?? false;
+}
+
+function sameStrings(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+    if (a === b) return true;
+    if (a === undefined || b === undefined || a.length !== b.length) return false;
+    return a.every((value, index) => value === b[index]);
+}
+
+/** True when two candidates would render the same row. */
+export function sameCandidate<T>(a: OneListCandidate<T>, b: OneListCandidate<T>): boolean {
+    return (
+        a.id === b.id &&
+        a.kind === b.kind &&
+        a.name === b.name &&
+        a.timestamp === b.timestamp &&
+        a.unreadCount === b.unreadCount &&
+        a.hasUnread === b.hasUnread &&
+        a.item === b.item &&
+        sameStrings(a.searchNames, b.searchNames)
+    );
+}
+
+/**
+ * Reuses the previous entry objects for rows that did not change, and returns the previous array itself when
+ * nothing changed at all, so subscribers (and the reorder animation) are not woken up for nothing.
+ */
+export function reuseUnchanged<T>(
+    previous: readonly OneListCandidate<T>[],
+    next: OneListCandidate<T>[]
+): { list: OneListCandidate<T>[]; changed: boolean } {
+    const previousById = new Map(previous.map((entry) => [entry.id, entry]));
+    let changed = previous.length !== next.length;
+    const list = next.map((entry, index) => {
+        const old = previousById.get(entry.id);
+        const kept = old !== undefined && sameCandidate(old, entry) ? old : entry;
+        if (previous[index] !== kept) changed = true;
+        return kept;
+    });
+    return { list: changed ? list : [...previous], changed };
+}
+
 /**
  * Merges every candidate into one list: deduplicated by id (the first one wins), without hidden rooms
  * (area chat rooms), filtered by the search, newest first.
- * Folders stay in the list while searching, as they did before: the search filters the rooms inside them.
+ * While searching, a folder stays when its name or anything inside it matches (the search then filters its rooms).
  */
 export function mergeOneList<T>(
     candidates: readonly OneListCandidate<T>[],
@@ -109,7 +158,7 @@ export function mergeOneList<T>(
         if (seen.has(candidate.id)) continue;
         seen.add(candidate.id);
         if (hiddenRoomIds.has(candidate.id)) continue;
-        if (candidate.kind !== "folder" && !matchesSearch(candidate.name, search)) continue;
+        if (!candidateMatchesSearch(candidate, search)) continue;
         merged.push(candidate);
     }
     return merged.sort(compareOneListCandidates);

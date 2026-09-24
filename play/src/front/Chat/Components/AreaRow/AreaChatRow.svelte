@@ -16,13 +16,14 @@
     /** The name of the area the room belongs to; the room's own name is used when the area has none. */
     export let areaName: string | undefined;
 
-    const roomName = room.name;
-    const hasUnreadMessages = room.hasUnreadMessages;
-    const unreadCount = room.unreadNotificationCount;
-    const isEncrypted = room.isEncrypted;
-    const areNotificationsMuted = room.areNotificationsMuted;
-    const typingMembers = room.typingMembers;
-    const messages = room.messages;
+    // Reactive, so the row follows a new room instance (reconnect, re-sync) instead of staying on the old one.
+    $: roomName = room.name;
+    $: hasUnreadMessages = room.hasUnreadMessages;
+    $: unreadCount = room.unreadNotificationCount;
+    $: isEncrypted = room.isEncrypted;
+    $: areNotificationsMuted = room.areNotificationsMuted;
+    $: typingMembers = room.typingMembers;
+    $: messages = room.messages;
 
     function toPlainText(body: string): string {
         try {
@@ -130,7 +131,10 @@
         {#if $areNotificationsMuted}
             <IconBellOff font-size="12" class="shrink-0 opacity-50" />
         {/if}
-        <RoomMenu {room} />
+        <!-- RoomMenu reads the room's stores once: remount it for a new room instance. -->
+        {#key room}
+            <RoomMenu {room} />
+        {/key}
     </div>
 </div>
 

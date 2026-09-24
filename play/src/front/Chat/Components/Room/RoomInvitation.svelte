@@ -11,8 +11,18 @@
     export let room: ChatRoom & ChatRoomMembershipManagement;
     let roomName = room.name;
     let loadingInvitation = false;
-    const inviterName = room.inviterName;
-    const inviteTimestamp = room.inviteTimestamp;
+    const members = room.members;
+    const myMembership = room.myMembership;
+
+    // The inviter's name and the invite time are plain getters, and can arrive later with lazily loaded
+    // members: read them again whenever the name, the members or the membership change.
+    function readInvite(..._changed: unknown[]): {
+        inviterName: string | undefined;
+        inviteTimestamp: number | undefined;
+    } {
+        return { inviterName: room.inviterName, inviteTimestamp: room.inviteTimestamp };
+    }
+    $: ({ inviterName, inviteTimestamp } = readInvite($roomName, $members, $myMembership));
 
     $: timeLabel =
         inviteTimestamp === undefined

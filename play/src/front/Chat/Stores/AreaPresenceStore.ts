@@ -75,8 +75,9 @@ export function withoutAreaChatRooms<T extends { id: string }>(
  * The Matrix area chat rooms of this tab, per tab and in memory only.
  *
  * - `hiddenRoomIds`: every room the main chat list must never show. It is the union of the area rooms known on the
- *   map, the areas the avatar is in (joining or joined) and the rooms whose join or leave has not settled yet, so an
- *   area room never flashes into the list while Matrix membership catches up.
+ *   map, the areas the avatar is in (joining or joined), the rooms whose join has not settled yet, and the rooms
+ *   being left, so an area room never flashes into the list while Matrix membership catches up. Rooms being left
+ *   stay hidden across reset() until their leave completes.
  * - `rows`: the area rows under the top row. Only areas whose join has completed, the most recently entered first,
  *   one row per room. When the most recent area is left, the previous one still active is on top again.
  */
@@ -89,6 +90,8 @@ export class AreaChatRoomTracker<Room = unknown> {
     private sceneStartGeneration = 1;
     /** Bumped by reset(), so settles started in an earlier scene can't touch this one. */
     private epoch = 0;
+    /** Leaves in flight per room. Not scene-scoped: kept across reset() until each leave settles. */
+    private leaving = new Map<string, Set<Promise<void>>>();
 
     private readonly hiddenStore = writable<ReadonlySet<string>>(new Set());
     private readonly rowsStore = writable<readonly AreaChatRoomEntry<Room>[]>([]);
@@ -152,6 +155,17 @@ export class AreaChatRoomTracker<Room = unknown> {
         return entry.generation >= this.sceneStartGeneration;
     }
 
+    /**
+     * The join of this entry failed or returned no room: forget the entry, if it is still the current one for its
+     * area, so nothing lingers until the avatar walks out. The room stays hidden through the map's area room ids.
+     * Returns true if the entry was removed.
+     */
+    public abandon(entry: AreaChatRoomEntry<Room>): boolean {
+        if (!this.isCurrent(entry)) return false;
+        this.leave(entry.areaId);
+        return true;
+    }
+
     /** True if an active area (joining or joined) still uses this room. */
     public hasActiveRoom(roomId: string): boolean {
         return this.entries.some((entry) => entry.roomId === roomId);
@@ -185,13 +199,58 @@ export class AreaChatRoomTracker<Room = unknown> {
         };
     }
 
-    /** Forgets everything, for a new scene. */
-    public reset(): void {
+    /**
+     * Tracks a leave of this room: the room stays hidden from the main list until it settles (even across reset()),
+     * and whenLeft() waits for it, so a join started meanwhile can't be undone by the late leave.
+     */
+    public trackLeave(roomId: string, leave: Promise<unknown>): Promise<void> {
+        const settled: Promise<void> = leave.then(
+            () => undefined,
+            () => undefined
+        );
+        let pending = this.leaving.get(roomId);
+        if (!pending) {
+            pending = new Set();
+            this.leaving.set(roomId, pending);
+        }
+        pending.add(settled);
+        this.publish();
+        void settled.then(() => {
+            const current = this.leaving.get(roomId);
+            if (!current) return;
+            current.delete(settled);
+            if (current.size === 0) this.leaving.delete(roomId);
+            this.publish();
+        });
+        return settled;
+    }
+
+    /** Resolves once every leave of this room tracked so far has settled. */
+    public whenLeft(roomId: string): Promise<void> {
+        const pending = this.leaving.get(roomId);
+        if (!pending || pending.size === 0) return Promise.resolve();
+        return Promise.all(Array.from(pending)).then(() => undefined);
+    }
+
+    /**
+     * Forgets the scene, for a new one. Area-leave handlers do not run when the scene closes (map change, exit,
+     * disconnect), so the rooms of the areas still active are left here through `leaveRoom`, once per room, and stay
+     * hidden until that leave settles. A join still in flight is left by its own stale-join handling.
+     */
+    public reset(leaveRoom?: (entry: AreaChatRoomEntry<Room> & { room: Room }) => Promise<unknown> | undefined): void {
+        const toLeave = new Map<string, AreaChatRoomEntry<Room> & { room: Room }>();
+        for (const entry of this.entries) {
+            if (entry.room !== undefined) toLeave.set(entry.roomId, { ...entry, room: entry.room });
+        }
         this.epoch++;
         this.sceneStartGeneration = this.nextGeneration;
         this.mapRoomIds = new Set();
         this.entries = [];
         this.settling = new Map();
+        for (const entry of toLeave.values()) {
+            const leave = leaveRoom?.(entry);
+            if (leave) void this.trackLeave(entry.roomId, leave);
+        }
         this.publish();
     }
 
@@ -199,6 +258,7 @@ export class AreaChatRoomTracker<Room = unknown> {
         const hidden = new Set<string>(this.mapRoomIds);
         for (const entry of this.entries) hidden.add(entry.roomId);
         for (const roomId of this.settling.keys()) hidden.add(roomId);
+        for (const roomId of this.leaving.keys()) hidden.add(roomId);
         this.hiddenStore.set(hidden);
 
         const rows: AreaChatRoomEntry<Room>[] = [];
