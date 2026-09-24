@@ -5,6 +5,7 @@
     import LL from "../../../../i18n/i18n-svelte";
     import { activeSubMenuStore, menuVisiblilityStore } from "../../../Stores/MenuStore";
     import { chatVisibilityStore } from "../../../Stores/ChatStore";
+    import { openChat } from "../../../Chat/openChat";
     import { gameManager } from "../../../Phaser/Game/GameManager";
 
     export let state: "normal" | "active" | "forbidden" | "disabled" = "normal";
@@ -14,7 +15,11 @@
             menuVisiblilityStore.set(false);
             activeSubMenuStore.activateByIndex(0);
         }
-        chatVisibilityStore.set(!$chatVisibilityStore);
+        if ($chatVisibilityStore) {
+            chatVisibilityStore.set(false);
+        } else {
+            openChat("button");
+        }
         navChat.switchToUserList();
     }
 

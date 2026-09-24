@@ -7,6 +7,7 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { activeSubMenuStore, menuVisiblilityStore } from "../../../Stores/MenuStore";
     import { chatVisibilityStore, chatZoneLiveStore } from "../../../Stores/ChatStore";
+    import { openChat } from "../../../Chat/openChat";
     import LL from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
@@ -27,7 +28,11 @@
             activeSubMenuStore.activateByIndex(0);
         }
 
-        chatVisibilityStore.set(!$chatVisibilityStore);
+        if ($chatVisibilityStore) {
+            chatVisibilityStore.set(false);
+        } else {
+            openChat("button");
+        }
         dispatch("click");
     }
 
