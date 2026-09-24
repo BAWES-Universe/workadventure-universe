@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { AvailabilityStatus, SayMessageType } from "@workadventure/messages";
     import { createEventDispatcher, onDestroy, onMount } from "svelte";
-    import { gameManager } from "../../Phaser/Game/GameManager";
+    import { sayTypeForcedByStatus, sendSayBubble } from "../../Phaser/Game/Say/sendSay";
+    import { expressTrayStore } from "../../Stores/ExpressStore";
     import { inputFormFocusStore } from "../../Stores/UserInputStore";
     import { popupJustClosed } from "../../Phaser/Game/Say/SayManager";
     import Select from "../Input/Select.svelte";
@@ -10,7 +10,6 @@
     import Input from "../Input/Input.svelte";
     import ButtonClose from "../Input/ButtonClose.svelte";
     import type { ExpressionSource } from "../../Administration/AnalyticsClient";
-    import { analyticsClient } from "../../Administration/AnalyticsClient";
     import PopUpContainer from "./PopUpContainer.svelte";
     import { IconSend } from "@wa-icons";
 
@@ -26,32 +25,16 @@
     }
 
     onMount(() => {
+        // The say popup and the Express tray are never open at the same time.
+        expressTrayStore.close();
         messageInput.focusInput();
         console.debug("SayPopUp mounted, focusing input", type);
     });
 
     $: {
-        switch ($availabilityStatusStore) {
-            case AvailabilityStatus.JITSI:
-            case AvailabilityStatus.BBB:
-            case AvailabilityStatus.LIVEKIT:
-            case AvailabilityStatus.DENY_PROXIMITY_MEETING:
-            case AvailabilityStatus.SPEAKER: {
-                type = "say";
-                break;
-            }
-            case AvailabilityStatus.SILENT:
-            case AvailabilityStatus.AWAY:
-            case AvailabilityStatus.DO_NOT_DISTURB:
-            case AvailabilityStatus.BACK_IN_A_MOMENT:
-            case AvailabilityStatus.BUSY: {
-                type = "think";
-                break;
-            }
-            default: {
-                console.warn("Say: unknown status ", $availabilityStatusStore);
-                break;
-            }
+        const forcedType = sayTypeForcedByStatus($availabilityStatusStore);
+        if (forcedType !== undefined) {
+            type = forcedType;
         }
     }
 
@@ -93,13 +76,7 @@
     }
 
     function sendMessage(message: string) {
-        const gameScene = gameManager.getCurrentGameScene();
-        gameScene.sayManager.say(
-            message,
-            type === "say" ? SayMessageType.SpeechBubble : SayMessageType.ThinkingCloud,
-            type === "say" ? 5000 : undefined
-        );
-        analyticsClient.saySent(type, source);
+        sendSayBubble(message, type, source);
         message = "";
         closeBanner();
     }

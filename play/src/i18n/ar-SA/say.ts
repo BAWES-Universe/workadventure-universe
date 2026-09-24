@@ -8,6 +8,21 @@ const say: DeepPartial<Translation["say"]> = {
     },
     placeholder: "اكتب رسالتك هنا...",
     button: "إنشاء فقاعة",
+    express: {
+        button: "عبّر عن نفسك",
+        close: "إغلاق",
+        placeholder: "قل شيئًا…",
+        say: "قل",
+        think: "فكّر",
+        send: "إرسال",
+        emote: "تشغيل {emoji}",
+        emotes: "تعابيرك",
+        forcedSay: "في الاجتماع تُقال الفقاعات بصوت عالٍ",
+        forcedThink: "عندما تكون بعيدًا أو مشغولًا تصبح الفقاعات أفكارًا",
+        sayHint: "يراها كل من يراك لمدة 5 ثوانٍ",
+        thinkHint: "تبقى فوقك حتى تتحرك",
+        enterToSend: "Enter للإرسال",
+    },
     tooltip: {
         description: {
             say: "يعرض فقاعة دردشة فوق شخصيتك. مرئية للجميع على الخريطة، وتظل معروضة لمدة 5 ثوانٍ.",
