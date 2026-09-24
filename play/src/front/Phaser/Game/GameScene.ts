@@ -181,7 +181,12 @@ import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcu
 import { enableUserInputsStore } from "../../Stores/UserInputStore";
 import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
 import { videoStreamStore, screenShareStreamStore } from "../../Stores/PeerStore";
-import type { ChatConnectionInterface, ChatUser } from "../../Chat/Connection/ChatConnection";
+import type {
+    ChatConnectionInterface,
+    ChatRoom,
+    ChatRoomMembershipManagement,
+    ChatUser,
+} from "../../Chat/Connection/ChatConnection";
 import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
@@ -1180,8 +1185,17 @@ export class GameScene extends DirtyScene {
         });
         this.proximitySpaceManager?.destroy();
         this._proximityChatRoom?.destroy();
-        // Area chat rooms and area presence are per scene: a new map starts with none.
-        areaChatRooms.reset();
+        // Area chat rooms are per scene: a new map starts with none. Area-leave handlers don't run when the scene
+        // closes, so the rooms of the areas still active are left here, and stay hidden until that leave completes.
+        areaChatRooms.reset(({ roomId, room }) => {
+            if (get(selectedRoomStore)?.id === roomId) {
+                selectedRoomStore.set(undefined);
+            }
+            if (!("leaveRoom" in room)) return undefined;
+            return (room as ChatRoom & ChatRoomMembershipManagement)
+                .leaveRoom()
+                .catch((error) => console.error("Failed to leave the area chat room", error));
+        });
         this.mapEditorModeStoreUnsubscriber?.();
         this.emoteUnsubscriber?.();
         this.followUsersColorStoreUnsubscriber?.();

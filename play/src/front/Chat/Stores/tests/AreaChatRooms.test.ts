@@ -203,3 +203,136 @@ describe("AreaChatRoomTracker", () => {
         expect(tracker.isFromCurrentScene(newEntry)).toBe(true);
     });
 });
+
+function deferred(): { promise: Promise<void>; resolve: () => void; reject: (error: unknown) => void } {
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
+function flush(): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, 0);
+    });
+}
+
+describe("AreaChatRoomTracker leaves", () => {
+    it("reset leaves the rooms of the active areas and keeps them hidden until the leave completes", async () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        tracker.setMapRoomIds(["!a", "!b"]);
+        tracker.markJoined(tracker.enter("area-a", "!a"), room("!a"));
+        tracker.markJoined(tracker.enter("area-a2", "!a"), room("!a"));
+        tracker.enter("area-b", "!b"); // still joining: left by its own stale-join handling, not by reset
+
+        const leaves = new Map<string, ReturnType<typeof deferred>>();
+        const left: string[] = [];
+        tracker.reset((entry) => {
+            left.push(entry.roomId);
+            const leave = deferred();
+            leaves.set(entry.roomId, leave);
+            return leave.promise;
+        });
+
+        // Once per room, only for joined rooms.
+        expect(left).toEqual(["!a"]);
+        expect(rowRoomIds(tracker)).toEqual([]);
+        // The new map doesn't know !a, but it is still hidden while it is being left.
+        expect(mainList(tracker, [room("!a"), room("!b")])).toEqual(["!b"]);
+
+        // A new scene's map ids and another reset don't drop it.
+        tracker.setMapRoomIds([]);
+        tracker.reset();
+        expect(mainList(tracker, [room("!a")])).toEqual([]);
+
+        leaves.get("!a")?.resolve();
+        await flush();
+        expect(mainList(tracker, [room("!a")])).toEqual(["!a"]);
+    });
+
+    it("a failed leave also releases the room", async () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        const leave = deferred();
+        void tracker.trackLeave("!a", leave.promise);
+        expect(mainList(tracker, [room("!a")])).toEqual([]);
+        leave.reject(new Error("network"));
+        await flush();
+        expect(mainList(tracker, [room("!a")])).toEqual(["!a"]);
+    });
+
+    it("quick leave then enter: the join waits for the leave in flight", async () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        tracker.markJoined(tracker.enter("area-a", "!a"), room("!a"));
+        tracker.leave("area-a");
+        const leave = deferred();
+        void tracker.trackLeave("!a", leave.promise);
+
+        const entry = tracker.enter("area-a", "!a");
+        const order: string[] = [];
+        const join = tracker.whenLeft("!a").then(() => {
+            order.push("join");
+            tracker.markJoined(entry, room("!a"));
+        });
+        await flush();
+        expect(order).toEqual([]);
+
+        order.push("left");
+        leave.resolve();
+        await join;
+        expect(order).toEqual(["left", "join"]);
+        expect(rowRoomIds(tracker)).toEqual(["!a"]);
+    });
+
+    it("whenLeft waits for every leave of the room and resolves at once when there is none", async () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        await expect(tracker.whenLeft("!none")).resolves.toBeUndefined();
+
+        const first = deferred();
+        const second = deferred();
+        void tracker.trackLeave("!a", first.promise);
+        void tracker.trackLeave("!a", second.promise);
+        let done = false;
+        void tracker.whenLeft("!a").then(() => (done = true));
+        first.resolve();
+        await flush();
+        expect(done).toBe(false);
+        second.resolve();
+        await flush();
+        expect(done).toBe(true);
+    });
+});
+
+describe("AreaChatRoomTracker failed joins", () => {
+    it("a failed join forgets its entry; the room stays hidden through the map ids", () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        tracker.setMapRoomIds(["!a"]);
+        const entry = tracker.enter("area-a", "!a");
+        expect(tracker.abandon(entry)).toBe(true);
+        expect(tracker.activeCount).toBe(0);
+        expect(tracker.hasActiveRoom("!a")).toBe(false);
+        expect(rowRoomIds(tracker)).toEqual([]);
+        expect(mainList(tracker, [room("!a")])).toEqual([]);
+    });
+
+    it("a failed join from an earlier visit leaves the current visit alone", () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        const firstVisit = tracker.enter("area-a", "!a");
+        tracker.leave("area-a");
+        const secondVisit = tracker.enter("area-a", "!a");
+        expect(tracker.abandon(firstVisit)).toBe(false);
+        expect(tracker.isCurrent(secondVisit)).toBe(true);
+        tracker.markJoined(secondVisit, room("!a"));
+        expect(rowRoomIds(tracker)).toEqual(["!a"]);
+    });
+
+    it("a failed join in one area keeps an overlapping area's row", () => {
+        const tracker = new AreaChatRoomTracker<FakeRoom>();
+        tracker.markJoined(tracker.enter("area-a", "!a"), room("!a"));
+        const b = tracker.enter("area-b", "!b");
+        tracker.abandon(b);
+        expect(rowRoomIds(tracker)).toEqual(["!a"]);
+    });
+});

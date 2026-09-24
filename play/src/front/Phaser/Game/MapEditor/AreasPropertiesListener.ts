@@ -950,23 +950,29 @@ export class AreasPropertiesListener {
             // only shows as the area row once the join below has completed while the avatar is still here.
             const entry = areaChatRooms.enter(property.id, matrixRoomId, areaName);
             const joinSettled = areaChatRooms.beginSettle(matrixRoomId);
-            this.scene.connection
-                .queryEnterChatRoomArea(matrixRoomId)
+            const connection = this.scene.connection;
+            // A leave of this room still in flight (quick leave and re-enter, a property update, a reconnect) must
+            // land before the join, or it would undo it while the avatar is inside.
+            areaChatRooms
+                .whenLeft(matrixRoomId)
+                .then(() => connection.queryEnterChatRoomArea(matrixRoomId))
                 .then(() => gameManager.chatConnection.joinRoom(matrixRoomId))
                 .then((room: ChatRoom | undefined) => {
-                    if (!room) return;
+                    if (!room) {
+                        areaChatRooms.abandon(entry);
+                        return;
+                    }
                     if (!areaChatRooms.markJoined(entry, room)) {
-                        // The avatar left (or left and came back) before the join finished: select nothing, open
-                        // nothing, and leave the room again unless another active area still uses it.
+                        // The avatar left (or left and came back, or the scene closed) before the join finished:
+                        // select nothing, open nothing, and leave the room again unless an active area still uses
+                        // it. The room stays hidden until that leave completes, on this map or the next one.
                         if (!areaChatRooms.hasActiveRoom(matrixRoomId) && "leaveRoom" in room) {
-                            // A join from a previous map must not hide a room on the new map while it leaves.
-                            const leaveSettled = areaChatRooms.isFromCurrentScene(entry)
-                                ? areaChatRooms.beginSettle(matrixRoomId)
-                                : () => {};
-                            (room as ChatRoom & ChatRoomMembershipManagement)
-                                .leaveRoom()
-                                .catch((error) => console.error(error))
-                                .finally(leaveSettled);
+                            void areaChatRooms.trackLeave(
+                                matrixRoomId,
+                                (room as ChatRoom & ChatRoomMembershipManagement)
+                                    .leaveRoom()
+                                    .catch((error) => console.error(error))
+                            );
                         }
                         return;
                     }
@@ -976,6 +982,8 @@ export class AreasPropertiesListener {
                     if (property.shouldOpenAutomatically) chatVisibilityStore.set(true);
                 })
                 .catch((error) => {
+                    // Don't keep an entry that will never get a row; a newer visit of the area is left alone.
+                    areaChatRooms.abandon(entry);
                     console.error("Failed to join the area chat room", error);
                 })
                 .finally(joinSettled);
@@ -1276,11 +1284,10 @@ export class AreasPropertiesListener {
 
         const roomToLeave = get(gameManager.chatConnection.rooms).find((room) => room.id === matrixRoomId);
         if (roomToLeave && matrixRoomId && !areaChatRooms.hasActiveRoom(matrixRoomId)) {
-            const leaveSettled = areaChatRooms.beginSettle(matrixRoomId);
-            roomToLeave
-                .leaveRoom()
-                .catch((error) => console.error(error))
-                .finally(leaveSettled);
+            void areaChatRooms.trackLeave(
+                matrixRoomId,
+                roomToLeave.leaveRoom().catch((error) => console.error(error))
+            );
         }
 
         if (this.scene.connection && property.serverData?.matrixRoomId) {

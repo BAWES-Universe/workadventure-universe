@@ -87,10 +87,29 @@ function setup(clock = new InvitationClock(() => 50)) {
     const folders = writable<RoomFolder[]>([]);
     const hiddenRoomIds = writable<ReadonlySet<string>>(new Set());
     const search = writable("");
-    const store = createOneListStore({ directRooms, rooms, invitations, folders, hiddenRoomIds, search }, clock);
+    // A manual scheduler: the test decides when the coalesced flush runs.
+    let queued: (() => void)[] = [];
+    const flush = () => {
+        const run = queued;
+        queued = [];
+        run.forEach((callback) => callback());
+    };
+    const store = createOneListStore(
+        { directRooms, rooms, invitations, folders, hiddenRoomIds, search },
+        clock,
+        (callback) => queued.push(callback)
+    );
     let current: OneListEntry[] = [];
-    const unsubscribe = store.subscribe((value) => (current = value));
+    let emissions = 0;
+    const unsubscribe = store.subscribe((value) => {
+        emissions++;
+        current = value;
+    });
     return {
+        flush,
+        pendingFlushes: () => queued.length,
+        emissions: () => emissions,
+        current: () => current,
         directRooms,
         rooms,
         invitations,
@@ -98,8 +117,14 @@ function setup(clock = new InvitationClock(() => 50)) {
         hiddenRoomIds,
         search,
         unsubscribe,
-        ids: () => current.map((entry) => entry.id),
-        entry: (id: string) => current.find((entry) => entry.id === id),
+        ids: () => {
+            flush();
+            return current.map((entry) => entry.id);
+        },
+        entry: (id: string) => {
+            flush();
+            return current.find((entry) => entry.id === id);
+        },
     };
 }
 
@@ -169,6 +194,7 @@ describe("createOneListStore", () => {
         expect(list.ids()).toEqual(["folder", "other"]);
 
         folder.roomsStore.set([]);
+        list.flush();
         expect(late.subscriberCount()).toBe(0);
         expect(list.entry("folder")?.timestamp).toBe(0);
     });
@@ -217,7 +243,9 @@ describe("createOneListStore", () => {
         const inside = fakeRoom("b", 1);
         list.rooms.set([room]);
         list.folders.set([fakeFolder("f", [inside])]);
+        list.flush();
         expect(room.subscriberCount()).toBeGreaterThan(0);
+        expect(inside.subscriberCount()).toBeGreaterThan(0);
         list.unsubscribe();
         expect(room.subscriberCount()).toBe(0);
         expect(inside.subscriberCount()).toBe(0);
@@ -229,6 +257,82 @@ describe("createOneListStore", () => {
         tabA.rooms.set([fakeRoom("a", 1)]);
         expect(tabA.ids()).toEqual(["a"]);
         expect(tabB.ids()).toEqual([]);
+    });
+});
+
+describe("createOneListStore batching", () => {
+    it("coalesces many rapid emissions into one flush and one emission", () => {
+        const list = setup();
+        const rooms = Array.from({ length: 20 }, (_, index) => fakeRoom(`r${index}`, index));
+        list.flush();
+        const before = list.emissions();
+        // Initial sync: the room list grows one room at a time.
+        for (let i = 1; i <= rooms.length; i++) list.rooms.set(rooms.slice(0, i));
+        rooms.forEach((room, index) => room.receive(1000 + index));
+        expect(list.pendingFlushes()).toBe(1);
+        list.flush();
+        expect(list.emissions()).toBe(before + 1);
+        expect(list.ids()[0]).toBe("r19");
+    });
+
+    it("does not emit when a change leaves every row the same", () => {
+        const list = setup();
+        const a = fakeRoom("a", 200);
+        const b = fakeRoom("b", 100);
+        list.rooms.set([a, b]);
+        list.flush();
+        const before = list.emissions();
+        const snapshot = list.current();
+        // A reaction or an edit: the messages store emits, the time and unread count stay the same.
+        b.messagesStore.update((messages) => [...messages]);
+        list.flush();
+        expect(list.emissions()).toBe(before);
+        expect(list.current()).toBe(snapshot);
+    });
+
+    it("keeps the entry objects of rows that did not change", () => {
+        const list = setup();
+        const a = fakeRoom("a", 200);
+        const b = fakeRoom("b", 100);
+        list.rooms.set([a, b]);
+        list.flush();
+        const entryA = list.entry("a");
+        b.receive(300, 1);
+        list.flush();
+        expect(list.ids()).toEqual(["b", "a"]);
+        expect(list.entry("a")).toBe(entryA);
+    });
+
+    it("only subscribes to rooms that arrive and unsubscribes from rooms that leave", () => {
+        const list = setup();
+        const a = fakeRoom("a", 1);
+        const b = fakeRoom("b", 2);
+        list.rooms.set([a]);
+        list.flush();
+        const subscriptionsOfA = a.subscriberCount();
+        list.rooms.set([a, b]);
+        list.flush();
+        expect(a.subscriberCount()).toBe(subscriptionsOfA);
+        expect(b.subscriberCount()).toBeGreaterThan(0);
+        list.rooms.set([b]);
+        list.flush();
+        expect(a.subscriberCount()).toBe(0);
+    });
+});
+
+describe("createOneListStore search on folders", () => {
+    it("drops a folder whose name and contents all fail the search, and keeps one that matches inside", () => {
+        const list = setup();
+        const nested = fakeFolder("Archive", [fakeRoom("Old design", 1)]);
+        list.folders.set([fakeFolder("Team", [fakeRoom("Sales", 5)]), fakeFolder("Projects", [], [nested])]);
+        list.search.set("design");
+        expect(list.ids()).toEqual(["Projects"]);
+        list.search.set("team");
+        expect(list.ids()).toEqual(["Team"]);
+        list.search.set("nothing like this");
+        expect(list.ids()).toEqual([]);
+        list.search.set("");
+        expect(list.ids().sort()).toEqual(["Projects", "Team"]);
     });
 });
 

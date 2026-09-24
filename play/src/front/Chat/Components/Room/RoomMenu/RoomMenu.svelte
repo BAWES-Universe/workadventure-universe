@@ -21,6 +21,7 @@
     import type { UserProviderMerger } from "../../../UserProviderMerger/UserProviderMerger";
     import type { OrderFreeze } from "../../OneList/OneListStore";
     import { ONE_LIST_FREEZE_CONTEXT } from "../../OneList/OneListStore";
+    import { openChatMenuStore } from "../../../Stores/OpenChatMenuStore";
     import RoomOption from "./RoomOption.svelte";
     import { IconDots, IconLogout, IconUserEdit, IconMute, IconUnMute, IconMapPin, IconCamera } from "@wa-icons";
 
@@ -45,6 +46,11 @@
 
     $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
 
+    // Opening another chat menu closes this one.
+    const unsubscribeOpenMenu = openChatMenuStore.subscribe((openMenu) => {
+        if (openMenu !== freezeHolder) hideOptions = true;
+    });
+
     onMount(() => {
         document.addEventListener("click", closeRoomOptionsOnClickOutside);
         // Initialize usersByRoomStore
@@ -61,6 +67,8 @@
     onDestroy(() => {
         document.removeEventListener("click", closeRoomOptionsOnClickOutside);
         orderFreeze?.release(freezeHolder);
+        unsubscribeOpenMenu();
+        openChatMenuStore.update((openMenu) => (openMenu === freezeHolder ? undefined : openMenu));
     });
 
     function toggleRoomOptions() {
@@ -68,6 +76,7 @@
             return;
         }
         hideOptions = !hideOptions;
+        if (!hideOptions) openChatMenuStore.set(freezeHolder);
     }
 
     function closeRoomOptionsOnClickOutside(e: MouseEvent) {
