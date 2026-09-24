@@ -77,13 +77,27 @@ describe("mergeOneList", () => {
         expect(ids(list)).toEqual(["b"]);
     });
 
-    it("filters rooms, DMs and invitations by the search, and keeps folders", () => {
+    it("drops a folder while searching unless its name or something inside it matches", () => {
+        const folder = (id: string, name: string, searchNames: string[]) => ({
+            ...candidate(id, "folder", 1, name),
+            searchNames,
+        });
+        const list = mergeOneList(
+            [folder("f1", "Team", ["Design room"]), folder("f2", "Sales", ["Leads"]), folder("f3", "Design", [])],
+            new Set(),
+            "design"
+        );
+        expect(ids(list)).toEqual(["f3", "f1"]);
+        expect(ids(mergeOneList([folder("f2", "Sales", [])], new Set(), ""))).toEqual(["f2"]);
+    });
+
+    it("filters rooms, DMs and invitations by the search, and keeps folders that match inside", () => {
         const list = mergeOneList(
             [
                 candidate("1", "room", 5, "Design room"),
                 candidate("2", "direct", 4, "Sara"),
                 candidate("3", "invitation", 3, "Design review"),
-                candidate("4", "folder", 2, "Team"),
+                { ...candidate("4", "folder", 2, "Team"), searchNames: ["Design sync"] },
             ],
             new Set(),
             "  design "
