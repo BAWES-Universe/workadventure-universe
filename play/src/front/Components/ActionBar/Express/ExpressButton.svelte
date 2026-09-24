@@ -107,7 +107,7 @@
         <button
             bind:this={button}
             type="button"
-            class="express-button relative m-0 flex h-16 w-16 items-center justify-center rounded-lg p-0"
+            class="express-button relative m-0 flex h-16 w-16 sm:h-14 sm:w-14 xl:h-16 xl:w-16 items-center justify-center rounded-lg p-0 bg-contrast/80 backdrop-blur hover:bg-contrast/100"
             class:is-open={open}
             class:pulse
             aria-label={open ? $LL.say.express.close() : $LL.say.express.button()}
@@ -142,16 +142,10 @@
         -webkit-touch-callout: none;
         -webkit-user-select: none;
         user-select: none;
-        background: rgba(27, 42, 65, 0.8);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
         cursor: pointer;
         isolation: isolate;
         transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), background 150ms ease;
         -webkit-tap-highlight-color: transparent;
-    }
-    .express-button:hover {
-        background: rgba(27, 42, 65, 0.95);
     }
     .express-button:active {
         transform: scale(0.9);
