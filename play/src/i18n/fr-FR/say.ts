@@ -29,6 +29,12 @@ const say: DeepPartial<Translation["say"]> = {
         thinkHint: "Reste au-dessus de vous jusqu'à ce que vous bougiez",
         enterToSend: "Entrée pour envoyer",
         phrases: "Phrases rapides",
+        edit: "Modifier",
+        done: "Terminé",
+        editTitle: "Modifier Express",
+        editHint: "Touchez une émote ou une phrase pour la changer",
+        changeEmote: "Changer {emoji}",
+        editPhrase: "Modifier « {phrase} »",
     },
     tooltip: {
         description: {

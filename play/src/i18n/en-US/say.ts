@@ -29,6 +29,12 @@ const say: BaseTranslation = {
         thinkHint: "Stays above you until you move",
         enterToSend: "Enter to send",
         phrases: "Quick phrases",
+        edit: "Edit",
+        done: "Done",
+        editTitle: "Edit Express",
+        editHint: "Tap an emote or a phrase to change it",
+        changeEmote: "Change {emoji}",
+        editPhrase: "Edit “{phrase}”",
     },
     tooltip: {
         description: {
