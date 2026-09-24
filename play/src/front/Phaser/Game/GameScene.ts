@@ -170,6 +170,7 @@ import { isActivatedStore as isTodoListActiveStore, todoListsStore } from "../..
 import { externalSvelteComponentService } from "../../Stores/Utils/externalSvelteComponentService";
 import type { ExtensionModule } from "../../ExternalModule/ExtensionModule";
 import type { SpaceInterface, SpaceUserExtended } from "../../Space/SpaceInterface";
+import { clearAreaPresence, areaChatRooms } from "../../Chat/Stores/AreaPresenceStore";
 import type { UserProviderInterface } from "../../Chat/UserProvider/UserProviderInterface";
 import { registerAdditionalMenuItem, unregisterAdditionalMenuItem } from "../../Stores/AdditionalItemsMenuStore";
 import { popupStore } from "../../Stores/PopupStore";
@@ -182,7 +183,6 @@ import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
 import { videoStreamStore, screenShareStreamStore } from "../../Stores/PeerStore";
 import type { ChatConnectionInterface, ChatUser } from "../../Chat/Connection/ChatConnection";
 import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
-import { areaChatRooms, areaPresenceStore } from "../../Chat/Stores/AreaPresenceStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
@@ -1162,6 +1162,8 @@ export class GameScene extends DirtyScene {
         followUsersStore.stopFollowing();
 
         audioManagerFileStore.unloadAudio();
+        // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
+        clearAreaPresence();
 
         this.connection?.closeConnection();
         this.outlineManager?.clear();
@@ -1180,7 +1182,6 @@ export class GameScene extends DirtyScene {
         this._proximityChatRoom?.destroy();
         // Area chat rooms and area presence are per scene: a new map starts with none.
         areaChatRooms.reset();
-        areaPresenceStore.clear();
         this.mapEditorModeStoreUnsubscriber?.();
         this.emoteUnsubscriber?.();
         this.followUsersColorStoreUnsubscriber?.();

@@ -153,15 +153,26 @@ export interface WorldPresence {
     elsewhere: number;
 }
 
+// Normalized play URIs, by raw play URI: the world list re-emits on every join and leave, and most avatars share
+// a handful of maps, so each distinct URI is parsed once. Bounded so it cannot grow without limit.
+const normalizedPlayUris = new Map<string, string>();
+const MAX_CACHED_PLAY_URIS = 500;
+
 function normalizePlayUri(playUri: string): string {
+    const cached = normalizedPlayUris.get(playUri);
+    if (cached !== undefined) return cached;
+    let normalized = playUri;
     try {
         const url = new URL(playUri, "https://placeholder.invalid");
         url.search = "";
         url.hash = "";
-        return url.toString();
+        normalized = url.toString();
     } catch {
-        return playUri;
+        // Not a URL: compare it as is.
     }
+    if (normalizedPlayUris.size >= MAX_CACHED_PLAY_URIS) normalizedPlayUris.clear();
+    normalizedPlayUris.set(playUri, normalized);
+    return normalized;
 }
 
 /**

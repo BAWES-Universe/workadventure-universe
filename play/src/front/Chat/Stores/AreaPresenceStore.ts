@@ -201,3 +201,11 @@ export class AreaChatRoomTracker<Room = unknown> {
 
 /** This tab's area chat rooms. */
 export const areaChatRooms = new AreaChatRoomTracker<ChatRoom>();
+
+/**
+ * Forgets every area. Called when the scene closes (exit, "Go to room"): area-leave handlers do not run then,
+ * and a "video" entry must not keep a destroyed space's users store alive on the next map.
+ */
+export function clearAreaPresence(): void {
+    areaPresenceStore.clear();
+}
