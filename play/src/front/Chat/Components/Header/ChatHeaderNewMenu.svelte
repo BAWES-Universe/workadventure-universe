@@ -143,7 +143,7 @@
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}
-        on:click|preventDefault|stopPropagation={toggleMenu}
+        on:click|preventDefault={toggleMenu}
         on:keydown={onTriggerKeyDown}
     >
         <IconPlus font-size="22" class="chat-new-plus" />
@@ -166,7 +166,7 @@
                     bind:this={itemRefs[index]}
                     data-testid={testIds[option]}
                     class="chat-new-item m-0 w-full min-h-14 flex items-center gap-3 px-2 py-2 rounded-xl text-start text-white bg-transparent hover:bg-white/10 focus-visible:bg-white/10 focus-visible:outline-none"
-                    on:click|stopPropagation={() => choose(option)}
+                    on:click={() => choose(option)}
                 >
                     <span
                         class="h-10 w-10 shrink-0 rounded-xl p-[2px] bg-gradient-to-br from-primary/70 to-secondary/70"

@@ -85,7 +85,7 @@
         ? 'bg-transparent'
         : 'bg-secondary'}"
     bind:this={optionButtonRef}
-    on:click|preventDefault|stopPropagation={toggleSpaceOption}
+    on:click|preventDefault={toggleSpaceOption}
     aria-expanded={!hideFolderOptions}
 >
     <IconDots />

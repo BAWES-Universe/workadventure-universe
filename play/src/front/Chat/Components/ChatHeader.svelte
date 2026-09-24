@@ -154,16 +154,13 @@
             {/if}
         </div>
         <div class="relative">
-            <ChatActionMenu
-                hasCloseChat={$hideActionBarStoreBecauseOfChatBar && !isInSpecificDiscussion}
-                hasSearch={false}
-            />
+            <ChatActionMenu hasCloseChat={$hideActionBarStoreBecauseOfChatBar && !isInSpecificDiscussion} />
         </div>
     </div>
 
     {#if showSearch || newChatOptions.length > 0}
         <!-- Search and one "+". The "+" menu is positioned against this row. -->
-        <div class="relative flex items-center gap-2 px-2 pb-2" data-testid="chatListCreateEntry">
+        <div class="relative flex items-center gap-2 px-2 pb-2">
             {#if showSearch}
                 {#await userProviderMergerPromise}
                     <div class="grow" />
