@@ -92,10 +92,18 @@
             ? $LL.chat.topRow.you()
             : lastMessage.sender?.username ?? $LL.chat.topRow.someone()
         : "";
+    // Like a DM row: the sender's name is left out when the title already names them alone.
+    // "You:" stays, and so do names when several people were in the chat.
+    $: senderIsTitle =
+        lastMessage !== undefined &&
+        !lastMessage.isMyMessage &&
+        (lastMessage.sender?.username ?? "").trim() === title.trim();
     $: preview = session.unsentDraft
         ? `${$LL.chat.session.unsentDraft()}: ${toPlainText(session.unsentDraft)}`
         : lastText
-        ? `${lastSender}: ${lastText}`
+        ? senderIsTitle
+            ? lastText
+            : `${lastSender}: ${lastText}`
         : "";
     // Wokas: the people who wrote, else the people who were there.
     $: talkers = withWorldPictures(talkersOf(session.messages), participants);
@@ -163,11 +171,12 @@
             {/if}
         </div>
         <div class="flex min-w-0 items-center gap-2">
-            <span class="session-tag shrink-0" data-testid="proximitySessionRowKind">{kind}</span>
             <span
                 class="min-w-0 grow truncate text-sm {hasUnread ? 'text-white/85' : 'text-white/60'}"
                 data-testid="proximitySessionRowPreview">{preview}</span
             >
+            <!-- What kind of chat this was, under the time, where DM rows keep their menu. -->
+            <span class="session-tag shrink-0" data-testid="proximitySessionRowKind">{kind}</span>
             {#if hasUnread}
                 <span
                     class="u-badge flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-bold"
@@ -179,7 +188,7 @@
 </button>
 
 <style>
-    /* What kind of chat this was, as a small tag before the preview. */
+    /* What kind of chat this was, as a small tag at the end of the preview line. */
     .session-tag {
         display: inline-flex;
         align-items: center;
