@@ -40,6 +40,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Least privilege by default. Without a workflow-level block every job inherits the
+# repository default token, which is broader than anything here needs. Jobs that need more
+# declare it themselves: the builds widen to packages: write, the release job to contents:
+# write, and the deploy job to deployments: write for recording the deployment.
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   # Change this to your GitHub username or organization
@@ -52,6 +59,8 @@ jobs:
   # ─────────────────────────────────────────────────
   get-version:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       new_version: ${{ steps.calculate.outputs.new_version }}
       release_version: ${{ steps.calculate.outputs.release_version }}
@@ -64,7 +73,10 @@ jobs:
         id: calculate
         run: |
           PKG_VERSION=$(cat VERSION)
-          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          # Anchored stable semver only. The glob is looser than it looks: [0-9]* means
+          # "a digit followed by anything", so it also matches a prerelease such as
+          # v0.2.70-rc.1, whose suffix then breaks the arithmetic below with a shell error.
+          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' | head -1)
           LATEST_VERSION="${LATEST_TAG#v}"
 
           echo "VERSION file: $PKG_VERSION"
@@ -432,6 +444,10 @@ jobs:
     if: needs.release.outputs.created == 'true'
     needs: release
     runs-on: ubuntu-latest
+    # Recording the deployment uses the deployments API; nothing here reads repository files.
+    permissions:
+      contents: read
+      deployments: write
     steps:
       - name: Deploy all universe services to Coolify
         env:

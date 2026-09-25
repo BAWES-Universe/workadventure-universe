@@ -24,6 +24,7 @@ import type { Entity } from "../../ECS/Entity";
 import { DEPTH_OVERLAY_INDEX } from "../DepthIndexes";
 import type { ITiledPlace } from "../GameMapPropertiesListener";
 import type { GameScene } from "../GameScene";
+import { areaChatRooms, collectAreaChatRoomIds } from "../../../Chat/Stores/AreaPresenceStore";
 import { EntitiesManager } from "./EntitiesManager";
 import { AreasManager } from "./AreasManager";
 import TilemapLayer = Phaser.Tilemaps.TilemapLayer;
@@ -281,6 +282,7 @@ export class GameMapFrontWrapper {
         // If gameMapAreas is undefined, we are on a public map
         if (gameMapAreas !== undefined) {
             this.areasManager = new AreasManager(this.scene, gameMapAreas, userConnectedTags, userCanEdit);
+            this.refreshAreaChatRoomIds();
             gameMapAreas.triggerAreasChange(undefined, this.position);
         }
         // Once we have the tags, we can compute the colliding layer again
@@ -889,7 +891,17 @@ export class GameMapFrontWrapper {
         return this.isInsideAreaByCoordinates(areaCoordinates, playerPosition);
     }
 
+    /**
+     * The chat list hides every area chat room of the map at all times, so an area room never shows up in it while
+     * joining, leaving or syncing.
+     */
+    private refreshAreaChatRoomIds(): void {
+        const areas = this.gameMap.getGameMapAreas()?.getAreas();
+        areaChatRooms.setMapRoomIds(collectAreaChatRoomIds(areas?.values() ?? []));
+    }
+
     public listenAreaCreation(areaData: AreaData): void {
+        this.refreshAreaChatRoomIds();
         if (this.position === undefined) {
             return;
         }
@@ -905,6 +917,7 @@ export class GameMapFrontWrapper {
     }
 
     public listenAreaChanges(oldConfig: AtLeast<AreaData, "id">, newConfig: AtLeast<AreaData, "id">): void {
+        this.refreshAreaChatRoomIds();
         if (this.position === undefined) {
             return;
         }
@@ -947,6 +960,7 @@ export class GameMapFrontWrapper {
     }
 
     public listenAreaDeletion(areaData: AreaData | undefined) {
+        this.refreshAreaChatRoomIds();
         if (areaData === undefined || this.position === undefined) {
             console.error('Area with id "' + areaData?.id + '" does not exist, this not supposed to happen');
             return;

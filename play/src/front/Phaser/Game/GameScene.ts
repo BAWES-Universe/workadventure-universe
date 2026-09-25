@@ -92,16 +92,12 @@ import {
     userIsJitsiDominantSpeakerStore,
 } from "../../Stores/GameStore";
 import {
-    activeSubMenuStore,
     contactPageStore,
     inviteUserActivated,
     mapEditorActivated,
     mapManagerActivated,
-    menuVisiblilityStore,
     roomListActivated,
     screenSharingActivatedStore,
-    SubMenusInterface,
-    subMenusStore,
 } from "../../Stores/MenuStore";
 import type { WasCameraUpdatedEvent } from "../../Api/Events/WasCameraUpdatedEvent";
 import { audioManagerFileStore, bubbleSoundStore } from "../../Stores/AudioManagerStore";
@@ -130,6 +126,7 @@ import { highlightedEmbedScreen } from "../../Stores/HighlightedEmbedScreenStore
 import type { AddPlayerEvent } from "../../Api/Events/AddPlayerEvent";
 import type { AskPositionEvent } from "../../Api/Events/AskPositionEvent";
 import { chatVisibilityStore, forceRefreshChatStore } from "../../Stores/ChatStore";
+import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
 import { myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
@@ -156,7 +153,7 @@ import { scriptUtils } from "../../Api/ScriptUtils";
 import { statusChanger } from "../../Components/ActionBar/AvailabilityStatus/statusChanger";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { closeCoWebsite, getCoWebSite, openCoWebSite, openCoWebSiteWithoutSource } from "../../Chat/Utils";
-import { navChat } from "../../Chat/Stores/ChatStore";
+import { inviteCardRequestStore, navChat } from "../../Chat/Stores/ChatStore";
 import { ProximityChatRoom } from "../../Chat/Connection/Proximity/ProximityChatRoom";
 import { ProximitySpaceManager } from "../../WebRtc/ProximitySpaceManager";
 import type { SpaceRegistryInterface } from "../../Space/SpaceRegistry/SpaceRegistryInterface";
@@ -169,7 +166,8 @@ import { isActivatedStore as isCalendarActiveStore, calendarEventsStore } from "
 import { isActivatedStore as isTodoListActiveStore, todoListsStore } from "../../Stores/TodoListStore";
 import { externalSvelteComponentService } from "../../Stores/Utils/externalSvelteComponentService";
 import type { ExtensionModule } from "../../ExternalModule/ExtensionModule";
-import type { SpaceInterface } from "../../Space/SpaceInterface";
+import type { SpaceInterface, SpaceUserExtended } from "../../Space/SpaceInterface";
+import { clearAreaPresence, areaChatRooms } from "../../Chat/Stores/AreaPresenceStore";
 import type { UserProviderInterface } from "../../Chat/UserProvider/UserProviderInterface";
 import { registerAdditionalMenuItem, unregisterAdditionalMenuItem } from "../../Stores/AdditionalItemsMenuStore";
 import { popupStore } from "../../Stores/PopupStore";
@@ -180,7 +178,12 @@ import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcu
 import { enableUserInputsStore } from "../../Stores/UserInputStore";
 import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
 import { videoStreamStore, screenShareStreamStore } from "../../Stores/PeerStore";
-import type { ChatConnectionInterface, ChatUser } from "../../Chat/Connection/ChatConnection";
+import type {
+    ChatConnectionInterface,
+    ChatRoom,
+    ChatRoomMembershipManagement,
+    ChatUser,
+} from "../../Chat/Connection/ChatConnection";
 import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { ConversationBubble } from "../Entity/ConversationBubble";
@@ -371,6 +374,10 @@ export class GameScene extends DirtyScene {
     private _proximityChatRoom: ProximityChatRoom | undefined;
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
+    // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
+    private _allUsersInWorldStore: ForwardableStore<Map<string, SpaceUserExtended> | undefined> = new ForwardableStore<
+        Map<string, SpaceUserExtended> | undefined
+    >(undefined);
     public extensionModule: ExtensionModule | undefined = undefined;
     public landingAreas: AreaData[] = [];
     // Listeners for when the player finishes moving
@@ -1157,6 +1164,8 @@ export class GameScene extends DirtyScene {
         followUsersStore.stopFollowing();
 
         audioManagerFileStore.unloadAudio();
+        // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
+        clearAreaPresence();
 
         this.connection?.closeConnection();
         this.outlineManager?.clear();
@@ -1172,7 +1181,20 @@ export class GameScene extends DirtyScene {
             Sentry.captureException(e);
         });
         this.proximitySpaceManager?.destroy();
+        // The chats you had come along to the next map.
+        this._proximityChatRoom?.stashHistoryForNextScene();
         this._proximityChatRoom?.destroy();
+        // Area chat rooms are per scene: a new map starts with none. Area-leave handlers don't run when the scene
+        // closes, so the rooms of the areas still active are left here, and stay hidden until that leave completes.
+        areaChatRooms.reset(({ roomId, room }) => {
+            if (get(selectedRoomStore)?.id === roomId) {
+                selectedRoomStore.set(undefined);
+            }
+            if (!("leaveRoom" in room)) return undefined;
+            return (room as ChatRoom & ChatRoomMembershipManagement)
+                .leaveRoom()
+                .catch((error) => console.error("Failed to leave the area chat room", error));
+        });
         this.mapEditorModeStoreUnsubscriber?.();
         this.emoteUnsubscriber?.();
         this.followUsersColorStoreUnsubscriber?.();
@@ -1783,6 +1805,7 @@ export class GameScene extends DirtyScene {
                         this.allUserSpace = space;
                         worldUserProvider = new WorldUserProvider(space);
                         this._worldUserCounter.forward(worldUserProvider.userCount);
+                        this._allUsersInWorldStore.forward(space.usersStore);
                         return gameManager.getChatConnection();
                     })
                     .then((chatConnection) => {
@@ -2237,7 +2260,7 @@ export class GameScene extends DirtyScene {
                         externalRestrictedMapEditorProperties: mapEditorRestrictedPropertiesStore,
                         showComponentInChat(component: ComponentType, props: Record<string, unknown>) {
                             navChat.switchToCustomComponent(component, props);
-                            chatVisibilityStore.set(true);
+                            openChat("script");
                         },
                         openErrorScreen: (error: Error) => {
                             errorScreenStore.setException(error);
@@ -2531,7 +2554,7 @@ ${escapedMessage}
 
         this.iframeSubscriptionList.push(
             iframeListener.openChatStream.subscribe(() => {
-                chatVisibilityStore.set(true);
+                openChat("script");
             })
         );
 
@@ -2595,15 +2618,16 @@ ${escapedMessage}
                         switch (chatMessage.options.scope) {
                             case "local": {
                                 room.addExternalMessage("local", chatMessage.message, chatMessage.options.author);
-                                selectedRoomStore.set(room);
-                                chatVisibilityStore.set(true);
+                                // Shows where the message landed, not an older chat left selected.
+                                room.showLatest();
+                                openChat("script");
 
                                 break;
                             }
                             case "bubble": {
                                 room.addExternalMessage("bubble", chatMessage.message);
-                                selectedRoomStore.set(room);
-                                chatVisibilityStore.set(true);
+                                room.showLatest();
+                                openChat("script");
                             }
                         }
                     })
@@ -2724,14 +2748,11 @@ ${escapedMessage}
 
         this.iframeSubscriptionList.push(
             iframeListener.openInviteMenuStream.subscribe(() => {
-                const inviteMenu = subMenusStore.findByKey(SubMenusInterface.invite);
-                if (get(menuVisiblilityStore) && activeSubMenuStore.isActive(inviteMenu)) {
-                    menuVisiblilityStore.set(false);
-                    activeSubMenuStore.activateByIndex(0);
-                    return;
-                }
-                activeSubMenuStore.activateByMenuItem(inviteMenu);
-                menuVisiblilityStore.set(true);
+                // The invite lives at the bottom of the chat panel: open the panel and its invite card.
+                if (!get(inviteUserActivated)) return;
+                navChat.switchToChat();
+                chatVisibilityStore.set(true);
+                inviteCardRequestStore.set(true);
             })
         );
 
@@ -3998,6 +4019,14 @@ ${escapedMessage}
 
     get worldUserCounter(): Readable<number> {
         return this._worldUserCounter;
+    }
+
+    /**
+     * Everyone in the world space, unfiltered (the People tab's source before its search filter).
+     * Undefined until the world space is joined.
+     */
+    get allUsersInWorldStore(): Readable<Map<string, SpaceUserExtended> | undefined> {
+        return this._allUsersInWorldStore;
     }
 
     getStartPositionNames(): string[] {

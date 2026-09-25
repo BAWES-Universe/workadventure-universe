@@ -1,81 +1,54 @@
 <script lang="ts">
-    import { get } from "svelte/store";
-
-    import { onDestroy, onMount } from "svelte";
+    import { derived } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import LL from "../../../i18n/i18n-svelte";
-    import { chatSearchBarValue, joignableRoom, navChat } from "../Stores/ChatStore";
+    import { findGroupOpenStore, navChat } from "../Stores/ChatStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
-    import type { ChatRoom } from "../Connection/ChatConnection";
     import { INITIAL_SIDEBAR_WIDTH, loginTokenErrorStore } from "../../Stores/ChatStore";
     import { userIsConnected } from "../../Stores/MenuStore";
-    import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
     import getCloseImg from "../images/get-close.png";
     import ExternalComponents from "../../Components/ExternalModules/ExternalComponents.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import Room from "./Room/Room.svelte";
+    import type { ChatMessage } from "../Connection/ChatConnection";
+    import type { ProximitySession } from "../Connection/Proximity/ProximitySessions";
+    import { ROOM_MESSAGES_SESSION_ID, listableSessions } from "../Connection/Proximity/ProximitySessions";
+    import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
-    import RoomInvitation from "./Room/RoomInvitation.svelte";
-    import JoignableRooms from "./Room/JoignableRooms.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
-    import RoomFolder from "./RoomFolder.svelte";
-    import CreateRoomOrFolderOption from "./Room/CreateRoomOrFolderOption.svelte";
-    import ShowMore from "./ShowMore.svelte";
     import ChatHeader from "./ChatHeader.svelte";
+    import FindGroup from "./FindGroup.svelte";
+    import InviteFooter from "./InviteFooter.svelte";
     import RequireConnection from "./requireConnection.svelte";
     import RefreshChat from "./RefreshChat.svelte";
-    import { IconChevronUp, IconCloudLock, IconRefresh } from "@wa-icons";
+    import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
+    import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
+    import OneList from "./OneList/OneList.svelte";
+    import type { OneListEntry } from "./OneList/OneListStore";
+    import { resolveChatLayout } from "./ChatLayout";
+    import {
+        IconChevronRight,
+        IconCloudLock,
+        IconMessage,
+        IconRefresh,
+        IconTools,
+        IconUserCircle,
+        IconWorldSearch,
+    } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
 
-    const proximityChatRoom = gameManager.getCurrentGameScene().proximityChatRoom;
+    const gameScene = gameManager.getCurrentGameScene();
+    const proximityChatRoom = gameScene.proximityChatRoom;
+    const proximitySessions = proximityChatRoom.sessions;
+    const proximityUnread = proximityChatRoom.unreadBySession;
     const chat = gameManager.chatConnection;
     const shouldRetrySendingEvents = chat.shouldRetrySendingEvents;
+    const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
 
     const chatConnectionStatus = chat.connectionStatus;
     const CHAT_LAYOUT_LIMIT = INITIAL_SIDEBAR_WIDTH * 2;
-
-    let directRooms = chat.directRooms;
-    let rooms = chat.rooms;
-    let roomInvitations = chat.invitations;
-    let roomFolders = chat.folders;
-    let proximityHasUnreadMessages = proximityChatRoom.hasUnreadMessages;
-
-    let displayDirectRooms = false;
-    let displayRooms = false;
-    let displayRoomInvitations = false;
-
-    //let proximityChatRoomHasUserInProximityChatSubscribtion: Unsubscriber | undefined;
-    //let _hasUserInProximityChat = false;
-    //let proximityChatRoomHasUnreadMessagesSubscribtion: Unsubscriber | undefined;
-    //let _hasUnreadMessages = false;
-
-    onMount(() => {
-        expandOrCollapseRoomsIfEmpty();
-        /*proximityChatRoomHasUserInProximityChatSubscribtion = proximityChatRoom.hasUserInProximityChat.subscribe(
-            (hasUserInProximityChat) => {
-                _hasUserInProximityChat = hasUserInProximityChat;
-            }
-        );
-        proximityChatRoomHasUnreadMessagesSubscribtion = proximityChatRoom.hasUnreadMessages.subscribe(
-            (hasUnreadMessages) => {
-                _hasUnreadMessages = hasUnreadMessages;
-            }
-        );*/
-    });
-
-    const directRoomsUnsubscriber = rooms.subscribe((rooms) => openRoomsIfCollapsedBeforeNewRoom(rooms));
-    const roomInvitationsUnsubscriber = roomInvitations.subscribe((roomInvitations) =>
-        openRoomInvitationsIfCollapsedBeforeNewRoom(roomInvitations)
-    );
-
-    onDestroy(() => {
-        directRoomsUnsubscriber();
-        roomInvitationsUnsubscriber();
-        //if (proximityChatRoomHasUserInProximityChatSubscribtion) proximityChatRoomHasUserInProximityChatSubscribtion();
-        //if (proximityChatRoomHasUnreadMessagesSubscribtion) proximityChatRoomHasUnreadMessagesSubscribtion();
-    });
 
     async function initChatConnectionEncryption() {
         try {
@@ -89,235 +62,187 @@
     const isEncryptionRequiredAndNotSet = chat.isEncryptionRequiredAndNotSet;
     const isGuest = chat.isGuest;
 
-    function openRoomsIfCollapsedBeforeNewRoom(rooms: ChatRoom[]) {
-        if (rooms.length !== 0 && displayRooms === false) {
-            displayRooms = true;
-        }
+    function openLiveProximityChat() {
+        proximityChatRoom.open();
     }
 
-    function openRoomInvitationsIfCollapsedBeforeNewRoom(roomInvitations: ChatRoom[]) {
-        if (roomInvitations.length !== 0 && displayRoomInvitations === false) {
-            displayRoomInvitations = true;
-        }
+    function openSession(session: ProximitySession<ChatMessage>) {
+        proximityChatRoom.open(session.id);
     }
 
-    function expandOrCollapseRoomsIfEmpty() {
-        displayDirectRooms = $directRooms.length > 0;
-        displayRooms = $rooms.length > 0;
-        displayRoomInvitations = $roomInvitations.length > 0;
-    }
+    // The proximity chats you had, one row each, sorted in with the saved conversations by their last message.
+    // Only stays where someone wrote something get a row; the room messages get one when no stay is live.
+    const proximityEntries: Readable<OneListEntry[]> = derived(
+        [proximitySessions, proximityUnread, LL],
+        ([$sessions, $unread, $LL]) =>
+            listableSessions($sessions).map((session): OneListEntry => {
+                // A conversation made of several stays adds up what you didn't read in each of them.
+                const unreadCount = session.stayIds.reduce((total, id) => total + ($unread.get(id) ?? 0), 0);
+                const title =
+                    session.id === ROOM_MESSAGES_SESSION_ID
+                        ? $LL.chat.session.roomMessages()
+                        : session.isArea
+                        ? session.label
+                        : session.label || $LL.chat.proximity();
+                return {
+                    id: `proximity:${session.id}`,
+                    kind: "proximity",
+                    name: title,
+                    timestamp: session.lastMessage?.date?.getTime() ?? session.endedAt ?? session.startedAt ?? 0,
+                    unreadCount,
+                    hasUnread: unreadCount > 0,
+                    item: session,
+                    searchNames: session.participants,
+                };
+            })
+    );
 
-    function toggleDisplayDirectRooms() {
-        displayDirectRooms = !displayDirectRooms;
-    }
+    // The live card shows while you're in a bubble, a meeting or a zone.
+    let liveCardVisible = false;
+    $: hasProximityHistory = $proximityEntries.length > 0;
 
-    function toggleDisplayRooms() {
-        displayRooms = !displayRooms;
-    }
+    // One rule for both the columns and the list: at 670px and wider, list and thread sit side by side.
+    // Below that, an open thread takes the whole panel, and the list (with the Chats / People tabs) hides.
+    $: layout = resolveChatLayout(sideBarWidth, CHAT_LAYOUT_LIMIT, $selectedRoomStore !== undefined);
+    $: displayTwoColumnLayout = layout.twoColumns;
 
-    function toggleDisplayRoomInvitations() {
-        displayRoomInvitations = !displayRoomInvitations;
-    }
-
-    function toggleDisplayProximityChat() {
-        selectedRoomStore.set(proximityChatRoom);
-        proximityChatRoom.hasUnreadMessages.set(false);
-        proximityChatRoom.unreadNotificationCount.set(0);
-    }
-
-    $: filteredDirectRoom = $directRooms
-        .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
-        .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
-    $: filteredRooms = $rooms
-        .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
-        .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
-    $: filteredRoomInvitations = $roomInvitations
-        .filter(({ name }) => get(name).toLocaleLowerCase().includes($chatSearchBarValue.toLocaleLowerCase()))
-        .sort((a: ChatRoom, b: ChatRoom) => (a.lastMessageTimestamp > b.lastMessageTimestamp ? -1 : 1));
-
-    $: displayTwoColumnLayout = sideBarWidth >= CHAT_LAYOUT_LIMIT;
+    const isMatrixChatEnabled = gameScene.room.isMatrixChatEnabled;
 </script>
 
 <div
-    class="overflow-auto h-full grid grid-rows-[1fr_auto] {sideBarWidth > INITIAL_SIDEBAR_WIDTH * 2 &&
-    $navChat.key === 'chat'
+    class="overflow-auto h-full grid grid-rows-[1fr_auto] {displayTwoColumnLayout && $navChat.key === 'chat'
         ? 'grid-cols-[auto_1fr]'
         : 'grid-cols-[1fr]'}"
 >
-    {#if $selectedRoomStore === undefined || displayTwoColumnLayout}
+    {#if layout.showList}
         <div
             class="w-full flex flex-col border border-solid border-y-0 border-l-0 border-white/10 relative overflow-y-auto overflow-x-none"
             style={displayTwoColumnLayout ? `width:335px ;flex : 0 0 auto` : ``}
         >
-            {#if $shouldRetrySendingEvents}
-                <RefreshChat />
-            {/if}
-            <ChatHeader />
-            <div
-                class="relative pt-2 {$isEncryptionRequiredAndNotSet === true && $isGuest === false
-                    ? ' h-[calc(100%-2rem)]'
-                    : 'h-full'}"
-            >
-                {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
-                    <ChatLoader label={$LL.chat.connecting()} />
+            {#if $findGroupOpenStore && $chatConnectionStatus === "ONLINE"}
+                <FindGroup />
+            {:else}
+                {#if $shouldRetrySendingEvents}
+                    <RefreshChat />
                 {/if}
-                {#if $chatConnectionStatus === "ON_ERROR" && $userIsConnected}
-                    <ChatError />
-                {/if}
+                <ChatHeader />
+                <div
+                    class="relative pt-1 {$isEncryptionRequiredAndNotSet === true && $isGuest === false
+                        ? ' h-[calc(100%-2rem)]'
+                        : 'h-full'}"
+                >
+                    {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
+                        <ChatLoader label={$LL.chat.connecting()} />
+                    {/if}
+                    {#if $chatConnectionStatus === "ON_ERROR" && $userIsConnected}
+                        <ChatError />
+                    {/if}
 
-                {#if !$userIsConnected && gameManager.getCurrentGameScene().room.isMatrixChatEnabled}
-                    <RequireConnection />
-                {:else if $loginTokenErrorStore}
-                    <RequireConnection>
-                        <span slot="emoji">
-                            <IconRefresh font-size="50" />
-                        </span>
-                        <span slot="title">
-                            {$LL.chat.loginTokenError()}
-                        </span>
-                        <span slot="button-label">
-                            {$LL.chat.reconnect()}
-                        </span>
-                    </RequireConnection>
-                {/if}
+                    {#if $loginTokenErrorStore && !(!$userIsConnected && isMatrixChatEnabled)}
+                        <RequireConnection>
+                            <span slot="emoji">
+                                <IconRefresh font-size="50" />
+                            </span>
+                            <span slot="title">
+                                {$LL.chat.loginTokenError()}
+                            </span>
+                            <span slot="button-label">
+                                {$LL.chat.reconnect()}
+                            </span>
+                        </RequireConnection>
+                    {/if}
 
-                <div class="px-2 py-3 border border-solid border-x-0 border-t border-y-0 border-b-0 border-white/10">
-                    <div
-                        class="group relative px-3 rounded h-11 w-full flex space-x-2 items-center {$proximityHasUnreadMessages
-                            ? 'hover:bg-contrast-200/20 bg-contrast-200/10'
-                            : 'hover:bg-contrast-200/10'}"
-                    >
-                        <button
-                            class="flex items-center space-x-2 grow m-0 p-0"
-                            on:click={toggleDisplayProximityChat}
-                            data-testid="toggleDisplayProximityChat"
-                        >
-                            <div class="relative">
-                                <div
-                                    class="rounded-full bg-white/10 h-7 w-7 border border-solid text-white flex items-center justify-center p-[1px] relative {$proximityHasUnreadMessages
-                                        ? 'border-white'
-                                        : 'border-white/70'}"
+                    <!-- What you're in the middle of: the live proximity chat, then the area chats you stand in. -->
+                    <div class="flex flex-col px-2 pb-1 empty:hidden">
+                        <ProximityTopRow
+                            {proximityChatRoom}
+                            onOpen={openLiveProximityChat}
+                            bind:visible={liveCardVisible}
+                        />
+                        <AreaChatRows />
+                    </div>
+                    {#if !liveCardVisible && !hasProximityHistory}
+                        <!-- Nothing yet: say how it starts, and offer the People tab. -->
+                        <section class="u-glass-warm mx-2 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
+                            <div class="flex items-start gap-3">
+                                <div class="flex h-11 w-11 shrink-0 items-end justify-center" aria-hidden="true">
+                                    <WokaFromUserId userId={-1} customWidth="40px" placeholderSrc="" />
+                                </div>
+                                <div class="flex min-w-0 flex-col gap-0.5">
+                                    <h3 class="u-text-gradient m-0 text-base font-bold leading-6">
+                                        {$LL.chat.here.title()}
+                                    </h3>
+                                    <p class="m-0 text-sm leading-5 text-white/75">{$LL.chat.here.hint()}</p>
+                                </div>
+                            </div>
+                            {#if hasPeopleTab}
+                                <button
+                                    type="button"
+                                    class="u-cta mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold"
+                                    data-testid="nearbyHintPeople"
+                                    on:click={() => navChat.switchToUserList()}
                                 >
-                                    <div class="absolute overflow-hidden w-full h-full rounded-full">
-                                        <div
-                                            class=" flex items-center justify-center translate-y-[3px] group-hover:translate-y-[0] transition-all"
-                                        >
-                                            <WokaFromUserId userId={-1} customWidth="32px" placeholderSrc="" />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div
-                                class="cursor-default text-sm grow text-start ps-1 {$proximityHasUnreadMessages
-                                    ? 'text-white font-bold'
-                                    : 'text-white/75'}"
-                            >
-                                {$LL.chat.proximity()}
-                            </div>
-                            {#if $proximityHasUnreadMessages}
-                                <div class="flex items-center justify-center h-7 w-7 relative">
-                                    <div class="rounded-full bg-secondary-200 h-2 w-2 animate-ping absolute" />
-                                    <div class="rounded-full bg-secondary-200 h-1.5 w-1.5 absolute" />
-                                </div>
+                                    {$LL.chat.here.seeWhoIsHere()}
+                                    <IconChevronRight font-size="16" class="rtl:-scale-x-100" aria-hidden="true" />
+                                </button>
                             {/if}
-                        </button>
-                    </div>
-                </div>
-                {#if $chatConnectionStatus === "ONLINE"}
-                    {#if $joignableRoom.length > 0 && $chatSearchBarValue.trim() !== ""}
-                        <p class="p-0 m-0 text-gray-400">{$LL.chat.availableRooms()}</p>
-                        <div class="flex flex-col">
-                            {#each $joignableRoom as room (room.id)}
-                                <JoignableRooms {room} />
-                            {/each}
-                        </div>
+                        </section>
                     {/if}
-                    {#if filteredRoomInvitations.length > 0}
-                        <button
-                            class="group relative m-0 px-3 rounded-none text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center border border-solid border-x-0 border-t border-b-0 border-white/10"
-                            on:click={toggleDisplayRoomInvitations}
-                        >
-                            <div class="text-sm font-bold tracking-widest uppercase grow text-start">
-                                {$LL.chat.invitations()}
-                            </div>
-                            <button
-                                class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
-                            >
-                                <IconChevronUp
-                                    class={`transform transition ${!displayRoomInvitations ? "" : "rotate-180"}`}
-                                />
-                            </button>
-                        </button>
-                        {#if displayRoomInvitations}
-                            <div class="flex flex-col overflow-auto ps-3 pr-4 pb-3">
-                                <ShowMore items={filteredRoomInvitations} maxNumber={8} idKey="id" let:item={room}>
-                                    <RoomInvitation {room} />
-                                </ShowMore>
-                            </div>
-                        {/if}
-                    {/if}
-
-                    <button
-                        class="group relative px-3 m-0 rounded-none text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center border border-solid border-x-0 border-t border-b-0 border-white/10"
-                        on:click={toggleDisplayDirectRooms}
-                    >
-                        <div class="flex items-center space-x-2 m-0 p-0 grow">
-                            <div class="text-sm font-bold tracking-widest uppercase grow text-start">
-                                {$LL.chat.people()}
-                            </div>
-                            <button
-                                class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
-                            >
-                                <IconChevronUp
-                                    class={`transform transition ${!displayDirectRooms ? "" : "rotate-180"}`}
-                                />
-                            </button>
-                        </div>
-                    </button>
-
-                    {#if displayDirectRooms}
-                        <div class="flex flex-col px-2 pb-2">
-                            <ShowMore items={filteredDirectRoom} maxNumber={8} idKey="id" let:item={room}>
-                                <Room {room} />
-                            </ShowMore>
-                        </div>
-                    {/if}
-
-                    <div class="flex items-center space-x-2 grow m-0 p-0">
-                        <!-- TODO : use div instead of button to avoid focus issues try to find a better solution -->
-                        <!-- svelte-ignore a11y-click-events-have-key-events -->
-                        <!-- svelte-ignore a11y-no-static-element-interactions -->
-                        <div
-                            class="group relative px-3 m-0 mb-2 rounded-none text-white/75 hover:text-white h-11 hover:bg-contrast-200/10 w-full flex space-x-2 items-center border border-solid border-x-0 border-t border-b-0 border-white/10"
-                            on:click={toggleDisplayRooms}
-                            data-testid="roomAccordeon"
-                        >
-                            <div class="flex items-center space-x-2 grow m-0 p-0">
-                                <div class="text-sm font-bold tracking-widest uppercase grow text-start">
-                                    {$LL.chat.rooms()}
-                                </div>
-                            </div>
-                            <CreateRoomOrFolderOption parentID={undefined} parentName="" folder={undefined} />
-                            <button
-                                class="transition-all group-hover:bg-white/10 p-1 rounded-lg aspect-square flex items-center justify-center text-white"
-                            >
-                                <IconChevronUp class={`transform transition ${!displayRooms ? "" : "rotate-180"}`} />
-                            </button>
-                        </div>
-                    </div>
-                    {#if displayRooms}
+                    {#if $chatConnectionStatus === "ONLINE" || hasProximityHistory}
+                        <!-- One list: proximity chats you had, DMs, groups, invitations and folders, newest first. -->
                         <div class="px-2 pb-2">
-                            <ShowMore items={filteredRooms} maxNumber={8} idKey="id" let:item={room}>
-                                <Room {room} />
-                            </ShowMore>
+                            <OneList
+                                extraEntries={proximityEntries}
+                                showEmpty={$chatConnectionStatus === "ONLINE"}
+                                onOpenSession={openSession}
+                            />
                         </div>
                     {/if}
-                    <!--roomBySpace-->
-                    {#each Array.from($roomFolders.values()) as rootRoomFolder (rootRoomFolder.id)}
-                        <RoomFolder folder={rootRoomFolder} rootFolder={true} />
-                    {/each}
-                {/if}
-            </div>
+                    {#if !$userIsConnected && isMatrixChatEnabled}
+                        <!-- Guests: under the conversations, so what you had stays together at the top. -->
+                        <section
+                            class="u-glass mx-2 mb-2 rounded-2xl px-4 pt-4 pb-4 text-sm text-white/80"
+                            aria-labelledby="chatGuestTitle"
+                            data-testid="chatGuestCard"
+                        >
+                            <span class="u-eyebrow">{$LL.chat.guest.eyebrow()}</span>
+                            <h3 id="chatGuestTitle" class="u-text-gradient m-0 mt-1.5 text-lg font-bold leading-6">
+                                {$LL.chat.guest.title()}
+                            </h3>
+                            <p class="m-0 mt-1 text-xs leading-5 text-white/60">{$LL.chat.guest.intro()}</p>
+                            <ul class="m-0 mt-3 flex list-none flex-col gap-2.5 p-0 text-[13px] leading-5">
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="16" /></span>
+                                    <span>{$LL.chat.guest.build()}</span>
+                                </li>
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconWorldSearch font-size="16" /></span
+                                    >
+                                    <span>{$LL.chat.guest.orbit()}</span>
+                                </li>
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="16" /></span>
+                                    <span>{$LL.chat.guest.messageAnyone()}</span>
+                                </li>
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="16" /></span>
+                                    <span>{$LL.chat.guest.keepWoka()}</span>
+                                </li>
+                            </ul>
+                            <a
+                                class="u-cta mt-4 flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold no-underline hover:no-underline"
+                                href="/login"
+                                data-testid="chatGuestSignIn"
+                                on:click={() => analyticsClient.login()}
+                            >
+                                <span>{$LL.chat.guest.action()}</span>
+                                <IconChevronRight font-size="16" class="shrink-0 rtl:-scale-x-100" aria-hidden="true" />
+                            </a>
+                        </section>
+                    {/if}
+                </div>
+                <InviteFooter />
+            {/if}
         </div>
     {/if}
     {#if $selectedRoomStore !== undefined}
@@ -357,3 +282,19 @@
         {/if}
     </div>
 </div>
+
+<style>
+    /* The small icon tiles of the guest card: a purple → blue gradient, like the "+" menu's. */
+    .guest-tile {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        flex-shrink: 0;
+        border-radius: 0.5rem;
+        color: #fff;
+        background: linear-gradient(135deg, rgba(134, 41, 252, 0.9), rgba(65, 86, 246, 0.9));
+        box-shadow: 0 4px 10px -4px rgba(134, 41, 252, 0.7);
+    }
+</style>

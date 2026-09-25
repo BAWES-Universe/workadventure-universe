@@ -1,10 +1,13 @@
 <script lang="ts">
+    import { getContext, onDestroy, onMount } from "svelte";
     import { readable } from "svelte/store";
     import { openModal } from "svelte-modals";
     import { EventType } from "matrix-js-sdk";
     import LL from "../../../../i18n/i18n-svelte";
     import { notificationPlayingStore } from "../../../Stores/NotificationStore";
     import type { RoomFolder, ChatRoomModeration } from "../../Connection/ChatConnection";
+    import type { OrderFreeze } from "../OneList/OneListStore";
+    import { ONE_LIST_FREEZE_CONTEXT } from "../OneList/OneListStore";
     import ManageParticipantsModal from "./ManageParticipantsModal.svelte";
     import CreateFolderModal from "./CreateFolderModal.svelte";
     import CreateRoomModal from "./CreateRoomModal.svelte";
@@ -21,6 +24,23 @@
     const hasPermissionToInvite = folder?.hasPermissionTo("invite") ?? readable(false);
     const hasPermissionToKick = folder?.hasPermissionTo("kick") ?? readable(false);
     const hasPermissionToBan = folder?.hasPermissionTo("ban") ?? readable(false);
+
+    // Inside the one chat list, the list holds its order still while this menu is open.
+    const orderFreeze = getContext<OrderFreeze | undefined>(ONE_LIST_FREEZE_CONTEXT);
+    const freezeHolder = {};
+    $: orderFreeze?.setHeld(freezeHolder, !hideFolderOptions);
+    onDestroy(() => orderFreeze?.release(freezeHolder));
+
+    // Close on a click anywhere else, like the room menu does, so an open menu never holds the list still.
+    function closeOnClickOutside(event: MouseEvent) {
+        if (hideFolderOptions || optionButtonRef === undefined) return;
+        if (event.target instanceof Node && optionButtonRef.contains(event.target)) return;
+        hideFolderOptions = true;
+    }
+    onMount(() => {
+        document.addEventListener("click", closeOnClickOutside);
+        return () => document.removeEventListener("click", closeOnClickOutside);
+    });
 
     $: shouldDisplayManageParticipantButton = $hasPermissionToInvite || $hasPermissionToKick || $hasPermissionToBan;
 
@@ -65,7 +85,8 @@
         ? 'bg-transparent'
         : 'bg-secondary'}"
     bind:this={optionButtonRef}
-    on:click|preventDefault|stopPropagation={toggleSpaceOption}
+    on:click|preventDefault={toggleSpaceOption}
+    aria-expanded={!hideFolderOptions}
 >
     <IconDots />
 </button>

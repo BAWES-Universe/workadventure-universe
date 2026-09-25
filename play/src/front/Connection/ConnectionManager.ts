@@ -124,7 +124,9 @@ class ConnectionManager {
     public loadOpenIDScreen(manuallyTriggered: boolean, providerId?: string, providerScopes?: string[]): URL | null {
         localUserStore.setAuthToken(null);
         // Clear guest-picked textures/name/companion so OIDC user's
-        // saved data loads from DB via the /room/access fallback
+        // saved data loads from DB via the /room/access fallback.
+        // The guest woka is kept aside and restored if the user comes back as a guest.
+        localUserStore.backupGuestCharacterTextures();
         localUserStore.setCharacterTextures([]);
         if (!ENABLE_OPENID || !this._currentRoom) {
             analyticsClient.loggedWithToken();
@@ -321,6 +323,9 @@ class ConnectionManager {
                 if (!this._currentRoom.authenticationMandatory) {
                     await this.anonymousLogin();
 
+                    // Back as a guest after a logout or an abandoned login: reuse the guest's woka
+                    // rather than sending them through the woka picker again.
+                    localUserStore.restoreGuestCharacterTextures();
                     const characterTextures = localUserStore.getCharacterTextures();
                     if (characterTextures === null || characterTextures.length === 0) {
                         nextScene = "selectCharacterScene";

@@ -11,8 +11,8 @@ const chat: DeepPartial<Translation["chat"]> = {
     typing: "schreibt...",
     users: "Benutzer",
     userList: {
-        disconnected: "Getrennt",
-        isHere: "Ist auf dieser Karte",
+        disconnected: "Offline",
+        isHere: "Auf dieser Karte",
         inAnotherMap: "In einer anderen Karte",
         in: "In ",
         teleport: "Teleportieren",

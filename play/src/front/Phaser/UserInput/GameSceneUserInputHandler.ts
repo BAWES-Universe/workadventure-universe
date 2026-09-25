@@ -11,8 +11,8 @@ import { displayEmote, isEmoteIndex } from "../../Stores/EmoteStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { navChat } from "../../Chat/Stores/ChatStore";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
-import { popupStore } from "../../Stores/PopupStore";
-import SayPopUp from "../../Components/PopUp/SayPopUp.svelte";
+import { openChat } from "../../Chat/openChat";
+import { expressTrayStore } from "../../Stores/ExpressStore";
 import { isPopupJustClosed } from "../Game/Say/SayManager";
 import LL from "../../../i18n/i18n-svelte";
 import type { Shortcut } from "./UserInputManager";
@@ -157,7 +157,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
             navChat.switchToChat();
         } else if (!isChatVisible && !isInMapEditor) {
             navChat.switchToChat();
-            chatVisibilityStore.set(true);
+            openChat("button");
         } else if (isChatVisible) {
             chatVisibilityStore.set(false);
         }
@@ -171,7 +171,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
             navChat.switchToUserList();
         } else if (!isChatVisible && !isInMapEditor) {
             navChat.switchToUserList();
-            chatVisibilityStore.set(true);
+            openChat("button");
         } else if (isChatVisible) {
             chatVisibilityStore.set(false);
         }
@@ -227,7 +227,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
                 const emoteIndex = Number.parseInt(digit, 10);
 
                 if (isEmoteIndex(emoteIndex)) {
-                    displayEmote(emoteIndex);
+                    displayEmote(emoteIndex, "keyboard");
                 } else {
                     console.warn(`Invalid emote index: ${emoteIndex}`);
                     Sentry.captureException(new Error(`Invalid emote index: ${emoteIndex}`));
@@ -252,19 +252,22 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
         return event;
     }
 
-    private openSayPopup(): void {
+    /** Enter opens the Express tray ready to type; Ctrl+Enter opens it in Think mode. */
+    private openExpress(): void {
         if (!this.gameScene.room.isSayEnabled) {
             return;
         }
-        // Don't open if we just closed.
-        if (isPopupJustClosed() || popupStore.hasPopup("say")) {
+        // Don't reopen with the Enter that just sent or closed the tray, nor while it is open.
+        if (isPopupJustClosed() || get(expressTrayStore) !== "closed") {
             return;
         }
-        popupStore.addPopup(SayPopUp, { type: this.controlKeyisPressed ? "think" : "say" }, "say");
-        if (this.controlKeyisPressed) {
-            analyticsClient.openThinkBubble();
+        const think = this.controlKeyisPressed;
+        expressTrayStore.open({ think, focusInput: true });
+        analyticsClient.expressTrayOpened("keyboard");
+        if (think) {
+            analyticsClient.openThinkBubble("keyboard");
         } else {
-            analyticsClient.openSayBubble();
+            analyticsClient.openSayBubble("keyboard");
         }
     }
 
@@ -280,7 +283,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
                 break;
             }
             case "Enter": {
-                this.openSayPopup();
+                this.openExpress();
                 this.controlKeyisPressed = false;
                 break;
             }

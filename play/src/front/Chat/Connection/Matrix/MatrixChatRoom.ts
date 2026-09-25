@@ -104,7 +104,7 @@ export class MatrixChatRoom
         this.type = this.getMatrixRoomType();
         this.hasUnreadMessages = writable(matrixRoom.getUnreadNotificationCount() > 0);
         this.unreadNotificationCount = writable(matrixRoom.getUnreadNotificationCount());
-        this.pictureStore = readable(matrixRoom.getAvatarUrl(matrixRoom.client.baseUrl, 24, 24, "scale") ?? undefined);
+        this.pictureStore = readable(matrixRoom.getAvatarUrl(matrixRoom.client.baseUrl, 96, 96, "scale") ?? undefined);
         this.messages = new SearchableArrayStore((item: MatrixChatMessage) => item.id);
         this.sendMessage = this.sendMessage.bind(this);
         this.myMembership = writable(matrixRoom.getMyMembership());
@@ -696,6 +696,28 @@ export class MatrixChatRoom
 
     public get lastMessageTimestamp(): number {
         return this.matrixRoom.getLastActiveTimestamp();
+    }
+
+    /** This account's pending invite event in this room, if there is one. */
+    private getMyInviteEvent(): MatrixEvent | undefined {
+        const myUserId = this.matrixRoom.myUserId;
+        const event = this.matrixRoom.getMember(myUserId)?.events.member;
+        if (!event || event.getContent().membership !== "invite") return undefined;
+        return event;
+    }
+
+    public get inviteTimestamp(): number | undefined {
+        const timestamp = this.getMyInviteEvent()?.getTs();
+        return timestamp !== undefined && Number.isFinite(timestamp) && timestamp > 0 ? timestamp : undefined;
+    }
+
+    public get inviterName(): string | undefined {
+        const sender = this.getMyInviteEvent()?.getSender();
+        if (!sender) return undefined;
+        const name = this.matrixRoom.getMember(sender)?.name;
+        if (name) return name;
+        // "@omar:example.org" -> "omar"
+        return sender.replace(/^@/, "").split(":")[0] || undefined;
     }
 
     public hasPermissionTo(action: ModerationAction, member?: ChatRoomMember): Readable<boolean> {

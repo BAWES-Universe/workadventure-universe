@@ -6,7 +6,8 @@ class Chat {
         await this.get(page).locator('li:has-text("Chat")').click({timeout: 60_000});
     }
     async slideToUsers(page: Page){
-        await page.locator('.userList').click({timeout: 60_000});
+        // The People tab of the chat.
+        await page.getByTestId('chatTabPeople').click({timeout: 60_000});
     }
 
     async checkNameInChat(page: Page, name: string, timeout = 30_000){
@@ -34,7 +35,7 @@ class Chat {
             }*/
         }
         await page.getByTestId('user-list-button').click();
-        await expect(page.getByText('Users')).toBeVisible();
+        await expect(page.getByTestId('peopleList')).toBeVisible();
     }
 
     get(page: Page){
@@ -64,9 +65,9 @@ class Chat {
     }
 
     async UL_walkTo(page: Page, nickname: string){
-        await page.locator('.user', {hasText: nickname}).locator('.wa-dropdown').click();
-        await expect(page.locator('.user', {hasText: nickname}).locator('span:has-text("Talk to")')).toBeVisible();
-        await page.locator('.user', {hasText: nickname}).locator('span:has-text("Talk to")').click({ timeout: 5_000 });
+        // "Walk to" is a visible button on each person of the People tab (it used to be "Talk to" in the menu).
+        await expect(page.getByTestId('walk-to-'+nickname)).toBeVisible();
+        await page.getByTestId('walk-to-'+nickname).click({ timeout: 5_000 });
     }
 
     async UL_sendMessage(page: Page, nickname: string){

@@ -8,7 +8,6 @@
     import LL from "../../../../i18n/i18n-svelte";
     import AppsMenuItem from "./AppsMenuItem.svelte";
     import FollowMenuItem from "./FollowMenuItem.svelte";
-    import EmojiMenuItem from "./EmojiMenuItem.svelte";
     import LockDiscussionMenuItem from "./LockDiscussionMenuItem.svelte";
     import MusicMenuItem from "./MusicMenuItem.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
@@ -29,7 +28,6 @@
 {/if}
 
 {#if !inProfileMenu}
-    <EmojiMenuItem />
     <AppsMenuItem />
 {/if}
 
