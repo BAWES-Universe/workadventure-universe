@@ -1161,6 +1161,12 @@ export class GameScene extends DirtyScene {
         audioManagerFileStore.unloadAudio();
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
+        // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
+        // next scene (a reconnect) starts zoomed in on the old area, with every resize snapping back to it.
+        if (waScaleManager.getFocusTarget()) {
+            waScaleManager.setFocusTarget();
+            waScaleManager.zoomModifier = waScaleManager.getSaveZoom();
+        }
 
         this.connection?.closeConnection();
         this.outlineManager?.clear();
