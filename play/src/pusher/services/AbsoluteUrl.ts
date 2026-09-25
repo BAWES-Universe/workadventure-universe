@@ -6,3 +6,12 @@ export function absoluteUrl(src: string, pageUrl: string): string {
         return src;
     }
 }
+
+/**
+ * The protocol the visitor used. Behind several proxies, X-Forwarded-Proto can list one value per hop
+ * ("https, http"): the first is the visitor's.
+ */
+export function requestProtocol(forwardedProto: string | undefined, fallback: string): string {
+    const first = forwardedProto?.split(",")[0]?.trim();
+    return first || fallback;
+}
