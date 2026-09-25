@@ -15,6 +15,7 @@ const warning: DeepPartial<Translation["warning"]> = {
     connectionLost: "Zwězanje jo pśetergnjone. Zwězanje naspjet startowaś...",
     connectionLostTitle: "Zwězanja su pśetergnjone",
     connectionLostSubtitle: "Zwězanje naspjet startowaś...",
+    reconnectingTitle: "Zwězanje naspjet startowaś",
     waitingConnectionTitle: "Na zwězanje cakaś",
     waitingConnectionSubtitle: "Zwězaś",
     popupBlocked: {

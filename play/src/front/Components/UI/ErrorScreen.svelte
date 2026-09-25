@@ -10,6 +10,7 @@
     import { userIsConnected } from "../../Stores/MenuStore";
 
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
+    import { reconnectingCopy } from "../../Connection/ReconnectScreen";
 
     let errorScreen = $errorScreenStore;
 
@@ -48,6 +49,28 @@
     }
 
     $: detailsStylized = (details ?? "").replace("{time}", `${timeVar / 1000}`);
+
+    // Still reconnecting after a while with no network: say the device is offline (it keeps retrying on its own).
+    let online = navigator.onLine;
+    let now = Date.now();
+    let reconnectingSince: number | undefined;
+    $: if ($errorScreenStore?.type === "reconnecting") {
+        if (reconnectingSince === undefined) reconnectingSince = Date.now();
+    } else {
+        reconnectingSince = undefined;
+    }
+    $: offline = reconnectingSince !== undefined && reconnectingCopy(now - reconnectingSince, online) === "offline";
+
+    const clock = setInterval(() => (now = Date.now()), 1000);
+    const onOnline = () => (online = true);
+    const onOffline = () => (online = false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    onDestroy(() => {
+        clearInterval(clock);
+        window.removeEventListener("online", onOnline);
+        window.removeEventListener("offline", onOffline);
+    });
 </script>
 
 {#if $errorScreenStore}
@@ -86,19 +109,31 @@
                     />
                 </div>
             {/if}
-            {#if $errorScreenStore.type !== "retry"}<h2 class="mt-10">{$errorScreenStore.title}</h2>{/if}
-            {#if $errorScreenStore.subtitle}<p>{$errorScreenStore.subtitle}</p>{/if}
+            {#if $errorScreenStore.type !== "retry"}<h2 class="mt-10">
+                    {offline ? $LL.warning.offlineTitle() : $errorScreenStore.title}
+                </h2>{/if}
+            {#if $errorScreenStore.subtitle && !offline}<p>{$errorScreenStore.subtitle}</p>{/if}
             {#if $errorScreenStore.type !== "retry" && $errorScreenStore.type !== "reconnecting"}<p class="code">
                     Code : {$errorScreenStore.code}
                 </p>{/if}
-            <p class="details flex flex-row items-center justify-center content-center gap-2">
-                <span>{detailsStylized}</span>
-                {#if $errorScreenStore.type === "retry"}
-                    <div class="loading" />
-                {:else if $errorScreenStore.type === "reconnecting"}
+            {#if $errorScreenStore.type === "reconnecting"}
+                <!-- The text, then the spinner under it: both centred. -->
+                <div class="details flex flex-col items-center justify-center gap-3" data-testid="reconnectingDetails">
+                    {#if offline}
+                        <span>{$LL.warning.offlineDetails()}</span>
+                    {:else if detailsStylized}
+                        <span>{detailsStylized}</span>
+                    {/if}
                     <LoaderIcon />
-                {/if}
-            </p>
+                </div>
+            {:else}
+                <p class="details flex flex-row items-center justify-center content-center gap-2">
+                    <span>{detailsStylized}</span>
+                    {#if $errorScreenStore.type === "retry"}
+                        <div class="loading" />
+                    {/if}
+                </p>
+            {/if}
             <div class="flex gap-2">
                 {#if ($errorScreenStore.type === "retry" && $errorScreenStore.canRetryManual) || $errorScreenStore.type === "unauthorized"}
                     <button type="button" class="btn-lg btn btn-light btn-border button" on:click={click}>
@@ -146,10 +181,14 @@
             opacity: 0.6;
             user-select: text;
         }
-        p.details {
+        p.details,
+        div.details {
             font-size: 12px;
             max-width: 80%;
             margin: 0 auto 35px auto;
+        }
+        div.details {
+            font-size: 14px;
         }
         .loading {
             display: inline-block;
