@@ -126,12 +126,18 @@ function dragMovesSomethingInside(target: EventTarget | null, dx: number, dy: nu
 }
 
 /** Makes iOS drop a page zoom: a changed viewport meta is applied again, and it allows no zoom. */
-function resetPageZoom(win: ViewportGuardWindow): void {
+function resetPageZoom(win: ViewportGuardWindow, originalContent: string, done: () => void): void {
     const meta = win.document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
-    if (!meta) return;
-    const content = meta.getAttribute("content") ?? "";
-    meta.setAttribute("content", `${content}, shrink-to-fit=no`);
-    win.setTimeout(() => meta.setAttribute("content", content), 50);
+    if (!meta) {
+        done();
+        return;
+    }
+    meta.setAttribute("content", `${originalContent}, shrink-to-fit=no`);
+    // Always back to the meta as the page was served, even if two resets overlap.
+    win.setTimeout(() => {
+        meta.setAttribute("content", originalContent);
+        done();
+    }, 50);
 }
 
 /**
@@ -164,10 +170,19 @@ export function installViewportGuard(
     };
     const userIsPanning = () => fingersDown > 0 || now() < userPanUntil;
 
+    // The viewport meta as the page was served, and whether a reset is under way (iOS fires pageshow and
+    // visibilitychange together on a restore: one reset, one report).
+    const originalViewportContent =
+        doc.querySelector<HTMLMetaElement>('meta[name="viewport"]')?.getAttribute("content") ?? "";
+    let resettingZoom = false;
+
     const undoZoom = (reason: "load" | "resume" | "pageshow" | "orientation") => {
-        if (!isZoomed() || fingersDown > 0) return;
+        if (resettingZoom || !isZoomed() || fingersDown > 0) return;
         const scale = pageZoom();
-        resetPageZoom(win);
+        resettingZoom = true;
+        resetPageZoom(win, originalViewportContent, () => {
+            resettingZoom = false;
+        });
         resetPagePosition(win);
         options.onZoomReset?.(scale, reason);
     };
@@ -229,8 +244,10 @@ export function installViewportGuard(
     const onTouchMove = (event: Event) => {
         const touches = (event as TouchEvent).touches;
         if (touches && touches.length > 1) {
-            // Two fingers: a pinch. The game zooms itself from its own touch handling; the page never zooms.
-            if (event.cancelable) event.preventDefault();
+            // Two fingers while typing: the page must not zoom or pan (the game still gets the touches for its own
+            // pinch). Without the keyboard, two-finger scrolling stays as it was; Safari's page pinch is cancelled
+            // through its gesture events below.
+            if (keyboardOpen() && event.cancelable) event.preventDefault();
             return;
         }
         const touch = touches?.[0];

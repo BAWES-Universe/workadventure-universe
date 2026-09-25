@@ -290,8 +290,43 @@ describe("ViewportGuard", () => {
         const ios = fakeIosWindow();
         stop = installViewportGuard(ios.win, { now: ios.now });
         const { move, gesture } = ios.pinch(game);
-        expect(move.defaultPrevented).toBe(true);
+        // Safari's own page pinch is cancelled; the touches still reach the game.
         expect(gesture.defaultPrevented).toBe(true);
+        // Without the keyboard, two-finger scrolling is left as it was.
+        expect(move.defaultPrevented).toBe(false);
+    });
+
+    it("holds the page against a two-finger drag while typing", () => {
+        const ios = fakeIosWindow();
+        stop = installViewportGuard(ios.win, { now: ios.now });
+        input.focus();
+        ios.openKeyboard(300);
+        const { move } = ios.pinch(game);
+        expect(move.defaultPrevented).toBe(true);
+    });
+
+    it("resets a page zoom once when a restore fires two events, and restores the meta as served", () => {
+        const served = "width=device-width, initial-scale=1.0, maximum-scale=1.0";
+        const meta = document.createElement("meta");
+        meta.name = "viewport";
+        meta.content = served;
+        document.head.append(meta);
+        const ios = fakeIosWindow();
+        const timers: (() => void)[] = [];
+        (ios.win as unknown as { setTimeout: (handler: () => void) => number }).setTimeout = (handler) => {
+            timers.push(handler);
+            return timers.length;
+        };
+        const onZoomReset = vi.fn();
+        stop = installViewportGuard(ios.win, { now: ios.now, onZoomReset });
+
+        ios.viewport.scale = 2;
+        ios.fire("pageshow");
+        ios.fire("pageshow");
+        expect(onZoomReset).toHaveBeenCalledTimes(1);
+
+        timers.forEach((run) => run());
+        expect(meta.content).toBe(served);
     });
 
     it("undoes a page zoom found on load, and says so", () => {
