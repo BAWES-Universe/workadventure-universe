@@ -87,6 +87,22 @@ describe('BotClient join gate', () => {
         warn.mockRestore();
     });
 
+    it('always keeps its latest position, even when the queue is full', () => {
+        const { bot, internals, sent } = botWithFakeSocket();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        for (let i = 0; i < 100; i++) {
+            internals.send({ message: { $case: 'followAbortMessage', followAbortMessage: { leader: i, follower: 0 } } });
+        }
+        bot.sendPosition({ x: 180, y: 100 }, PositionMessage_Direction.RIGHT, false);
+        expect(warn).not.toHaveBeenCalled();
+
+        internals.markJoined();
+        const last = sent[sent.length - 1].message;
+        expect(last?.$case === 'userMovesMessage' && last.userMovesMessage.position?.x).toBe(180);
+        warn.mockRestore();
+    });
+
     it('forgets what it held when the socket closes before the join', () => {
         const { bot, internals, sent } = botWithFakeSocket();
         bot.sendPosition({ x: 120, y: 100 }, PositionMessage_Direction.RIGHT, true);

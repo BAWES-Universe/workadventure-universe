@@ -12,6 +12,7 @@ type Listener = (event?: Event) => void;
 
 interface FakeEvent {
     target?: EventTarget | null;
+    composedPath?: () => EventTarget[];
     touches?: { clientX: number; clientY: number }[];
     cancelable: boolean;
     defaultPrevented: boolean;
@@ -234,6 +235,33 @@ describe("ViewportGuard", () => {
         ios.openKeyboard(300);
 
         const move = ios.drag(row, -60);
+        expect(move.defaultPrevented).toBe(false);
+    });
+
+    it("keeps a list inside a web component scrolling while the keyboard is up", () => {
+        const ios = fakeIosWindow();
+        // Like the emoji picker: the list that scrolls is inside the component's shadow root.
+        const host = document.createElement("div");
+        document.body.append(host);
+        const shadow = host.attachShadow({ mode: "open" });
+        const list = document.createElement("div");
+        list.style.overflowY = "auto";
+        const row = document.createElement("div");
+        list.append(row);
+        shadow.append(list);
+        Object.defineProperty(list, "scrollHeight", { value: 1000 });
+        Object.defineProperty(list, "clientHeight", { value: 300 });
+        list.scrollTop = 200;
+        stop = installViewportGuard(ios.win, { now: ios.now });
+        input.focus();
+        ios.openKeyboard(300);
+
+        // Seen from the window, the target is the host; the composed path still has the list.
+        const composedPath = () => [row, list, shadow, host, document.body, document.documentElement, document];
+        ios.fire("touchstart", fakeEvent({ target: host, composedPath, touches: [{ clientX: 100, clientY: 400 }] }));
+        const move = fakeEvent({ target: host, composedPath, touches: [{ clientX: 100, clientY: 340 }] });
+        ios.fire("touchmove", move);
+
         expect(move.defaultPrevented).toBe(false);
     });
 

@@ -3129,10 +3129,14 @@ export class BotClient {
         // itself is in the connection URL, so nothing needs to go out first.
         if (!this.joined && message.message?.$case !== 'pingMessage') {
             if (message.message?.$case === 'userMovesMessage') {
-                // Only where the bot is now matters.
+                // Only where the bot is now matters, and it is always kept: it replaces the one held before, so
+                // the cap never costs the bot its position.
                 this.pendingMessages = this.pendingMessages.filter((m) => m.message?.$case !== 'userMovesMessage');
+                this.pendingMessages.push(message);
+                return;
             }
-            if (this.pendingMessages.length < BotClient.MAX_PENDING_MESSAGES) {
+            const held = this.pendingMessages.filter((m) => m.message?.$case !== 'userMovesMessage').length;
+            if (held < BotClient.MAX_PENDING_MESSAGES) {
                 this.pendingMessages.push(message);
             } else {
                 console.warn(
