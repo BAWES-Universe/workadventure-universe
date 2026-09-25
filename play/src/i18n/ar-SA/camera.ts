@@ -18,6 +18,7 @@ const camera: DeepPartial<Translation["camera"]> = {
         content: "يجب السماح بالوصول إلى الكاميرا والميكروفون في المتصفح.", // Access to camera and microphone must be allowed in the browser.
         firefoxContent: 'يرجى النقر على زر "حفظ هذا القرار" لمنع طلبات الإذن المتكررة في Firefox.', // Please click the "Save this decision" button to prevent repeated permission requests in Firefox.
         continue: "المتابعة بدون كاميرا", // Continue without camera
+        why: "ليراك ويسمعك من تقترب منهم. يمكنك إيقافهما في أي وقت.",
         allow: "السماح بالكاميرا", // Allow camera
         screen: {
             firefox: "/resources/help-setting-camera-permission/ar-SA-firefox.png", // Firefox help setting camera permission

@@ -24,14 +24,13 @@ import { MegaphoneIcon } from "../Components/MegaphoneIcon";
 import { StringUtils } from "../../Utils/StringUtils";
 
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
-import { SpeechBubble } from "./SpeechBubble";
 import { SpeechDomElement } from "./SpeechDomElement";
-import { ThinkingCloud } from "./ThinkingCloud";
+import { SayStack } from "./SayStack";
+import { SayStackDomView } from "./SayStackView";
 import Text = Phaser.GameObjects.Text;
 import Container = Phaser.GameObjects.Container;
 import Sprite = Phaser.GameObjects.Sprite;
 import DOMElement = Phaser.GameObjects.DOMElement;
-import RenderTexture = Phaser.GameObjects.RenderTexture;
 
 const playerNameY = -25;
 const interactiveRadius = 25;
@@ -41,8 +40,17 @@ export const CHARACTER_BODY_HEIGHT = 16;
 export const CHARACTER_BODY_OFFSET_X = 0;
 export const CHARACTER_BODY_OFFSET_Y = 8;
 
+/** Bottom of the say stack, relative to the avatar's center: where the single say bubble used to end. */
+const SAY_STACK_BOTTOM_Y = -CHARACTER_BODY_HEIGHT / 2 - 38;
+/** Resting height of an emote when nothing is said. */
+const EMOTE_Y = -45;
+/** Gap between the top of the say stack and the emote's center. */
+const EMOTE_ABOVE_STACK_GAP = 14;
+
 export abstract class Character extends Container implements OutlineableInterface {
-    private bubble: RenderTexture | null | DOMElement = null;
+    private sayStack: SayStack | undefined;
+    private sayStackView: SayStackDomView | undefined;
+    private sayStackElement: DOMElement | undefined;
     private playerNameText: Text | undefined;
     private readonly talkIcon: TalkIcon;
     protected readonly statusDot: PlayerStatusDot;
@@ -411,47 +419,54 @@ export abstract class Character extends Container implements OutlineableInterfac
         this.playAnimation(this._lastDirection, false);
     }
 
+    /**
+     * Shows a Say line (stacked, each on its own 5s timer) or a Think cloud above the character.
+     * An empty Say only removes lines past their lifetime; an empty Think removes the cloud.
+     * Local and remote players both go through here, so they behave the same.
+     */
     say(text: string, type: SayMessageType) {
         this.scene.markDirty();
-        if (this.bubble !== null) {
-            this.remove(this.bubble);
-            this.bubble.destroy();
-        }
-        // If text is empty, let's just remove the previous bubble and say nothing.
-        if (!text) {
+        if (!text && !this.sayStack) {
             return;
         }
+        const stack = this.getSayStack();
 
         switch (type) {
             case SayMessageType.SpeechBubble:
             case SayMessageType.UNRECOGNIZED: {
-                const speechBubble = new SpeechBubble(text);
-                this.bubble = new DOMElement(
-                    this.scene,
-                    0,
-                    0 - CHARACTER_BODY_HEIGHT / 2 - 50,
-                    speechBubble.getElement()
-                );
-                this.add(this.bubble);
+                stack.say(text);
                 break;
             }
             case SayMessageType.ThinkingCloud: {
-                const thinkElement = new ThinkingCloud({
-                    text: text,
-                    maxWidth: 200,
-                    fontSize: 11,
-                    cornerRadius: 10,
-                    padding: 12,
-                    fillColor: 0xffffff,
-                    fillAlpha: 0.8,
-                }).getElement();
-                this.bubble = new DOMElement(this.scene, 0, 0 - CHARACTER_BODY_HEIGHT / 2 - 70, thinkElement);
-                this.add(this.bubble);
+                stack.think(text);
                 break;
             }
             default: {
                 const _exhaustiveCheck: never = type;
             }
+        }
+    }
+
+    private getSayStack(): SayStack {
+        if (!this.sayStack) {
+            const view = new SayStackDomView(() => this.scene?.markDirty());
+            this.sayStackView = view;
+            this.sayStackElement = new DOMElement(this.scene, 0, SAY_STACK_BOTTOM_Y, view.getElement());
+            this.add(this.sayStackElement);
+            this.sayStack = new SayStack(view);
+        }
+        return this.sayStack;
+    }
+
+    private destroySayStack(): void {
+        this.sayStack?.destroy();
+        this.sayStack = undefined;
+        this.sayStackView?.destroy();
+        this.sayStackView = undefined;
+        if (this.sayStackElement) {
+            this.remove(this.sayStackElement);
+            this.sayStackElement.destroy();
+            this.sayStackElement = undefined;
         }
     }
 
@@ -462,6 +477,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             }
         }
         this.texturePromise?.cancel();
+        this.destroySayStack();
         this.list.forEach((objectContaining) => objectContaining.destroy());
         this.outlineColorStoreUnsubscribe?.();
         this.destroyed = true;
@@ -470,10 +486,13 @@ export abstract class Character extends Container implements OutlineableInterfac
 
     playEmote(emote: string) {
         this.cancelPreviousEmote();
-        const emoteY = -45;
+        // Emotes play above the say stack, whatever its height.
+        const stackHeight = this.sayStackView?.getHeight() ?? 0;
+        const emoteY =
+            stackHeight > 0 ? Math.min(EMOTE_Y, SAY_STACK_BOTTOM_Y - stackHeight - EMOTE_ABOVE_STACK_GAP) : EMOTE_Y;
         const span = document.createElement("span");
         span.innerHTML = emote;
-        this.emote = new DOMElement(this.scene, -1, 0, span, "z-index:10;");
+        this.emote = new DOMElement(this.scene, -1, emoteY - EMOTE_Y, span, "z-index:10;");
         this.emote.setAlpha(0);
         this.add(this.emote);
         this.createStartTransition(emoteY);
@@ -534,7 +553,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             this.emoteTween = this.scene?.tweens.add({
                 targets: this.emote,
                 props: {
-                    y: emoteY * 1.3,
+                    y: emoteY + EMOTE_Y * 0.3,
                     scale: this.emote.scale * 1.1,
                 },
                 duration: 250,
@@ -553,7 +572,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             targets: this.emote,
             props: {
                 alpha: 0,
-                y: 2 * emoteY,
+                y: emoteY + EMOTE_Y,
             },
             ease: "Power2",
             duration: 500,

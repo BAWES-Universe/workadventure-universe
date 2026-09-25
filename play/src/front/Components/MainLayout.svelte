@@ -61,6 +61,7 @@
     import ExternalComponents from "./ExternalModules/ExternalComponents.svelte";
     import PictureInPicture from "./Video/PictureInPicture.svelte";
     import AudioStreamWrapper from "./Video/PictureInPicture/AudioStreamWrapper.svelte";
+    import ExpressButton from "./ActionBar/Express/ExpressButton.svelte";
     import ExplorerMenu from "./ActionsMenu/ExplorerMenu.svelte";
 
     const handleFocusInEvent = (event: FocusEvent) => {
@@ -250,7 +251,14 @@
             {/if}
             <ExternalComponents zone="centeredPopup" />
 
-            <ExplorerMenu />
+            <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
+                 directly above the menu button. -->
+            <div
+                class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
+            >
+                <ExplorerMenu />
+                <ExpressButton />
+            </div>
         </section>
         <div class="">
             <!--<ActionBar />-->

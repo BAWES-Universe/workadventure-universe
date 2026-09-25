@@ -30,9 +30,8 @@ test.describe("Walk to @nomobile @nowebkit", () => {
       "Proximity Chat"
     );
 
-    await expect(page.locator(".messageTextBody")).toContainText(
-      "New discussion with Bob"
-    );
+    // The bubble's start marker is a session divider naming the group.
+    await expect(page.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Bob");
 
 
     await userBob.context().close();
@@ -82,8 +81,9 @@ test.describe("Send Message from User List @oidc @matrix @chat", () => {
     await using userUserLogin1 = await getPage(browser, 'Member1', Map.url("empty"));
     await chatUtils.open(userUserLogin1, false);
     await chatUtils.slideToUsers(userUserLogin1);
-    // Click on chat button
-    await expect(userUserLogin1.getByTestId(`send-message-Alice`)).toBeDisabled();
+    // Alice can't receive a direct message: no greyed-out button, but she can still be reached by walking to her
+    await expect(userUserLogin1.getByTestId(`walk-to-Alice`)).toBeVisible();
+    await expect(userUserLogin1.getByTestId(`send-message-Alice`)).toHaveCount(0);
 
     await userAlice.context().close();
     await userUserLogin1.context().close();

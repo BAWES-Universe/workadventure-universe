@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import { evaluateScript } from "./utils/scripting";
-import Chat from "./utils/chat";
 import Map from "./utils/map";
 import { resetWamMaps } from "./utils/map-editor/uploader";
 import chatUtils from "./chat/chatUtils";
@@ -31,18 +30,12 @@ test.describe("#Scripting chat functions @nowebkit @nomobile", () => {
       return WA.chat.open();
     });
     await expect(page.locator("#chat")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Proximity Chat" })
-    ).toBeVisible({ timeout: 60000 });
 
-    // Open the timeline
-    await Chat.openTimeline(page);
-    await expect(page.locator(".back-roomlist")).toBeVisible();
-
-    // Test send message scripting
+    // Test send message scripting: alone, there is no proximity chat to open by hand, so the message opens it.
     await evaluateScript(page, async () => {
       return WA.chat.sendChatMessage("Test message sent", "Test machine");
     });
+    await expect(page.locator(".back-roomlist")).toBeVisible({ timeout: 60000 });
 
     await expect(page.locator("#chat").locator(".messageContainer")).toContainText(
       "Test message sent"
@@ -131,7 +124,7 @@ test.describe("#Scripting chat functions @nowebkit @nomobile", () => {
 
     // Check that bob received the message
     //await bob.pause();
-    await expect(bob.getByText('New discussion with Alice')).toBeVisible();
+    await expect(bob.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Alice");
 
     // Check that bob received the message
     await expect(bob.locator("#chat")).toContainText("Test message sent", {
@@ -139,7 +132,7 @@ test.describe("#Scripting chat functions @nowebkit @nomobile", () => {
     });
 
     // Check that bob received the message
-    await expect(alice.getByText('New discussion with Bob')).toBeVisible();
+    await expect(alice.getByTestId("threadSessionDividerLabel").last()).toHaveText("With Bob");
 
     // Check that alice also received the message
     await expect(alice.locator("#chat")).toContainText("Test message sent", {

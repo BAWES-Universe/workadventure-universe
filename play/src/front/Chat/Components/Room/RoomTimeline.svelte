@@ -1,20 +1,35 @@
 <script lang="ts">
     import { afterUpdate, beforeUpdate, onMount } from "svelte";
-    import { get } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import type { ChatRoom } from "../../Connection/ChatConnection";
+    import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
     import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
     import { matrixSecurity } from "../../Connection/Matrix/MatrixSecurity";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
-    import LL from "../../../../i18n/i18n-svelte";
+    import type {
+        ProximitySession,
+        ProximitySessionMarker,
+        TimelineEntry,
+    } from "../../Connection/Proximity/ProximitySessions";
+    import {
+        sessionOfStay,
+        ROOM_MESSAGES_SESSION_ID,
+        buildTimelineEntries,
+    } from "../../Connection/Proximity/ProximitySessions";
+    import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
+    import LL, { locale } from "../../../../i18n/i18n-svelte";
+    import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import Message from "./Message.svelte";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
     import TypingUsers from "./TypingUsers.svelte";
-    import { IconChevronLeft, IconChevronRight, IconLoader, IconMailBox } from "@wa-icons";
+    import SessionDivider from "./Thread/SessionDivider.svelte";
+    import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
+    import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
+    import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
 
@@ -42,6 +57,64 @@
     $: messages = room?.messages;
     $: roomName = room?.name;
     $: typingMembers = room.typingMembers;
+    $: isEncrypted = room.isEncrypted;
+    $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
+    // The proximity chat is one timeline across every stay. The thread shows one stay at a time: the live one,
+    // or an ended one from the list (read-only). With no stay selected, the whole timeline shows with dividers,
+    // as it always did. Other rooms have no session markers.
+    $: spaceJoinedAt = proximityRoom ? proximityRoom.spaceJoinedAt : readable(undefined);
+    $: sessions = proximityRoom ? proximityRoom.sessions : readable([] as ProximitySession<ChatMessage>[]);
+    $: shownSession = proximityRoom
+        ? $selectedProximitySessionStore !== undefined
+            ? sessionOfStay($sessions, $selectedProximitySessionStore)
+            : undefined
+        : undefined;
+    $: liveSession = proximityRoom ? $sessions.find((session) => session.isLive) : undefined;
+    $: isEnded = shownSession !== undefined && !shownSession.isLive;
+    $: isRoomMessages = shownSession?.id === ROOM_MESSAGES_SESSION_ID;
+    $: timelineEntries = shownSession
+        ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
+        : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt);
+    $: endedTitle = shownSession
+        ? isRoomMessages
+            ? $LL.chat.session.roomMessages()
+            : shownSession.isArea
+            ? shownSession.label
+            : $LL.chat.proximity()
+        : "";
+    $: endedSubtitle = (() => {
+        if (!shownSession) return "";
+        if (isRoomMessages) return $LL.chat.session.roomMessagesHint();
+        const parts: string[] = [];
+        if (!shownSession.isArea) {
+            const names = formatPeopleNames(shownSession.participants, {
+                two: $LL.chat.topRow.twoNames,
+                more: $LL.chat.topRow.moreNames,
+            });
+            if (names) parts.push($LL.chat.thread.withPeople({ names }));
+        }
+        if (shownSession.endedAt) {
+            const time = new Date(shownSession.endedAt).toLocaleTimeString($locale, {
+                hour: "2-digit",
+                minute: "2-digit",
+            });
+            parts.push($LL.chat.session.endedAt({ time }));
+        }
+        return parts.join($LL.chat.topRow.separator());
+    })();
+    // Someone walked up while you were reading an ended stay: your view stays, a small notice offers the live one.
+    $: liveElsewhere = isEnded && liveSession !== undefined;
+    $: liveNotice = liveSession
+        ? liveSession.isArea
+            ? $LL.chat.session.liveNowArea({ name: liveSession.label })
+            : $LL.chat.session.liveNow({
+                  names: formatPeopleNames(liveSession.participants, {
+                      two: $LL.chat.topRow.twoNames,
+                      more: $LL.chat.topRow.moreNames,
+                  }),
+              })
+        : "";
+    $: isEmptyProximityView = shownSession !== undefined && shownSession.messages.length === 0;
 
     onMount(() => {
         initMessages()
@@ -194,7 +267,7 @@
 
     function onDropFiles(event: DragEvent) {
         if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
-            messageInputBarRef.handleFiles({
+            messageInputBarRef?.handleFiles({
                 detail: event.dataTransfer.files,
             } as CustomEvent<FileList>);
         }
@@ -225,8 +298,39 @@
                 {:else}
                     <div class="p-3 rounded-2xl aspect-square w-12" />
                 {/if}
-                <div class="text-md font-bold h-5 grow text-center" data-testid="roomName">
-                    {$roomName}
+                <div class="flex min-w-0 grow flex-col items-center gap-0.5">
+                    {#if proximityRoom && isEnded}
+                        <div
+                            class="flex min-w-0 max-w-full flex-col items-center"
+                            data-testid="threadNow"
+                            data-state="ended"
+                        >
+                            <div class="max-w-full truncate text-md font-bold leading-5" data-testid="roomName">
+                                {endedTitle}
+                            </div>
+                            <div class="max-w-full truncate text-xs text-white/60" data-testid="threadNowLabel">
+                                {endedSubtitle}
+                            </div>
+                        </div>
+                    {:else if proximityRoom}
+                        <ProximityThreadTitle room={proximityRoom} />
+                    {:else}
+                        <div class="flex max-w-full items-center justify-center gap-1.5">
+                            <div class="text-md font-bold h-5 truncate text-center" data-testid="roomName">
+                                {$roomName}
+                            </div>
+                            {#if $isEncrypted}
+                                <span
+                                    class="shrink-0 text-white/50"
+                                    title={$LL.chat.thread.encrypted()}
+                                    data-testid="threadEncryptedLock"
+                                >
+                                    <IconLock font-size="14" />
+                                    <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
+                                </span>
+                            {/if}
+                        </div>
+                    {/if}
                 </div>
 
                 <div class="p-3 rounded-2xl aspect-square w-12" />
@@ -234,6 +338,23 @@
             {#if shouldDisplayLoader}
                 <div class="flex justify-center items-center w-full pb-1 bg-transparent">
                     <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
+                </div>
+            {/if}
+            {#if liveElsewhere && proximityRoom}
+                <div
+                    class="mx-2 flex items-center gap-2 rounded-xl bg-success/15 px-3 py-2 text-xs text-white"
+                    data-testid="proximityLiveNotice"
+                >
+                    <span class="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />
+                    <span class="grow">{liveNotice}</span>
+                    <button
+                        type="button"
+                        class="m-0 rounded-lg bg-white/10 px-2 py-1 text-xs font-bold hover:bg-white/20"
+                        data-testid="proximityLiveNoticeOpen"
+                        on:click={() => proximityRoom?.open()}
+                    >
+                        {$LL.chat.session.goToChat()}
+                    </button>
                 </div>
             {/if}
         </div>
@@ -256,7 +377,16 @@
                 <!--        {/each}-->
                 <!--    </div>-->
                 <!--{/if}-->
-                {#if $messages.length === 0}
+                {#if shownSession && !isEnded && !isRoomMessages}
+                    <li class="px-4 pb-2 text-center text-xs text-white/45" data-testid="proximityExplainer">
+                        {$LL.chat.session.explainer()}
+                    </li>
+                {/if}
+                {#if isEmptyProximityView && isEnded}
+                    <li class="text-center px-3 py-6 text-sm text-white/50">{$LL.chat.session.empty()}</li>
+                {:else if shownSession && shownSession.isLive}
+                    <!-- In a bubble with nothing written yet: the explainer above is enough. -->
+                {:else if $messages.length === 0 || isEmptyProximityView}
                     {#if room instanceof ProximityChatRoom}
                         <li class="text-center px-3 max-w-md">
                             <img draggable="false" src={getCloseImg} alt="Discussion bubble" />
@@ -287,22 +417,43 @@
                         </li>
                     {/if}
                 {/if}
-                {#each $messages as message (message.id)}
-                    <li class="last:pb-3" data-event-id={message.id}>
-                        {#if message.type === "outcoming" || message.type === "incoming"}
-                            <MessageSystem {message} />
+                {#each timelineEntries as entry (entry.message.id)}
+                    <li class="last:pb-3" data-event-id={entry.message.id}>
+                        {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
+                            <SessionDivider
+                                marker={entry.message.session}
+                                date={entry.message.date}
+                                isCurrent={entry.isCurrentSession}
+                                resumed={entry.role === "resume"}
+                            />
+                        {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
+                            <MessageSystem message={entry.message} />
                         {:else}
-                            <Message on:updateMessageBody={onUpdateMessageBody} {message} />
+                            <Message on:updateMessageBody={onUpdateMessageBody} message={entry.message} />
+                            {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
+                                <div class="px-4 pb-2 text-xs italic text-white/45" data-testid="proximityStoppedNote">
+                                    {$LL.chat.session.stopped()}
+                                </div>
+                            {/if}
                         {/if}
                     </li>
                 {/each}
             </ul>
         </div>
 
-        {#if $typingMembers.length > 0}
+        {#if $typingMembers.length > 0 && !isEnded}
             <TypingUsers typingMembers={$typingMembers} />
         {/if}
 
-        <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
+        {#if isEnded && shownSession}
+            <!-- An ended proximity chat can't receive anything: a way back to the people replaces the composer. -->
+            <ProximityEndedFooter session={shownSession} live={liveSession} onContinue={() => proximityRoom?.open()} />
+        {:else}
+            <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
+                 Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->
+            {#key room.id}
+                <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
+            {/key}
+        {/if}
     {/if}
 </div>

@@ -17,7 +17,8 @@ const camera: BaseTranslation = {
         content: "You must allow camera and microphone access in your browser.",
         firefoxContent:
             'Please click the "Remember this decision" checkbox, if you don\'t want Firefox to keep asking you the authorization.',
-        allow: "Allow webcam",
+        why: "So people you walk up to can see and hear you. You can turn them off at any time.",
+        allow: "Allow camera and mic",
         continue: "Continue without webcam",
         screen: {
             firefox: "/resources/help-setting-camera-permission/en-US-firefox.png",

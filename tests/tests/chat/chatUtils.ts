@@ -105,10 +105,6 @@ class ChatUtils {
       timeout: 20_000,
     });
   }
-
-  public async openRoomAreaList(page: Page) {
-    return page.getByTestId("roomAccordeon").click();
-  }
 }
 
 export default new ChatUtils();

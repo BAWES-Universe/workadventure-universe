@@ -85,6 +85,10 @@ export interface ChatRoom {
     readonly stopTyping: () => Promise<object>;
     readonly isRoomFolder: boolean;
     readonly lastMessageTimestamp: number;
+    /** For a pending invitation: when the invite was sent (ms), if the invite event carries a time. */
+    readonly inviteTimestamp?: number;
+    /** For a pending invitation: the display name of whoever sent it, if known. */
+    readonly inviterName?: string;
 }
 
 export interface ChatRoomMembershipManagement {

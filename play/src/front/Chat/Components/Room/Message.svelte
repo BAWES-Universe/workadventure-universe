@@ -6,6 +6,7 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import Avatar from "../Avatar.svelte";
     import { selectedChatMessageToEdit } from "../../Stores/ChatStore";
+    import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
     import MessageOptions from "./MessageOptions.svelte";
     import MessageImage from "./Message/MessageImage.svelte";
     import MessageText from "./Message/MessageText.svelte";
@@ -17,7 +18,7 @@
     import MessageReactions from "./MessageReactions.svelte";
     import MessageIncoming from "./Message/MessageIncoming.svelte";
     import MessageOutcoming from "./Message/MessageOutcoming.svelte";
-    import { IconTrash } from "@wa-icons";
+    import { IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
 
     export let message: ChatMessage;
     export let replyDepth = 0;
@@ -49,6 +50,8 @@
     };
 
     const messageFromSystem = type === "incoming" || type === "outcoming";
+    // A proximity message whose conversation ended before its upload finished: shown here, never sent.
+    const notSent = message instanceof ProximityChatMessage && message.notSent === true;
 
     const messageType: { [key in ChatMessageType]: ComponentType } = {
         image: MessageImage as ComponentType,
@@ -97,7 +100,10 @@
                     {$isDeleted && !isMyMessage && !messageFromSystem && replyDepth === 0 ? 'bg-white/10' : ''}
                     {$isDeleted && isMyMessage && !messageFromSystem && replyDepth === 0 ? 'bg-white/10' : ''}
                     {!isMyMessage && !messageFromSystem && !$isDeleted && replyDepth === 0 ? 'bg-contrast' : ''}
-                    {isMyMessage && !messageFromSystem && !$isDeleted && replyDepth === 0 ? 'bg-secondary' : ''}
+                    {isMyMessage && !messageFromSystem && !$isDeleted && replyDepth === 0 && !notSent
+                ? 'bg-secondary'
+                : ''}
+                    {notSent ? 'message-not-sent bg-white/5 border border-dashed border-white/20' : ''}
                     {$reactionsWithUsers.length > 0 && !$isDeleted && replyDepth === 0 ? 'mb-4 p-0.5' : ''}
                     {!isQuotedMessage ? 'my' : ''}"
         >
@@ -113,7 +119,32 @@
                     <div class="px-2 pt-1 text-xxs font-bold">{isMyMessage ? "You" : sender?.username}</div>
                 {/if}
 
-                <svelte:component this={messageType[type]} on:updateMessageBody={updateMessageBody} {content} />
+                {#if !notSent}
+                    <svelte:component this={messageType[type]} on:updateMessageBody={updateMessageBody} {content} />
+                {:else if $content.body.trim() !== ""}
+                    <div class="opacity-70">
+                        <svelte:component this={messageType[type]} {content} />
+                    </div>
+                {/if}
+                {#if notSent}
+                    {#if $content.fileNames && $content.fileNames.length > 0}
+                        <ul class="m-0 flex list-none flex-col gap-1 px-2 pt-1.5 opacity-70">
+                            {#each $content.fileNames as fileName, index (index)}
+                                <li class="flex min-w-0 items-center gap-1 text-xs">
+                                    <IconPaperclip font-size="12" class="shrink-0" />
+                                    <span class="truncate">{fileName}</span>
+                                </li>
+                            {/each}
+                        </ul>
+                    {/if}
+                    <p
+                        class="m-0 flex items-center gap-1.5 px-2 pb-1.5 pt-1 text-xs text-white/70"
+                        data-testid="messageNotSent"
+                    >
+                        <IconInfoCircle font-size="14" class="shrink-0" />
+                        {$LL.chat.thread.notSent()}
+                    </p>
+                {/if}
 
                 {#if $reactionsWithUsers.length > 0}
                     <MessageReactions

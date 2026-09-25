@@ -20,14 +20,19 @@ export class WorldUserProvider implements UserProviderInterface {
             },
             []
         );
-        this.userCount = derived(this.users, (users) => {
-            // TOOD FIXME: this is workaround for the fact that we are not using the uuid as the key in the map
-            return new Set(users.map((user) => user.uuid)).size;
-        });
+        this.userCount = derived(this.users, countPeople);
     }
 
     setFilter(searchText: string): Promise<void> {
         this.filter.set(searchText);
         return Promise.resolve();
     }
+}
+
+/**
+ * Counts people the way the People tab lists them: one per tab (space user id), so several tabs of one account
+ * (clones) count each other. Falls back to the uuid for entries without a space user id.
+ */
+export function countPeople(users: { spaceUserId?: string; uuid?: string }[]): number {
+    return new Set(users.map((user) => user.spaceUserId || user.uuid)).size;
 }

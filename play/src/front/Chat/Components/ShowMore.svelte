@@ -16,13 +16,13 @@
 {#each filteredItems as item (item[idKey])}
     <slot {item} />
 {/each}
-{#if items.length > 8}
+{#if items.length > maxNumber}
     <div class="flex justify-center">
         <button
             class="flex-col p-0 m-0 text-gray-400 text-center w-full text-sm"
             on:click={() => (showMore = !showMore)}
         >
-            {showMore ? $LL.chat.showLess() : $LL.chat.showMore({ number: items.length - 8 })}
+            {showMore ? $LL.chat.showLess() : $LL.chat.showMore({ number: items.length - maxNumber })}
         </button>
     </div>
 {/if}

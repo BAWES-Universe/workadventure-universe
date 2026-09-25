@@ -3,7 +3,6 @@ import { evaluateScript } from "../utils/scripting";
 import { publicTestMapUrl } from "../utils/urls";
 import { getPage } from "../utils/auth";
 import {isMobile} from "../utils/isMobile";
-import Menu from "../utils/menu";
 
 test.describe("Iframe API @nodesktop", () => {
     test.beforeEach(async ({ page }) => {
@@ -12,8 +11,14 @@ test.describe("Iframe API @nodesktop", () => {
     test("disable invite user button", async ({ browser }) => {
         await using page = await getPage(browser, 'Alice', publicTestMapUrl("tests/E2E/empty.json", "iframe_script"));
         await page.evaluate(() => localStorage.setItem("debug", "*"));
-        await Menu.openMenu(page);
-        await expect(page.getByRole('button', { name: 'Share' })).toBeVisible();
+        // The invite lives at the bottom of the chat panel. Opened by script: without a webcam (webkit) the chat
+        // may already be open, and the action bar's chat button would then close it.
+        await evaluateScript(page, async () => {
+            await WA.onInit();
+            WA.chat.open();
+        });
+        const inviteButton = page.getByTestId('chatInviteButton');
+        await expect(inviteButton).toBeVisible();
         // Create a script to evaluate function to disable map editor
         await evaluateScript(page, async () => {
             await WA.onInit();
@@ -22,7 +27,7 @@ test.describe("Iframe API @nodesktop", () => {
 
         // Check if the map editor is enabled
 
-        await expect(page.getByRole('button', { name: 'Share' })).toBeHidden();
+        await expect(page.getByTestId('chatInviteButton')).toBeHidden();
 
 
         await page.context().close();
