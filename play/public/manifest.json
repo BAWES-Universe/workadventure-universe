@@ -1,0 +1,41 @@
+{
+  "name": "BAWES Universe",
+  "short_name": "Universe",
+  "description": "BAWES Universe — your persistent social world",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#4f98a3",
+  "orientation": "any",
+  "lang": "en",
+  "categories": ["games", "social"],
+  "icons": [
+    {
+      "src": "/static/images/universe-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/images/universe-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/images/universe-icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Enter Universe",
+      "url": "/",
+      "description": "Jump straight into the world"
+    }
+  ],
+  "screenshots": []
+}
