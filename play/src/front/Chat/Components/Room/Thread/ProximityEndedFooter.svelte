@@ -110,7 +110,7 @@
     data-testid="proximityEndedFooter"
 >
     {#if session.unsentDraft}
-        <div class="flex items-start gap-2 rounded-xl bg-white/5 px-3 py-2" data-testid="proximityUnsentDraft">
+        <div class="u-glass flex items-start gap-2 rounded-xl px-3 py-2" data-testid="proximityUnsentDraft">
             <div class="flex min-w-0 grow flex-col">
                 <span class="text-xs font-bold text-white/60">{$LL.chat.session.unsentDraft()}</span>
                 <span class="line-clamp-3 text-sm text-white/85">{toPlainText(session.unsentDraft)}</span>
@@ -131,10 +131,9 @@
             {#each waysBack as way (way.key)}
                 <button
                     type="button"
-                    class="m-0 flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-bold text-white {way.kind ===
-                    'find'
-                        ? 'bg-white/10 hover:bg-white/20'
-                        : 'bg-secondary hover:bg-secondary-600'}"
+                    class="m-0 flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-bold {way.kind === 'find'
+                        ? 'u-cta-secondary'
+                        : 'u-cta'}"
                     data-testid="proximityWayBack"
                     data-kind={way.kind}
                     on:click={way.act}

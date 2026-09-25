@@ -225,8 +225,13 @@
 <style>
     /* Live: a soft green wash and edge, the same green as the live dot. */
     .top-row-live {
-        background-image: linear-gradient(135deg, rgb(102 233 121 / 0.14), rgb(65 86 246 / 0.1));
-        box-shadow: inset 0 0 0 1px rgb(102 233 121 / 0.28);
+        background-image: linear-gradient(
+            135deg,
+            rgb(52 211 153 / 0.16),
+            rgb(134 41 252 / 0.12) 60%,
+            rgb(65 86 246 / 0.1)
+        );
+        box-shadow: inset 0 0 0 1px rgb(52 211 153 / 0.3), 0 0 24px -8px rgb(134 41 252 / 0.5);
     }
 
     :global([dir="rtl"]) .top-row-live {

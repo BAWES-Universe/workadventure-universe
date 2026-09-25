@@ -48,13 +48,13 @@ test.describe("Proximity chat in the chat list @chat @nomobile @nowebkit", () =>
     await expect(alice.getByTestId("proximityTopRowTitle")).toHaveText("Proximity Chat");
     await expect(alice.getByTestId("nearbyHint")).toBeHidden();
 
-    // Bob walks away: the chat you had drops into the list as its own row, named after who was in it.
+    // Bob walks away: the chat you had drops into the list as its own row, titled with who was in it.
     await Map.teleportToPosition(bob, 20 * 32, 20 * 32);
     await expect(topRow).toBeHidden({ timeout: 20_000 });
     const row = alice.getByTestId("proximitySessionRow");
     await expect(row).toHaveCount(1);
-    await expect(row.getByTestId("proximitySessionRowTitle")).toHaveText("Proximity Chat");
-    await expect(row.getByTestId("proximitySessionRowNames")).toContainText("Bob");
+    await expect(row.getByTestId("proximitySessionRowTitle")).toHaveText("Bob");
+    await expect(row.getByTestId("proximitySessionRowKind")).toHaveText("Proximity chat");
     await expect(row.getByTestId("proximitySessionRowPreview")).toContainText("see you at the demo");
 
     // Opening it shows only that chat, read-only, with a way back to Bob.

@@ -19,6 +19,8 @@
     label={$LL.actionbar.login()}
     state="active"
     hideIconInActionBar={true}
+    dataTestId="actionBarLogin"
+    boldLabel={true}
     on:click={goToLogin}
     {first}
     {last}

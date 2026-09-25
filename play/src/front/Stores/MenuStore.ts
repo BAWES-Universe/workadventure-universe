@@ -14,7 +14,6 @@ import {
 } from "../Enum/EnvironmentVariable";
 import MapSubMenu from "../Components/ActionBar/MenuIcons/MapSubMenu.svelte";
 import LoginMenuItem from "../Components/ActionBar/MenuIcons/LoginMenuItem.svelte";
-import InviteMenuItem from "../Components/ActionBar/MenuIcons/InviteMenuItem.svelte";
 import OrbitMenuItem from "../Components/ActionBar/MenuIcons/OrbitMenuItem.svelte";
 import CustomActionBarButton from "../Components/ActionBar/MenuIcons/CustomActionBarButton.svelte";
 import { analyticsClient } from "../Administration/AnalyticsClient";
@@ -114,11 +113,6 @@ function createSubMenusStore() {
             type: "translated",
             key: SubMenusInterface.aboutRoom,
             visible: alwaysVisible,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.invite,
-            visible: inviteUserActivated,
         },
         {
             type: "translated",
@@ -327,15 +321,6 @@ const loginMenuItem: RightMenuItem<LoginMenuItem> = {
     },
 };
 
-const inviteMenuItem: RightMenuItem<InviteMenuItem> = {
-    id: "invite",
-    fallsInBurgerMenuStore: writable(false),
-    component: InviteMenuItem,
-    props: {
-        last: false,
-    },
-};
-
 // Store to track if Orbit (admin dashboard) should be shown
 export const adminDashboardActivatedStore = writable(false);
 
@@ -347,8 +332,8 @@ const orbitMenuItem: RightMenuItem<OrbitMenuItem> = {
 };
 
 export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentTyped>[]> = derived(
-    [additionalRightButtonsMenu, userIsConnected, inviteUserActivated, adminDashboardActivatedStore],
-    ([$additionalButtonsMenu, $userIsConnected, $inviteUserActivated, $adminDashboardActivated]) => {
+    [additionalRightButtonsMenu, userIsConnected, adminDashboardActivatedStore],
+    ([$additionalButtonsMenu, $userIsConnected, $adminDashboardActivated]) => {
         const menuItems: RightMenuItem<SvelteComponentTyped>[] = [];
 
         // Add additional buttons from "top" location first
@@ -358,22 +343,10 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
             const lastAdditional = additionalButtons[additionalButtons.length - 1];
             lastAdditional.props = {
                 ...lastAdditional.props,
-                last: $inviteUserActivated || (!$userIsConnected && ENABLE_OPENID) || $adminDashboardActivated,
+                last: (!$userIsConnected && ENABLE_OPENID) || $adminDashboardActivated,
             };
         }
         menuItems.push(...additionalButtons);
-
-        // Then add share button (will move to burger menu on mobile if space is limited)
-        if ($inviteUserActivated) {
-            // Create a copy to avoid mutating the original
-            const inviteItem = { ...inviteMenuItem };
-            // Set last prop only if Login is NOT the next item (to keep Share and Login visually grouped)
-            // Share should have last=true if build or orbit comes after it, but NOT if login comes after
-            // This keeps Share and Login in the same visual block
-            const hasItemsAfterNotLogin = !(!$userIsConnected && ENABLE_OPENID) && ($adminDashboardActivated || true); // Build always comes, orbit might come
-            inviteItem.props = { ...inviteItem.props, last: hasItemsAfterNotLogin };
-            menuItems.push(inviteItem);
-        }
 
         // Then login button (already has fallsInBurgerMenuStore: true)
         if (!$userIsConnected && ENABLE_OPENID) {
@@ -381,11 +354,9 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
             const loginItem = { ...loginMenuItem };
             // Login should have last=true if build or orbit comes after it (to get margin and rounded right edge)
             // This ensures Login gets proper styling when it's not the last item
-            // Login should be part of the same visual group as Share (same bgColor)
             loginItem.props = {
                 ...loginItem.props,
                 last: $adminDashboardActivated || true, // Build always comes after
-                bgColor: "rgba(255, 255, 255, 0.1)", // Same as Share to keep them visually grouped
             };
             menuItems.push(loginItem);
         }

@@ -51,6 +51,9 @@ export const navChat = createNavChatStore();
 
 export const chatSearchBarValue = writable<string>("");
 
+/** Set to ask the chat panel to open its "Invite someone to join" card (from a map script, for example). */
+export const inviteCardRequestStore = writable(false);
+
 /** The "Find a group" page (the public Matrix directory), shown over the chat list when true. */
 export const findGroupOpenStore = writable(false);
 

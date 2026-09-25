@@ -123,12 +123,10 @@
                 <IconChevronLeft font-size="20" />
             {/if}
         </button>
-        <h2 class="m-0 grow truncate text-md font-bold">{$LL.chat.findGroup.title()}</h2>
+        <h2 class="u-text-gradient m-0 grow truncate text-md font-bold">{$LL.chat.findGroup.title()}</h2>
     </div>
     <div class="px-2 pb-2">
-        <div
-            class="group relative flex h-11 items-center rounded-full border border-solid border-white/10 bg-white/10 transition-colors focus-within:border-white/30 focus-within:bg-white/15"
-        >
+        <div class="find-group-search u-glass group relative flex h-11 items-center rounded-full transition-colors">
             <IconSearch
                 font-size="18"
                 class="pointer-events-none absolute start-3.5 text-white/60 group-focus-within:text-white"
@@ -196,7 +194,7 @@
                         >
                         <button
                             type="button"
-                            class="m-0 flex h-9 shrink-0 items-center rounded-lg bg-secondary px-3 text-sm font-bold text-white hover:bg-secondary-600 disabled:opacity-60"
+                            class="u-cta m-0 flex h-9 shrink-0 items-center rounded-lg px-3 text-sm font-bold disabled:opacity-60"
                             disabled={joiningId !== undefined}
                             data-testid="findGroupJoin"
                             on:click={() => join(group).catch((e) => console.error(e))}
@@ -218,6 +216,10 @@
 </div>
 
 <style>
+    .find-group-search:focus-within {
+        border-color: rgba(167, 139, 250, 0.6);
+        box-shadow: 0 0 0 3px rgba(134, 41, 252, 0.18);
+    }
     .find-group-input::-webkit-search-cancel-button,
     .find-group-input::-webkit-search-decoration {
         -webkit-appearance: none;
