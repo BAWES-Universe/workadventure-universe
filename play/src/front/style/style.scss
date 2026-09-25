@@ -6,10 +6,14 @@ button,
 select {
     cursor: pointer;
 }
-// The app is one fixed screen. Pinning the root leaves nothing for the iOS keyboard to pan into or strand
-// off-screen; the ViewportGuard puts the page back if it still moves (see Utils/ViewportGuard.ts).
-html,
 body {
+    overflow: hidden;
+}
+// On touch screens the app is one fixed screen. Pinning the root leaves nothing for the on-screen keyboard to pan
+// into or strand off-screen; the ViewportGuard puts the page back if it still moves (see Utils/ViewportGuard.ts).
+// Desktop is left as it was.
+html.touch-screen,
+html.touch-screen body {
     position: fixed;
     inset: 0;
     overflow: hidden;

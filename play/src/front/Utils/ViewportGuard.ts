@@ -75,6 +75,18 @@ function pagePosition(win: ViewportGuardWindow): { x: number; y: number } {
     };
 }
 
+/**
+ * Whether the main input is a touch screen (phones, tablets): where the on-screen keyboard and page pinch-zoom
+ * move the page. A laptop with a touch screen has a mouse or trackpad as its main pointer, and is left alone.
+ */
+export function isTouchScreen(win: Pick<Window, "matchMedia">): boolean {
+    try {
+        return win.matchMedia?.("(pointer: coarse)").matches ?? false;
+    } catch {
+        return false;
+    }
+}
+
 /** Scrolls the page (and its root elements) back to the top-left corner if anything moved it. */
 export function resetPagePosition(win: ViewportGuardWindow): void {
     const { x, y } = pagePosition(win);

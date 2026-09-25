@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ViewportGuardWindow } from "../ViewportGuard";
-import { MOMENTUM_MS, REVEAL_WINDOW_MS, installViewportGuard, resetPagePosition } from "../ViewportGuard";
+import {
+    MOMENTUM_MS,
+    REVEAL_WINDOW_MS,
+    installViewportGuard,
+    isTouchScreen,
+    resetPagePosition,
+} from "../ViewportGuard";
 
 type Listener = (event?: Event) => void;
 
@@ -335,5 +341,23 @@ describe("ViewportGuard", () => {
         document.body.scrollLeft = 30;
         resetPagePosition(ios.win);
         expect(document.body.scrollLeft).toBe(0);
+    });
+});
+
+describe("isTouchScreen", () => {
+    const withPointer = (coarse: boolean) => ({
+        matchMedia: (query: string) => ({ matches: query === "(pointer: coarse)" && coarse } as MediaQueryList),
+    });
+
+    it("is true when the main pointer is a finger (phones, tablets)", () => {
+        expect(isTouchScreen(withPointer(true))).toBe(true);
+    });
+
+    it("is false with a mouse or trackpad, touch-screen laptops included", () => {
+        expect(isTouchScreen(withPointer(false))).toBe(false);
+    });
+
+    it("is false when media queries are unavailable", () => {
+        expect(isTouchScreen({} as Pick<Window, "matchMedia">)).toBe(false);
     });
 });
