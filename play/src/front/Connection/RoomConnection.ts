@@ -214,6 +214,8 @@ export class RoomConnection implements RoomConnection {
                 "Timeout detected. No ping from the server received. Is your connection down? Closing connection."
             );
             this.noteConnectionLost({ cause: "no_ping" });
+            // This connection is over: stop listening for the page coming back (the next connection reports it).
+            this.pingWatchdog.stop();
             this.socket.close();
             this.cleanupConnection(false);
         },

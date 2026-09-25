@@ -91,8 +91,6 @@ function createErrorScreenStore() {
             if (typeof error === "string" || error instanceof String) {
                 set(
                     ErrorScreenMessage.fromPartial({
-                        image: "/resources/icons/new_version.png",
-                        imageLogo: "/static/images/logo.png",
                         type: "error",
                         code: "INTERNAL_ERROR",
                         title: "An error occurred",
