@@ -65,8 +65,25 @@ test.describe("Proximity chat in the chat list @chat @nomobile @nowebkit", () =>
     await expect(alice.getByTestId("messageInput")).toBeHidden();
     await expect(alice.getByTestId("proximityWayBack").first()).toHaveAttribute("data-kind", "walk");
 
-    // People: the room comes first, with its count, and Bob is in it.
+    // Bob comes back within a few minutes: the same chat carries on. The view you had open turns live again,
+    // with a "Back with Bob" line, and the list shows the live card, not a second row.
+    await Map.teleportToPosition(bob, 5 * 32, 5 * 32);
+    await expect(alice.getByTestId("messageInput")).toBeVisible({ timeout: 20_000 });
+    await expect(alice.getByTestId("proximityEndedFooter")).toBeHidden();
+    await expect(alice.getByTestId("threadSessionDivider").last()).toHaveAttribute("data-resumed", "true");
+    await expect(alice.getByTestId("threadSessionDividerLabel").last()).toHaveText("Back with Bob");
+    await expect(alice.getByText("see you at the demo")).toBeVisible();
     await chatUtils.closeTimeline(alice);
+    await expect(topRow).toHaveAttribute("data-state", "withPeople");
+    await expect(row).toHaveCount(0);
+
+    // Bob leaves again: still one chat, with everything said in it.
+    await Map.teleportToPosition(bob, 20 * 32, 20 * 32);
+    await expect(topRow).toBeHidden({ timeout: 20_000 });
+    await expect(row).toHaveCount(1);
+    await expect(row.getByTestId("proximitySessionRowPreview")).toContainText("see you at the demo");
+
+    // People (from the list, where Alice already is): the room comes first, with its count, and Bob is in it.
     await alice.getByTestId("chatTabPeople").click();
     await expect(alice.getByTestId("peopleHereTitle")).toContainText("2 here");
     await expect(alice.getByTestId("walk-to-Bob")).toBeVisible();

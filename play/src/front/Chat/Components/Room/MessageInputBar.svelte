@@ -18,8 +18,11 @@
     import { v4 as uuid } from "uuid";
     import type { EmojiClickEvent } from "emoji-picker-element/shared";
     import { defautlNativeIntegrationAppName } from "@workadventure/shared-utils";
+    import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
-    import type { ChatRoom } from "../../Connection/ChatConnection";
+    import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
+    import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
@@ -112,6 +115,24 @@
     const hasSpaceDrafts = spaceGenerationOf(room) !== undefined;
     // The stay the composer opened in: text left when that stay ends is kept there as unsent, never sent on.
     const mountSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
+    // Back with the same people within a few minutes: what you'd typed before walking away goes back in here.
+    const proximitySessions: Readable<ProximitySession<ChatMessage>[]> =
+        room instanceof ProximityChatRoom ? room.sessions : readable([]);
+    let draftLoaded = false;
+    let restoredDraftFor: string | undefined;
+    $: restoreContinuedDraft($proximitySessions, draftLoaded);
+
+    function restoreContinuedDraft(sessions: ProximitySession<ChatMessage>[], loaded: boolean) {
+        if (!loaded || !(room instanceof ProximityChatRoom)) return;
+        const live = sessions.find((session) => session.isLive);
+        if (!live || live.unsentDraft === undefined || restoredDraftFor === live.id) return;
+        // Never over something being typed: the draft then stays with the chat, shown as unsent once it ends.
+        if (!isEmptyMessage(message)) return;
+        const text = room.takeUnsentDraft(live);
+        if (text === undefined) return;
+        restoredDraftFor = live.id;
+        message = text;
+    }
 
     const selectedChatChatMessageToReplyUnsubscriber = selectedChatMessageToReply.subscribe((chatMessage) => {
         if (chatMessage !== null) {
@@ -427,6 +448,7 @@
                 }
             }
         }
+        draftLoaded = true;
     });
 
     onDestroy(() => {

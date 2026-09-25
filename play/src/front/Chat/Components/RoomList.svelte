@@ -76,7 +76,8 @@
         [proximitySessions, proximityUnread, LL],
         ([$sessions, $unread, $LL]) =>
             listableSessions($sessions).map((session): OneListEntry => {
-                const unreadCount = $unread.get(session.id) ?? 0;
+                // A conversation made of several stays adds up what you didn't read in each of them.
+                const unreadCount = session.stayIds.reduce((total, id) => total + ($unread.get(id) ?? 0), 0);
                 const title =
                     session.id === ROOM_MESSAGES_SESSION_ID
                         ? $LL.chat.session.roomMessages()

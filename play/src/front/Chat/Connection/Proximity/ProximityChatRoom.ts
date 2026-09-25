@@ -55,7 +55,13 @@ import {
     takeProximityHistory,
 } from "../../Stores/ProximitySessionStore";
 import type { ProximitySession, ProximitySessionMarker } from "./ProximitySessions";
-import { ROOM_MESSAGES_SESSION_ID, buildProximitySessions, findNotSentInsertIndex } from "./ProximitySessions";
+import {
+    DEFAULT_CONTINUATION,
+    ROOM_MESSAGES_SESSION_ID,
+    buildProximitySessions,
+    findNotSentInsertIndex,
+    sessionOfStay,
+} from "./ProximitySessions";
 
 const debug = Debug("ProximityChatRoom");
 
@@ -254,14 +260,8 @@ export class ProximityChatRoom implements ChatRoom {
         this.typingMembers = writable([]);
         this.sessions = derived(
             [this.messages, this._spaceJoinedAt, this._unsentDrafts],
-            ([$messages, $spaceJoinedAt, $unsentDrafts]) => {
-                const sessions = buildProximitySessions(Array.from($messages), $spaceJoinedAt);
-                for (const session of sessions) {
-                    const draft = $unsentDrafts.get(session.id);
-                    if (draft !== undefined) session.unsentDraft = draft;
-                }
-                return sessions;
-            }
+            ([$messages, $spaceJoinedAt, $unsentDrafts]) =>
+                buildProximitySessions(Array.from($messages), $spaceJoinedAt, DEFAULT_CONTINUATION, $unsentDrafts)
         );
 
         // The chats you had on the previous map, when the scene handed them over.
@@ -656,6 +656,22 @@ export class ProximityChatRoom implements ChatRoom {
         this.markSessionRead(target);
     }
 
+    /** The session (one stay, or the conversation it carried on) a stay belongs to. */
+    private sessionOf(stayId: string): ProximitySession<ChatMessage> | undefined {
+        return sessionOfStay(get(this.sessions), stayId);
+    }
+
+    /** True when the thread shows the session this stay belongs to. */
+    private isShowing(stayId: string): boolean {
+        if (get(selectedRoomStore) !== this) return false;
+        const shown = get(selectedProximitySessionStore);
+        if (shown === undefined || shown === stayId) return true;
+        // One read of the store: both lookups must land on the same objects.
+        const sessions = get(this.sessions);
+        const shownSession = sessionOfStay(sessions, shown);
+        return shownSession !== undefined && shownSession === sessionOfStay(sessions, stayId);
+    }
+
     /**
      * Shows where new messages land: the live stay, or with none, the whole timeline with its composer (as the
      * proximity chat always opened for a script message), never an older, read-only stay left selected.
@@ -683,10 +699,7 @@ export class ProximityChatRoom implements ChatRoom {
      */
     private markUnread(): void {
         const sessionId = this.arrivalSessionId;
-        if (get(selectedRoomStore) === this) {
-            const shown = get(selectedProximitySessionStore);
-            if (shown === undefined || shown === sessionId) return;
-        }
+        if (this.isShowing(sessionId)) return;
         const unread = new Map(get(this._unreadBySession));
         unread.set(sessionId, (unread.get(sessionId) ?? 0) + 1);
         this._unreadBySession.set(unread);
@@ -695,11 +708,30 @@ export class ProximityChatRoom implements ChatRoom {
 
     private markSessionRead(sessionId: string): void {
         const current = get(this._unreadBySession);
-        if (!current.has(sessionId)) return;
+        // Reading a conversation reads every stay of it.
+        const stayIds = this.sessionOf(sessionId)?.stayIds ?? [sessionId];
+        if (!stayIds.some((id) => current.has(id))) return;
         const unread = new Map(current);
-        unread.delete(sessionId);
+        for (const id of stayIds) unread.delete(id);
         this._unreadBySession.set(unread);
         this.refreshUnreadTotals(unread);
+    }
+
+    /**
+     * Hands back the text left in the composer when a stay of this session ended, and forgets it: the composer
+     * takes it when you're back with the same people.
+     */
+    public takeUnsentDraft(session: ProximitySession<ChatMessage>): string | undefined {
+        const drafts = new Map(get(this._unsentDrafts));
+        let text: string | undefined;
+        for (const id of session.stayIds) {
+            const draft = drafts.get(id);
+            if (draft !== undefined) text = draft;
+            drafts.delete(id);
+        }
+        if (text === undefined) return undefined;
+        this._unsentDrafts.set(drafts);
+        return text;
     }
 
     private refreshUnreadTotals(unread: Map<string, number>): void {

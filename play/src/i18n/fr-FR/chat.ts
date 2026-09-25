@@ -505,6 +505,8 @@ const chat: DeepPartial<Translation["chat"]> = {
     remoteUserNotConnected: "Utilisateur non connecté. Impossible d'envoyer un message.",
     thread: {
         withPeople: "Avec {names}",
+        backWith: "De retour avec {names}",
+        backIn: "De retour dans {name}",
         currentGroup: "Groupe actuel",
         notSent: "Non envoyé, la conversation est terminée",
         encrypted: "Chiffré de bout en bout",
@@ -580,9 +582,11 @@ const chat: DeepPartial<Translation["chat"]> = {
     session: {
         live: "En direct",
         endedAt: "Terminée à {time}",
-        endedFooter: "Cette bulle de discussion s'est terminée quand vous êtes parti·e.",
-        startedNotice: "Bulle de discussion ouverte",
-        open: "Ouvrir",
+        endedFooter: "Cette bulle de discussion est terminée.",
+        liveNow: "Vous êtes avec {names} maintenant",
+        liveNowArea: "Vous êtes dans {name} maintenant",
+        goToChat: "Aller à la discussion",
+        continueWith: "Continuer avec {name}",
         unsentDraft: "Brouillon non envoyé",
         copy: "Copier",
         copied: "Copié",

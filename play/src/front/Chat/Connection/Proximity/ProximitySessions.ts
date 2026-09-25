@@ -33,7 +33,8 @@ export interface SessionTimelineMessage {
     type?: string;
 }
 
-export type TimelineEntryRole = "start" | "end" | "message";
+/** "resume": the start of a later stay that carried on the same conversation (you came back to the same people). */
+export type TimelineEntryRole = "start" | "end" | "message" | "resume";
 
 export interface TimelineEntry<M extends SessionTimelineMessage> {
     message: M;
@@ -127,14 +128,40 @@ export const ROOM_MESSAGES_SESSION_ID = "room-messages";
 /** Message types that count as something said, as opposed to join/leave notices and markers. */
 const NOTICE_TYPES = new Set(["incoming", "outcoming"]);
 
+/**
+ * How long you can be away and still carry on the same conversation when you're back with the same people
+ * (matched by their id) or in the same meeting area. Long enough for a coffee break, short enough to keep
+ * the morning and the afternoon apart.
+ */
+export const CONTINUE_WITHIN_MS = 15 * 60 * 1000;
+/** Shorter when a person can only be matched by name: they reconnected and got a new id. */
+export const CONTINUE_BY_NAME_WITHIN_MS = 5 * 60 * 1000;
+
+export interface ContinuationRules {
+    withinMs: number;
+    byNameWithinMs: number;
+}
+
+export const DEFAULT_CONTINUATION: ContinuationRules = {
+    withinMs: CONTINUE_WITHIN_MS,
+    byNameWithinMs: CONTINUE_BY_NAME_WITHIN_MS,
+};
+
+/** No stay ever continues another: each one is its own session. */
+export const NO_CONTINUATION: ContinuationRules = { withinMs: -1, byNameWithinMs: -1 };
+
 export interface ProximitySession<M extends SessionTimelineMessage = SessionTimelineMessage> {
-    /** The stay's id, or ROOM_MESSAGES_SESSION_ID for messages outside any stay. */
+    /** The first stay's id, or ROOM_MESSAGES_SESSION_ID for messages outside any stay. */
     id: string;
+    /** Every stay of this conversation, in order: one, or more when you came back to the same people. */
+    stayIds: string[];
     /** 1, 2, … in timeline order; 0 for the room messages. */
     index: number;
     /** "Sara & Omar", or the area's name. Empty for the room messages. */
     label: string;
+    /** Everyone who was in it, at the start or when you left, in order of appearance. */
     participants: string[];
+    /** Their space user ids, in the same order ("" when unknown). */
     participantIds: string[];
     isArea: boolean;
     startedAt: number | undefined;
@@ -150,18 +177,127 @@ export interface ProximitySession<M extends SessionTimelineMessage = SessionTime
 }
 
 /**
+ * Adds people to a session, by name: a person who reconnected (same name, new id) stays one person, with
+ * the newest id, so "Walk to" and "Continue with" find the avatar that is around now.
+ */
+function addPeople(
+    session: ProximitySession<SessionTimelineMessage>,
+    names: readonly string[],
+    ids: readonly string[]
+) {
+    names.forEach((name, index) => {
+        const id = ids[index] ?? "";
+        if (name.trim() === "") return;
+        const known = session.participants.indexOf(name);
+        if (known === -1) {
+            session.participants.push(name);
+            session.participantIds.push(id);
+        } else if (id !== "") {
+            session.participantIds[known] = id;
+        }
+    });
+}
+
+/**
+ * Whether a stay carries on the conversation of the one before it: back with at least one of the same
+ * people (or in the same meeting area) within the window. Nothing else counts, so two chats with different
+ * people never merge, whatever the gap.
+ */
+function continues(
+    previous: ProximitySession<SessionTimelineMessage>,
+    next: ProximitySession<SessionTimelineMessage>,
+    rules: ContinuationRules
+): boolean {
+    if (previous.id === ROOM_MESSAGES_SESSION_ID || next.id === ROOM_MESSAGES_SESSION_ID) return false;
+    if (previous.endedAt === undefined || next.startedAt === undefined) return false;
+    const gap = next.startedAt - previous.endedAt;
+    if (gap < 0) return false;
+    if (previous.isArea || next.isArea) {
+        return previous.isArea && next.isArea && previous.label === next.label && gap <= rules.withinMs;
+    }
+    const sharesId = next.participantIds.some((id) => id !== "" && previous.participantIds.includes(id));
+    if (sharesId) return gap <= rules.withinMs;
+    const sharesName = next.participants.some((name) => previous.participants.includes(name));
+    return sharesName && gap <= rules.byNameWithinMs;
+}
+
+/** Appends a stay to the conversation it carries on. Its start marker becomes the "back with" divider. */
+function mergeInto<M extends SessionTimelineMessage>(target: ProximitySession<M>, next: ProximitySession<M>) {
+    target.stayIds.push(...next.stayIds);
+    for (const entry of next.entries) {
+        target.entries.push({
+            ...entry,
+            role: entry.role === "start" ? "resume" : entry.role,
+            sessionIndex: target.index,
+        });
+    }
+    target.messages.push(...next.messages);
+    if (next.lastMessage) target.lastMessage = next.lastMessage;
+    const before = target.participants.length;
+    addPeople(target, next.participants, next.participantIds);
+    if (target.participants.length !== before && !target.isArea) {
+        target.label = target.participants.join(", ");
+    }
+    target.endedAt = next.endedAt;
+    target.isLive = next.isLive;
+    // A draft left when you walked away is kept, to go back into the composer once you're back.
+    if (next.unsentDraft !== undefined) target.unsentDraft = next.unsentDraft;
+}
+
+/**
+ * Joins the stays that carry on one conversation: each stay goes to the most recent conversation it continues
+ * (same people or place, within the window), even with other chats in between. Going back and forth between
+ * two people keeps two chats, not one row per visit. Each chat only shows its own messages, so nothing is
+ * reordered. Walk-bys where nobody wrote anything are never continued: they stay as their own, unlisted,
+ * sessions.
+ */
+function continueConversations<M extends SessionTimelineMessage>(
+    sessions: ProximitySession<M>[],
+    rules: ContinuationRules
+): ProximitySession<M>[] {
+    const result: ProximitySession<M>[] = [];
+    for (const session of sessions) {
+        let candidate: ProximitySession<M> | undefined;
+        let candidateEnd = -Infinity;
+        for (const earlier of result) {
+            if (earlier.messages.length === 0 && earlier.unsentDraft === undefined) continue;
+            if (!continues(earlier, session, rules)) continue;
+            // The most recent one wins (a group can share people with several earlier chats).
+            const end = earlier.endedAt ?? -Infinity;
+            if (end >= candidateEnd) {
+                candidate = earlier;
+                candidateEnd = end;
+            }
+        }
+        if (candidate) {
+            mergeInto(candidate, session);
+        } else {
+            result.push(session);
+        }
+    }
+    return result;
+}
+
+/**
  * Splits the timeline into stays. Each start marker opens a session that runs until its end marker;
  * messages before the first start or between an end and the next start go to the room messages session.
  * A session with no end marker is live only while a space is joined: an unfinished session of a carried
  * timeline (no space joined now) counts as ended.
+ *
+ * Coming back to the same people (or the same meeting area) within the continuation window carries on the
+ * same session instead of starting another: its stays are listed in `stayIds`, and the later starts become
+ * "resume" entries. `drafts` holds the text left in the composer when a stay ended, by stay id.
  */
 export function buildProximitySessions<M extends SessionTimelineMessage>(
     messages: readonly M[],
-    currentSpaceJoinedAt: number | undefined
+    currentSpaceJoinedAt: number | undefined,
+    rules: ContinuationRules = DEFAULT_CONTINUATION,
+    drafts?: ReadonlyMap<string, string>
 ): ProximitySession<M>[] {
     const sessions: ProximitySession<M>[] = [];
     const loose: ProximitySession<M> = {
         id: ROOM_MESSAGES_SESSION_ID,
+        stayIds: [ROOM_MESSAGES_SESSION_ID],
         index: 0,
         label: "",
         participants: [],
@@ -194,12 +330,14 @@ export function buildProximitySessions<M extends SessionTimelineMessage>(
                 sessions.push(open);
             }
             index++;
+            const id = marker.sessionId ?? `session-${index}`;
             open = {
-                id: marker.sessionId ?? `session-${index}`,
+                id,
+                stayIds: [id],
                 index,
                 label: marker.label,
-                participants: marker.participants,
-                participantIds: marker.participantIds ?? [],
+                participants: [],
+                participantIds: [],
                 isArea: marker.isArea ?? marker.participants.length === 0,
                 startedAt: message.date?.getTime(),
                 endedAt: undefined,
@@ -209,14 +347,17 @@ export function buildProximitySessions<M extends SessionTimelineMessage>(
                 unsentDraft: undefined,
                 isLive: false,
             };
+            addPeople(open, marker.participants, marker.participantIds ?? []);
             add(open, message, "start");
             continue;
         }
         if (marker?.kind === "end") {
             if (open) {
                 add(open, message, "end");
+                // Whoever was still there when you left counts too: they may have joined after the start.
+                if (!open.isArea) addPeople(open, marker.participants, marker.participantIds ?? []);
                 open.endedAt = message.date?.getTime();
-                open.unsentDraft = marker.unsentDraft;
+                open.unsentDraft = marker.unsentDraft ?? drafts?.get(open.id);
                 sessions.push(open);
                 open = undefined;
             } else {
@@ -232,13 +373,23 @@ export function buildProximitySessions<M extends SessionTimelineMessage>(
             open.startedAt !== undefined &&
             open.startedAt >= currentSpaceJoinedAt - 1000;
         open.isLive = startedRecently;
+        if (!open.isLive) open.unsentDraft = open.unsentDraft ?? drafts?.get(open.id);
         sessions.push(open);
     }
-    for (const session of sessions) {
+    const conversations = continueConversations(sessions, rules);
+    for (const session of conversations) {
         for (const entry of session.entries) entry.isCurrentSession = session.isLive;
     }
-    if (loose.entries.length > 0) sessions.unshift(loose);
-    return sessions;
+    if (loose.entries.length > 0) conversations.unshift(loose);
+    return conversations;
+}
+
+/** The session a stay belongs to: its own, or the conversation it carried on. */
+export function sessionOfStay<M extends SessionTimelineMessage>(
+    sessions: readonly ProximitySession<M>[],
+    stayId: string
+): ProximitySession<M> | undefined {
+    return sessions.find((session) => session.id === stayId || session.stayIds.includes(stayId));
 }
 
 /** The live session, if any. */
