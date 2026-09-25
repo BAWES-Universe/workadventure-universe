@@ -488,6 +488,8 @@ const chat: DeepPartial<Translation["chat"]> = {
     remoteUserNotConnected: "المستخدم غير مصدق. لا يمكن إرسال الرسالة.", // User not authenticated. Cannot send message.
     thread: {
         withPeople: "مع {names}",
+        backWith: "عدت مع {names}",
+        backIn: "عدت إلى {name}",
         currentGroup: "المجموعة الحالية",
         notSent: "لم تُرسل، انتهت المحادثة",
         encrypted: "مشفّرة من طرف إلى طرف",
@@ -563,9 +565,11 @@ const chat: DeepPartial<Translation["chat"]> = {
     session: {
         live: "مباشر",
         endedAt: "انتهت {time}",
-        endedFooter: "انتهت دردشة القرب هذه عندما ابتعدت.",
-        startedNotice: "بدأت دردشة قرب",
-        open: "افتح",
+        endedFooter: "انتهت دردشة القرب هذه.",
+        liveNow: "أنت مع {names} الآن",
+        liveNowArea: "أنت في {name} الآن",
+        goToChat: "الانتقال إلى الدردشة",
+        continueWith: "متابعة مع {name}",
         unsentDraft: "مسودة غير مرسلة",
         copy: "نسخ",
         copied: "تم النسخ",

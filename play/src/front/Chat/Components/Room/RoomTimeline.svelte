@@ -14,7 +14,11 @@
         ProximitySessionMarker,
         TimelineEntry,
     } from "../../Connection/Proximity/ProximitySessions";
-    import { ROOM_MESSAGES_SESSION_ID, buildTimelineEntries } from "../../Connection/Proximity/ProximitySessions";
+    import {
+        sessionOfStay,
+        ROOM_MESSAGES_SESSION_ID,
+        buildTimelineEntries,
+    } from "../../Connection/Proximity/ProximitySessions";
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
@@ -61,7 +65,9 @@
     $: spaceJoinedAt = proximityRoom ? proximityRoom.spaceJoinedAt : readable(undefined);
     $: sessions = proximityRoom ? proximityRoom.sessions : readable([] as ProximitySession<ChatMessage>[]);
     $: shownSession = proximityRoom
-        ? $sessions.find((session) => session.id === $selectedProximitySessionStore)
+        ? $selectedProximitySessionStore !== undefined
+            ? sessionOfStay($sessions, $selectedProximitySessionStore)
+            : undefined
         : undefined;
     $: liveSession = proximityRoom ? $sessions.find((session) => session.isLive) : undefined;
     $: isEnded = shownSession !== undefined && !shownSession.isLive;
@@ -98,6 +104,16 @@
     })();
     // Someone walked up while you were reading an ended stay: your view stays, a small notice offers the live one.
     $: liveElsewhere = isEnded && liveSession !== undefined;
+    $: liveNotice = liveSession
+        ? liveSession.isArea
+            ? $LL.chat.session.liveNowArea({ name: liveSession.label })
+            : $LL.chat.session.liveNow({
+                  names: formatPeopleNames(liveSession.participants, {
+                      two: $LL.chat.topRow.twoNames,
+                      more: $LL.chat.topRow.moreNames,
+                  }),
+              })
+        : "";
     $: isEmptyProximityView = shownSession !== undefined && shownSession.messages.length === 0;
 
     onMount(() => {
@@ -330,14 +346,14 @@
                     data-testid="proximityLiveNotice"
                 >
                     <span class="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />
-                    <span class="grow">{$LL.chat.session.startedNotice()}</span>
+                    <span class="grow">{liveNotice}</span>
                     <button
                         type="button"
                         class="m-0 rounded-lg bg-white/10 px-2 py-1 text-xs font-bold hover:bg-white/20"
                         data-testid="proximityLiveNoticeOpen"
                         on:click={() => proximityRoom?.open()}
                     >
-                        {$LL.chat.session.open()}
+                        {$LL.chat.session.goToChat()}
                     </button>
                 </div>
             {/if}
@@ -403,11 +419,12 @@
                 {/if}
                 {#each timelineEntries as entry (entry.message.id)}
                     <li class="last:pb-3" data-event-id={entry.message.id}>
-                        {#if entry.role === "start" && entry.message.session}
+                        {#if (entry.role === "start" || entry.role === "resume") && entry.message.session}
                             <SessionDivider
                                 marker={entry.message.session}
                                 date={entry.message.date}
                                 isCurrent={entry.isCurrentSession}
+                                resumed={entry.role === "resume"}
                             />
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
@@ -430,7 +447,7 @@
 
         {#if isEnded && shownSession}
             <!-- An ended proximity chat can't receive anything: a way back to the people replaces the composer. -->
-            <ProximityEndedFooter session={shownSession} />
+            <ProximityEndedFooter session={shownSession} live={liveSession} onContinue={() => proximityRoom?.open()} />
         {:else}
             <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
                  Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->

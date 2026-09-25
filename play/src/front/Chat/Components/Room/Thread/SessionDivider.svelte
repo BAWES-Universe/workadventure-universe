@@ -2,15 +2,21 @@
     import LL, { locale } from "../../../../../i18n/i18n-svelte";
     import type { ProximitySessionMarker } from "../../../Connection/Proximity/ProximitySessions";
     import { formatSessionDivider } from "../../../Connection/Proximity/ProximitySessions";
-    import { IconMapPin, IconUsers } from "@wa-icons";
+    import { IconArrowBackUp, IconMapPin, IconUsers } from "@wa-icons";
 
     export let marker: ProximitySessionMarker;
     export let date: Date | null;
     /** The group this tab is in right now: the divider is highlighted. */
     export let isCurrent = false;
+    /** You came back to the same people (or place) and carried on: "Back with Sara" instead of "With Sara". */
+    export let resumed = false;
 
-    $: text = formatSessionDivider(marker, { withPeople: $LL.chat.thread.withPeople });
     $: isArea = marker.participants.length === 0;
+    $: text = resumed
+        ? isArea
+            ? $LL.chat.thread.backIn({ name: marker.label })
+            : $LL.chat.thread.backWith({ names: marker.label })
+        : formatSessionDivider(marker, { withPeople: $LL.chat.thread.withPeople });
     $: time = date?.toLocaleTimeString($locale, { hour: "2-digit", minute: "2-digit" });
 </script>
 
@@ -20,6 +26,7 @@
     aria-label={text}
     data-testid="threadSessionDivider"
     data-current={isCurrent}
+    data-resumed={resumed}
 >
     <span class="session-divider-line h-px grow" aria-hidden="true" />
     <span
@@ -27,7 +34,9 @@
             ? 'session-divider-current text-white font-bold'
             : 'bg-white/5 text-white/70'}"
     >
-        {#if isArea}
+        {#if resumed}
+            <IconArrowBackUp font-size="12" class="shrink-0 opacity-80" />
+        {:else if isArea}
             <IconMapPin font-size="12" class="shrink-0 opacity-80" />
         {:else}
             <IconUsers font-size="12" class="shrink-0 opacity-80" />

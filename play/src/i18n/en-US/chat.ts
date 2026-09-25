@@ -503,6 +503,8 @@ const chat: BaseTranslation = {
     remoteUserNotConnected: "User not authenticated. Cannot send message.",
     thread: {
         withPeople: "With {names}",
+        backWith: "Back with {names}",
+        backIn: "Back in {name}",
         currentGroup: "Current group",
         notSent: "Not sent, the conversation ended",
         encrypted: "End-to-end encrypted",
@@ -578,9 +580,11 @@ const chat: BaseTranslation = {
     session: {
         live: "Live",
         endedAt: "Ended {time}",
-        endedFooter: "This proximity chat ended when you walked away.",
-        startedNotice: "Proximity chat started",
-        open: "Open",
+        endedFooter: "This proximity chat has ended.",
+        liveNow: "You're with {names} now",
+        liveNowArea: "You're in {name} now",
+        goToChat: "Go to chat",
+        continueWith: "Continue with {name}",
         unsentDraft: "Unsent draft",
         copy: "Copy",
         copied: "Copied",

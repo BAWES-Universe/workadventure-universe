@@ -52,11 +52,20 @@
     // The people who were in the chat, with their wokas from the world when they're still around.
     const worldUsers = gameManager.getCurrentGameScene().allUsersInWorldStore;
 
+    function findByName(name: string) {
+        if (!$worldUsers) return undefined;
+        for (const user of $worldUsers.values()) {
+            if (user.name === name) return user;
+        }
+        return undefined;
+    }
+
     function participantsOf(ids: readonly string[], names: readonly string[]): Talker[] {
         return names
             .map((name, index): Talker => {
                 const id = ids[index];
-                const user = id ? $worldUsers?.get(id) : undefined;
+                // By id, else by name: someone who reconnected has a new id but the same woka.
+                const user = (id ? $worldUsers?.get(id) : undefined) ?? findByName(name);
                 return {
                     key: id ?? name,
                     name,

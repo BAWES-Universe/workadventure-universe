@@ -9,7 +9,7 @@
     import { toPlainText } from "../../OneList/OneListOrder";
     import { goToPersonRoom, walkToPerson } from "../../UserList/PersonNavigation";
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
-    import { IconCopy, IconDoorIn, IconSearch, IconWalk } from "@wa-icons";
+    import { IconCopy, IconDoorIn, IconMessage, IconSearch, IconWalk } from "@wa-icons";
 
     /**
      * What replaces the composer once a proximity chat has ended: nothing can be sent to it any more, so the
@@ -18,8 +18,12 @@
      * tabs, and the room link can only name the account); "Find people" for anyone who can't be placed.
      */
     export let session: ProximitySession<ChatMessage>;
+    /** The chat you're in right now, if any: someone from this one who is in it gets "Continue with". */
+    export let live: ProximitySession<ChatMessage> | undefined = undefined;
+    export let onContinue: () => void = () => undefined;
 
     type WayBack =
+        | { kind: "continue"; key: string; name: string; act: () => void }
         | { kind: "walk"; key: string; name: string; act: () => void }
         | { kind: "go"; key: string; room: string; act: () => void }
         | { kind: "find"; key: string; names: string[]; act: () => void };
@@ -68,6 +72,15 @@
         const seenRooms = new Set<string>();
         session.participantIds.forEach((spaceUserId, index) => {
             const name = session.participants[index] ?? "";
+            // Already together again: no need to walk anywhere, just carry on in the live chat.
+            if (
+                live &&
+                !live.isArea &&
+                (live.participantIds.includes(spaceUserId) || live.participants.includes(name))
+            ) {
+                ways.push({ kind: "continue", key: `continue:${name}`, name, act: onContinue });
+                return;
+            }
             const user = $worldUsers?.get(spaceUserId);
             if (!user || !user.playUri) {
                 if (name) missing.push(name);
@@ -138,7 +151,10 @@
                     data-kind={way.kind}
                     on:click={way.act}
                 >
-                    {#if way.kind === "walk"}
+                    {#if way.kind === "continue"}
+                        <IconMessage font-size="16" />
+                        {$LL.chat.session.continueWith({ name: way.name })}
+                    {:else if way.kind === "walk"}
                         <IconWalk font-size="16" />
                         {$LL.chat.userList.walkToUser({ userName: way.name })}
                     {:else if way.kind === "go"}

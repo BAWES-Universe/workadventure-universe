@@ -221,6 +221,8 @@ describe("ProximityChatRoom sessions", () => {
         expect(get(room.unreadNotificationCount)).toBe(1);
 
         await room.leaveSpace("bubble", true);
+        // Another area: a different chat (the same one, straight away, would carry on the first).
+        room.setDisplayName("Other room");
         await room.joinSpace("bubble", [], true);
         // Starting another stay neither clears nor moves it.
         expect(get(room.unreadBySession).get(first)).toBe(1);
@@ -236,6 +238,64 @@ describe("ProximityChatRoom sessions", () => {
         expect(get(room.unreadNotificationCount)).toBe(1);
         room.open(first);
         expect(get(room.unreadNotificationCount)).toBe(0);
+    });
+
+    it("carries on the same chat when you're back right away: unread adds up, reading it reads both stays", async () => {
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        const first = room.currentSessionId ?? "";
+        const otherRoom = { id: "other", isEncrypted: readable(false) } as unknown as ChatRoom;
+        selectedRoomStore.set(otherRoom);
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        await room.leaveSpace("bubble", true);
+        await room.joinSpace("bubble", [], true);
+        const second = room.currentSessionId ?? "";
+        selectedRoomStore.set(otherRoom);
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "again", name: "Sara" } });
+
+        const all = get(room.sessions);
+        expect(all).toHaveLength(1);
+        expect(all[0].stayIds).toEqual([first, second]);
+        expect(all[0].isLive).toBe(true);
+        expect(all[0].messages).toHaveLength(2);
+        expect(get(room.unreadNotificationCount)).toBe(2);
+
+        // Opening the chat by either stay reads the whole conversation.
+        room.open(first);
+        expect(get(room.unreadNotificationCount)).toBe(0);
+        // A message arriving while the chat is shown by its first stay isn't unread either.
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "still here", name: "Sara" } });
+        expect(get(room.unreadNotificationCount)).toBe(0);
+    });
+
+    it("hands the text left when you walked away back to the composer once you're back", async () => {
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        const first = room.currentSessionId ?? "";
+        await room.leaveSpace("bubble", true);
+        room.keepUnsentDraft(first, "was about to say");
+        expect(get(room.sessions)[0].unsentDraft).toBe("was about to say");
+
+        await room.joinSpace("bubble", [], true);
+        const live = get(room.sessions)[0];
+        expect(live.isLive).toBe(true);
+        expect(live.unsentDraft).toBe("was about to say");
+        expect(room.takeUnsentDraft(live)).toBe("was about to say");
+        expect(get(room.sessions)[0].unsentDraft).toBeUndefined();
+        expect(room.takeUnsentDraft(get(room.sessions)[0])).toBeUndefined();
     });
 
     it("splits the timeline into stays, and only stays with real messages make a row", async () => {
