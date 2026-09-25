@@ -1,5 +1,6 @@
 <script lang="ts">
     import { readable } from "svelte/store";
+    import type { SpaceUserExtended } from "../../../Space/SpaceInterface";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import type { ChatMessage } from "../../Connection/ChatConnection";
     import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
@@ -50,7 +51,10 @@
     }
 
     // The people who were in the chat, with their wokas from the world when they're still around.
-    const worldUsers = gameManager.getCurrentGameScene().allUsersInWorldStore;
+    // No scene while a reconnect swaps it: the row still shows, with initials.
+    const worldUsers =
+        gameManager.tryGetCurrentGameScene()?.allUsersInWorldStore ??
+        readable<Map<string, SpaceUserExtended> | undefined>(undefined);
 
     function findByName(name: string) {
         if (!$worldUsers) return undefined;

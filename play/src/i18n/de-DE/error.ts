@@ -16,7 +16,7 @@ const error: DeepPartial<Translation["error"]> = {
     },
     connectionRetry: {
         unableConnect:
-            "Es konnte keine Verbindung zu WorkAdventure hergestellt werden. Bitte stelle sicher, dass du mit dem Internet verbunden bist.",
+            "Es konnte keine Verbindung zu Universe hergestellt werden. Bitte stelle sicher, dass du mit dem Internet verbunden bist.",
     },
     errorDialog: {
         title: "Fehler 😱",

@@ -42,7 +42,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         privacySettings: {
             title: "Mode no present",
             explanation:
-                'Quan la pestanya de WorkAdventure al seu navegador no és visible, WorkAdventure cambia al "mode no present"',
+                'Quan la pestanya de Universe al seu navegador no és visible, Universe cambia al "mode no present"',
             cameraToggle: 'Mantenir la càmera activa en "mode no present"',
             microphoneToggle: 'Mantenir el micròfon actiu en "mode no present"',
         },
@@ -76,7 +76,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "Començar",
             description:
-                "WorkAdventure us permet crear un espai en línia per comunicar-vos espontàneament amb altres. I tot comença creant el vostre propi espai. Escolliu entre una gran selecció de mapes prefabricats pel nostre equip.",
+                "Universe us permet crear un espai en línia per comunicar-vos espontàneament amb altres. I tot comença creant el vostre propi espai. Escolliu entre una gran selecció de mapes prefabricats pel nostre equip.",
         },
         createMap: {
             title: "Crear el vostre mapa",

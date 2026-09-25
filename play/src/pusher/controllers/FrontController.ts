@@ -6,6 +6,7 @@ import * as Sentry from "@sentry/node";
 import { z } from "zod";
 import Debug from "debug";
 import { MetaTagsBuilder } from "../services/MetaTagsBuilder";
+import { absoluteUrl, requestProtocol } from "../services/AbsoluteUrl";
 import { adminService } from "../services/AdminService";
 import { getStringPalette, wrapWithStyleTag } from "../services/GenerateCustomColors";
 import { notWaHost } from "../middlewares/NotWaHost";
@@ -79,10 +80,7 @@ export class FrontController extends BaseHttpController {
     }
 
     private getFullUrl(req: Request): string {
-        let protocol = req.header("X-Forwarded-Proto");
-        if (!protocol) {
-            protocol = req.protocol;
-        }
+        const protocol = requestProtocol(req.header("X-Forwarded-Proto"), req.protocol);
         return `${protocol}://${req.get("host")}${req.originalUrl}`;
     }
 
@@ -369,6 +367,7 @@ export class FrontController extends BaseHttpController {
             }
             html = Mustache.render(this.indexFile, {
                 ...metaTagsData,
+                cardImage: absoluteUrl(metaTagsData.cardImage, url),
                 // TODO change it to push data from admin
                 msApplicationTileImage: metaTagsData.favIcons[metaTagsData.favIcons.length - 1].src,
                 url,

@@ -1048,6 +1048,14 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    /** The page was found zoomed in (the app enlarged, cut off at the edges) and was put back. */
+    pageZoomReset(properties: { scale: number; reason: string }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_page_zoom_reset", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     showBusinessCard(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -1066,6 +1074,30 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_open_woka_menu");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The game connection dropped: why, and whether the page had just been in the background. */
+    connectionLost(properties: { cause: "no_ping" | "socket_closed"; closeCode?: number; hiddenMs: number }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_connection_lost", properties);
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The page came back to the foreground (after switching apps or tabs), and whether the connection held. */
+    connectionResumed(properties: { hiddenMs: number; socketOpen: boolean }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_connection_resumed", properties);
+            })
+            .catch((e) => console.error(e));
+    }
+    /** Back in the room after a dropped connection, and how long that took. */
+    connectionRestored(properties: { downMs: number }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_connection_restored", properties);
             })
             .catch((e) => console.error(e));
     }

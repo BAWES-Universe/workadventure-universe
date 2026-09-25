@@ -25,12 +25,12 @@ const warning: DeepPartial<Translation["warning"]> = {
     },
     browserNotSupported: {
         title: "😢 Wobhladowak so njepodpěruje",
-        message: "Waš wobhladowak ({browserName}) so wjace njepodpěruje wot WorkAdventure.",
+        message: "Waš wobhladowak ({browserName}) so wjace njepodpěruje wot Universe.",
         description:
-            "Waš wobhladowak je přestarši, zo by WorkAdventure wuwjedł. Prošu aktualizujće jón na najnowšu wersiju, zo byšće pokročowali.",
+            "Waš wobhladowak je přestarši, zo by Universe wuwjedł. Prošu aktualizujće jón na najnowšu wersiju, zo byšće pokročowali.",
         whatToDo: "Što móžeće činić?",
         option1: "{browserName} na najnowšu wersiju aktualizować",
-        option2: "WorkAdventure wopušćić a druhi wobhladowak wužiwać",
+        option2: "Universe wopušćić a druhi wobhladowak wužiwać",
         updateBrowser: "Wobhladowak aktualizować",
         leave: "Wopušćić",
     },

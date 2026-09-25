@@ -27,8 +27,9 @@
 
     $: ({ chatId, availabilityStatus, username = "", color, isAdmin, pictureStore } = user);
 
-    const currentGameScene = gameManager.getCurrentGameScene();
-    const connection = currentGameScene.connection;
+    // No scene while a reconnect swaps it: the row still shows, without the actions that need the map.
+    const currentGameScene = gameManager.tryGetCurrentGameScene();
+    const connection = currentGameScene?.connection;
     const iAmAdmin = connection?.hasTag("admin") ?? false;
 
     // "Yourself" is this tab's own avatar: other tabs of the same account are other people here.
@@ -53,7 +54,7 @@
         uuid: user.uuid,
         chatId: user.chatId,
         playUri: user.playUri,
-        currentRoomUrl: currentGameScene.roomUrl,
+        currentRoomUrl: currentGameScene?.roomUrl,
         visitCardUrl: user.visitCardUrl,
         isMatrixChatEnabled,
         roomCreationInProgress: showRoomCreationInProgress,

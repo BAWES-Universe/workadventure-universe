@@ -42,7 +42,7 @@ test.describe("Connection @nomobile @nowebkit", () => {
     //Simulation of offline network
     await page.context().setOffline(true);
 
-    await expect(page.getByText("Unable to connect to WorkAdventure")).toBeVisible({
+    await expect(page.getByText("Unable to connect to the Universe")).toBeVisible({
       timeout: 180_000,
     });
 

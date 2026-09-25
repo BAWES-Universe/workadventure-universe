@@ -41,7 +41,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         },
         privacySettings: {
             title: "Modus njepśibytnosći",
-            explanation: "Jolic až WorkAdventure-tab njejo aktiwny, ga aktiwěrujo se „modus njepśibytnosći“.",
+            explanation: "Jolic až Universe-tab njejo aktiwny, ga aktiwěrujo se „modus njepśibytnosći“.",
             cameraToggle: "Kameru we „modusu njepśibytnosći“ aktiwěrowanu wóstajiś.",
             microphoneToggle: "Mikrofon we „modusu njepśibytnosći“ aktiwěrowany wóstajiś.",
         },
@@ -75,7 +75,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "Prědne kšocenje",
             description:
-                "Z pomocu WorkAdventure móžoš stwóriś online-swět, źož móžoš se z drugimi spontanje zmakaś a rozgranjaś. Napóraj nejpjerwjej swóju kórtu. Tebje stoj k dispoziciji wjelika licba južo pśigótowanych kórtow wót našogo teama.",
+                "Z pomocu Universe móžoš stwóriś online-swět, źož móžoš se z drugimi spontanje zmakaś a rozgranjaś. Napóraj nejpjerwjej swóju kórtu. Tebje stoj k dispoziciji wjelika licba južo pśigótowanych kórtow wót našogo teama.",
         },
         createMap: {
             title: "Swóju kórtu stwóriś ",

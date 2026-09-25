@@ -15,7 +15,7 @@ const notification: DeepPartial<Translation["notification"]> = {
         title: "알림 접근이 거부됨",
         permissionDenied: "권한이 거부됨",
         content:
-            "어떤 대화도 놓치지 마세요. WorkAdventure 탭이 아닌 경우에도 누군가 대화를 원할 때 알림을 받으려면 알림을 활성화하세요.",
+            "어떤 대화도 놓치지 마세요. Universe 탭이 아닌 경우에도 누군가 대화를 원할 때 알림을 받으려면 알림을 활성화하세요.",
         firefoxContent: 'Firefox가 계속 권한을 요청하지 않도록 하려면 "이 결정 기억하기" 체크박스를 클릭하세요.',
         refresh: "새로 고침",
         continue: "알림 없이 계속하기",

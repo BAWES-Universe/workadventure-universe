@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { get } from "svelte/store";
+    import { onDestroy } from "svelte";
+    import { get, readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../../Phaser/Game/GameManager";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
@@ -9,6 +10,7 @@
     import { toPlainText } from "../../OneList/OneListOrder";
     import { goToPersonRoom, walkToPerson } from "../../UserList/PersonNavigation";
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
+    import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
     import { IconCopy, IconDoorIn, IconMessage, IconSearch, IconWalk } from "@wa-icons";
 
     /**
@@ -28,23 +30,37 @@
         | { kind: "go"; key: string; room: string; act: () => void }
         | { kind: "find"; key: string; names: string[]; act: () => void };
 
-    const gameScene = gameManager.getCurrentGameScene();
-    const worldUsers = gameScene.allUsersInWorldStore;
-    const currentRoomUrl = gameScene.roomUrl;
-    const userProviderMergerPromise = gameScene.userProviderMerger;
-    const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
+    // No scene while a reconnect swaps it: the footer still shows, and picks the new scene up once it has loaded.
+    let gameScene = gameManager.tryGetCurrentGameScene();
+    onDestroy(
+        gameSceneIsLoadedStore.subscribe(() => {
+            const scene = gameManager.tryGetCurrentGameScene();
+            if (scene !== gameScene) gameScene = scene;
+        })
+    );
+    $: worldUsers = gameScene?.allUsersInWorldStore ?? readable(undefined);
+    $: currentRoomUrl = gameScene?.roomUrl;
+    $: hasPeopleTab = gameScene
+        ? gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled
+        : false;
 
     let roomNames = new Map<string, string>();
-    userProviderMergerPromise
-        .then((merger) => {
-            const byRoom = get(merger.usersByRoomStore);
-            const names = new Map<string, string>();
-            for (const [playUri, room] of byRoom) {
-                if (playUri && room.roomName) names.set(playUri, room.roomName);
-            }
-            roomNames = names;
-        })
-        .catch((e) => console.error(e));
+    $: loadRoomNames(gameScene);
+
+    function loadRoomNames(scene: typeof gameScene) {
+        roomNames = new Map();
+        scene?.userProviderMerger
+            .then((merger) => {
+                if (scene !== gameScene) return;
+                const byRoom = get(merger.usersByRoomStore);
+                const names = new Map<string, string>();
+                for (const [playUri, room] of byRoom) {
+                    if (playUri && room.roomName) names.set(playUri, room.roomName);
+                }
+                roomNames = names;
+            })
+            .catch((e) => console.error(e));
+    }
 
     let copied = false;
     let copyTimer: ReturnType<typeof setTimeout> | undefined;

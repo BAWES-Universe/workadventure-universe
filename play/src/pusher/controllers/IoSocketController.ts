@@ -312,11 +312,9 @@ export class IoSocketController {
                                         type: "retry",
                                         title: "Please refresh",
                                         subtitle: "New version available",
-                                        image: "/resources/icons/new_version.png",
-                                        imageLogo: "/static/images/logo.png",
+                                        // No image: the page shows the room's own logos.
                                         code: "NEW_VERSION",
-                                        details:
-                                            "A new version of WorkAdventure is available. Please refresh your window",
+                                        details: "A new version of Universe is available. Please refresh the page.",
                                         canRetryManual: true,
                                         buttonTitle: "Refresh",
                                         timeToRetry: 999999,

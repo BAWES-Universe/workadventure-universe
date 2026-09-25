@@ -49,6 +49,7 @@ import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerMana
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
+import { areaChatRooms } from "../../Stores/AreaPresenceStore";
 import {
     selectedProximitySessionStore,
     stashProximityHistory,
@@ -187,6 +188,8 @@ export class ProximityChatRoom implements ChatRoom {
     public readonly spaceJoinedAt: Readable<number | undefined> = { subscribe: this._spaceJoinedAt.subscribe };
     currentMatrixRoom: ChatRoom | undefined;
     currentChatVisibility = false;
+    /** The chat state to put back came from the previous map's proximity chat (see stashHistoryForNextScene). */
+    private keepCarriedChatState = false;
     private _spaceGeneration = 0;
     // The name of the meeting area joined, for its end marker: the display name is reset before leaving.
     private meetingSessionLabel: string | undefined;
@@ -273,6 +276,13 @@ export class ProximityChatRoom implements ChatRoom {
             this.refreshUnreadTotals(stash.unreadBySession);
             const last = stash.messages[stash.messages.length - 1];
             if (last?.date) this.lastMessageTimestamp = last.date.getTime();
+            if (stash.chatStateToRestore) {
+                this.currentMatrixRoom = stash.chatStateToRestore.proximityChat ? this : stash.chatStateToRestore.room;
+                this.currentChatVisibility = stash.chatStateToRestore.visible;
+                this.keepCarriedChatState = true;
+            }
+            // The old map's proximity chat was open: this one takes its place, never a chat that no longer exists.
+            if (stash.wasSelected) selectedRoomStore.set(this);
         }
 
         this.newChatMessageWritingStatusStreamUnsubscriber =
@@ -462,8 +472,18 @@ export class ProximityChatRoom implements ChatRoom {
      * Writes a local session marker (joined or left a group). Never sent over the network.
      */
     private addSessionMarker(body: string, type: "incoming" | "outcoming", session: ProximitySessionMarker): void {
+        const marker = this.createSessionMarker(body, type, session);
+        this.messages.push(marker);
+        this.lastMessageTimestamp = marker.date.getTime();
+    }
+
+    private createSessionMarker(
+        body: string,
+        type: "incoming" | "outcoming",
+        session: ProximitySessionMarker
+    ): ProximityChatMessage {
         const spaceUser = this.users?.get(this._spaceUserId);
-        const marker = new ProximityChatMessage(
+        return new ProximityChatMessage(
             uuidv4(),
             spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser,
             writable({ body, url: undefined, urls: undefined, filename: undefined, fileNames: undefined }),
@@ -472,8 +492,6 @@ export class ProximityChatRoom implements ChatRoom {
             type,
             { session }
         );
-        this.messages.push(marker);
-        this.lastMessageTimestamp = marker.date.getTime();
     }
 
     /**
@@ -750,18 +768,23 @@ export class ProximityChatRoom implements ChatRoom {
     }
 
     /**
-     * Hands the timeline to the proximity chat of the next map, so leaving through a door keeps the chats you had.
-     * Called by the scene right before it destroys this room.
+     * Hands the timeline to the proximity chat of the next map, so leaving through a door, or a reconnect, keeps the
+     * chats you had. Called by the scene right before it destroys this room.
+     *
+     * The chat on screen may still show this room while the scene goes away, so nothing it shows changes here: the
+     * next map gets a copy, with the stay you were in closed in it.
      */
     public stashHistoryForNextScene(): void {
-        // Leaving the map ends the stay you're in: close it here, so the next map never receives an open stay
-        // that its own messages would fall into.
+        const messages = Array.from(get(this.messages));
+        const unsentDrafts = new Map(get(this._unsentDrafts));
+        // Leaving the map ends the stay you're in: close it in the copy, so the next map never receives an open
+        // stay that its own messages would fall into.
         const openSessionId = this._currentSessionId;
         if (openSessionId !== undefined) {
             const draft = composerDraftStore.load(this.id, this._spaceGeneration);
-            if (draft) {
+            if (draft && draft.message.replace(/<br\s*\/?>/gi, "").trim() !== "") {
                 composerDraftStore.clear(this.id);
-                this.keepUnsentDraft(openSessionId, draft.message);
+                unsentDrafts.set(openSessionId, draft.message);
             }
             for (const streaming of this.streamMessages.values()) {
                 streaming.stoppedOnLeave = true;
@@ -770,24 +793,40 @@ export class ProximityChatRoom implements ChatRoom {
                 ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
                 : [];
             const isArea = this.meetingSessionLabel !== undefined;
-            this.addSessionMarker(
-                isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
-                "outcoming",
-                {
-                    kind: "end",
-                    label: isArea ? this.meetingSessionLabel ?? "" : "",
-                    participants: isArea ? [] : others.map((user) => user.name),
-                    participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
-                    isArea,
-                    sessionId: openSessionId,
-                }
+            messages.push(
+                this.createSessionMarker(
+                    isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
+                    "outcoming",
+                    {
+                        kind: "end",
+                        label: isArea ? this.meetingSessionLabel ?? "" : "",
+                        participants: isArea ? [] : others.map((user) => user.name),
+                        participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
+                        isArea,
+                        sessionId: openSessionId,
+                    }
+                )
             );
             this._currentSessionId = undefined;
         }
         stashProximityHistory({
-            messages: Array.from(get(this.messages)),
+            messages,
             unreadBySession: new Map(get(this._unreadBySession)),
-            unsentDrafts: new Map(get(this._unsentDrafts)),
+            unsentDrafts,
+            wasSelected: get(selectedRoomStore) === this,
+            // Still in a bubble: leaving it on the next map puts back what was open before it, as it would have here.
+            chatStateToRestore: get(shouldRestoreChatStateStore)
+                ? {
+                      // An area's chat is only for who is in the area: the next map never gets one back.
+                      room:
+                          this.currentMatrixRoom === this ||
+                          (this.currentMatrixRoom && areaChatRooms.isAreaRoom(this.currentMatrixRoom.id))
+                              ? undefined
+                              : this.currentMatrixRoom,
+                      visible: this.currentChatVisibility,
+                      proximityChat: this.currentMatrixRoom === this,
+                  }
+                : undefined,
         });
     }
 
@@ -1470,14 +1509,34 @@ export class ProximityChatRoom implements ChatRoom {
 
     private restoreChatState() {
         if (get(selectedRoomStore) == this && get(shouldRestoreChatStateStore)) {
-            selectedRoomStore.set(this.currentMatrixRoom);
+            selectedRoomStore.set(this.chatToPutBack());
         }
 
         chatVisibilityStore.set(this.currentChatVisibility);
         shouldRestoreChatStateStore.set(false);
     }
 
+    /**
+     * The chat open before the bubble, if it can still be shown: an area's chat only while you're still in that area
+     * (its access follows your presence there).
+     */
+    private chatToPutBack(): ChatRoom | undefined {
+        const room = this.currentMatrixRoom;
+        if (room && room !== this && areaChatRooms.isAreaRoom(room.id) && !areaChatRooms.hasActiveRoom(room.id)) {
+            return undefined;
+        }
+        return room;
+    }
+
     private saveChatState() {
+        // Back in the bubble after a reconnect: what to put back is still the chat open before the bubble.
+        if (this.keepCarriedChatState) {
+            this.keepCarriedChatState = false;
+            if (get(selectedRoomStore) === this) {
+                shouldRestoreChatStateStore.set(true);
+                return;
+            }
+        }
         const currentChatVisibility = get(chatVisibilityStore);
         const currentRoom = get(selectedRoomStore);
         this.currentChatVisibility = currentChatVisibility;

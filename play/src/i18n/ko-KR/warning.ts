@@ -30,12 +30,12 @@ const warning: DeepPartial<Translation["warning"]> = {
     },
     browserNotSupported: {
         title: "😢 지원되지 않는 브라우저",
-        message: "사용 중인 브라우저({browserName})는 더 이상 WorkAdventure에서 지원되지 않습니다.",
+        message: "사용 중인 브라우저({browserName})는 더 이상 Universe에서 지원되지 않습니다.",
         description:
-            "사용 중인 브라우저가 WorkAdventure를 실행하기에는 너무 오래되었습니다. 계속하려면 최신 버전으로 업데이트하세요.",
+            "사용 중인 브라우저가 Universe를 실행하기에는 너무 오래되었습니다. 계속하려면 최신 버전으로 업데이트하세요.",
         whatToDo: "무엇을 할 수 있나요?",
         option1: "{browserName}을 최신 버전으로 업데이트",
-        option2: "WorkAdventure를 종료하고 다른 브라우저 사용",
+        option2: "Universe를 종료하고 다른 브라우저 사용",
         updateBrowser: "브라우저 업데이트",
         leave: "종료",
     },

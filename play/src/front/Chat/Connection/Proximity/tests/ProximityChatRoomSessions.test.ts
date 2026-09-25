@@ -5,7 +5,9 @@ import { ProximityChatRoom } from "../ProximityChatRoom";
 import type { ProximityChatMessage } from "../ProximityChatRoom";
 import { listableSessions } from "../ProximitySessions";
 import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
-import { selectedProximitySessionStore } from "../../../Stores/ProximitySessionStore";
+import { keepOnlyProximityHistory, selectedProximitySessionStore } from "../../../Stores/ProximitySessionStore";
+import { areaChatRooms } from "../../../Stores/AreaPresenceStore";
+import { shouldRestoreChatStateStore } from "../../../Stores/ChatStore";
 import type { ChatRoom } from "../../ChatConnection";
 import type { SpaceInterface, SpaceUserExtended } from "../../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../../Space/SpaceRegistry/SpaceRegistryInterface";
@@ -363,6 +365,153 @@ describe("ProximityChatRoom sessions", () => {
         expect(carried.map((session) => session.id)).toEqual([stayId]);
         expect(carried[0].isLive).toBe(false);
         expect(carried[0].endedAt).toBeDefined();
+        next.destroy();
+    });
+
+    function nextMapRoom(): ProximityChatRoom {
+        return new ProximityChatRoom(
+            "room_9",
+            {
+                joinSpace: () => Promise.resolve(fake.space),
+                leaveSpace: () => Promise.resolve(),
+            } as unknown as SpaceRegistryInterface,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+    }
+
+    it("leaves the chat on screen untouched while it hands the timeline over", async () => {
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Bot", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Bot" } });
+        const before = get(room.messages).length;
+        const onScreen = vi.fn();
+        const unsubscribe = room.messages.subscribe(onScreen);
+        onScreen.mockClear();
+
+        room.stashHistoryForNextScene();
+
+        expect(onScreen).not.toHaveBeenCalled();
+        expect(get(room.messages)).toHaveLength(before);
+        unsubscribe();
+        const next = nextMapRoom();
+        expect(get(next.messages)).toHaveLength(before + 1);
+        next.destroy();
+    });
+
+    it("opens the next map's proximity chat in place of this one after a reconnect", async () => {
+        await room.joinSpace("bubble", [], true);
+        room.open();
+        room.stashHistoryForNextScene();
+        room.destroy();
+
+        const next = nextMapRoom();
+        expect(get(selectedRoomStore)).toBe(next);
+        next.destroy();
+    });
+
+    it("never carries an area's chat to the next map as the chat to put back", async () => {
+        const areaRoom = { id: "!area-room:server" } as unknown as ChatRoom;
+        areaChatRooms.setMapRoomIds(["!area-room:server"]);
+        selectedRoomStore.set(areaRoom);
+        await room.joinSpace("bubble", [], true);
+        expect(get(shouldRestoreChatStateStore)).toBe(true);
+        room.open();
+        room.stashHistoryForNextScene();
+        room.destroy();
+        areaChatRooms.setMapRoomIds([]);
+
+        const next = nextMapRoom();
+        expect(next.currentMatrixRoom).toBeUndefined();
+        next.destroy();
+    });
+
+    it("does not put back an area's chat you left during the bubble", async () => {
+        const areaRoom = { id: "!area-room:server" } as unknown as ChatRoom;
+        areaChatRooms.setMapRoomIds(["!area-room:server"]);
+        selectedRoomStore.set(areaRoom);
+        await room.joinSpace("bubble", [], true);
+        room.open();
+        // You walk out of the area while still in the bubble: its chat is no longer yours to see.
+        await room.leaveSpace("bubble", true);
+        areaChatRooms.setMapRoomIds([]);
+
+        expect(get(selectedRoomStore)).toBeUndefined();
+    });
+
+    it("puts back the DM that was open before the bubble", async () => {
+        const dm = { id: "!dm:server" } as unknown as ChatRoom;
+        selectedRoomStore.set(dm);
+        await room.joinSpace("bubble", [], true);
+        room.open();
+        await room.leaveSpace("bubble", true);
+
+        expect(get(selectedRoomStore)).toBe(dm);
+    });
+
+    it("keeps a DM as the chat to put back across a reconnect", async () => {
+        const dm = { id: "!dm:server" } as unknown as ChatRoom;
+        selectedRoomStore.set(dm);
+        await room.joinSpace("bubble", [], true);
+        room.open();
+        room.stashHistoryForNextScene();
+        room.destroy();
+
+        const next = nextMapRoom();
+        expect(next.currentMatrixRoom).toBe(dm);
+        next.destroy();
+    });
+
+    it("keeps the proximity chat open after leaving a bubble you were in during a reconnect", async () => {
+        // The proximity chat was already open before the bubble.
+        room.open();
+        await room.joinSpace("bubble", [], true);
+        room.stashHistoryForNextScene();
+        room.destroy();
+
+        const next = nextMapRoom();
+        await next.joinSpace("bubble", [], true);
+        await next.leaveSpace("bubble", true);
+
+        expect(get(selectedRoomStore)).toBe(next);
+        next.destroy();
+    });
+
+    it("keeps the chats but opens nothing by itself after leaving the game and coming back", async () => {
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Sara", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Sara" } });
+        room.open();
+        room.stashHistoryForNextScene();
+        room.destroy();
+        keepOnlyProximityHistory();
+        selectedRoomStore.set(undefined);
+
+        const next = nextMapRoom();
+        expect(get(selectedRoomStore)).toBeUndefined();
+        expect(get(next.sessions)).toHaveLength(1);
+        next.destroy();
+    });
+
+    it("keeps another open chat open across a reconnect", () => {
+        const other = { id: "matrix-dm" } as unknown as ChatRoom;
+        selectedRoomStore.set(other);
+        room.stashHistoryForNextScene();
+
+        const next = nextMapRoom();
+        expect(get(selectedRoomStore)).toBe(other);
         next.destroy();
     });
 

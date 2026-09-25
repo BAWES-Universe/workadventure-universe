@@ -23,9 +23,8 @@
 
     const MAX_STACKED_AVATARS = 3;
 
-    const gameScene = gameManager.getCurrentGameScene();
     // "Yourself" is this tab's own avatar, never the account: other tabs of the same account count as people.
-    const mySpaceUserId = gameScene.connection?.getSpaceUserId();
+    const mySpaceUserId = gameManager.tryGetCurrentGameScene()?.connection?.getSpaceUserId();
 
     const participants = proximityChatRoom.participants;
     const spaceKind = proximityChatRoom.spaceKind;

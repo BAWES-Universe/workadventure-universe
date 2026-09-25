@@ -1,6 +1,5 @@
 import { TextField } from "../Components/TextField";
 import { gameManager } from "../Game/GameManager";
-import Image = Phaser.GameObjects.Image;
 import Sprite = Phaser.GameObjects.Sprite;
 import Text = Phaser.GameObjects.Text;
 import ScenePlugin = Phaser.Scenes.ScenePlugin;
@@ -15,7 +14,6 @@ export class ErrorScene extends Phaser.Scene {
     private titleField!: TextField;
     private subTitleField!: TextField;
     private messageField!: Text;
-    private logo!: Image;
     private cat!: Sprite;
     private title!: string;
     private subTitle!: string;
@@ -34,7 +32,6 @@ export class ErrorScene extends Phaser.Scene {
     }
 
     preload() {
-        this.load.image(Textures.icon, "static/images/favicons/favicon-32x32.png");
         // Note: arcade.png from the Phaser 3 examples at: https://github.com/photonstorm/phaser3-examples/tree/master/public/assets/fonts/bitmap
         if (!this.cache.bitmapFont.has("main_font")) {
             // We put this inside a "if" because despite the cache, Phaser will make a query to the XML file. And if there is no connection (which
@@ -45,9 +42,6 @@ export class ErrorScene extends Phaser.Scene {
     }
 
     create() {
-        this.logo = new Image(this, this.game.renderer.width - 30, this.game.renderer.height - 20, Textures.icon);
-        this.add.existing(this.logo);
-
         this.titleField = new TextField(this, this.game.renderer.width / 2, this.game.renderer.height / 2, this.title);
 
         this.subTitleField = new TextField(

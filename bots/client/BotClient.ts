@@ -65,6 +65,15 @@ export class BotClient {
     private behavior: BaseBehavior | null = null;
     private userId: number | null = null;
     private connected: boolean = false;
+    /**
+     * Set once the server confirms the join (roomJoinedMessage). The socket opens before that: the back is still
+     * joining the room, and any message it gets meanwhile makes it drop the connection ("The first message sent
+     * MUST be of type JoinRoomMessage"), so nothing is sent until then.
+     */
+    private joined: boolean = false;
+    /** What the bot tried to send before the join finished, in order (only the latest position), sent once joined. */
+    private pendingMessages: ClientToServerMessage[] = [];
+    private static readonly MAX_PENDING_MESSAGES = 100;
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
     private players: Map<number, PlayerInfo> = new Map();
     private queryId: number = 0;
@@ -208,6 +217,7 @@ export class BotClient {
                     this.onDisconnect?.();
                 }
                 this.connected = false;
+                this.resetJoin();
             });
 
             this.ws.on('message', (data: ArrayBuffer) => {
@@ -2279,6 +2289,7 @@ export class BotClient {
                 this.userId = message.roomJoinedMessage.currentUserId;
                 // Register this bot's userId so other bots can ignore it
                 BotClient.botUserIds.add(this.userId);
+                this.markJoined();
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[Bot ${this.config.botId}] ✅ Joined room, userId: ${this.userId}`);
                 }
@@ -3095,8 +3106,43 @@ export class BotClient {
         return 'text/html';
     }
 
+    /** The socket is gone: a new one starts joining from nothing, and what the old one held is dropped. */
+    private resetJoin(): void {
+        this.joined = false;
+        this.pendingMessages = [];
+    }
+
+    /** The server confirmed the join: messages can flow, starting with the position the bot is at now. */
+    private markJoined(): void {
+        this.joined = true;
+        const pending = this.pendingMessages;
+        this.pendingMessages = [];
+        for (const message of pending) this.send(message);
+    }
+
     private send(message: ClientToServerMessage): void {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        // Still joining: hold messages until the server confirms the join (a ping is always allowed). The join
+        // itself is in the connection URL, so nothing needs to go out first.
+        if (!this.joined && message.message?.$case !== 'pingMessage') {
+            if (message.message?.$case === 'userMovesMessage') {
+                // Only where the bot is now matters, and it is always kept: it replaces the one held before, so
+                // the cap never costs the bot its position.
+                this.pendingMessages = this.pendingMessages.filter((m) => m.message?.$case !== 'userMovesMessage');
+                this.pendingMessages.push(message);
+                return;
+            }
+            const held = this.pendingMessages.filter((m) => m.message?.$case !== 'userMovesMessage').length;
+            if (held < BotClient.MAX_PENDING_MESSAGES) {
+                this.pendingMessages.push(message);
+            } else {
+                console.warn(
+                    `[Bot ${this.config.botId}] Join still pending: dropped a ${message.message?.$case ?? 'message'} (queue full)`
+                );
+            }
             return;
         }
 

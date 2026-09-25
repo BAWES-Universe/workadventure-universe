@@ -74,7 +74,7 @@ const mapEditor: BaseTranslation = {
         },
         openWebsite: {
             label: "Abrir Link",
-            description: "Abrir site no WorkAdventure ou como nova aba.",
+            description: "Abrir site no Universe ou como nova aba.",
             linkLabel: "URL do Link",
             newTabLabel: "Abrir em nova aba",
             trigger: "Interação",
@@ -142,31 +142,31 @@ const mapEditor: BaseTranslation = {
         },
         youtube: {
             label: "Abrir Vídeo do YouTube",
-            description: "Abrir vídeo do YouTube no WorkAdventure ou como nova aba.",
+            description: "Abrir vídeo do YouTube no Universe ou como nova aba.",
             error: "Por favor, digite uma URL válida do YouTube",
             disabled: "Integração do YouTube está desabilitada.",
         },
         googleDocs: {
             label: "Abrir Google Docs",
-            description: "Abrir Google Docs no WorkAdventure ou como nova aba.",
+            description: "Abrir Google Docs no Universe ou como nova aba.",
             error: "Por favor, digite uma URL válida do Google Docs",
             disabled: "Integração do Google Docs está desabilitada.",
         },
         klaxoon: {
             label: "Abrir Klaxoon",
-            description: "Abrir Klaxoon no WorkAdventure ou como nova aba.",
+            description: "Abrir Klaxoon no Universe ou como nova aba.",
             error: "Por favor, digite uma URL válida do Klaxoon",
             disabled: "Integração do Klaxoon está desabilitada.",
         },
         googleSheets: {
             label: "Abrir Google Sheets",
-            description: "Abrir Google Sheets no WorkAdventure ou como nova aba.",
+            description: "Abrir Google Sheets no Universe ou como nova aba.",
             error: "Por favor, digite uma URL válida do Google Sheets",
             disabled: "Integração do Google Sheets está desabilitada.",
         },
         googleSlides: {
             label: "Abrir Google Slides",
-            description: "Abrir Google Slides no WorkAdventure ou como nova aba.",
+            description: "Abrir Google Slides no Universe ou como nova aba.",
             error: "Por favor, digite uma URL válida do Google Slides",
             disabled: "Integração do Google Slides está desabilitada.",
         },
@@ -179,7 +179,7 @@ const mapEditor: BaseTranslation = {
         },
         googleDrive: {
             label: "Abrir Google Drive",
-            description: "Abrir Google Drive no WorkAdventure ou como nova aba.",
+            description: "Abrir Google Drive no Universe ou como nova aba.",
             error: "Por favor, digite uma URL válida do Google Drive",
             disabled: "Integração do Google Drive está desabilitada.",
         },
@@ -241,7 +241,7 @@ const mapEditor: BaseTranslation = {
         },
         openFile: {
             label: "Abrir arquivo",
-            description: "Abrir arquivo dentro do WorkAdventure.",
+            description: "Abrir arquivo dentro do Universe.",
             error: "Por favor, insira um arquivo válido",
             disabled: "A integração de arquivos está desabilitada.",
             fileUrlLabel: "URL do arquivo",

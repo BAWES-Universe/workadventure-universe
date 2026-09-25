@@ -42,7 +42,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         privacySettings: {
             title: "离开模式设置",
             explanation:
-                '当WorkAdventure标签页在后台时, 会切换到"离开模式"。在该模式中，你可以选择自动禁用摄像头 和/或 麦克风 直到标签页显示。',
+                '当Universe标签页在后台时, 会切换到"离开模式"。在该模式中，你可以选择自动禁用摄像头 和/或 麦克风 直到标签页显示。',
             cameraToggle: "摄像头",
             microphoneToggle: "麦克风",
         },
@@ -74,7 +74,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "开始",
             description:
-                "WorkAdventure使你能够创建一个在线空间，与他们自然地交流。这都从创建你自己的空间开始。从我们的团队预制的大量选项中选择一个地图。",
+                "Universe使你能够创建一个在线空间，与他们自然地交流。这都从创建你自己的空间开始。从我们的团队预制的大量选项中选择一个地图。",
         },
         createMap: {
             title: "创建地图",

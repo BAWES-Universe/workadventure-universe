@@ -9,6 +9,16 @@ select {
 body {
     overflow: hidden;
 }
+// On touch screens the app is one fixed screen. Pinning the root leaves nothing for the on-screen keyboard to pan
+// into or strand off-screen; the ViewportGuard puts the page back if it still moves (see Utils/ViewportGuard.ts).
+// Desktop is left as it was.
+html.touch-screen,
+html.touch-screen body {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
 
 body button:focus,
 body img:focus,
@@ -691,7 +701,8 @@ div.emoji-picker {
 
 .say-bubble {
     font-weight: 500;
-    font-family: "Comic Sans MS", "Comic Sans", cursive;
+    // Comic Sans where it exists (desktop); Apple's look-alike on iOS; a plain face elsewhere, never a script.
+    font-family: "Comic Sans MS", "Comic Sans", "Chalkboard SE", "Comic Neue", sans-serif;
     text-align: center;
 }
 
@@ -818,7 +829,8 @@ div.emoji-picker {
 .thinking-text {
     font-weight: 500;
     width: 100%;
-    font-family: "Comic Sans MS", "Comic Sans", cursive;
+    // Comic Sans where it exists (desktop); Apple's look-alike on iOS; a plain face elsewhere, never a script.
+    font-family: "Comic Sans MS", "Comic Sans", "Chalkboard SE", "Comic Neue", sans-serif;
     font-size: 12px;
     color: #000000;
     text-align: center;

@@ -13,11 +13,11 @@ import { ADMIN_API_URL } from "../enums/EnvironmentVariable";
 import { adminService } from "./AdminService";
 
 export const MetaTagsDefaultValue: RequiredMetaTagsData = {
-    title: "WorkAdventure",
+    title: "Universe",
     description:
-        "Organize your online event in WorkAdventure to recreate spontaneous social interactions. Connect, collaborate and have fun with your teammates and attendees.",
-    author: "WorkAdventure team",
-    provider: "WorkAdventure",
+        "Organize your online event in Universe to recreate spontaneous social interactions. Connect, collaborate and have fun with your teammates and attendees.",
+    author: "Universe team",
+    provider: "Universe",
     favIcons: [
         {
             rel: "icon",
@@ -32,10 +32,11 @@ export const MetaTagsDefaultValue: RequiredMetaTagsData = {
             type: "image/png",
         },
     ],
-    appName: "WorkAdventure",
-    shortAppName: "WA",
+    appName: "Universe",
+    shortAppName: "Universe",
     themeColor: "#000000",
-    cardImage: "https://workadventu.re/images/general/logo-og.png",
+    // Relative: the page turns it into a full URL on its own domain (link previews need one).
+    cardImage: "/static/images/universe-card.png",
 };
 
 export class MetaTagsBuilder {

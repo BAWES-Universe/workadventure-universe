@@ -17,7 +17,7 @@ const notification: DeepPartial<Translation["notification"]> = {
         title: "Accès aux notifications refusé",
         permissionDenied: "Permission refusée",
         content:
-            "Ne manquez aucune discussion. Activez les notifications pour être informé(e) lorsque quelqu'un souhaite vous parler, même si vous n'êtes pas sur l'onglet WorkAdventure.",
+            "Ne manquez aucune discussion. Activez les notifications pour être informé(e) lorsque quelqu'un souhaite vous parler, même si vous n'êtes pas sur l'onglet Universe.",
         firefoxContent:
             'Veuillez cocher la case "Se souvenir de cette décision" si vous ne voulez pas que Firefox vous demande sans cesse l\'autorisation.',
         refresh: "Rafraîchir",
