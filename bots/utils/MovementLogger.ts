@@ -5,7 +5,7 @@
  * Disabled in production to avoid performance overhead and security concerns
  */
 
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 
 // Only enable logging in development
 const ENABLE_LOGGING = process.env.ENABLE_MOVEMENT_LOGGING === 'true' || process.env.NODE_ENV === 'development';

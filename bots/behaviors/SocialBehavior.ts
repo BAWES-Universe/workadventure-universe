@@ -3,7 +3,7 @@
  */
 
 import { BaseBehavior, createConversationState, type BehaviorConfig } from './BaseBehavior';
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { SpaceUser } from '@workadventure/messages';
 import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
