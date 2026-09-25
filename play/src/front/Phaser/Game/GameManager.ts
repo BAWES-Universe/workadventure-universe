@@ -237,6 +237,19 @@ export class GameManager {
         return gameScene;
     }
 
+    /**
+     * The current game scene, or undefined while there is none (a reconnect or a map change is swapping it).
+     * For UI that can mount or react during that swap and must not throw.
+     */
+    public tryGetCurrentGameScene(): GameScene | undefined {
+        try {
+            return this.getCurrentGameScene();
+        } catch (error) {
+            if (error instanceof GameSceneNotFoundError) return undefined;
+            throw error;
+        }
+    }
+
     public get currentStartedRoom() {
         return this.startRoom;
     }

@@ -366,6 +366,65 @@ describe("ProximityChatRoom sessions", () => {
         next.destroy();
     });
 
+    function nextMapRoom(): ProximityChatRoom {
+        return new ProximityChatRoom(
+            "room_9",
+            {
+                joinSpace: () => Promise.resolve(fake.space),
+                leaveSpace: () => Promise.resolve(),
+            } as unknown as SpaceRegistryInterface,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+    }
+
+    it("leaves the chat on screen untouched while it hands the timeline over", async () => {
+        await room.joinSpace("bubble", [], true);
+        fake.space.usersStore.set(
+            new Map([
+                ["room_1", spaceUser("room_1", "Me", "a")],
+                ["room_3", spaceUser("room_3", "Bot", "b")],
+            ])
+        );
+        fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "hello", name: "Bot" } });
+        const before = get(room.messages).length;
+        const onScreen = vi.fn();
+        const unsubscribe = room.messages.subscribe(onScreen);
+        onScreen.mockClear();
+
+        room.stashHistoryForNextScene();
+
+        expect(onScreen).not.toHaveBeenCalled();
+        expect(get(room.messages)).toHaveLength(before);
+        unsubscribe();
+        const next = nextMapRoom();
+        expect(get(next.messages)).toHaveLength(before + 1);
+        next.destroy();
+    });
+
+    it("opens the next map's proximity chat in place of this one after a reconnect", async () => {
+        await room.joinSpace("bubble", [], true);
+        room.open();
+        room.stashHistoryForNextScene();
+        room.destroy();
+
+        const next = nextMapRoom();
+        expect(get(selectedRoomStore)).toBe(next);
+        next.destroy();
+    });
+
+    it("keeps another open chat open across a reconnect", () => {
+        const other = { id: "matrix-dm" } as unknown as ChatRoom;
+        selectedRoomStore.set(other);
+        room.stashHistoryForNextScene();
+
+        const next = nextMapRoom();
+        expect(get(selectedRoomStore)).toBe(other);
+        next.destroy();
+    });
+
     it("marks a bot reply still streaming as stopped when you leave, in its own stay", async () => {
         room.setDisplayName("Design room");
         await room.joinSpace("bubble", [], true);

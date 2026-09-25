@@ -15,10 +15,11 @@
      */
     const COPIED_FOR_MS = 3000;
 
-    const gameScene = gameManager.getCurrentGameScene();
-    const startPositions = gameScene.getStartPositionNames();
+    // No scene while a reconnect swaps it: the link still works, without entry points or "next to me".
+    const gameScene = gameManager.tryGetCurrentGameScene();
+    const startPositions = gameScene?.getStartPositionNames() ?? [];
     const canShare = typeof navigator.share === "function";
-    const roomName = gameScene.room.roomName?.trim();
+    const roomName = gameScene?.room.roomName?.trim();
 
     let open = false;
     let arriveNextToMe = false;
@@ -28,19 +29,17 @@
     let container: HTMLDivElement | undefined;
     let linkField: HTMLInputElement | undefined;
 
-    function playerPosition(): { x: number; y: number } {
-        const player = gameScene.CurrentPlayer;
-        return { x: Math.floor(player.x), y: Math.floor(player.y) };
+    function playerPosition(): { x: number; y: number } | undefined {
+        const player = gameManager.tryGetCurrentGameScene()?.CurrentPlayer;
+        return player ? { x: Math.floor(player.x), y: Math.floor(player.y) } : undefined;
     }
 
     function buildLink(): string {
         const base = `${location.origin}${location.pathname}`;
         const hash: string[] = [];
         if (entryPoint && startPositions.length > 1) hash.push(entryPoint);
-        if (arriveNextToMe) {
-            const { x, y } = playerPosition();
-            hash.push(`moveTo=${x},${y}`);
-        }
+        const position = arriveNextToMe ? playerPosition() : undefined;
+        if (position) hash.push(`moveTo=${position.x},${position.y}`);
         return hash.length > 0 ? `${base}#${hash.join("&")}` : base;
     }
 

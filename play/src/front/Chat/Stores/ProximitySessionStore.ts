@@ -1,5 +1,5 @@
 import { writable } from "svelte/store";
-import type { ChatMessage } from "../Connection/ChatConnection";
+import type { ChatMessage, ChatRoom } from "../Connection/ChatConnection";
 
 /**
  * Which stay of the proximity chat the thread shows: a session id, ROOM_MESSAGES_SESSION_ID for the messages
@@ -16,12 +16,19 @@ export interface ProximityHistoryStash {
     messages: ChatMessage[];
     unreadBySession: Map<string, number>;
     unsentDrafts: Map<string, string>;
+    /** The proximity chat was the one open: the next map's opens in its place (a reconnect keeps you in it). */
+    wasSelected?: boolean;
+    /** What leaving the bubble puts back (the chat open before it), when the old map still had to put it back. */
+    chatStateToRestore?: { room: ChatRoom | undefined; visible: boolean };
 }
 
 let stash: ProximityHistoryStash | undefined;
 
 export function stashProximityHistory(history: ProximityHistoryStash): void {
-    stash = history.messages.length > 0 ? history : undefined;
+    stash =
+        history.messages.length > 0 || history.wasSelected || history.chatStateToRestore !== undefined
+            ? history
+            : undefined;
 }
 
 export function takeProximityHistory(): ProximityHistoryStash | undefined {

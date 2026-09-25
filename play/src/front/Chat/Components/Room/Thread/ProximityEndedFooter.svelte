@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { get } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../../Phaser/Game/GameManager";
     import type { ChatMessage } from "../../../Connection/ChatConnection";
@@ -28,14 +28,16 @@
         | { kind: "go"; key: string; room: string; act: () => void }
         | { kind: "find"; key: string; names: string[]; act: () => void };
 
-    const gameScene = gameManager.getCurrentGameScene();
-    const worldUsers = gameScene.allUsersInWorldStore;
-    const currentRoomUrl = gameScene.roomUrl;
-    const userProviderMergerPromise = gameScene.userProviderMerger;
-    const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
+    // No scene while a reconnect swaps it: the footer still shows, with "Find people" for everyone.
+    const gameScene = gameManager.tryGetCurrentGameScene();
+    const worldUsers = gameScene?.allUsersInWorldStore ?? readable(undefined);
+    const currentRoomUrl = gameScene?.roomUrl;
+    const hasPeopleTab = gameScene
+        ? gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled
+        : false;
 
     let roomNames = new Map<string, string>();
-    userProviderMergerPromise
+    gameScene?.userProviderMerger
         .then((merger) => {
             const byRoom = get(merger.usersByRoomStore);
             const names = new Map<string, string>();
