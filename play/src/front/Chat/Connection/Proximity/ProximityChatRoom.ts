@@ -656,6 +656,16 @@ export class ProximityChatRoom implements ChatRoom {
         this.markSessionRead(target);
     }
 
+    /**
+     * Shows where new messages land: the live stay, or with none, the whole timeline with its composer (as the
+     * proximity chat always opened for a script message), never an older, read-only stay left selected.
+     */
+    public showLatest(): void {
+        selectedProximitySessionStore.set(this._currentSessionId);
+        selectedRoomStore.set(this);
+        if (this._currentSessionId !== undefined) this.markSessionRead(this._currentSessionId);
+    }
+
     /** Opens the live stay when no conversation is open, as a message arriving always did. */
     private showIfNothingOpen(): void {
         if (get(selectedRoomStore) !== undefined) return;

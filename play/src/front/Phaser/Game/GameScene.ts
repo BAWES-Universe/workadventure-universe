@@ -2618,15 +2618,15 @@ ${escapedMessage}
                         switch (chatMessage.options.scope) {
                             case "local": {
                                 room.addExternalMessage("local", chatMessage.message, chatMessage.options.author);
-                                // Shows the conversation the message landed in, not an older one left selected.
-                                room.open();
+                                // Shows where the message landed, not an older chat left selected.
+                                room.showLatest();
                                 openChat("script");
 
                                 break;
                             }
                             case "bubble": {
                                 room.addExternalMessage("bubble", chatMessage.message);
-                                room.open();
+                                room.showLatest();
                                 openChat("script");
                             }
                         }

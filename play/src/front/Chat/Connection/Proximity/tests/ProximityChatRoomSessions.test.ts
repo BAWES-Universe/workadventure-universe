@@ -5,6 +5,7 @@ import { ProximityChatRoom } from "../ProximityChatRoom";
 import type { ProximityChatMessage } from "../ProximityChatRoom";
 import { listableSessions } from "../ProximitySessions";
 import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
+import { selectedProximitySessionStore } from "../../../Stores/ProximitySessionStore";
 import type { ChatRoom } from "../../ChatConnection";
 import type { SpaceInterface, SpaceUserExtended } from "../../../../Space/SpaceInterface";
 import type { SpaceRegistryInterface } from "../../../../Space/SpaceRegistry/SpaceRegistryInterface";
@@ -236,6 +237,20 @@ describe("ProximityChatRoom sessions", () => {
         expect(get(room.unreadNotificationCount)).toBe(1);
         room.open(first);
         expect(get(room.unreadNotificationCount)).toBe(0);
+    });
+
+    it("shows where a script message lands: the live stay, or the whole timeline when alone", async () => {
+        // Alone, with an older stay left selected: the whole timeline (with its composer), not that stay.
+        selectedProximitySessionStore.set("an-old-stay");
+        room.showLatest();
+        expect(get(selectedRoomStore)).toBe(room);
+        expect(get(selectedProximitySessionStore)).toBeUndefined();
+
+        room.setDisplayName("Design room");
+        await room.joinSpace("bubble", [], true);
+        selectedProximitySessionStore.set("an-old-stay");
+        room.showLatest();
+        expect(get(selectedProximitySessionStore)).toBe(room.currentSessionId);
     });
 
     it("splits the timeline into stays, and only stays with real messages make a row", async () => {
