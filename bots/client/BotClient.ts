@@ -217,8 +217,7 @@ export class BotClient {
                     this.onDisconnect?.();
                 }
                 this.connected = false;
-                this.joined = false;
-                this.pendingMessages = [];
+                this.resetJoin();
             });
 
             this.ws.on('message', (data: ArrayBuffer) => {
@@ -3107,6 +3106,12 @@ export class BotClient {
         return 'text/html';
     }
 
+    /** The socket is gone: a new one starts joining from nothing, and what the old one held is dropped. */
+    private resetJoin(): void {
+        this.joined = false;
+        this.pendingMessages = [];
+    }
+
     /** The server confirmed the join: messages can flow, starting with the position the bot is at now. */
     private markJoined(): void {
         this.joined = true;
@@ -3129,6 +3134,10 @@ export class BotClient {
             }
             if (this.pendingMessages.length < BotClient.MAX_PENDING_MESSAGES) {
                 this.pendingMessages.push(message);
+            } else {
+                console.warn(
+                    `[Bot ${this.config.botId}] Join still pending: dropped a ${message.message?.$case ?? 'message'} (queue full)`
+                );
             }
             return;
         }

@@ -8,7 +8,7 @@
  *  - sends what it held once joined, in order, with only its latest position;
  *  - starts holding again after a reconnect.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { ClientToServerMessage, PositionMessage_Direction } from '@workadventure/messages';
 import { BotClient } from '../client/BotClient';
@@ -32,6 +32,7 @@ function botWithFakeSocket() {
     const internals = bot as unknown as {
         send(message: ClientToServerMessage): void;
         markJoined(): void;
+        pendingMessages: ClientToServerMessage[];
     };
     return { bot, internals, sent };
 }
@@ -69,5 +70,32 @@ describe('BotClient join gate', () => {
         bot.sendPosition({ x: 160, y: 100 }, PositionMessage_Direction.DOWN, false);
 
         expect(cases(sent)).toEqual(['userMovesMessage']);
+    });
+
+    it('caps what it holds while joining, and says so when it drops', () => {
+        const { internals, sent } = botWithFakeSocket();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        for (let i = 0; i < 105; i++) {
+            internals.send({ message: { $case: 'followAbortMessage', followAbortMessage: { leader: i, follower: 0 } } });
+        }
+        expect(internals.pendingMessages).toHaveLength(100);
+        expect(warn).toHaveBeenCalledTimes(5);
+
+        internals.markJoined();
+        expect(sent).toHaveLength(100);
+        warn.mockRestore();
+    });
+
+    it('forgets what it held when the socket closes before the join', () => {
+        const { bot, internals, sent } = botWithFakeSocket();
+        bot.sendPosition({ x: 120, y: 100 }, PositionMessage_Direction.RIGHT, true);
+        expect(internals.pendingMessages).toHaveLength(1);
+
+        // The socket's close handler resets the join; a later join sends nothing from the old socket.
+        (internals as unknown as { resetJoin(): void }).resetJoin();
+        internals.markJoined();
+
+        expect(sent).toHaveLength(0);
     });
 });
