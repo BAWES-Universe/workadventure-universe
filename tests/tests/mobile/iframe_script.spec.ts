@@ -12,9 +12,15 @@ test.describe("Iframe API @nodesktop", () => {
     test("disable invite user button", async ({ browser }) => {
         await using page = await getPage(browser, 'Alice', publicTestMapUrl("tests/E2E/empty.json", "iframe_script"));
         await page.evaluate(() => localStorage.setItem("debug", "*"));
-        // The invite lives at the bottom of the chat panel.
-        await chatUtils.open(page, true);
-        await expect(page.getByTestId('chatInviteButton')).toBeVisible();
+        // The invite lives at the bottom of the chat panel. Without a webcam (webkit) the chat is already open
+        // and covers the menu button: only open it when it isn't.
+        const inviteButton = page.getByTestId('chatInviteButton');
+        await expect(inviteButton.or(page.locator('button#burgerIcon'))).toBeVisible();
+        //eslint-disable-next-line playwright/no-conditional-in-test
+        if (!(await inviteButton.isVisible())) {
+            await chatUtils.open(page, true);
+        }
+        await expect(inviteButton).toBeVisible();
         // Create a script to evaluate function to disable map editor
         await evaluateScript(page, async () => {
             await WA.onInit();
