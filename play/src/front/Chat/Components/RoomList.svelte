@@ -19,6 +19,7 @@
     import ChatError from "./ChatError.svelte";
     import ChatHeader from "./ChatHeader.svelte";
     import FindGroup from "./FindGroup.svelte";
+    import InviteFooter from "./InviteFooter.svelte";
     import RequireConnection from "./requireConnection.svelte";
     import RefreshChat from "./RefreshChat.svelte";
     import ProximityTopRow from "./TopRow/ProximityTopRow.svelte";
@@ -163,13 +164,8 @@
                         <!-- Nothing yet: say how it starts, and offer the People tab. -->
                         <section class="u-glass-warm mx-2 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
                             <div class="flex items-start gap-3">
-                                <div
-                                    class="u-glow flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary"
-                                    aria-hidden="true"
-                                >
-                                    <div class="translate-y-[3px]">
-                                        <WokaFromUserId userId={-1} customWidth="34px" placeholderSrc="" />
-                                    </div>
+                                <div class="flex h-11 w-11 shrink-0 items-end justify-center" aria-hidden="true">
+                                    <WokaFromUserId userId={-1} customWidth="40px" placeholderSrc="" />
                                 </div>
                                 <div class="flex min-w-0 flex-col gap-0.5">
                                     <h3 class="u-text-gradient m-0 text-base font-bold leading-6">
@@ -205,12 +201,8 @@
                             <p class="m-0 mt-1 text-xs leading-5 text-white/60">{$LL.chat.guest.intro()}</p>
                             <ul class="m-0 mt-3 flex list-none flex-col gap-2.5 p-0 text-[13px] leading-5">
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="16" /></span>
-                                    <span>{$LL.chat.guest.messageAnyone()}</span>
-                                </li>
-                                <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="16" /></span>
-                                    <span>{$LL.chat.guest.keepWoka()}</span>
+                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="16" /></span>
+                                    <span>{$LL.chat.guest.build()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
                                     <span class="guest-tile" aria-hidden="true"><IconWorldSearch font-size="16" /></span
@@ -218,8 +210,12 @@
                                     <span>{$LL.chat.guest.orbit()}</span>
                                 </li>
                                 <li class="flex items-start gap-3">
-                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="16" /></span>
-                                    <span>{$LL.chat.guest.build()}</span>
+                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="16" /></span>
+                                    <span>{$LL.chat.guest.messageAnyone()}</span>
+                                </li>
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="16" /></span>
+                                    <span>{$LL.chat.guest.keepWoka()}</span>
                                 </li>
                             </ul>
                             <a
@@ -244,6 +240,7 @@
                         </div>
                     {/if}
                 </div>
+                <InviteFooter />
             {/if}
         </div>
     {/if}

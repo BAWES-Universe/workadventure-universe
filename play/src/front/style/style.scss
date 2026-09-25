@@ -913,7 +913,7 @@ div.emoji-picker {
     position: absolute;
     inset: 0;
     z-index: -1;
-    background: linear-gradient(90deg, #f7941d, #ef3d2e 50%, #e9c74c);
+    background: linear-gradient(90deg, #9a4dfd, #5a6cf8);
     opacity: 0;
     transition: opacity 400ms ease;
 }
@@ -1005,4 +1005,15 @@ div.emoji-picker {
     .u-live-dot {
         animation: none;
     }
+}
+
+/* The Login button, and only it: the same purple → blue gradient as the chat panel's primary buttons. */
+button[data-testid="actionBarLogin"] {
+    background: linear-gradient(90deg, #8629fc, #4156f6);
+    box-shadow: 0 6px 18px -8px rgba(134, 41, 252, 0.7);
+    transition: background 200ms ease, box-shadow 200ms ease;
+}
+button[data-testid="actionBarLogin"]:hover {
+    background: linear-gradient(90deg, #9a4dfd, #5a6cf8);
+    box-shadow: 0 8px 22px -8px rgba(134, 41, 252, 0.85);
 }

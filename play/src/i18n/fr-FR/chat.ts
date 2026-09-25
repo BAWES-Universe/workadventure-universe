@@ -596,6 +596,18 @@ const chat: DeepPartial<Translation["chat"]> = {
             "Seules les personnes présentes quand vous envoyez un message le voient. Qui arrive après ne voit que ce qui est envoyé ensuite. Rien n'est enregistré sur un serveur.",
         empty: "Aucun message dans cette bulle de discussion.",
     },
+    inviteFooter: {
+        button: "Inviter quelqu'un",
+        title: "Inviter quelqu'un",
+        hint: "Avec le lien, on entre directement dans cette salle. Rien à installer, pas besoin de compte.",
+        hintRoom: "Avec le lien, on entre directement dans {room}. Rien à installer, pas besoin de compte.",
+        linkLabel: "Lien d'invitation",
+        share: "Partager avec une app",
+        nextToMe: "Arriver à côté de moi",
+        nextToMeHint: "La personne arrive là où vous êtes maintenant.",
+        entryPoint: "Point d'entrée",
+        close: "Fermer",
+    },
     header: {
         newChat: "Nouveau message, groupe ou dossier",
         newMessage: "Nouveau message",

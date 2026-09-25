@@ -594,6 +594,18 @@ const chat: BaseTranslation = {
             "Only people here when you send a message see it. Anyone who joins later sees only what's sent after they arrive. Nothing is saved on a server.",
         empty: "No messages in this proximity chat.",
     },
+    inviteFooter: {
+        button: "Invite someone to join",
+        title: "Invite someone to join",
+        hint: "Anyone with the link can walk straight into this room. No download, no account needed.",
+        hintRoom: "Anyone with the link can walk straight into {room}. No download, no account needed.",
+        linkLabel: "Invite link",
+        share: "Share with an app",
+        nextToMe: "Arrive next to me",
+        nextToMeHint: "They start where you're standing now.",
+        entryPoint: "Entry point",
+        close: "Close",
+    },
     header: {
         newChat: "New message, group or folder",
         newMessage: "New message",

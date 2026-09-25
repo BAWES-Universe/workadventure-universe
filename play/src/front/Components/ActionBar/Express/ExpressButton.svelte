@@ -119,7 +119,7 @@
             <ExpressTray {sayEnabled} on:close={onTrayClose} />
         {:else if hintVisible}
             <div
-                class="express-hint express-surface absolute bottom-full right-0 mb-2 w-72 rounded-lg p-3 text-sm text-white pointer-events-none"
+                class="express-hint absolute bottom-full right-0 mb-2 w-72 rounded-lg bg-contrast/90 backdrop-blur p-3 text-sm text-white pointer-events-none"
                 role="tooltip"
                 id="express-shortcuts"
                 data-testid="express-shortcuts"
@@ -245,14 +245,6 @@
         }
     }
 
-    /* The shortcuts card uses the tray's surface, so the two read as one feature. */
-    .express-surface {
-        background: linear-gradient(160deg, rgba(38, 52, 82, 0.92), rgba(27, 42, 65, 0.94));
-        backdrop-filter: blur(18px) saturate(140%);
-        -webkit-backdrop-filter: blur(18px) saturate(140%);
-        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.25),
-            0 18px 48px -12px rgba(0, 0, 0, 0.55), 0 0 28px 2px rgba(134, 41, 252, 0.4);
-    }
     .express-button {
         -webkit-touch-callout: none;
         -webkit-user-select: none;
@@ -262,14 +254,14 @@
         -webkit-backdrop-filter: blur(12px);
         cursor: pointer;
         isolation: isolate;
-        box-shadow: 0 0 18px 1px rgba(134, 41, 252, 0.35);
+        box-shadow: 0 0 14px -2px rgba(134, 41, 252, 0.3);
         transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), background 150ms ease, box-shadow 200ms ease;
         -webkit-tap-highlight-color: transparent;
     }
     .express-button:hover,
     .express-button.is-open {
         background: rgba(27, 42, 65, 0.95);
-        box-shadow: 0 0 26px 3px rgba(134, 41, 252, 0.5);
+        box-shadow: 0 0 18px -2px rgba(134, 41, 252, 0.42);
     }
     .express-button:active {
         transform: scale(0.9);

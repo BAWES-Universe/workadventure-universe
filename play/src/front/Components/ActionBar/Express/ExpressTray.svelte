@@ -578,8 +578,8 @@
         background: linear-gradient(160deg, rgba(38, 52, 82, 0.92), rgba(27, 42, 65, 0.94));
         backdrop-filter: blur(18px) saturate(140%);
         -webkit-backdrop-filter: blur(18px) saturate(140%);
-        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.25),
-            0 18px 48px -12px rgba(0, 0, 0, 0.55), 0 0 28px 2px rgba(134, 41, 252, 0.4);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.18),
+            0 18px 48px -12px rgba(0, 0, 0, 0.55), 0 0 32px -12px rgba(134, 41, 252, 0.55);
         touch-action: none;
     }
 

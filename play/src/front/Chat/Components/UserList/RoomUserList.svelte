@@ -5,6 +5,7 @@
     import { chatSearchBarValue, peopleSectionsOpenStore } from "../../Stores/ChatStore";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import ChatHeader from "../ChatHeader.svelte";
+    import InviteFooter from "../InviteFooter.svelte";
     import UserList from "./UserList.svelte";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
 
@@ -95,7 +96,7 @@
 
 <div class="flex flex-col h-full">
     <ChatHeader />
-    <div class="max-h-full overflow-x-hidden overflow-y-auto pb-2" data-testid="peopleList">
+    <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-2" data-testid="peopleList">
         {#if hereAll.length > 0 && (!isSearching || hereShown.length > 0)}
             <section class="flex flex-col" data-testid="peopleHere">
                 <h3
@@ -181,4 +182,5 @@
             </p>
         {/if}
     </div>
+    <InviteFooter />
 </div>
