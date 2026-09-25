@@ -32,7 +32,7 @@ vi.mock("../../../../i18n/i18n-svelte", () => {
     return { default: readable(fn), LL: readable(fn) };
 });
 
-import { expressTrayStore } from "../../../Stores/ExpressStore";
+import { expressTrayOpenOptions, expressTrayStore } from "../../../Stores/ExpressStore";
 import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
 import ExpressButton from "./ExpressButton.svelte";
 
@@ -94,5 +94,43 @@ describe("ExpressButton", () => {
         // jsdom doesn't run the tray's closing animation, so check the state rather than the DOM.
         expect(trayState()).toBe("closed");
         expect(button()?.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("opens ready to type when pressed from the keyboard, in Think mode with Ctrl+Enter", async () => {
+        const target = document.createElement("div");
+        document.body.appendChild(target);
+        component = new ExpressButton({ target });
+        const button = () => target.querySelector<HTMLButtonElement>('[data-testid="express-button"]');
+        const options = () => {
+            let value = {};
+            expressTrayOpenOptions.subscribe((v) => (value = v))();
+            return value;
+        };
+
+        // Enter on the focused button: the browser clicks it with detail 0 (no pointer).
+        button()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        button()?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        await settle();
+        expect(trayState()).toBe("open");
+        expect(options()).toEqual({ think: false, focusInput: true });
+
+        expressTrayStore.close();
+        await settle();
+
+        // Ctrl+Enter: Think mode, even when the click doesn't carry the Ctrl key.
+        button()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+        button()?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        await settle();
+        expect(trayState()).toBe("open");
+        expect(options()).toEqual({ think: true, focusInput: true });
+
+        expressTrayStore.close();
+        await settle();
+
+        // A tap or a mouse click opens it as before.
+        button()?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+        await settle();
+        expect(trayState()).toBe("open");
+        expect(options()).toEqual({});
     });
 });
