@@ -28,12 +28,12 @@ const warning: DeepPartial<Translation["warning"]> = {
     },
     browserNotSupported: {
         title: "😢 サポートされていないブラウザ",
-        message: "お使いのブラウザ（{browserName}）は、WorkAdventureでサポートされなくなりました。",
+        message: "お使いのブラウザ（{browserName}）は、Universeでサポートされなくなりました。",
         description:
-            "お使いのブラウザはWorkAdventureを実行するには古すぎます。続行するには、最新バージョンに更新してください。",
+            "お使いのブラウザはUniverseを実行するには古すぎます。続行するには、最新バージョンに更新してください。",
         whatToDo: "何ができますか？",
         option1: "{browserName}を最新バージョンに更新する",
-        option2: "WorkAdventureを終了して別のブラウザを使用する",
+        option2: "Universeを終了して別のブラウザを使用する",
         updateBrowser: "ブラウザを更新",
         leave: "終了",
     },

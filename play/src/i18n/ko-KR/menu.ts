@@ -43,7 +43,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         },
         privacySettings: {
             title: "자리 비움 모드",
-            explanation: '브라우저에서 WorkAdventure 탭이 보이지 않을 때 WorkAdventure는 "자리 비움 모드"로 전환됩니다',
+            explanation: '브라우저에서 Universe 탭이 보이지 않을 때 Universe는 "자리 비움 모드"로 전환됩니다',
             cameraToggle: '"자리 비움 모드"에서 카메라 활성 상태 유지',
             microphoneToggle: '"자리 비움 모드"에서 마이크 활성 상태 유지',
         },
@@ -90,7 +90,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "시작하기",
             description:
-                "WorkAdventure를 사용하면 다른 사람들과 자발적으로 소통할 수 있는 온라인 공간을 만들 수 있습니다. 모든 것은 자신만의 공간을 만드는 것에서 시작됩니다. 저희 팀이 제작한 다양한 사전 제작 지도 중에서 선택하세요.",
+                "Universe를 사용하면 다른 사람들과 자발적으로 소통할 수 있는 온라인 공간을 만들 수 있습니다. 모든 것은 자신만의 공간을 만드는 것에서 시작됩니다. 저희 팀이 제작한 다양한 사전 제작 지도 중에서 선택하세요.",
         },
         createMap: {
             title: "지도 만들기",

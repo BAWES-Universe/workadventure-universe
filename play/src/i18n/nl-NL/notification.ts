@@ -10,7 +10,7 @@ const notification: DeepPartial<Translation["notification"]> = {
         title: "Toegang tot meldingen geweigerd",
         permissionDenied: "Toegang geweigerd",
         content:
-            "Mis geen enkele discussie. Sta meldingen toe om gewaarschuwd te worden wanneer iemand met je wil praten, zelfs als je niet op het WorkAdventure-tabblad bent.",
+            "Mis geen enkele discussie. Sta meldingen toe om gewaarschuwd te worden wanneer iemand met je wil praten, zelfs als je niet op het Universe-tabblad bent.",
         firefoxContent:
             'Klik op het vakje "Onthoud deze beslissing" als je niet wilt dat Firefox je telkens om toestemming vraagt.',
         refresh: "Vernieuwen",

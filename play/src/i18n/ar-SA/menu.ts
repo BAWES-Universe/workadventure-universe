@@ -43,7 +43,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         },
         privacySettings: {
             title: "وضع الغياب", // Absence mode
-            explanation: 'إذا لم يكن تبويب WorkAdventure نشطًا، سيتم التبديل إلى "وضع الغياب".', // If the WorkAdventure tab is not active, it will switch to "absence mode".
+            explanation: 'إذا لم يكن تبويب Universe نشطًا، سيتم التبديل إلى "وضع الغياب".', // If the Universe tab is not active, it will switch to "absence mode".
             cameraToggle: 'اترك الكاميرا مفعلة في "وضع الغياب".', // Keep camera active in "absence mode".
             microphoneToggle: 'اترك الميكروفون مفعلاً في "وضع الغياب".', // Keep microphone active in "absence mode".
         },
@@ -90,7 +90,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "البدء", // Getting started
             description:
-                "مع WorkAdventure يمكنك إنشاء عالم عبر الإنترنت حيث يمكنك الاجتماع والتحدث مع الآخرين بشكل عفوي. ابدأ بإنشاء خريطتك الخاصة. يتوفر لك مجموعة كبيرة من الخرائط الجاهزة من فريقنا.", // With WorkAdventure you can create an online world where you can meet and talk to others spontaneously. Start by creating your own map. A large selection of ready-made maps from our team is available to you.
+                "مع Universe يمكنك إنشاء عالم عبر الإنترنت حيث يمكنك الاجتماع والتحدث مع الآخرين بشكل عفوي. ابدأ بإنشاء خريطتك الخاصة. يتوفر لك مجموعة كبيرة من الخرائط الجاهزة من فريقنا.", // With Universe you can create an online world where you can meet and talk to others spontaneously. Start by creating your own map. A large selection of ready-made maps from our team is available to you.
         },
         createMap: {
             title: "إنشاء خريطة خاصة", // Create your own map

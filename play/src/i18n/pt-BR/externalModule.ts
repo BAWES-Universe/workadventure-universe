@@ -20,7 +20,7 @@ const externalModule: BaseTranslation = {
     discord: {
         integration: "INTEGRAÇÃO",
         explainText:
-            "Ao conectar sua conta do discord aqui, você poderá receber suas mensagens diretamente no chat do workadventure. Após sincronizar um servidor, criaremos as salas que ele contém, você só terá que se juntar a elas no chat do Workadventure.",
+            "Ao conectar sua conta do discord aqui, você poderá receber suas mensagens diretamente no chat do Universe. Após sincronizar um servidor, criaremos as salas que ele contém, você só terá que se juntar a elas no chat do Universe.",
         login: "Conectar ao Discord",
         fetchingServer: "Buscando seus servidores Discord... 👀",
         qrCodeTitle: "Escaneie o código QR com seu aplicativo Discord para fazer login.",
@@ -37,13 +37,13 @@ const externalModule: BaseTranslation = {
         saveSync: "Salvar e sincronizar",
         logout: "Sair",
         guilds: "Servidores Discord",
-        guildExplain: "Selecione os canais que você deseja adicionar à interface de chat do Workadventure.\n",
+        guildExplain: "Selecione os canais que você deseja adicionar à interface de chat do Universe.\n",
     },
     outlook: {
         signIn: "Entrar com Outlook",
         popupScopeToSync: "Conectar minha Conta Outlook",
         popupScopeToSyncExplainText:
-            "Precisamos conectar sua conta Outlook para sincronizar seu calendário e/ou tarefas. Isso permitirá que você veja suas reuniões e tarefas no WorkAdventure e participe delas diretamente do mapa.",
+            "Precisamos conectar sua conta Outlook para sincronizar seu calendário e/ou tarefas. Isso permitirá que você veja suas reuniões e tarefas no Universe e participe delas diretamente do mapa.",
         popupScopeToSyncCalendar: "Sincronizar meu calendário",
         popupScopeToSyncTask: "Sincronizar minhas tarefas",
         popupCancel: "Cancelar",
@@ -64,7 +64,7 @@ const externalModule: BaseTranslation = {
         signIn: "Entrar com Google",
         popupScopeToSync: "Conectar minha Conta Google",
         popupScopeToSyncExplainText:
-            "Precisamos conectar sua conta Google para sincronizar seu calendário e/ou tarefas. Isso permitirá que você veja suas reuniões e tarefas no WorkAdventure e participe delas diretamente do mapa.",
+            "Precisamos conectar sua conta Google para sincronizar seu calendário e/ou tarefas. Isso permitirá que você veja suas reuniões e tarefas no Universe e participe delas diretamente do mapa.",
         popupScopeToSyncCalendar: "Sincronizar meu calendário",
         popupScopeToSyncTask: "Sincronizar minhas tarefas",
         popupCancel: "Cancelar",

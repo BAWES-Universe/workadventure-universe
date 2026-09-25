@@ -21,7 +21,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
     discord: {
         integration: "التكامل",
         explainText:
-            "من خلال ربط حساب Discord الخاص بك هنا، ستتمكن من تلقي رسائلك مباشرة في دردشة Workadventure. بعد مزامنة الخادم، سنقوم بإنشاء الغرف التي يحتوي عليها، عليك فقط الانضمام إليها في واجهة دردشة Workadventure.",
+            "من خلال ربط حساب Discord الخاص بك هنا، ستتمكن من تلقي رسائلك مباشرة في دردشة Universe. بعد مزامنة الخادم، سنقوم بإنشاء الغرف التي يحتوي عليها، عليك فقط الانضمام إليها في واجهة دردشة Universe.",
         login: "اتصل بـ Discord",
         fetchingServer: "جلب خوادم Discord الخاصة بك... 👀",
         qrCodeTitle: "امسح رمز QR باستخدام تطبيق Discord لتسجيل الدخول.",
@@ -38,13 +38,13 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         saveSync: "حفظ ومزامنة",
         logout: "تسجيل الخروج",
         guilds: "خوادم Discord",
-        guildExplain: "حدد القنوات التي تريد إضافتها إلى واجهة دردشة Workadventure.\n",
+        guildExplain: "حدد القنوات التي تريد إضافتها إلى واجهة دردشة Universe.\n",
     },
     outlook: {
         signIn: "تسجيل الدخول باستخدام Outlook",
         popupScopeToSync: "الاتصال بحساب Outlook الخاص بي",
         popupScopeToSyncExplainText:
-            "نحتاج إلى الاتصال بحساب Outlook الخاص بك لمزامنة تقويمك و/أو مهامك. سيمكنك ذلك من عرض اجتماعاتك ومهامك في WorkAdventure والانضمام إليها مباشرة من الخريطة.",
+            "نحتاج إلى الاتصال بحساب Outlook الخاص بك لمزامنة تقويمك و/أو مهامك. سيمكنك ذلك من عرض اجتماعاتك ومهامك في Universe والانضمام إليها مباشرة من الخريطة.",
         popupScopeToSyncCalendar: "مزامنة التقويم الخاص بي",
         popupScopeToSyncTask: "مزامنة مهامي",
         popupCancel: "إلغاء",
@@ -64,7 +64,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         signIn: "تسجيل الدخول باستخدام Google",
         popupScopeToSync: "الاتصال بحساب Google الخاص بي",
         popupScopeToSyncExplainText:
-            "نحتاج إلى الاتصال بحساب Google الخاص بك لمزامنة تقويمك و/أو مهامك. سيمكنك ذلك من عرض اجتماعاتك ومهامك في WorkAdventure والانضمام إليها مباشرة من الخريطة.",
+            "نحتاج إلى الاتصال بحساب Google الخاص بك لمزامنة تقويمك و/أو مهامك. سيمكنك ذلك من عرض اجتماعاتك ومهامك في Universe والانضمام إليها مباشرة من الخريطة.",
         popupScopeToSyncCalendar: "مزامنة التقويم الخاص بي",
         popupScopeToSyncTask: "مزامنة مهامي",
         popupCancel: "إلغاء",

@@ -44,7 +44,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         privacySettings: {
             title: "Modalità assente",
             explanation:
-                'Quando la scheda WorkAdventure nel tuo browser non è visibile, WorkAdventure passa alla modalità "assente"',
+                'Quando la scheda Universe nel tuo browser non è visibile, Universe passa alla modalità "assente"',
             cameraToggle: 'Mantieni la fotocamera attiva in modalità "assente"',
             microphoneToggle: 'Mantieni il microfono attivo in modalità "assente"',
         },
@@ -84,7 +84,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "Iniziare",
             description:
-                "WorkAdventure ti permette di creare uno spazio online per comunicare spontaneamente con gli altri. E tutto inizia con la creazione del tuo spazio. Scegli tra una vasta selezione di mappe prefabbricate dal nostro team.",
+                "Universe ti permette di creare uno spazio online per comunicare spontaneamente con gli altri. E tutto inizia con la creazione del tuo spazio. Scegli tra una vasta selezione di mappe prefabbricate dal nostro team.",
         },
         createMap: {
             title: "Crea la tua mappa",

@@ -11,7 +11,7 @@ const notification: DeepPartial<Translation["notification"]> = {
         title: "通知へのアクセス拒否",
         permissionDenied: "拒否されました",
         content:
-            "会話を見逃さない。WorkAdventure タブを開いていなくても、誰かがあなたと話したがっていることを通知できるように、通知を有効にしてください。",
+            "会話を見逃さない。Universe タブを開いていなくても、誰かがあなたと話したがっていることを通知できるように、通知を有効にしてください。",
         refresh: "更新",
         continue: "通知なしで続行",
     },

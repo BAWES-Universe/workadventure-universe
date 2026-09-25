@@ -21,7 +21,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
     discord: {
         integration: "통합",
         explainText:
-            "여기에서 Discord 계정을 연결하면 WorkAdventure 채팅에서 직접 메시지를 받을 수 있습니다. 서버를 동기화하면 포함된 방을 만들고 WorkAdventure 채팅에서 참가하기만 하면 됩니다.",
+            "여기에서 Discord 계정을 연결하면 Universe 채팅에서 직접 메시지를 받을 수 있습니다. 서버를 동기화하면 포함된 방을 만들고 Universe 채팅에서 참가하기만 하면 됩니다.",
         login: "Discord에 연결",
         fetchingServer: "Discord 서버를 가져오는 중... 👀",
         qrCodeTitle: "Discord 앱으로 QR 코드를 스캔하여 로그인하세요.",
@@ -38,13 +38,13 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         saveSync: "저장 및 동기화",
         logout: "로그아웃",
         guilds: "Discord 서버",
-        guildExplain: "WorkAdventure 채팅 인터페이스에 추가할 채널을 선택하세요.\n",
+        guildExplain: "Universe 채팅 인터페이스에 추가할 채널을 선택하세요.\n",
     },
     outlook: {
         signIn: "Outlook으로 로그인",
         popupScopeToSync: "Outlook 계정 연결",
         popupScopeToSyncExplainText:
-            "캘린더 및/또는 작업을 동기화하려면 Outlook 계정에 연결해야 합니다. 이렇게 하면 WorkAdventure에서 회의 및 작업을 보고 지도에서 직접 참가할 수 있습니다.",
+            "캘린더 및/또는 작업을 동기화하려면 Outlook 계정에 연결해야 합니다. 이렇게 하면 Universe에서 회의 및 작업을 보고 지도에서 직접 참가할 수 있습니다.",
         popupScopeToSyncCalendar: "캘린더 동기화",
         popupScopeToSyncTask: "작업 동기화",
         popupCancel: "취소",
@@ -65,7 +65,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         signIn: "Google로 로그인",
         popupScopeToSync: "Google 계정 연결",
         popupScopeToSyncExplainText:
-            "캘린더 및/또는 작업을 동기화하려면 Google 계정에 연결해야 합니다. 이렇게 하면 WorkAdventure에서 회의 및 작업을 보고 지도에서 직접 참가할 수 있습니다.",
+            "캘린더 및/또는 작업을 동기화하려면 Google 계정에 연결해야 합니다. 이렇게 하면 Universe에서 회의 및 작업을 보고 지도에서 직접 참가할 수 있습니다.",
         popupScopeToSyncCalendar: "캘린더 동기화",
         popupScopeToSyncTask: "작업 동기화",
         popupCancel: "취소",

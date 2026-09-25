@@ -21,7 +21,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
     discord: {
         integration: "INTEGRACIJA",
         explainText:
-            "Gaž zwězujośo swójo Discord-konto how, buźośo mócy swóje powěsći direktnje w Workadventure-chatje dostaś. Pó synchronizěrowanju serwera napóraju mej rumniny, kótarež wopśimujo, musyśo jenjez k nim w Workadventure-chatje pśiźoś.",
+            "Gaž zwězujośo swójo Discord-konto how, buźośo mócy swóje powěsći direktnje w Universe-chatje dostaś. Pó synchronizěrowanju serwera napóraju mej rumniny, kótarež wopśimujo, musyśo jenjez k nim w Universe-chatje pśiźoś.",
         login: "Z Discord zwězaś",
         fetchingServer: "Waše Discord-serwery se wótwołuju... 👀",
         qrCodeTitle: "Skennujśo QR-kod ze swójeju Discord-nałožku, aby se pśizjawił.",
@@ -38,13 +38,13 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         saveSync: "Składowaś a synchronizěrowaś",
         logout: "Wótzjawiś",
         guilds: "Discord-serwery",
-        guildExplain: "Wubjeŕśo kanale, kótarež cośo k Workadventure-chat-interfejsoju pśidaś.\n",
+        guildExplain: "Wubjeŕśo kanale, kótarež cośo k Universe-chat-interfejsoju pśidaś.\n",
     },
     outlook: {
         signIn: "Z Outlook se pśizjawiś",
         popupScopeToSync: "Mójo Outlook-konto zwězaś",
         popupScopeToSyncExplainText:
-            "Musymy se z wašym Outlook-kontom zwězaś, aby waš kalendaŕ a/abo nadawki synchronizěrował. To wam zmóžnijo, waše ześělenja a nadawki w WorkAdventure wiźeś a direktnje z kórtow k nim pśiźoś.",
+            "Musymy se z wašym Outlook-kontom zwězaś, aby waš kalendaŕ a/abo nadawki synchronizěrował. To wam zmóžnijo, waše ześělenja a nadawki w Universe wiźeś a direktnje z kórtow k nim pśiźoś.",
         popupScopeToSyncCalendar: "Mój kalendaŕ synchronizěrowaś",
         popupScopeToSyncTask: "Móje nadawki synchronizěrowaś",
         popupCancel: "Pśetergnuś",
@@ -65,7 +65,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         signIn: "Z Google se pśizjawiś",
         popupScopeToSync: "Mójo Google-konto zwězaś",
         popupScopeToSyncExplainText:
-            "Musymy se z wašym Google-kontom zwězaś, aby waš kalendaŕ a/abo nadawki synchronizěrował. To wam zmóžnijo, waše ześělenja a nadawki w WorkAdventure wiźeś a direktnje z kórtow k nim pśiźoś.",
+            "Musymy se z wašym Google-kontom zwězaś, aby waš kalendaŕ a/abo nadawki synchronizěrował. To wam zmóžnijo, waše ześělenja a nadawki w Universe wiźeś a direktnje z kórtow k nim pśiźoś.",
         popupScopeToSyncCalendar: "Mój kalendaŕ synchronizěrowaś",
         popupScopeToSyncTask: "Móje nadawki synchronizěrowaś",
         popupCancel: "Pśetergnuś",
