@@ -245,8 +245,11 @@ function mergeInto<M extends SessionTimelineMessage>(target: ProximitySession<M>
 }
 
 /**
- * Joins the stays that carry on one conversation. The candidate is the last conversation before this stay,
- * looking past walk-bys where nobody wrote anything (they stay as their own, unlisted, sessions).
+ * Joins the stays that carry on one conversation: each stay goes to the most recent conversation it continues
+ * (same people or place, within the window), even with other chats in between. Going back and forth between
+ * two people keeps two chats, not one row per visit. Each chat only shows its own messages, so nothing is
+ * reordered. Walk-bys where nobody wrote anything are never continued: they stay as their own, unlisted,
+ * sessions.
  */
 function continueConversations<M extends SessionTimelineMessage>(
     sessions: ProximitySession<M>[],
@@ -255,15 +258,18 @@ function continueConversations<M extends SessionTimelineMessage>(
     const result: ProximitySession<M>[] = [];
     for (const session of sessions) {
         let candidate: ProximitySession<M> | undefined;
-        for (let i = result.length - 1; i >= 0; i--) {
-            const earlier = result[i];
-            if (earlier.id === ROOM_MESSAGES_SESSION_ID) break;
-            if (earlier.messages.length > 0 || earlier.unsentDraft !== undefined) {
+        let candidateEnd = -Infinity;
+        for (const earlier of result) {
+            if (earlier.messages.length === 0 && earlier.unsentDraft === undefined) continue;
+            if (!continues(earlier, session, rules)) continue;
+            // The most recent one wins (a group can share people with several earlier chats).
+            const end = earlier.endedAt ?? -Infinity;
+            if (end >= candidateEnd) {
                 candidate = earlier;
-                break;
+                candidateEnd = end;
             }
         }
-        if (candidate && continues(candidate, session, rules)) {
+        if (candidate) {
             mergeInto(candidate, session);
         } else {
             result.push(session);
