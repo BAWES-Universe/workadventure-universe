@@ -203,11 +203,13 @@ test.describe("Say bubbles @nomobile @nowebkit", () => {
         await alicePage.keyboard.press("Enter");
         await expect(alicePage.getByTestId("express-tray")).toBeHidden();
 
-        // Ctrl+Enter opens it in Think mode (retried: Enter is ignored for a moment after closing)
+        // Ctrl+Enter opens it in Think mode. Retried only until the tray shows (Enter is ignored for a moment after
+        // closing): pressing again once it's open would land in the empty field and close it.
         await expect(async () => {
             await alicePage.keyboard.press("Control+Enter");
-            await expect(alicePage.getByTestId("express-input")).toBeFocused({ timeout: 150 });
+            await expect(alicePage.getByTestId("express-tray")).toBeVisible({ timeout: 500 });
         }).toPass({ intervals: [100], timeout: 10_000 });
+        await expect(alicePage.getByTestId("express-input")).toBeFocused();
         await expect(alicePage.getByTestId("express-think-toggle")).toHaveAttribute("aria-checked", "true");
 
         await alicePage.context().close();
