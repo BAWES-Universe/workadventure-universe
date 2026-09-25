@@ -70,9 +70,12 @@ test.describe('Action bar responsiveness @nomobile', () => {
 
         await expect(page.getByText('Login')).toBeVisible();
 
-        await page.setViewportSize({ width: 345, height: 600 });
-
-        await expect(page.getByText('Login')).toBeHidden();
+        // Narrower still, Login goes into the menu too (again step by step: how narrow depends on the browser's font).
+        await expect(async () => {
+            width = Math.max(width - 25, 320);
+            await page.setViewportSize({ width, height: 600 });
+            await expect(page.getByText('Login')).toBeHidden({ timeout: 1_000 });
+        }).toPass({ intervals: [0], timeout: 40_000 });
 
         await Menu.openMenu(page);
 
