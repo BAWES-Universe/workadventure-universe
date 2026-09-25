@@ -49,6 +49,7 @@ import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerMana
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
 import { composerDraftStore } from "../../Stores/ComposerDraftStore";
+import { areaChatRooms } from "../../Stores/AreaPresenceStore";
 import {
     selectedProximitySessionStore,
     stashProximityHistory,
@@ -816,7 +817,12 @@ export class ProximityChatRoom implements ChatRoom {
             // Still in a bubble: leaving it on the next map puts back what was open before it, as it would have here.
             chatStateToRestore: get(shouldRestoreChatStateStore)
                 ? {
-                      room: this.currentMatrixRoom === this ? undefined : this.currentMatrixRoom,
+                      // An area's chat is only for who is in the area: the next map never gets one back.
+                      room:
+                          this.currentMatrixRoom === this ||
+                          (this.currentMatrixRoom && areaChatRooms.isAreaRoom(this.currentMatrixRoom.id))
+                              ? undefined
+                              : this.currentMatrixRoom,
                       visible: this.currentChatVisibility,
                   }
                 : undefined,
@@ -1502,11 +1508,23 @@ export class ProximityChatRoom implements ChatRoom {
 
     private restoreChatState() {
         if (get(selectedRoomStore) == this && get(shouldRestoreChatStateStore)) {
-            selectedRoomStore.set(this.currentMatrixRoom);
+            selectedRoomStore.set(this.chatToPutBack());
         }
 
         chatVisibilityStore.set(this.currentChatVisibility);
         shouldRestoreChatStateStore.set(false);
+    }
+
+    /**
+     * The chat open before the bubble, if it can still be shown: an area's chat only while you're still in that area
+     * (its access follows your presence there).
+     */
+    private chatToPutBack(): ChatRoom | undefined {
+        const room = this.currentMatrixRoom;
+        if (room && room !== this && areaChatRooms.isAreaRoom(room.id) && !areaChatRooms.hasActiveRoom(room.id)) {
+            return undefined;
+        }
+        return room;
     }
 
     private saveChatState() {

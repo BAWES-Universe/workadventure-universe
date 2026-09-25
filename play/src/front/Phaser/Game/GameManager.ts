@@ -29,6 +29,7 @@ import { MatrixChatConnection } from "../../Chat/Connection/Matrix/MatrixChatCon
 import { VoidChatConnection } from "../../Chat/Connection/VoidChatConnection";
 import { loginTokenErrorStore, isMatrixChatEnabledStore } from "../../Stores/ChatStore";
 import { initializeChatVisibilitySubscription } from "../../Chat/Stores/ChatStore";
+import { keepOnlyProximityHistory } from "../../Chat/Stores/ProximitySessionStore";
 import { GameScene } from "./GameScene";
 /**
  * This class should be responsible for any scene starting/stopping
@@ -203,6 +204,7 @@ export class GameManager {
         }
 
         gameScene.cleanupClosingScene();
+        keepOnlyProximityHistory();
         gameScene.createSuccessorGameScene(false, false);
         menuIconVisiblilityStore.set(false);
     }

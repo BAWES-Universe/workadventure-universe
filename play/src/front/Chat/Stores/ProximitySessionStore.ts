@@ -31,6 +31,16 @@ export function stashProximityHistory(history: ProximityHistoryStash): void {
             : undefined;
 }
 
+/**
+ * Leaving the game without a new map right away (back to the login screen, changing your woka or camera): keep the
+ * chats you had, but not what was open, so the proximity chat never opens by itself when you come back.
+ */
+export function keepOnlyProximityHistory(): void {
+    if (!stash) return;
+    stash = { ...stash, wasSelected: false, chatStateToRestore: undefined };
+    if (stash.messages.length === 0) stash = undefined;
+}
+
 export function takeProximityHistory(): ProximityHistoryStash | undefined {
     const taken = stash;
     stash = undefined;
