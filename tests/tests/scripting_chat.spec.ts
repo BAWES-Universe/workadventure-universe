@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import { evaluateScript } from "./utils/scripting";
-import Chat from "./utils/chat";
 import Map from "./utils/map";
 import { resetWamMaps } from "./utils/map-editor/uploader";
 import chatUtils from "./chat/chatUtils";
@@ -31,18 +30,12 @@ test.describe("#Scripting chat functions @nowebkit @nomobile", () => {
       return WA.chat.open();
     });
     await expect(page.locator("#chat")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Proximity Chat" })
-    ).toBeVisible({ timeout: 60000 });
 
-    // Open the timeline
-    await Chat.openTimeline(page);
-    await expect(page.locator(".back-roomlist")).toBeVisible();
-
-    // Test send message scripting
+    // Test send message scripting: alone, there is no proximity chat to open by hand, so the message opens it.
     await evaluateScript(page, async () => {
       return WA.chat.sendChatMessage("Test message sent", "Test machine");
     });
+    await expect(page.locator(".back-roomlist")).toBeVisible({ timeout: 60000 });
 
     await expect(page.locator("#chat").locator(".messageContainer")).toContainText(
       "Test message sent"
