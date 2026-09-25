@@ -508,16 +508,18 @@ const chat: BaseTranslation = {
         encrypted: "End-to-end encrypted",
     },
     guest: {
+        eyebrow: "Exploring as a guest",
         title: "Make this universe yours",
-        intro: "You're exploring as a guest. Proximity chat, People and Express already work. Sign in to:",
+        intro: "Proximity chat, People and Express already work. An account adds:",
         messageAnyone: "Message anyone with an account, start groups and keep every conversation",
         keepWoka: "Keep your woka and name on every device",
-        orbit: "Explore the whole universe with Orbit and jump to where people are",
-        build: "Build rooms and bots in worlds that make you a member",
+        orbit: "Orbit: see what's popular, jump to where people are, save the places you love",
+        build: "Build your own rooms, worlds and universes from templates, and invite your own members",
         action: "Sign in or create an account",
     },
     here: {
-        hint: "Walk up to someone to start a proximity chat.",
+        title: "Say hi in person",
+        hint: "Walk up to someone and a proximity chat opens on its own. No typing needed to start.",
         seeWhoIsHere: "See who's here",
     },
     nearby: {

@@ -142,7 +142,11 @@
 <div class="relative z-40 w-full">
     <div class="flex items-center gap-2 ps-2 pe-2 pt-2 pb-1">
         {#if hasChatsTab && hasPeopleTab}
-            <div class="chat-tabs flex grow min-w-0 gap-1 rounded-xl bg-white/5 p-1" role="tablist">
+            <div
+                class="chat-tabs u-glass relative flex grow min-w-0 gap-1 rounded-xl p-1"
+                role="tablist"
+                data-active={activeTab}
+            >
                 <button
                     type="button"
                     role="tab"
@@ -200,13 +204,13 @@
 
     {#if showSearch || newChatOptions.length > 0}
         <!-- Search and one "+". The "+" menu is positioned against this row. -->
-        <div class="relative flex items-center gap-2 px-2 pb-2">
+        <div class="relative flex items-center gap-2 px-2 pt-2 pb-2">
             {#if showSearch}
                 {#await userProviderMergerPromise}
                     <div class="grow" />
                 {:then userProviderMerger}
                     <div
-                        class="chat-search group relative grow min-w-0 h-11 flex items-center rounded-full bg-white/10 border border-solid border-white/10 focus-within:border-white/30 focus-within:bg-white/15 transition-colors"
+                        class="chat-search u-glass group relative grow min-w-0 h-11 flex items-center rounded-full transition-colors"
                     >
                         <IconSearch
                             font-size="18"
@@ -262,48 +266,82 @@
 </div>
 
 <style>
+    /* A gradient pill slides under the open tab; the tabs themselves stay transparent above it. */
+    .chat-tabs::before {
+        content: "";
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        inset-inline-start: 4px;
+        width: calc(50% - 6px);
+        border-radius: 0.625rem;
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+        box-shadow: 0 6px 18px -6px rgba(134, 41, 252, 0.9);
+        transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 150ms ease;
+        opacity: 0;
+    }
+    .chat-tabs[data-active="chats"]::before {
+        opacity: 1;
+    }
+    .chat-tabs[data-active="people"]::before {
+        opacity: 1;
+        transform: translateX(calc(100% + 4px));
+    }
+    :global([dir="rtl"]) .chat-tabs[data-active="people"]::before {
+        transform: translateX(calc(-100% - 4px));
+    }
+
     .chat-tab {
+        position: relative;
+        z-index: 1;
         margin: 0;
         display: flex;
         flex: 1 1 0;
         min-width: 0;
         align-items: center;
         justify-content: center;
-        gap: 0.375rem;
+        gap: 0.4rem;
         height: 2.25rem;
         padding: 0 0.75rem;
         border-radius: 0.625rem;
         font-size: 0.875rem;
         font-weight: 700;
-        color: rgb(255 255 255 / 0.65);
+        color: rgba(255, 255, 255, 0.6);
         background: transparent;
-        transition: background-color 150ms ease, color 150ms ease;
+        transition: color 150ms ease;
     }
 
     .chat-tab:hover {
         color: #fff;
-        background: rgb(255 255 255 / 0.08);
     }
 
     .chat-tab:focus-visible {
-        outline: 2px solid rgb(255 255 255 / 0.6);
+        outline: 2px solid rgb(255 255 255 / 0.7);
         outline-offset: -2px;
     }
 
     .chat-tab.is-active {
         color: #fff;
-        background: rgb(255 255 255 / 0.14);
-        box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+        text-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
     }
 
     .chat-tab-count {
-        background: rgb(255 255 255 / 0.12);
+        background: rgb(255 255 255 / 0.1);
         color: rgb(255 255 255 / 0.85);
+        transition: background-color 150ms ease, color 150ms ease;
     }
 
     .chat-tab.is-active .chat-tab-count {
-        background: linear-gradient(135deg, rgb(134 41 252 / 0.85), rgb(65 86 246 / 0.85));
-        color: #fff;
+        background: #e9c74c;
+        color: #1b1233;
+    }
+
+    .chat-search {
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .chat-search:focus-within {
+        border-color: rgba(167, 139, 250, 0.6);
+        box-shadow: 0 0 0 3px rgba(134, 41, 252, 0.18);
     }
 
     /* The field has its own clear button; hide the browser's. */

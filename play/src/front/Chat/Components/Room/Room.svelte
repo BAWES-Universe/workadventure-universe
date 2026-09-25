@@ -153,7 +153,7 @@
                     <span
                         class="shrink-0 min-w-5 h-5 px-1.5 rounded-full {$areNotificationsMuted
                             ? 'bg-white/30'
-                            : 'bg-secondary'} text-white text-[11px] font-bold flex items-center justify-center"
+                            : 'u-badge'} text-white text-[11px] font-bold flex items-center justify-center"
                         data-testid="roomRowUnread"
                         aria-label={$LL.chat.areaRow.unread({ count: $unreadCount })}
                         >{formatUnreadCount($unreadCount)}</span

@@ -108,7 +108,7 @@
                         {#if summary?.hasUnread}
                             {#if summary.unreadCount > 0}
                                 <span
-                                    class="shrink-0 min-w-5 h-5 px-1.5 rounded-full bg-secondary text-white text-[11px] font-bold flex items-center justify-center"
+                                    class="u-badge shrink-0 min-w-5 h-5 px-1.5 rounded-full text-white text-[11px] font-bold flex items-center justify-center"
                                     data-testid="folderUnread"
                                     aria-label={$LL.chat.areaRow.unread({ count: summary.unreadCount })}
                                     >{formatUnreadCount(summary.unreadCount)}</span

@@ -13,6 +13,7 @@
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import PersonActionButton from "./PersonActionButton.svelte";
     import { locatePerson } from "./PersonNavigation";
+    import { openPersonMenuStore } from "./PersonMenuStore";
     import { IconForbid, IconDots, IconMapPin } from "@wa-icons";
 
     export let user: ChatUser;
@@ -26,6 +27,9 @@
     let buttonElement: HTMLButtonElement | undefined;
 
     let chatMenuActive = false;
+    // Opening this menu closes any other person's: only one is ever open.
+    const menuId = `person-menu-${Math.random().toString(36).slice(2, 9)}`;
+    $: if (chatMenuActive && $openPersonMenuStore !== menuId) chatMenuActive = false;
 
     let usersByRoomStore:
         | Readable<Map<string | undefined, { roomName: string | undefined; users: ChatUser[] }>>
@@ -73,10 +77,16 @@
 
     const closeChatUserMenu = () => {
         chatMenuActive = false;
+        if ($openPersonMenuStore === menuId) openPersonMenuStore.set(undefined);
     };
 
     const toggleChatUSerMenu = () => {
-        chatMenuActive = !chatMenuActive;
+        if (chatMenuActive) {
+            closeChatUserMenu();
+            return;
+        }
+        openPersonMenuStore.set(menuId);
+        chatMenuActive = true;
     };
 
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
@@ -103,6 +113,7 @@
 
     onDestroy(() => {
         if (cleanup) cleanup();
+        if ($openPersonMenuStore === menuId) openPersonMenuStore.set(undefined);
     });
 
     const openBusinessCard = (visitCardUrl: string | undefined) => {
@@ -164,7 +175,7 @@
         <div
             bind:this={popoversElement}
             role="menu"
-            class="wa-dropdown-menu z-10 mr-1 fixed bg-contrast/80 backdrop-blur-md rounded-md p-1"
+            class="wa-dropdown-menu u-glass z-10 mr-1 fixed rounded-xl p-1 shadow-2xl"
         >
             {#if showLocate}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->

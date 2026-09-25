@@ -13,6 +13,7 @@
     import type { ChatMessage } from "../Connection/ChatConnection";
     import type { ProximitySession } from "../Connection/Proximity/ProximitySessions";
     import { ROOM_MESSAGES_SESSION_ID, listableSessions } from "../Connection/Proximity/ProximitySessions";
+    import WokaFromUserId from "../../Components/Woka/WokaFromUserId.svelte";
     import RoomTimeline from "./Room/RoomTimeline.svelte";
     import ChatLoader from "./ChatLoader.svelte";
     import ChatError from "./ChatError.svelte";
@@ -159,66 +160,70 @@
                         <AreaChatRows />
                     </div>
                     {#if !liveCardVisible && !hasProximityHistory}
-                        <div
-                            class="mx-2 mb-2 flex items-center gap-3 rounded-xl border border-dashed border-white/15 px-3 py-2.5 text-xs text-white/60"
-                            data-testid="nearbyHint"
-                        >
-                            <span class="grow">{$LL.chat.here.hint()}</span>
+                        <!-- Nothing yet: say how it starts, and offer the People tab. -->
+                        <section class="u-glass-warm mx-2 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
+                            <div class="flex items-start gap-3">
+                                <div
+                                    class="u-glow flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-secondary"
+                                    aria-hidden="true"
+                                >
+                                    <div class="translate-y-[3px]">
+                                        <WokaFromUserId userId={-1} customWidth="34px" placeholderSrc="" />
+                                    </div>
+                                </div>
+                                <div class="flex min-w-0 flex-col gap-0.5">
+                                    <h3 class="u-text-gradient m-0 text-base font-bold leading-6">
+                                        {$LL.chat.here.title()}
+                                    </h3>
+                                    <p class="m-0 text-sm leading-5 text-white/75">{$LL.chat.here.hint()}</p>
+                                </div>
+                            </div>
                             {#if hasPeopleTab}
                                 <button
                                     type="button"
-                                    class="m-0 shrink-0 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-white/20"
+                                    class="u-cta mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold"
                                     data-testid="nearbyHintPeople"
                                     on:click={() => navChat.switchToUserList()}
                                 >
                                     {$LL.chat.here.seeWhoIsHere()}
+                                    <IconChevronRight font-size="16" class="rtl:-scale-x-100" aria-hidden="true" />
                                 </button>
                             {/if}
-                        </div>
+                        </section>
                     {/if}
                     {#if !$userIsConnected && isMatrixChatEnabled}
-                        <!-- Guests: say what they have, what an account adds, and how to get one. Never blocks the list. -->
+                        <!-- Guests: what already works, what an account adds, and how to get one. Never blocks the list. -->
                         <section
-                            class="mx-2 mb-2 rounded-xl bg-white/5 p-3 text-sm text-white/80"
+                            class="u-glass mx-2 mb-2 rounded-2xl px-4 pt-4 pb-4 text-sm text-white/80"
                             aria-labelledby="chatGuestTitle"
                             data-testid="chatGuestCard"
                         >
-                            <h3 id="chatGuestTitle" class="m-0 text-sm font-bold text-white">
+                            <span class="u-eyebrow">{$LL.chat.guest.eyebrow()}</span>
+                            <h3 id="chatGuestTitle" class="u-text-gradient m-0 mt-1.5 text-lg font-bold leading-6">
                                 {$LL.chat.guest.title()}
                             </h3>
-                            <p class="m-0 mt-1 text-xs text-white/60">{$LL.chat.guest.intro()}</p>
-                            <ul class="m-0 mt-2 flex list-none flex-col gap-1.5 p-0 text-xs">
-                                <li class="flex items-start gap-2">
-                                    <IconMessage
-                                        font-size="16"
-                                        class="mt-px shrink-0 text-white/60"
-                                        aria-hidden="true"
-                                    />
+                            <p class="m-0 mt-1 text-xs leading-5 text-white/60">{$LL.chat.guest.intro()}</p>
+                            <ul class="m-0 mt-3 flex list-none flex-col gap-2.5 p-0 text-[13px] leading-5">
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconMessage font-size="16" /></span>
                                     <span>{$LL.chat.guest.messageAnyone()}</span>
                                 </li>
-                                <li class="flex items-start gap-2">
-                                    <IconUserCircle
-                                        font-size="16"
-                                        class="mt-px shrink-0 text-white/60"
-                                        aria-hidden="true"
-                                    />
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconUserCircle font-size="16" /></span>
                                     <span>{$LL.chat.guest.keepWoka()}</span>
                                 </li>
-                                <li class="flex items-start gap-2">
-                                    <IconWorldSearch
-                                        font-size="16"
-                                        class="mt-px shrink-0 text-white/60"
-                                        aria-hidden="true"
-                                    />
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconWorldSearch font-size="16" /></span
+                                    >
                                     <span>{$LL.chat.guest.orbit()}</span>
                                 </li>
-                                <li class="flex items-start gap-2">
-                                    <IconTools font-size="16" class="mt-px shrink-0 text-white/60" aria-hidden="true" />
+                                <li class="flex items-start gap-3">
+                                    <span class="guest-tile" aria-hidden="true"><IconTools font-size="16" /></span>
                                     <span>{$LL.chat.guest.build()}</span>
                                 </li>
                             </ul>
                             <a
-                                class="group mt-3 flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-secondary px-3 text-sm font-bold text-white no-underline hover:no-underline hover:bg-secondary-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                                class="u-cta mt-4 flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold no-underline hover:no-underline"
                                 href="/login"
                                 data-testid="chatGuestSignIn"
                                 on:click={() => analyticsClient.login()}
@@ -279,3 +284,19 @@
         {/if}
     </div>
 </div>
+
+<style>
+    /* The small icon tiles of the guest card: a purple → blue gradient, like the "+" menu's. */
+    .guest-tile {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.75rem;
+        height: 1.75rem;
+        flex-shrink: 0;
+        border-radius: 0.5rem;
+        color: #fff;
+        background: linear-gradient(135deg, rgba(134, 41, 252, 0.9), rgba(65, 86, 246, 0.9));
+        box-shadow: 0 4px 10px -4px rgba(134, 41, 252, 0.7);
+    }
+</style>

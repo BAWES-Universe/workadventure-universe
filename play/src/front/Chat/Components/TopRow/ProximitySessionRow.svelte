@@ -128,7 +128,7 @@
             >
             {#if hasUnread}
                 <span
-                    class="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-secondary-200 px-1.5 text-[11px] font-bold text-contrast"
+                    class="u-badge flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-bold"
                     data-testid="proximitySessionRowUnread">{formatUnreadCount(unreadCount)}</span
                 >
             {/if}
