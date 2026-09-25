@@ -85,6 +85,7 @@ import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { asError } from "catch-unknown";
 import { abortAny } from "@workadventure/shared-utils/src/Abort/AbortAny";
 import { abortTimeout } from "@workadventure/shared-utils/src/Abort/AbortTimeout";
+import { analyticsClient } from "../Administration/AnalyticsClient";
 import type { ReceiveEventEvent } from "../Api/Events/ReceiveEventEvent";
 import type { SetPlayerVariableEvent } from "../Api/Events/SetPlayerVariableEvent";
 import { iframeListener } from "../Api/IframeListener";
@@ -123,6 +124,7 @@ import type {
 } from "./ConnexionModels";
 import { localUserStore } from "./LocalUserStore";
 import { ConnectionClosedError } from "./ConnectionClosedError";
+import { PingWatchdog } from "./PingWatchdog";
 
 // This must be greater than RoomManager's PING_INTERVAL
 const manualPingDelay = 100_000;
@@ -200,8 +202,24 @@ export class RoomConnection implements RoomConnection {
     // Triggered if a "close" event is received from the WebSocket before a message is received
     private readonly _connectionErrorStream = new Subject<CloseEvent>();
     public readonly connectionErrorStream = this._connectionErrorStream.asObservable();
-    // If this timeout triggers, we consider the connection is lost (no ping received)
-    private timeout: ReturnType<typeof setInterval> | undefined = undefined;
+    // Calls the connection lost when no ping is received (see PingWatchdog for switching apps on a phone).
+    private readonly pingWatchdog: PingWatchdog = new PingWatchdog({
+        delay: manualPingDelay,
+        isOpen: () => this.socket?.readyState === WebSocket.OPEN,
+        onResume: (hiddenMs) => {
+            analyticsClient.connectionResumed({ hiddenMs, socketOpen: this.socket?.readyState === WebSocket.OPEN });
+        },
+        onTimeout: () => {
+            console.warn(
+                "Timeout detected. No ping from the server received. Is your connection down? Closing connection."
+            );
+            this.noteConnectionLost({ cause: "no_ping" });
+            this.socket.close();
+            this.cleanupConnection(false);
+        },
+    });
+    // When the last connection dropped, to measure how long getting back into the room took.
+    private static connectionLostAt: number | undefined;
     private readonly _moveToPositionMessageStream = new Subject<MoveToPositionMessageProto>();
     public readonly moveToPositionMessageStream = this._moveToPositionMessageStream.asObservable();
     private readonly _locatePositionMessageStream = new Subject<LocatePositionMessageProto>();
@@ -486,6 +504,12 @@ export class RoomConnection implements RoomConnection {
                     }
                     case "roomJoinedMessage": {
                         const roomJoinedMessage = message.roomJoinedMessage;
+                        if (RoomConnection.connectionLostAt !== undefined) {
+                            analyticsClient.connectionRestored({
+                                downMs: Date.now() - RoomConnection.connectionLostAt,
+                            });
+                            RoomConnection.connectionLostAt = undefined;
+                        }
 
                         const items: { [itemId: number]: unknown } = {};
                         for (const item of roomJoinedMessage.item) {
@@ -706,9 +730,7 @@ export class RoomConnection implements RoomConnection {
     // Event handlers as arrow function in order not to have to bind this explicitly
     private handleSocketClose = (event: CloseEvent) => {
         console.info("Socket has been closed", this.userId, this._closed, event);
-        if (this.timeout) {
-            clearTimeout(this.timeout);
-        }
+        this.pingWatchdog.stop();
 
         // If we are not connected yet (if a JoinRoomMessage was not sent), we need to retry.
         if (this.userId === null && !this._closed) {
@@ -716,14 +738,14 @@ export class RoomConnection implements RoomConnection {
             return;
         }
 
-        this.cleanupConnection(event.code === 1000);
+        this.cleanupConnection(event.code === 1000, event.code);
     };
 
     private handleSocketError = (event: Event) => {
         this._websocketErrorStream.next(event);
     };
 
-    private cleanupConnection(isNormalClosure: boolean) {
+    private cleanupConnection(isNormalClosure: boolean, closeCode?: number) {
         // Cleanup queries:
         for (const query of this.queries.values()) {
             query.reject(new ConnectionClosedError("Socket closed"));
@@ -740,6 +762,7 @@ export class RoomConnection implements RoomConnection {
             return;
         }
 
+        this.noteConnectionLost({ cause: "socket_closed", closeCode });
         this._serverDisconnected.next();
         this._serverDisconnected.complete();
     }
@@ -860,6 +883,7 @@ export class RoomConnection implements RoomConnection {
     }
 
     public closeConnection(): void {
+        this.pingWatchdog.stop();
         this.socket?.close();
         this.cleanupConnection(true);
         this.socket?.removeEventListener("close", this.handleSocketClose);
@@ -1717,17 +1741,16 @@ export class RoomConnection implements RoomConnection {
     }
 
     private resetPingTimeout(): void {
-        if (this.timeout) {
-            clearTimeout(this.timeout);
-            this.timeout = undefined;
-        }
-        this.timeout = setTimeout(() => {
-            console.warn(
-                "Timeout detected. No ping from the server received. Is your connection down? Closing connection."
-            );
-            this.socket.close();
-            this.cleanupConnection(false);
-        }, manualPingDelay);
+        this.pingWatchdog.ping();
+    }
+
+    /** Reports a dropped connection once (a ping timeout also closes the socket), and starts the downtime clock. */
+    private connectionLostNoted = false;
+    private noteConnectionLost(details: { cause: "no_ping" | "socket_closed"; closeCode?: number }): void {
+        if (this.connectionLostNoted) return;
+        this.connectionLostNoted = true;
+        RoomConnection.connectionLostAt = Date.now();
+        analyticsClient.connectionLost({ ...details, hiddenMs: this.pingWatchdog.hiddenForMs });
     }
 
     private sendPong(): void {
