@@ -42,8 +42,7 @@ const menu: BaseTranslation = {
         },
         privacySettings: {
             title: "Away mode",
-            explanation:
-                'While the WorkAdventure tab in your browser is not visible. WorkAdventure switches to "away mode"',
+            explanation: 'While the Universe tab in your browser is not visible. Universe switches to "away mode"',
             cameraToggle: 'Keep camera active in "away mode"',
             microphoneToggle: 'Keep microphone active in "away mode"',
         },
@@ -91,7 +90,7 @@ const menu: BaseTranslation = {
         gettingStarted: {
             title: "Getting started",
             description:
-                "WorkAdventure allows you to create an online space to communicate spontaneously with others. And it all starts with creating your own space. Choose from a large selection of prefabricated maps by our team.",
+                "Universe allows you to create an online space to communicate spontaneously with others. And it all starts with creating your own space. Choose from a large selection of prefabricated maps by our team.",
         },
         createMap: {
             title: "Create your map",

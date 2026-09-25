@@ -24,12 +24,12 @@ const warning: DeepPartial<Translation["warning"]> = {
     },
     browserNotSupported: {
         title: "😢 Wobglědowak se njepódpěra",
-        message: "Waš wobglědowak ({browserName}) se wěcej njepódpěra wót WorkAdventure.",
+        message: "Waš wobglědowak ({browserName}) se wěcej njepódpěra wót Universe.",
         description:
-            "Waš wobglědowak jo pśestaršy, aby WorkAdventure wuwjadł. Pšosym aktualizěrujśo jogo na nejnowšu wersiju, aby pókšacowali.",
+            "Waš wobglědowak jo pśestaršy, aby Universe wuwjadł. Pšosym aktualizěrujśo jogo na nejnowšu wersiju, aby pókšacowali.",
         whatToDo: "Co móžośo cyniś?",
         option1: "{browserName} na nejnowšu wersiju aktualizěrowaś",
-        option2: "WorkAdventure wopušćiś a drugi wobglědowak wužywaś",
+        option2: "Universe wopušćiś a drugi wobglědowak wužywaś",
         updateBrowser: "Wobglědowak aktualizěrowaś",
         leave: "Wopušćiś",
     },

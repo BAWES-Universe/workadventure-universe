@@ -11,7 +11,7 @@ const notification: DeepPartial<Translation["notification"]> = {
         title: "Accesso alle notifiche negato",
         permissionDenied: "Permesso negato",
         content:
-            "Non perdere nessuna discussione. Abilita le notifiche per essere avvisato quando qualcuno vuole parlare con te, anche se non sei sulla scheda WorkAdventure.",
+            "Non perdere nessuna discussione. Abilita le notifiche per essere avvisato quando qualcuno vuole parlare con te, anche se non sei sulla scheda Universe.",
         firefoxContent:
             'Si prega di cliccare sulla casella "Ricorda questa decisione", se non vuoi che Firefox continui a chiederti l\'autorizzazione.',
         refresh: "Ricarica",

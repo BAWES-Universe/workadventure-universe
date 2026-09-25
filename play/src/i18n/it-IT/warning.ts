@@ -28,12 +28,12 @@ const warning: DeepPartial<Translation["warning"]> = {
     },
     browserNotSupported: {
         title: "😢 Browser non supportato",
-        message: "Il tuo browser ({browserName}) non è più supportato da WorkAdventure.",
+        message: "Il tuo browser ({browserName}) non è più supportato da Universe.",
         description:
-            "Il tuo browser è troppo vecchio per eseguire WorkAdventure. Si prega di aggiornarlo all'ultima versione per continuare.",
+            "Il tuo browser è troppo vecchio per eseguire Universe. Si prega di aggiornarlo all'ultima versione per continuare.",
         whatToDo: "Cosa puoi fare?",
         option1: "Aggiornare {browserName} all'ultima versione",
-        option2: "Uscire da WorkAdventure e utilizzare un browser diverso",
+        option2: "Uscire da Universe e utilizzare un browser diverso",
         updateBrowser: "Aggiorna browser",
         leave: "Esci",
     },

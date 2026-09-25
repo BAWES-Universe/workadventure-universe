@@ -14,7 +14,7 @@ const notification: BaseTranslation = {
         title: "Acesso às notificações negado",
         permissionDenied: "Permissão negada",
         content:
-            "Não perca nenhuma discussão. Habilite as notificações para ser notificado quando alguém quiser falar com você, mesmo quando você não estiver na aba do WorkAdventure.",
+            "Não perca nenhuma discussão. Habilite as notificações para ser notificado quando alguém quiser falar com você, mesmo quando você não estiver na aba do Universe.",
         firefoxContent:
             'Por favor, clique na caixa de seleção "Lembrar desta decisão", se você não quiser que o Firefox continue pedindo a autorização.',
         refresh: "Atualizar",

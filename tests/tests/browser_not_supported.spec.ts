@@ -43,7 +43,7 @@ test.describe('Browser Not Supported Page', () => {
 
         // Verify the description is displayed
         await expect(
-            page.getByText(/Your browser is too old to run WorkAdventure/)
+            page.getByText(/Your browser is too old to run Universe/)
         ).toBeVisible();
 
         // Verify "What can you do?" section is displayed
@@ -54,7 +54,7 @@ test.describe('Browser Not Supported Page', () => {
             page.getByText(/Update.*to the latest version/, { exact: false })
         ).toBeVisible();
         await expect(
-            page.getByText(/Leave WorkAdventure and use a different browser/)
+            page.getByText(/Leave Universe and use a different browser/)
         ).toBeVisible();
 
         // Verify both buttons are present and visible

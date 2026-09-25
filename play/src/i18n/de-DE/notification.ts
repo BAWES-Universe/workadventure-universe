@@ -11,7 +11,7 @@ const notification: DeepPartial<Translation["notification"]> = {
         title: "Zugriff auf Benachrichtigungen verweigert",
         permissionDenied: "Zugriff verweigert",
         content:
-            "Verpasse keine Diskussion. Aktiviere Benachrichtigungen, um informiert zu werden, wenn jemand mit dir sprechen möchte, auch wenn du nicht im WorkAdventure-Tab bist.",
+            "Verpasse keine Diskussion. Aktiviere Benachrichtigungen, um informiert zu werden, wenn jemand mit dir sprechen möchte, auch wenn du nicht im Universe-Tab bist.",
         firefoxContent:
             'Bitte klicke auf das Kästchen "Diese Entscheidung merken", wenn du nicht möchtest, dass Firefox weiterhin nach der Erlaubnis fragt.',
         refresh: "Aktualisieren",

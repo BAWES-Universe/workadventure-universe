@@ -83,7 +83,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         },
         openWebsite: {
             label: "فتح رابط",
-            description: "فتح موقع ويب داخل WorkAdventure أو في تبويب جديد.",
+            description: "فتح موقع ويب داخل Universe أو في تبويب جديد.",
             linkLabel: "عنوان الرابط",
             newTabLabel: "فتح في تبويب جديد",
             trigger: "التفاعل",
@@ -148,31 +148,31 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         },
         youtube: {
             label: "فتح فيديو يوتيوب",
-            description: "فتح فيديو يوتيوب داخل WorkAdventure أو في تبويب جديد.",
+            description: "فتح فيديو يوتيوب داخل Universe أو في تبويب جديد.",
             error: "يرجى إدخال رابط يوتيوب صالح",
             disabled: "تم تعطيل تكامل يوتيوب.",
         },
         googleDocs: {
             label: "فتح مستندات جوجل",
-            description: "فتح مستندات جوجل داخل WorkAdventure أو في تبويب جديد.",
+            description: "فتح مستندات جوجل داخل Universe أو في تبويب جديد.",
             error: "يرجى إدخال رابط مستندات جوجل صالح",
             disabled: "تم تعطيل تكامل مستندات جوجل.",
         },
         klaxoon: {
             label: "فتح Klaxoon",
-            description: "فتح Klaxoon داخل WorkAdventure أو في تبويب جديد.",
+            description: "فتح Klaxoon داخل Universe أو في تبويب جديد.",
             error: "يرجى إدخال رابط Klaxoon صالح",
             disabled: "تم تعطيل تكامل Klaxoon.",
         },
         googleSheets: {
             label: "فتح جداول جوجل",
-            description: "فتح جداول جوجل داخل WorkAdventure أو في تبويب جديد.",
+            description: "فتح جداول جوجل داخل Universe أو في تبويب جديد.",
             error: "يرجى إدخال رابط جداول جوجل صالح",
             disabled: "تم تعطيل تكامل جداول جوجل.",
         },
         googleSlides: {
             label: "فتح عروض جوجل",
-            description: "فتح عروض جوجل داخل WorkAdventure أو في تبويب جديد.",
+            description: "فتح عروض جوجل داخل Universe أو في تبويب جديد.",
             error: "يرجى إدخال رابط عروض جوجل صالح",
             disabled: "تم تعطيل تكامل عروض جوجل.",
         },
@@ -185,7 +185,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         },
         googleDrive: {
             label: "فتح Google Drive",
-            description: "فتح Google Drive داخل WorkAdventure أو في تبويب جديد.",
+            description: "فتح Google Drive داخل Universe أو في تبويب جديد.",
             error: "يرجى إدخال رابط Google Drive صالح",
             disabled: "تم تعطيل تكامل Google Drive.",
         },
@@ -249,7 +249,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         },
         openFile: {
             label: "فتح ملف",
-            description: "افتح ملفًا داخل WorkAdventure.",
+            description: "افتح ملفًا داخل Universe.",
             error: "يرجى إدخال ملف صالح",
             disabled: "تم تعطيل تكامل الملفات.",
             fileUrlLabel: "رابط الملف",

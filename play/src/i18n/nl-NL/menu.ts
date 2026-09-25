@@ -43,7 +43,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         privacySettings: {
             title: "Afwezigheidsmodus",
             explanation:
-                'Wanneer het WorkAdventure-tabblad in je browser niet zichtbaar is, schakelt WorkAdventure over naar de "afwezigheidsmodus"',
+                'Wanneer het Universe-tabblad in je browser niet zichtbaar is, schakelt Universe over naar de "afwezigheidsmodus"',
             cameraToggle: 'Houd camera actief in "afwezigheidsmodus"',
             microphoneToggle: 'Houd microfoon actief in "afwezigheidsmodus"',
         },
@@ -80,7 +80,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "Aan de slag",
             description:
-                "WorkAdventure stelt je in staat om een online ruimte te creëren om spontaan met anderen te communiceren. En het begint allemaal met het creëren van je eigen ruimte. Kies uit een grote selectie van prefab-kaarten door ons team.",
+                "Universe stelt je in staat om een online ruimte te creëren om spontaan met anderen te communiceren. En het begint allemaal met het creëren van je eigen ruimte. Kies uit een grote selectie van prefab-kaarten door ons team.",
         },
         createMap: {
             title: "Maak je kaart",

@@ -21,7 +21,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
     discord: {
         integration: "INTEGRAZIONE",
         explainText:
-            "Collegando il tuo account Discord qui, potrai ricevere i tuoi messaggi direttamente nella chat di Workadventure. Dopo aver sincronizzato un server, creeremo le stanze che contiene, dovrai solo unirti ad esse nella chat di Workadventure.",
+            "Collegando il tuo account Discord qui, potrai ricevere i tuoi messaggi direttamente nella chat di Universe. Dopo aver sincronizzato un server, creeremo le stanze che contiene, dovrai solo unirti ad esse nella chat di Universe.",
         login: "Connetti a Discord",
         fetchingServer: "Recupero dei tuoi server Discord... 👀",
         qrCodeTitle: "Scansiona il codice QR con la tua app Discord per accedere.",
@@ -38,13 +38,13 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         saveSync: "Salva e sincronizza",
         logout: "Esci",
         guilds: "Server Discord",
-        guildExplain: "Seleziona i canali che desideri aggiungere all'interfaccia chat di Workadventure.\n",
+        guildExplain: "Seleziona i canali che desideri aggiungere all'interfaccia chat di Universe.\n",
     },
     outlook: {
         signIn: "Accedi con Outlook",
         popupScopeToSync: "Connetti il mio account Outlook",
         popupScopeToSyncExplainText:
-            "Dobbiamo connetterci al tuo account Outlook per sincronizzare il tuo calendario e/o le tue attività. Questo ti permetterà di visualizzare le tue riunioni e attività in WorkAdventure e parteciparvi direttamente dalla mappa.",
+            "Dobbiamo connetterci al tuo account Outlook per sincronizzare il tuo calendario e/o le tue attività. Questo ti permetterà di visualizzare le tue riunioni e attività in Universe e parteciparvi direttamente dalla mappa.",
         popupScopeToSyncCalendar: "Sincronizza il mio calendario",
         popupScopeToSyncTask: "Sincronizza le mie attività",
         popupCancel: "Annulla",
@@ -65,7 +65,7 @@ const externalModule: DeepPartial<Translation["externalModule"]> = {
         signIn: "Accedi con Google",
         popupScopeToSync: "Connetti il mio account Google",
         popupScopeToSyncExplainText:
-            "Dobbiamo connetterci al tuo account Google per sincronizzare il tuo calendario e/o le tue attività. Questo ti permetterà di visualizzare le tue riunioni e attività in WorkAdventure e parteciparvi direttamente dalla mappa.",
+            "Dobbiamo connetterci al tuo account Google per sincronizzare il tuo calendario e/o le tue attività. Questo ti permetterà di visualizzare le tue riunioni e attività in Universe e parteciparvi direttamente dalla mappa.",
         popupScopeToSyncCalendar: "Sincronizza il mio calendario",
         popupScopeToSyncTask: "Sincronizza le mie attività",
         popupCancel: "Annulla",

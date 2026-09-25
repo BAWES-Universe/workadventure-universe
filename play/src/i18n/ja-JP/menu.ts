@@ -41,8 +41,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         },
         privacySettings: {
             title: "離席モード",
-            explanation:
-                "ブラウザの WorkAdventure タブが表示されていない間、WorkAdventure は離席モードに切り替わります。",
+            explanation: "ブラウザの Universe タブが表示されていない間、Universe は離席モードに切り替わります。",
             cameraToggle: "離席モードでカメラをアクティブに保つ",
             microphoneToggle: "離席モードでマイクをアクティブに保つ",
         },
@@ -82,7 +81,7 @@ const menu: DeepPartial<Translation["menu"]> = {
         gettingStarted: {
             title: "入門",
             description:
-                "WorkAdventure を使用すると、他のユーザと自然にコミュニケーションできるオンラインスペースを作成することができます",
+                "Universe を使用すると、他のユーザと自然にコミュニケーションできるオンラインスペースを作成することができます",
         },
         createMap: {
             title: "マップを作成します",
