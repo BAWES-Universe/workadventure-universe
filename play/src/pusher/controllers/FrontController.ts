@@ -6,6 +6,7 @@ import * as Sentry from "@sentry/node";
 import { z } from "zod";
 import Debug from "debug";
 import { MetaTagsBuilder } from "../services/MetaTagsBuilder";
+import { absoluteUrl } from "../services/AbsoluteUrl";
 import { adminService } from "../services/AdminService";
 import { getStringPalette, wrapWithStyleTag } from "../services/GenerateCustomColors";
 import { notWaHost } from "../middlewares/NotWaHost";
@@ -369,6 +370,7 @@ export class FrontController extends BaseHttpController {
             }
             html = Mustache.render(this.indexFile, {
                 ...metaTagsData,
+                cardImage: absoluteUrl(metaTagsData.cardImage, url),
                 // TODO change it to push data from admin
                 msApplicationTileImage: metaTagsData.favIcons[metaTagsData.favIcons.length - 1].src,
                 url,
