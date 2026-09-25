@@ -16,6 +16,7 @@
     import { isActivatedStore as todoListIsActivatedStore, isTodoListVisibleStore } from "../Stores/TodoListStore";
     import { draggingFile } from "../Stores/FileUploadStore";
     import ChatSidebar from "../Chat/ChatSidebar.svelte";
+    import { gameManager } from "../Phaser/Game/GameManager";
     import LoginScene from "./Login/LoginScene.svelte";
     import MainLayout from "./MainLayout.svelte";
     import SelectCompanionScene from "./SelectCompanion/SelectCompanionScene.svelte";
@@ -26,7 +27,6 @@
     import LoaderScene from "./Loader/LoaderScene.svelte";
     import EnableCameraScene from "./EnableCamera/EnableCameraScene.svelte";
     import bgMap from "./images/map-exemple.png";
-    import defaultLoader from "./images/Workadventure.gif";
     import GlobalCommunicationModal from "./Modal/GlobalCommunicationModal.svelte";
     import Calendar from "./Calendar/Calendar.svelte";
     import TodoList from "./TodoList/TodoList.svelte";
@@ -37,6 +37,9 @@
 
     export let game: Game;
 
+    // The room's own loading logo (Universe's, from the admin), fetched ahead of the loading screen.
+    const loadingLogo = gameManager.currentStartedRoom?.loadingLogo;
+
     /**
      * When changing map from an exit on the current map, the Chat and the MainLayout are not really destroyed
      * due to an internal issue of Svelte, we use a #key directive to force the destruction of the components.
@@ -46,7 +49,9 @@
 
 <!-- Preload image loader TODO HUGO : Better way ? -->
 <link rel="preload" as="image" href={bgMap} />
-<link rel="preload" as="image" href={defaultLoader} />
+{#if loadingLogo}
+    <link rel="preload" as="image" href={loadingLogo} />
+{/if}
 
 {#if $loaderVisibleStore}
     <div class="bg-contrast">

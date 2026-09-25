@@ -3,9 +3,9 @@
     import { loaderProgressStore } from "../../Stores/LoaderStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import bgMap from "../images/map-exemple.png";
-    import defaultLoader from "../images/Workadventure.gif";
 
-    const logo = gameManager.currentStartedRoom.loadingLogo ?? defaultLoader;
+    // The room's own loading logo (Universe's, from the admin), else the name.
+    const logo = gameManager.currentStartedRoom.loadingLogo;
     const sceneBg = gameManager.currentStartedRoom.backgroundSceneImage ?? bgMap;
     const bgColor = gameManager.currentStartedRoom.backgroundColor ?? "#000000";
     const primary = gameManager.currentStartedRoom.primaryColor ?? "#4056F6";
@@ -24,7 +24,11 @@
             {/if}
             -->
             <div class="mb-4 w-full flex justify-center">
-                <img draggable="false" src={logo} class="max-h-10 px-4" alt="Logo loading screen" />
+                {#if logo}
+                    <img draggable="false" src={logo} class="max-h-10 px-4" alt="Logo loading screen" />
+                {:else}
+                    <p class="text-white text-3xl font-bold tracking-wide px-4 m-0">Universe</p>
+                {/if}
             </div>
             <div class="w-full h-3 bg-contrast py-[2px]">
                 <div

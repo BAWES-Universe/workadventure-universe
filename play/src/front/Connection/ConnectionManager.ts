@@ -41,7 +41,6 @@ import { setCurrentLocale } from "../Utils/locales";
 import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { openChatRoom } from "../Chat/Utils";
 import LL from "../../i18n/i18n-svelte";
-import waLogo from "../Components/images/logo.svg";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
 import { axiosToPusher, axiosWithRetry } from "./AxiosUtils";
 import { Room } from "./Room";
@@ -613,7 +612,10 @@ class ConnectionManager {
                     code: "reconnecting",
                     title: get(LL).messageScreen.connecting(),
                     subtitle: get(LL).messageScreen.pleaseWait(),
-                    image: gameManager?.currentStartedRoom?.loadingLogo ?? waLogo,
+                    image:
+                        gameManager?.currentStartedRoom?.loadingLogo ??
+                        gameManager?.currentStartedRoom?.errorSceneLogo ??
+                        "",
                 })
             );
             // Let's retry in 4-6 seconds
