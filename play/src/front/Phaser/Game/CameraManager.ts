@@ -57,6 +57,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     private waScaleManager: WaScaleManager;
 
     private cameraMode: CameraMode = CameraMode.Positioned;
+    /** The other player the camera follows (their woka menu is open), if any. */
+    private followedRemotePlayerUuid: string | undefined;
 
     private restoreZoomTween?: Phaser.Tweens.Tween;
     private startFollowTween?: Phaser.Tweens.Tween;
@@ -210,6 +212,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
      */
     public enterFocusMode(focusOn: WaScaleManagerFocusTarget, margin = 0, duration = 1000): void {
         this.setCameraMode(CameraMode.Focus);
+        this.followedRemotePlayerUuid = undefined;
         this.waScaleManager.saveZoom();
         this.waScaleManager.setFocusTarget(focusOn);
 
@@ -363,13 +366,19 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         }
 
         // Restore camera mode
+        this.followedRemotePlayerUuid = userUuid;
         this.startFollowPlayer(remotePlayer, 1000);
     }
 
     /**
-     * Stop following a remote player.
+     * Stop following a remote player. Does nothing when no one else is followed: the camera may be locked on an area,
+     * and moving it back to the player there would leave the area's zoom stuck.
      */
     public stopFollowRemotePlayer(): void {
+        if (this.followedRemotePlayerUuid === undefined) {
+            return;
+        }
+        this.followedRemotePlayerUuid = undefined;
         // Start following the current player
         this.startFollowPlayer(this.scene.CurrentPlayer, 1000);
     }
