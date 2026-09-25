@@ -19,6 +19,9 @@
     // A logo that fails to load shows the name instead; a failed image is left out.
     let logoFailed = false;
     let imageFailed = false;
+    // When the image is the same picture as the logo shown above it, show it only once, as the logo.
+    $: logoShown = $errorScreenStore?.type !== "reconnecting" && !!logoErrorSrc && !logoFailed;
+    $: imageShown = !!imageErrorSrc && !imageFailed && !(logoShown && imageErrorSrc === logoErrorSrc);
 
     function click() {
         if (errorScreen?.type === "unauthorized") void connectionManager.logout();
@@ -58,7 +61,7 @@
             <div class="icon" bind:this={imageErrorParent} /> -->
             <div class="logo">
                 {#if $errorScreenStore.type !== "reconnecting"}
-                    {#if logoErrorSrc && !logoFailed}
+                    {#if logoShown}
                         <img
                             src={logoErrorSrc}
                             on:error={() => (logoFailed = true)}
@@ -72,7 +75,7 @@
                 {/if}
             </div>
 
-            {#if imageErrorSrc && !imageFailed}
+            {#if imageShown}
                 <div class="icon">
                     <img
                         src={imageErrorSrc}
