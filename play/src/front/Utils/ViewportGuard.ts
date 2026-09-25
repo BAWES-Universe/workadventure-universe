@@ -109,7 +109,17 @@ function dragMovesSomethingInside(target: EventTarget | null, dx: number, dy: nu
     let element = target instanceof Element ? target : null;
     const view = doc.defaultView;
     while (element && element !== doc.body && element !== doc.documentElement) {
-        if (element instanceof HTMLInputElement || isTextField(element)) return true;
+        if (isTextField(element) && element instanceof HTMLElement) {
+            // A text field takes the drag only while it can still scroll that way: at its edge, the drag would
+            // pan the page instead.
+            if (dy > 0 && element.scrollTop > 0) return true;
+            if (dy < 0 && element.scrollTop + element.clientHeight < element.scrollHeight - 1) return true;
+            if (dx > 0 && element.scrollLeft > 0) return true;
+            if (dx < 0 && element.scrollLeft + element.clientWidth < element.scrollWidth - 1) return true;
+        } else if (element instanceof HTMLInputElement) {
+            // A slider, checkbox or other control takes the drag itself.
+            return true;
+        }
         if (view && element instanceof HTMLElement) {
             const style = view.getComputedStyle(element);
             const scrollsY = /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 1;

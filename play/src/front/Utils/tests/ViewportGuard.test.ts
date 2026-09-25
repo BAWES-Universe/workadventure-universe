@@ -237,7 +237,23 @@ describe("ViewportGuard", () => {
         expect(move.defaultPrevented).toBe(false);
     });
 
-    it("keeps dragging inside a text field (the caret, its own scroll)", () => {
+    it("lets a text field scroll its own text while the keyboard is up", () => {
+        const ios = fakeIosWindow();
+        const note = document.createElement("textarea");
+        document.body.append(note);
+        Object.defineProperty(note, "scrollHeight", { value: 400 });
+        Object.defineProperty(note, "clientHeight", { value: 100 });
+        note.scrollTop = 50;
+        stop = installViewportGuard(ios.win, { now: ios.now });
+        note.focus();
+        ios.openKeyboard(300);
+        ios.wait(REVEAL_WINDOW_MS);
+
+        expect(ios.drag(note, 30).defaultPrevented).toBe(false);
+        expect(ios.drag(note, -30).defaultPrevented).toBe(false);
+    });
+
+    it("holds the page when a drag on a text field has nothing left to scroll", () => {
         const ios = fakeIosWindow();
         stop = installViewportGuard(ios.win, { now: ios.now });
         input.focus();
@@ -245,7 +261,20 @@ describe("ViewportGuard", () => {
         ios.wait(REVEAL_WINDOW_MS);
 
         const move = ios.drag(input, 30);
-        expect(move.defaultPrevented).toBe(false);
+        expect(move.defaultPrevented).toBe(true);
+        expect(ios.viewport.pageTop).toBe(300);
+    });
+
+    it("leaves a slider's drag alone while the keyboard is up", () => {
+        const ios = fakeIosWindow();
+        const slider = document.createElement("input");
+        slider.type = "range";
+        document.body.append(slider);
+        stop = installViewportGuard(ios.win, { now: ios.now });
+        input.focus();
+        ios.openKeyboard(300);
+
+        expect(ios.drag(slider, 0.5).defaultPrevented).toBe(false);
     });
 
     it("leaves drags alone when the keyboard is closed", () => {
