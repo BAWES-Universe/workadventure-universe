@@ -48,6 +48,7 @@ import { LocalUser } from "./LocalUser";
 import { localUserStore } from "./LocalUserStore";
 import type { OnConnectInterface, PositionInterface, ViewportInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
+import { RECONNECTING_CODE } from "./ReconnectScreen";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
 
@@ -56,6 +57,8 @@ class ConnectionManager {
 
     private connexionType?: GameConnexionTypes;
     private reconnectingTimeout: NodeJS.Timeout | null = null;
+    /** Failed attempts to open the room socket in a row: the first retry comes sooner. */
+    private failedSocketAttempts = 0;
     private _unloading = false;
     private authToken: string | null = null;
     private _currentRoom: Room | null = null;
@@ -600,29 +603,44 @@ class ConnectionManager {
                 }
                 this._roomConnection = connection;
                 this._roomConnectionStream.next(connection);
+                this.failedSocketAttempts = 0;
                 errorScreenStore.delete();
                 resolve(connect);
             });
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
 
-            errorScreenStore.setError(
-                ErrorScreenMessage.fromPartial({
-                    type: "reconnecting",
-                    code: "reconnecting",
-                    title: get(LL).messageScreen.connecting(),
-                    subtitle: get(LL).messageScreen.pleaseWait(),
-                    image:
-                        gameManager?.currentStartedRoom?.loadingLogo ??
-                        gameManager?.currentStartedRoom?.errorSceneLogo ??
-                        "",
-                })
-            );
-            // Let's retry in 4-6 seconds
+            // Getting back in after a dropped connection: the "Reconnecting" screen stays as it is.
+            if (get(errorScreenStore)?.code !== RECONNECTING_CODE) {
+                errorScreenStore.setError(
+                    ErrorScreenMessage.fromPartial({
+                        type: "reconnecting",
+                        code: "reconnecting",
+                        title: get(LL).messageScreen.connecting(),
+                        subtitle: get(LL).messageScreen.pleaseWait(),
+                        image:
+                            gameManager?.currentStartedRoom?.loadingLogo ??
+                            gameManager?.currentStartedRoom?.errorSceneLogo ??
+                            "",
+                    })
+                );
+            }
+            // Let's retry in 4-6 seconds, sooner the first time (a phone coming back to the app often just needed its
+            // network), and right away when the browser comes back online.
+            this.failedSocketAttempts++;
+            const retryDelay =
+                this.failedSocketAttempts === 1
+                    ? 1000 + Math.floor(Math.random() * 1000)
+                    : 4000 + Math.floor(Math.random() * 2000);
             return new Promise<OnConnectInterface>((resolve) => {
                 console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => reconnectingTimeout");
 
-                this.reconnectingTimeout = setTimeout(() => {
+                const retry = () => {
+                    window.removeEventListener("online", retry);
+                    if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
+                    this.reconnectingTimeout = null;
+                    // The page is closing: no new attempt (the pending one was cancelled on beforeunload).
+                    if (this._unloading) return;
                     //todo: allow a way to break recursion?
                     //todo: find a way to avoid recursive function. Otherwise, the call stack will grow indefinitely.
                     console.info(
@@ -650,7 +668,9 @@ class ConnectionManager {
                         this._roomConnectionStream.next(connection.connection);
                         resolve(connection);
                     });
-                }, 4000 + Math.floor(Math.random() * 2000));
+                };
+                this.reconnectingTimeout = setTimeout(retry, retryDelay);
+                window.addEventListener("online", retry);
             });
         });
     }

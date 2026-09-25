@@ -14,6 +14,7 @@ const warning: BaseTranslation = {
     connectionLost: "Conexão perdida. Reconectando...",
     connectionLostTitle: "Conexão perdida",
     connectionLostSubtitle: "Reconectando",
+    reconnectingTitle: "Reconectando",
     waitingConnectionTitle: "Aguardando a conexão",
     waitingConnectionSubtitle: "Conectando",
     megaphoneNeeds: "Para usar o megafone, você deve ativar sua câmera ou seu microfone ou compartilhar sua tela.",
