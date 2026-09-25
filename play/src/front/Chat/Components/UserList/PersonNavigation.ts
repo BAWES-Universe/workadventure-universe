@@ -10,7 +10,9 @@ import { resolvePersonTarget } from "./PersonTarget";
  * the same account is reachable); otherwise we ask the server by uuid, as before.
  */
 export function walkToPerson(person: PersonLocation): void {
-    const scene = gameManager.getCurrentGameScene();
+    // Nothing to walk on while a reconnect swaps the map.
+    const scene = gameManager.tryGetCurrentGameScene();
+    if (!scene) return;
     const players = scene.getRemotePlayersRepository().getPlayers();
     const target = resolvePersonTarget(person, scene.roomUrl, (userId) => players.has(userId));
 
@@ -33,7 +35,8 @@ export function walkToPerson(person: PersonLocation): void {
  * Locate a person: open the woka menu on their avatar if it is in view, otherwise ask the server for their position.
  */
 export function locatePerson(person: PersonLocation): void {
-    const scene = gameManager.getCurrentGameScene();
+    const scene = gameManager.tryGetCurrentGameScene();
+    if (!scene) return;
     const target = resolvePersonTarget(person, scene.roomUrl, (userId) => scene.MapPlayersByKey.has(userId));
 
     if (target.kind === "avatar") {

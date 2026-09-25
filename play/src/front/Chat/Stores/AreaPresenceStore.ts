@@ -167,6 +167,11 @@ export class AreaChatRoomTracker<Room = unknown> {
     }
 
     /** True if an active area (joining or joined) still uses this room. */
+    /** True for the chat room of an area: of this map, or entered on it (its access follows presence in the area). */
+    public isAreaRoom(roomId: string): boolean {
+        return this.mapRoomIds.has(roomId) || this.entries.some((entry) => entry.roomId === roomId);
+    }
+
     public hasActiveRoom(roomId: string): boolean {
         return this.entries.some((entry) => entry.roomId === roomId);
     }
