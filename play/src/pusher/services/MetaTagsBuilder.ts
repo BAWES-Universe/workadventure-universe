@@ -35,7 +35,8 @@ export const MetaTagsDefaultValue: RequiredMetaTagsData = {
     appName: "Universe",
     shortAppName: "Universe",
     themeColor: "#000000",
-    cardImage: "https://workadventu.re/images/general/logo-og.png",
+    // Relative: the page turns it into a full URL on its own domain (link previews need one).
+    cardImage: "/static/images/universe-card.png",
 };
 
 export class MetaTagsBuilder {
