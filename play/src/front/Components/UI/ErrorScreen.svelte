@@ -9,13 +9,19 @@
     import LL from "../../../i18n/i18n-svelte";
     import { userIsConnected } from "../../Stores/MenuStore";
 
-    import logoImg from "../images/logo-min-white.png";
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
-    import errorGif from "./images/error.gif";
 
     let errorScreen = $errorScreenStore;
 
-    let logoErrorSrc = gameManager?.currentStartedRoom?.loginSceneLogo ?? logoImg;
+    // The room's own logos (Universe's, from the admin); an empty value from the server means "none".
+    const logoErrorSrc = errorScreen?.imageLogo || gameManager?.currentStartedRoom?.loginSceneLogo || undefined;
+    const imageErrorSrc = errorScreen?.image || gameManager?.currentStartedRoom?.errorSceneLogo || undefined;
+    // A logo that fails to load shows the name instead; a failed image is left out.
+    let logoFailed = false;
+    let imageFailed = false;
+    // When the image is the same picture as the logo shown above it, show it only once, as the logo.
+    $: logoShown = $errorScreenStore?.type !== "reconnecting" && !!logoErrorSrc && !logoFailed;
+    $: imageShown = !!imageErrorSrc && !imageFailed && !(logoShown && imageErrorSrc === logoErrorSrc);
 
     function click() {
         if (errorScreen?.type === "unauthorized") void connectionManager.logout();
@@ -54,24 +60,32 @@
             <!-- <div class="logo" bind:this={logoErrorParent} />
             <div class="icon" bind:this={imageErrorParent} /> -->
             <div class="logo">
-                {#if logoErrorSrc && $errorScreenStore.type !== "reconnecting"}
-                    <img
-                        src={errorScreen?.imageLogo ?? logoErrorSrc}
-                        alt="Logo error"
-                        style="max-height:25vh; max-width:80%;"
-                        draggable="false"
-                    />
+                {#if $errorScreenStore.type !== "reconnecting"}
+                    {#if logoShown}
+                        <img
+                            src={logoErrorSrc}
+                            on:error={() => (logoFailed = true)}
+                            alt="Logo error"
+                            style="max-height:25vh; max-width:80%;"
+                            draggable="false"
+                        />
+                    {:else}
+                        <p class="wordmark">Universe</p>
+                    {/if}
                 {/if}
             </div>
 
-            <div class="icon">
-                <img
-                    src={errorScreen?.image ?? gameManager?.currentStartedRoom?.errorSceneLogo ?? errorGif}
-                    alt="Error"
-                    style="height:125px; max-width:100%;"
-                    draggable="false"
-                />
-            </div>
+            {#if imageShown}
+                <div class="icon">
+                    <img
+                        src={imageErrorSrc}
+                        alt="Error"
+                        style="height:125px; max-width:100%;"
+                        draggable="false"
+                        on:error={() => (imageFailed = true)}
+                    />
+                </div>
+            {/if}
             {#if $errorScreenStore.type !== "retry"}<h2 class="mt-10">{$errorScreenStore.title}</h2>{/if}
             {#if $errorScreenStore.subtitle}<p>{$errorScreenStore.subtitle}</p>{/if}
             {#if $errorScreenStore.type !== "retry" && $errorScreenStore.type !== "reconnecting"}<p class="code">
@@ -109,6 +123,12 @@
 
 <style lang="scss">
     main.errorScreen {
+        .wordmark {
+            font-size: 2.25rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            margin: 0;
+        }
         min-width: 300px;
         z-index: 700;
         .logo {
