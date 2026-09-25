@@ -19,7 +19,12 @@ export interface ProximityHistoryStash {
     /** The proximity chat was the one open: the next map's opens in its place (a reconnect keeps you in it). */
     wasSelected?: boolean;
     /** What leaving the bubble puts back (the chat open before it), when the old map still had to put it back. */
-    chatStateToRestore?: { room: ChatRoom | undefined; visible: boolean };
+    chatStateToRestore?: {
+        room: ChatRoom | undefined;
+        visible: boolean;
+        /** The chat to put back was the proximity chat itself: the next map's proximity chat stands in for it. */
+        proximityChat?: boolean;
+    };
 }
 
 let stash: ProximityHistoryStash | undefined;
