@@ -105,10 +105,10 @@ export function resetPagePosition(win: ViewportGuardWindow): void {
  * Whether a drag from this element in this direction moves something on the page (a list, a text field, a slider)
  * rather than the page itself.
  */
-function dragMovesSomethingInside(target: EventTarget | null, dx: number, dy: number, doc: Document): boolean {
-    let element = target instanceof Element ? target : null;
+function dragMovesSomethingInside(event: Event, dx: number, dy: number, doc: Document): boolean {
     const view = doc.defaultView;
-    while (element && element !== doc.body && element !== doc.documentElement) {
+    for (const element of dragPath(event)) {
+        if (element === doc.body || element === doc.documentElement) break;
         if (isTextField(element) && element instanceof HTMLElement) {
             // A text field takes the drag only while it can still scroll that way: at its edge, the drag would
             // pan the page instead.
@@ -130,9 +130,26 @@ function dragMovesSomethingInside(target: EventTarget | null, dx: number, dy: nu
             if (scrollsX && dx > 0 && element.scrollLeft > 0) return true;
             if (scrollsX && dx < 0 && element.scrollLeft + element.clientWidth < element.scrollWidth - 1) return true;
         }
-        element = element.parentElement;
     }
     return false;
+}
+
+/**
+ * The elements a drag passes through, innermost first. Listening on the window, the event's target is the outermost
+ * shadow host: the composed path also has what is inside open shadow roots (the emoji picker's list scrolls there).
+ */
+function dragPath(event: Event): Element[] {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    const elements = path.filter((node): node is Element => node instanceof Element);
+    if (elements.length > 0) return elements;
+    for (
+        let element = event.target instanceof Element ? event.target : null;
+        element;
+        element = element.parentElement
+    ) {
+        elements.push(element);
+    }
+    return elements;
 }
 
 /** Makes iOS drop a page zoom: a changed viewport meta is applied again, and it allows no zoom. */
@@ -267,7 +284,7 @@ export function installViewportGuard(
         lastTouch = { x: touch.clientX, y: touch.clientY };
         if (!keyboardOpen() || (dx === 0 && dy === 0)) return;
         // With the keyboard up, a drag that moves nothing on the page would drag the page itself.
-        if (!dragMovesSomethingInside(event.target, dx, dy, doc) && event.cancelable) event.preventDefault();
+        if (!dragMovesSomethingInside(event, dx, dy, doc) && event.cancelable) event.preventDefault();
     };
 
     const onTouchEnd = (event: Event) => {

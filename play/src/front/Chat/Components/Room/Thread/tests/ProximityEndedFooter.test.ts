@@ -3,12 +3,14 @@ import { tick } from "svelte";
 import { readable, writable } from "svelte/store";
 
 // A reconnect is swapping the map: there is no game scene to read.
+const sceneHolder = vi.hoisted(() => ({ scene: undefined as unknown }));
 vi.mock("../../../../../Phaser/Game/GameManager", () => ({
     gameManager: {
         getCurrentGameScene: () => {
-            throw new Error("Not the Game Scene");
+            if (!sceneHolder.scene) throw new Error("Not the Game Scene");
+            return sceneHolder.scene;
         },
-        tryGetCurrentGameScene: () => undefined,
+        tryGetCurrentGameScene: () => sceneHolder.scene,
     },
 }));
 vi.mock("../../../../Stores/ChatStore", () => ({
@@ -28,6 +30,7 @@ vi.mock("../../../../../../i18n/i18n-svelte", () => {
 import type { ProximitySession } from "../../../../Connection/Proximity/ProximitySessions";
 import type { ChatMessage } from "../../../../Connection/ChatConnection";
 import ProximityEndedFooter from "../ProximityEndedFooter.svelte";
+import { gameSceneIsLoadedStore } from "../../../../../Stores/GameSceneStore";
 
 const endedWithBot: ProximitySession<ChatMessage> = {
     id: "stay-1",
@@ -52,6 +55,27 @@ describe("ProximityEndedFooter", () => {
     afterEach(() => {
         component?.$destroy();
         document.body.innerHTML = "";
+        sceneHolder.scene = undefined;
+        gameSceneIsLoadedStore.set(false);
+    });
+
+    it("offers the way back once the new map has loaded, when it first showed during the swap", async () => {
+        const target = document.createElement("div");
+        document.body.append(target);
+        component = new ProximityEndedFooter({ target, props: { session: endedWithBot } });
+        await tick();
+        expect(target.querySelector('[data-kind="find"]')).toBeNull();
+
+        sceneHolder.scene = {
+            allUsersInWorldStore: readable(new Map()),
+            roomUrl: "https://play.example.test/room",
+            room: { isChatOnlineListEnabled: true, isChatDisconnectedListEnabled: false },
+            userProviderMerger: Promise.resolve({ usersByRoomStore: readable(new Map()) }),
+        };
+        gameSceneIsLoadedStore.set(true);
+        await tick();
+
+        expect(target.querySelector('[data-kind="find"]')).not.toBeNull();
     });
 
     it("shows while the map is being swapped, instead of breaking the chat", async () => {
