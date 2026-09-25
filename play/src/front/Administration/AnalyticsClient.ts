@@ -1048,6 +1048,14 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    /** The page was found zoomed in (the app enlarged, cut off at the edges) and was put back. */
+    pageZoomReset(properties: { scale: number; reason: string }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_page_zoom_reset", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     showBusinessCard(): void {
         this.posthogPromise
             ?.then((posthog) => {
