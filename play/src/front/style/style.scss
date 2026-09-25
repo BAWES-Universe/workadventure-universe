@@ -1009,6 +1009,7 @@ div.emoji-picker {
 
 /* The Login button, and only it: the same purple → blue gradient as the chat panel's primary buttons. */
 button[data-testid="actionBarLogin"] {
+    font-weight: 700;
     background: linear-gradient(90deg, #8629fc, #4156f6);
     box-shadow: 0 6px 18px -8px rgba(134, 41, 252, 0.7);
     transition: background 200ms ease, box-shadow 200ms ease;

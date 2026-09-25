@@ -4,6 +4,7 @@
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { inviteUserActivated } from "../../Stores/MenuStore";
+    import { inviteCardRequestStore } from "../Stores/ChatStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { IconCheck, IconCopy, IconShare, IconUserPlus, IconX } from "@wa-icons";
 
@@ -62,6 +63,12 @@
 
     function close() {
         open = false;
+    }
+
+    // A map script asked for the invite menu: open the card.
+    $: if ($inviteCardRequestStore) {
+        inviteCardRequestStore.set(false);
+        if (!open) toggle().catch((e) => console.error(e));
     }
 
     function copy() {
