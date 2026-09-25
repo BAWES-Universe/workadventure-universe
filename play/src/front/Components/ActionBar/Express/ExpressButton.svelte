@@ -53,9 +53,25 @@
     let burstId = 0;
     let pulse = false;
 
-    function toggle() {
+    // Ctrl held while Enter pressed the focused button (some browsers don't copy it onto the click that follows).
+    let ctrlEnterOnButton = false;
+
+    function onButtonKeydown(event: KeyboardEvent) {
+        ctrlEnterOnButton = event.key === "Enter" && event.ctrlKey;
+    }
+
+    function toggle(event: MouseEvent) {
+        const think = ctrlEnterOnButton || event.ctrlKey;
+        ctrlEnterOnButton = false;
         if (open) {
             expressTrayStore.close();
+            return;
+        }
+        // Pressed from the keyboard (the button keeps focus after the tray closes, so Enter and Ctrl+Enter land
+        // here instead of the game): open it like the Enter shortcut does, ready to type, in Think with Ctrl.
+        if (event.detail === 0) {
+            expressTrayStore.open({ think, focusInput: true });
+            analyticsClient.expressTrayOpened("keyboard");
             return;
         }
         expressTrayStore.open();
@@ -169,6 +185,7 @@
             aria-describedby={hintVisible ? "express-shortcuts" : undefined}
             use:longpress={openEditing}
             on:click|stopPropagation={toggle}
+            on:keydown={onButtonKeydown}
             on:mouseenter={showHintSoon}
             on:mouseleave={hideHint}
             on:focus={(event) => {
