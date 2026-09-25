@@ -1,5 +1,7 @@
 <script lang="ts">
     import { onMount, setContext } from "svelte";
+    import { readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
     import { flip } from "svelte/animate";
     import { fade } from "svelte/transition";
     import LL from "../../../../i18n/i18n-svelte";
@@ -10,13 +12,16 @@
         ChatRoomModeration,
         ChatRoomNotificationControl,
         RoomFolder as RoomFolderType,
+        ChatMessage,
     } from "../../Connection/ChatConnection";
+    import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
     import { chatSearchBarValue } from "../../Stores/ChatStore";
     import { areaChatRooms } from "../../Stores/AreaPresenceStore";
     import { WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore } from "../../Stores/ChatUserWokaStore";
     import Room from "../Room/Room.svelte";
     import RoomInvitation from "../Room/RoomInvitation.svelte";
     import RoomFolder from "../RoomFolder.svelte";
+    import ProximitySessionRow from "../TopRow/ProximitySessionRow.svelte";
     import type { OneListEntry } from "./OneListStore";
     import { ONE_LIST_FREEZE_CONTEXT, OrderFreeze, createOneListStore, freezeWhileHeld } from "./OneListStore";
 
@@ -24,6 +29,13 @@
 
     /** Rows rendered before "Show more": enough for everyday use, light on a phone with hundreds of rooms. */
     const PAGE_SIZE = 50;
+
+    /** The proximity chats you had, as rows, from the parent. */
+    export let extraEntries: Readable<OneListEntry[]> = readable([]);
+    /** Whether an empty list says so; off while the saved chat is not connected, so guests see no empty text. */
+    export let showEmpty = true;
+    /** Opens a proximity chat you had. */
+    export let onOpenSession: (session: ProximitySession<ChatMessage>) => void = () => undefined;
 
     const chat = gameManager.chatConnection;
 
@@ -35,6 +47,7 @@
         // Area chat rooms have their own row under the top row and never show here, even while joining or leaving.
         hiddenRoomIds: areaChatRooms.hiddenRoomIds,
         search: chatSearchBarValue,
+        extraEntries,
     });
 
     // Nothing reorders while a finger or pointer is down on a row, or while a row menu is open.
@@ -90,6 +103,10 @@
         return entry.item as RoomFolderType & ChatRoomModeration;
     }
 
+    function asSession(entry: OneListEntry): ProximitySession<ChatMessage> {
+        return entry.item as ProximitySession<ChatMessage>;
+    }
+
     $: duration = reducedMotion ? 0 : 220;
     $: visibleEntries = showAll ? $displayed : $displayed.slice(0, PAGE_SIZE);
     $: hiddenCount = Math.max(0, $displayed.length - PAGE_SIZE);
@@ -112,7 +129,13 @@
             animate:flip={{ duration }}
             in:fade={{ duration }}
         >
-            {#if entry.kind === "invitation"}
+            {#if entry.kind === "proximity"}
+                <ProximitySessionRow
+                    session={asSession(entry)}
+                    unreadCount={entry.unreadCount}
+                    onOpen={() => onOpenSession(asSession(entry))}
+                />
+            {:else if entry.kind === "invitation"}
                 <RoomInvitation room={asInvitation(entry)} />
             {:else if entry.kind === "folder"}
                 <RoomFolder
@@ -143,7 +166,7 @@
     </div>
 {/if}
 
-{#if $displayed.length === 0}
+{#if showEmpty && $displayed.length === 0}
     <p class="m-0 px-4 py-6 text-center text-sm text-white/50" data-testid="oneChatListEmpty">
         {isSearching ? $LL.chat.oneList.noResults() : $LL.chat.oneList.empty()}
     </p>

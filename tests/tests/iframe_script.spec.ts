@@ -1,4 +1,5 @@
 import { chromium, expect, test } from "@playwright/test";
+import chatUtils from "./utils/chat";
 import { evaluateScript } from "./utils/scripting";
 import { publicTestMapUrl } from "./utils/urls";
 import Menu from "./utils/menu";
@@ -74,26 +75,25 @@ test.describe("Iframe API @nowebkit", () => {
       publicTestMapUrl("tests/E2E/empty.json", "iframe_script")
     );
     await page.evaluate(() => localStorage.setItem("debug", "*"));
-    
-    // Create a script to evaluate function to disable map editor
+    // The invite lives at the bottom of the chat panel.
+    await chatUtils.open(page, false);
+    await expect(page.getByTestId('chatInviteButton')).toBeVisible();
+
     await evaluateScript(page, async () => {
       await WA.onInit();
 
       WA.controls.disableInviteButton();
     });
 
-    // Check if the screen sharing is disabled
-    await expect(page.getByRole('button', { name: 'Share' })).toBeHidden();
+    await expect(page.getByTestId('chatInviteButton')).toBeHidden();
 
-    // Create a script to evaluate function to enable map editor
     await evaluateScript(page, async () => {
       await WA.onInit();
 
       WA.controls.restoreInviteButton();
     });
 
-    // Check if the screen sharing is enabled
-    await expect(page.getByRole('button', { name: 'Share' })).toBeVisible();
+    await expect(page.getByTestId('chatInviteButton')).toBeVisible();
 
     await page.close();
     await page.context().close();

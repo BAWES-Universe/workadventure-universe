@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/svelte";
 import Debug from "debug";
 import { MapStore, SearchableArrayStore } from "@workadventure/store-utils";
 import type { Readable, Writable, Unsubscriber } from "svelte/store";
-import { get, writable, readable } from "svelte/store";
+import { derived, get, writable, readable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import type { Subscription } from "rxjs";
 import type { CharacterTextureMessage } from "@workadventure/messages";
@@ -48,8 +48,14 @@ import type { PictureStore } from "../../../Stores/PictureStore";
 import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerManager";
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
 import { formatPeopleNames } from "../../Components/TopRow/TopRowSummary";
-import type { ProximitySessionMarker } from "./ProximitySessions";
-import { findNotSentInsertIndex } from "./ProximitySessions";
+import { composerDraftStore } from "../../Stores/ComposerDraftStore";
+import {
+    selectedProximitySessionStore,
+    stashProximityHistory,
+    takeProximityHistory,
+} from "../../Stores/ProximitySessionStore";
+import type { ProximitySession, ProximitySessionMarker } from "./ProximitySessions";
+import { ROOM_MESSAGES_SESSION_ID, buildProximitySessions, findNotSentInsertIndex } from "./ProximitySessions";
 
 const debug = Debug("ProximityChatRoom");
 
@@ -93,6 +99,11 @@ export class ProximityChatMessage implements ChatMessage {
      * Local and in memory only.
      */
     notSent?: boolean;
+    /**
+     * Set on a bot reply that was still streaming when this tab left the space: the text stops where it was.
+     * Local and in memory only.
+     */
+    stoppedOnLeave?: boolean;
     constructor(
         public id: string,
         public sender: AnyKindOfUser,
@@ -173,6 +184,20 @@ export class ProximityChatRoom implements ChatRoom {
     private _spaceGeneration = 0;
     // The name of the meeting area joined, for its end marker: the display name is reset before leaving.
     private meetingSessionLabel: string | undefined;
+    // One id per stay (bubble or meeting), shared by its start and end markers. Undefined when alone.
+    private _currentSessionId: string | undefined;
+    // Unread messages by session id, in this tab's memory: an ended stay keeps what you didn't read in it.
+    private readonly _unreadBySession: Writable<Map<string, number>> = writable(new Map());
+    public readonly unreadBySession: Readable<Map<string, number>> = { subscribe: this._unreadBySession.subscribe };
+    // Text left in the composer when a stay ended, by session id. Shown as unsent in that stay, never sent on.
+    private readonly _unsentDrafts: Writable<Map<string, string>> = writable(new Map());
+    /** The timeline split into stays, room messages first, the live one last. */
+    public readonly sessions: Readable<ProximitySession<ChatMessage>[]>;
+
+    /** The id of the stay this tab is in now, if any. */
+    public get currentSessionId(): string | undefined {
+        return this._currentSessionId;
+    }
 
     /**
      * Changes every time a space is joined or left. A send captures it at submit time and is dropped
@@ -227,6 +252,28 @@ export class ProximityChatRoom implements ChatRoom {
         }
     ) {
         this.typingMembers = writable([]);
+        this.sessions = derived(
+            [this.messages, this._spaceJoinedAt, this._unsentDrafts],
+            ([$messages, $spaceJoinedAt, $unsentDrafts]) => {
+                const sessions = buildProximitySessions(Array.from($messages), $spaceJoinedAt);
+                for (const session of sessions) {
+                    const draft = $unsentDrafts.get(session.id);
+                    if (draft !== undefined) session.unsentDraft = draft;
+                }
+                return sessions;
+            }
+        );
+
+        // The chats you had on the previous map, when the scene handed them over.
+        const stash = takeProximityHistory();
+        if (stash) {
+            this.messages.push(...stash.messages);
+            this._unreadBySession.set(stash.unreadBySession);
+            this._unsentDrafts.set(stash.unsentDrafts);
+            this.refreshUnreadTotals(stash.unreadBySession);
+            const last = stash.messages[stash.messages.length - 1];
+            if (last?.date) this.lastMessageTimestamp = last.date.getTime();
+        }
 
         this.newChatMessageWritingStatusStreamUnsubscriber =
             iframeListenerInstance.newChatMessageWritingStatusStream.subscribe((status) => {
@@ -405,6 +452,9 @@ export class ProximityChatRoom implements ChatRoom {
             kind: "start",
             label,
             participants,
+            participantIds: users.map((user) => user.spaceUserId),
+            isArea: false,
+            sessionId: this._currentSessionId,
         });
     }
 
@@ -570,10 +620,7 @@ export class ProximityChatRoom implements ChatRoom {
 
         this.notifyNewMessage(newMessage);
 
-        if (get(selectedRoomStore) !== this) {
-            this.hasUnreadMessages.set(true);
-            this.unreadNotificationCount.set(get(this.unreadNotificationCount) + 1);
-        }
+        this.markUnread();
         // Send bubble message to WorkAdventure scripting API (text only)
         if (messageType === "proximity") {
             try {
@@ -587,8 +634,129 @@ export class ProximityChatRoom implements ChatRoom {
     sendFiles(files: FileList): Promise<void> {
         return Promise.resolve();
     }
+    /** Marks the stay the thread shows as read (every stay when the whole timeline is shown). */
     setTimelineAsRead(): void {
-        console.info("setTimelineAsRead => Method not implemented yet!");
+        const selected = get(selectedProximitySessionStore);
+        if (selected === undefined) {
+            this._unreadBySession.set(new Map());
+            this.refreshUnreadTotals(new Map());
+            return;
+        }
+        this.markSessionRead(selected);
+    }
+
+    /**
+     * Shows a stay in the thread: the live one by default, an ended one by id, and marks it read.
+     * With no live stay and no id, the room messages are shown.
+     */
+    public open(sessionId: string | undefined = this._currentSessionId): void {
+        const target = sessionId ?? ROOM_MESSAGES_SESSION_ID;
+        selectedProximitySessionStore.set(target);
+        selectedRoomStore.set(this);
+        this.markSessionRead(target);
+    }
+
+    /**
+     * Shows where new messages land: the live stay, or with none, the whole timeline with its composer (as the
+     * proximity chat always opened for a script message), never an older, read-only stay left selected.
+     */
+    public showLatest(): void {
+        selectedProximitySessionStore.set(this._currentSessionId);
+        selectedRoomStore.set(this);
+        if (this._currentSessionId !== undefined) this.markSessionRead(this._currentSessionId);
+    }
+
+    /** Opens the live stay when no conversation is open, as a message arriving always did. */
+    private showIfNothingOpen(): void {
+        if (get(selectedRoomStore) !== undefined) return;
+        this.open();
+    }
+
+    /** The stay a message arriving now belongs to. */
+    private get arrivalSessionId(): string {
+        return this._currentSessionId ?? ROOM_MESSAGES_SESSION_ID;
+    }
+
+    /**
+     * Counts a message that arrived as unread in its stay, unless that stay is the one open in the thread.
+     * Reading one stay never marks another read.
+     */
+    private markUnread(): void {
+        const sessionId = this.arrivalSessionId;
+        if (get(selectedRoomStore) === this) {
+            const shown = get(selectedProximitySessionStore);
+            if (shown === undefined || shown === sessionId) return;
+        }
+        const unread = new Map(get(this._unreadBySession));
+        unread.set(sessionId, (unread.get(sessionId) ?? 0) + 1);
+        this._unreadBySession.set(unread);
+        this.refreshUnreadTotals(unread);
+    }
+
+    private markSessionRead(sessionId: string): void {
+        const current = get(this._unreadBySession);
+        if (!current.has(sessionId)) return;
+        const unread = new Map(current);
+        unread.delete(sessionId);
+        this._unreadBySession.set(unread);
+        this.refreshUnreadTotals(unread);
+    }
+
+    private refreshUnreadTotals(unread: Map<string, number>): void {
+        let total = 0;
+        for (const count of unread.values()) total += count;
+        this.hasUnreadMessages.set(total > 0);
+        this.unreadNotificationCount.set(total);
+    }
+
+    /** Keeps what the composer still held when its stay ended, to show it there as unsent. */
+    public keepUnsentDraft(sessionId: string | undefined, text: string): void {
+        if (sessionId === undefined || text.replace(/<br\s*\/?>/gi, "").trim() === "") return;
+        const drafts = new Map(get(this._unsentDrafts));
+        drafts.set(sessionId, text);
+        this._unsentDrafts.set(drafts);
+    }
+
+    /**
+     * Hands the timeline to the proximity chat of the next map, so leaving through a door keeps the chats you had.
+     * Called by the scene right before it destroys this room.
+     */
+    public stashHistoryForNextScene(): void {
+        // Leaving the map ends the stay you're in: close it here, so the next map never receives an open stay
+        // that its own messages would fall into.
+        const openSessionId = this._currentSessionId;
+        if (openSessionId !== undefined) {
+            const draft = composerDraftStore.load(this.id, this._spaceGeneration);
+            if (draft) {
+                composerDraftStore.clear(this.id);
+                this.keepUnsentDraft(openSessionId, draft.message);
+            }
+            for (const streaming of this.streamMessages.values()) {
+                streaming.stoppedOnLeave = true;
+            }
+            const others = this.users
+                ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
+                : [];
+            const isArea = this.meetingSessionLabel !== undefined;
+            this.addSessionMarker(
+                isArea ? get(LL).chat.timeLine.youleftMeetingRoom() : get(LL).chat.timeLine.youLeft(),
+                "outcoming",
+                {
+                    kind: "end",
+                    label: isArea ? this.meetingSessionLabel ?? "" : "",
+                    participants: isArea ? [] : others.map((user) => user.name),
+                    participantIds: isArea ? [] : others.map((user) => user.spaceUserId),
+                    isArea,
+                    sessionId: openSessionId,
+                }
+            );
+            this._currentSessionId = undefined;
+        }
+        stashProximityHistory({
+            messages: Array.from(get(this.messages)),
+            unreadBySession: new Map(get(this._unreadBySession)),
+            unsentDrafts: new Map(get(this._unsentDrafts)),
+        });
     }
 
     loadMorePreviousMessages(): Promise<void> {
@@ -770,6 +938,7 @@ export class ProximityChatRoom implements ChatRoom {
             this._spaceKind.set("bubble");
         }
         this._spaceJoinedAt.set(Date.now());
+        this._currentSessionId = uuidv4();
         if (isMeetingRoomChat) {
             // A meeting area or zone: the divider names the place (its name was set just before joining).
             this.meetingSessionLabel = get(this.name);
@@ -777,6 +946,9 @@ export class ProximityChatRoom implements ChatRoom {
                 kind: "start",
                 label: this.meetingSessionLabel,
                 participants: [],
+                participantIds: [],
+                isArea: true,
+                sessionId: this._currentSessionId,
             });
         }
 
@@ -836,7 +1008,7 @@ export class ProximityChatRoom implements ChatRoom {
             );
             // if the proximity chat is not open, open it to see the message
             openChat("bubble");
-            if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
+            this.showIfNothingOpen();
         });
 
         this.spaceIsTypingSubscription?.unsubscribe();
@@ -946,7 +1118,7 @@ export class ProximityChatRoom implements ChatRoom {
                     this.lastMessageTimestamp = errorMessage.date.getTime();
                     this.notifyNewMessage(errorMessage);
                     openChat("bubble");
-                    if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
+                    this.showIfNothingOpen();
                     return;
                 }
 
@@ -981,11 +1153,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.lastMessageTimestamp = newMessage.date.getTime();
                 this.notifyNewMessage(newMessage);
 
-                // Track unread messages when chat room is not active
-                if (get(selectedRoomStore) !== this) {
-                    this.hasUnreadMessages.set(true);
-                    this.unreadNotificationCount.set(get(this.unreadNotificationCount) + 1);
-                }
+                this.markUnread();
 
                 // If this was also the final chunk, finalize immediately
                 if (stream.isFinal) {
@@ -993,14 +1161,14 @@ export class ProximityChatRoom implements ChatRoom {
                 }
 
                 openChat("bubble");
-                if (get(selectedRoomStore) == undefined) selectedRoomStore.set(this);
+                this.showIfNothingOpen();
             });
 
         this.saveChatState();
 
         const actualStatus = get(availabilityStatusStore);
         if (!isAChatRoomIsVisible()) {
-            selectedRoomStore.set(this);
+            this.open(this._currentSessionId);
             navChat.switchToChat();
             if (
                 !get(requestedMicrophoneState) &&
@@ -1028,6 +1196,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this._participants.set([]);
                 this._spaceKind.set("none");
                 this._spaceJoinedAt.set(undefined);
+                this._currentSessionId = undefined;
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
@@ -1175,6 +1344,13 @@ export class ProximityChatRoom implements ChatRoom {
             return;
         }
         this._space = undefined;
+        const endedSessionId = this._currentSessionId;
+        // The composer's text for this stay, when the thread is closed: it stays with the stay, as unsent.
+        const draft = composerDraftStore.load(this.id, this._spaceGeneration);
+        if (draft) {
+            composerDraftStore.clear(this.id);
+            this.keepUnsentDraft(endedSessionId, draft.message);
+        }
         this._spaceGeneration++;
 
         hideBubbleConfirmationModal();
@@ -1186,43 +1362,39 @@ export class ProximityChatRoom implements ChatRoom {
             this.screenWakeRelease = undefined;
         }
 
-        if (this.users) {
-            const leftPeople = Array.from(this.users.values())
-                .filter((user) => user.spaceUserId !== this._spaceUserId)
-                .map((user) => user.name);
-            const endMarker: ProximitySessionMarker = {
-                kind: "end",
-                label: isMeetingRoomChat
-                    ? this.meetingSessionLabel ?? get(this.name)
-                    : formatPeopleNames(leftPeople, {
-                          two: get(LL).chat.topRow.twoNames,
-                          more: get(LL).chat.topRow.moreNames,
-                      }),
-                participants: isMeetingRoomChat ? [] : leftPeople,
-            };
-            if (this.users.size > 2) {
-                if (isMeetingRoomChat) {
-                    this.addSessionMarker(get(LL).chat.timeLine.youleftMeetingRoom(), "outcoming", endMarker);
-                } else {
-                    this.addSessionMarker(get(LL).chat.timeLine.youLeft(), "outcoming", endMarker);
-                }
-            } else {
-                for (const user of this.users.values()) {
-                    if (user.spaceUserId === this._spaceUserId) {
-                        continue;
-                    }
-                    if (isMeetingRoomChat) {
-                        this.addSessionMarker(get(LL).chat.timeLine.youleftMeetingRoom(), "outcoming", endMarker);
-                    } else {
-                        this.addSessionMarker(
-                            get(LL).chat.timeLine.outcoming({ userName: user.name }),
-                            "outcoming",
-                            endMarker
-                        );
-                    }
-                }
-            }
+        // A bot reply still streaming stops where it is: nothing can reach this stay any more.
+        for (const streaming of this.streamMessages.values()) {
+            streaming.stoppedOnLeave = true;
         }
+
+        // Always one end marker, even when you were alone in a meeting: it closes the stay.
+        const others = this.users
+            ? Array.from(this.users.values()).filter((user) => user.spaceUserId !== this._spaceUserId)
+            : [];
+        const leftPeople = others.map((user) => user.name);
+        const endMarker: ProximitySessionMarker = {
+            kind: "end",
+            label: isMeetingRoomChat
+                ? this.meetingSessionLabel ?? get(this.name)
+                : formatPeopleNames(leftPeople, {
+                      two: get(LL).chat.topRow.twoNames,
+                      more: get(LL).chat.topRow.moreNames,
+                  }),
+            participants: isMeetingRoomChat ? [] : leftPeople,
+            participantIds: isMeetingRoomChat ? [] : others.map((user) => user.spaceUserId),
+            isArea: isMeetingRoomChat,
+            sessionId: endedSessionId,
+        };
+        let endBody: string;
+        if (isMeetingRoomChat) {
+            endBody = get(LL).chat.timeLine.youleftMeetingRoom();
+        } else if (others.length === 1) {
+            endBody = get(LL).chat.timeLine.outcoming({ userName: others[0].name });
+        } else {
+            endBody = get(LL).chat.timeLine.youLeft();
+        }
+        this.addSessionMarker(endBody, "outcoming", endMarker);
+        this._currentSessionId = undefined;
         this.meetingSessionLabel = undefined;
         this.clearTypingMembers();
         this.hasUserInProximityChat.set(false);

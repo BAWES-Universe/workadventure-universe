@@ -3,12 +3,12 @@
     import type { ComponentType } from "svelte";
     import { openModal } from "svelte-modals";
     import LL from "../../../../i18n/i18n-svelte";
-    import { navChat } from "../../Stores/ChatStore";
+    import { findGroupOpenStore, navChat } from "../../Stores/ChatStore";
     import CreateRoomModal from "../Room/CreateRoomModal.svelte";
     import CreateFolderModal from "../Room/CreateFolderModal.svelte";
     import type { NewChatOption } from "./ChatHeaderNewMenu";
     import { focusChatSearchRequest, nextMenuIndex } from "./ChatHeaderNewMenu";
-    import { IconFolder, IconMessagePlus, IconPlus, IconSend } from "@wa-icons";
+    import { IconFolder, IconPlus, IconSearch, IconSend, IconUsersGroup } from "@wa-icons";
 
     /** Which choices to show; the parent hides the whole "+" when this is empty. */
     export let options: NewChatOption[];
@@ -22,12 +22,14 @@
     // Existing e2e helpers open the root "create room / folder" menu by these ids, so they stay.
     const testIds: Record<NewChatOption, string> = {
         newMessage: "openNewMessageButton",
-        newRoom: "openCreateRoomModalButton",
+        newGroup: "openCreateRoomModalButton",
+        findGroup: "openFindGroupButton",
         newFolder: "openCreateFolderModalButton",
     };
     const icons: Record<NewChatOption, ComponentType> = {
         newMessage: IconSend,
-        newRoom: IconMessagePlus,
+        newGroup: IconUsersGroup,
+        findGroup: IconSearch,
         newFolder: IconFolder,
     };
 
@@ -35,8 +37,10 @@
         switch (option) {
             case "newMessage":
                 return $LL.chat.header.newMessage();
-            case "newRoom":
-                return $LL.chat.header.newRoom();
+            case "newGroup":
+                return $LL.chat.header.newGroup();
+            case "findGroup":
+                return $LL.chat.header.findGroup();
             case "newFolder":
                 return $LL.chat.header.newFolder();
         }
@@ -46,8 +50,10 @@
         switch (option) {
             case "newMessage":
                 return $LL.chat.header.newMessageHint();
-            case "newRoom":
-                return $LL.chat.header.newRoomHint();
+            case "newGroup":
+                return $LL.chat.header.newGroupHint();
+            case "findGroup":
+                return $LL.chat.header.findGroupHint();
             case "newFolder":
                 return $LL.chat.header.newFolderHint();
         }
@@ -107,8 +113,11 @@
                 focusChatSearchRequest.set(true);
                 navChat.switchToUserList();
                 break;
-            case "newRoom":
+            case "newGroup":
                 openModal(CreateRoomModal, { parentID: undefined });
+                break;
+            case "findGroup":
+                findGroupOpenStore.set(true);
                 break;
             case "newFolder":
                 openModal(CreateFolderModal, { parentID: undefined });
@@ -165,7 +174,10 @@
                     tabindex="-1"
                     bind:this={itemRefs[index]}
                     data-testid={testIds[option]}
-                    class="chat-new-item m-0 w-full min-h-14 flex items-center gap-3 px-2 py-2 rounded-xl text-start text-white bg-transparent hover:bg-white/10 focus:outline-none focus-visible:bg-white/10"
+                    class="chat-new-item m-0 w-full min-h-14 flex items-center gap-3 px-2 py-2 rounded-xl text-start text-white bg-transparent hover:bg-white/10 focus:outline-none focus-visible:bg-white/10 {option ===
+                    'newFolder'
+                        ? 'chat-new-item-last'
+                        : ''}"
                     on:click={() => choose(option)}
                 >
                     <span
@@ -185,6 +197,13 @@
 </div>
 
 <style>
+    /* New folder is the odd one out: a line keeps it apart from the three everyday actions. */
+    .chat-new-item-last {
+        margin-top: 0.375rem;
+        border-top: 1px solid rgb(255 255 255 / 0.12);
+        border-radius: 0 0 0.75rem 0.75rem;
+    }
+
     .chat-new-popover {
         width: min(18rem, calc(100% - 1rem));
     }

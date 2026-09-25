@@ -16,8 +16,8 @@
     /** Opens the proximity chat timeline, exactly as the row always did. */
     export let onOpen: () => void;
     /**
-     * Whether the card shows: in a bubble, a meeting or a zone. When you're alone the "Here" strip says who is
-     * on the map and the nearby chat you had sits in the list, so the card stays out of the way.
+     * Whether the card shows: in a bubble, a meeting or a zone. When you're alone there is no card: the proximity
+     * chats you had sit in the list as rows of their own, and the People tab says who is around.
      */
     export let visible = false;
 
@@ -87,12 +87,8 @@
         { two: $LL.chat.topRow.twoNames, more: $LL.chat.topRow.moreNames }
     );
 
-    $: title =
-        state.kind === "withPeople"
-            ? state.areaName ?? peopleNames
-            : state.kind === "alone"
-            ? $LL.chat.nearby.title()
-            : state.areaName;
+    // The title always says what this is ("Proximity Chat", or the meeting's name); the people go underneath.
+    $: title = ("areaName" in state && state.areaName) || $LL.chat.nearby.title();
 
     $: typingLine = formatTypingLine(
         $typingMembers.map((member) => member.name),
@@ -125,11 +121,9 @@
 
     $: subtitle =
         state.kind === "withPeople"
-            ? state.areaName
-                ? peopleNames
-                : latestMessageText
+            ? latestMessageText
                 ? `${latestMessageSender}: ${latestMessageText}`
-                : undefined
+                : $LL.chat.thread.withPeople({ names: peopleNames })
             : state.kind === "meetingAlone"
             ? $LL.chat.topRow.onlyYouHere()
             : undefined;
@@ -151,7 +145,9 @@
             on:click={onOpen}
             data-testid="toggleDisplayProximityChat"
         >
-            <span class="sr-only">{$LL.chat.proximity()}</span>
+            {#if title !== $LL.chat.nearby.title()}
+                <span class="sr-only">{$LL.chat.proximity()}</span>
+            {/if}
             <div class="relative flex shrink-0 items-center" aria-hidden="true">
                 {#if stackedPeople.length > 0}
                     <div class="flex items-center">
@@ -229,8 +225,13 @@
 <style>
     /* Live: a soft green wash and edge, the same green as the live dot. */
     .top-row-live {
-        background-image: linear-gradient(135deg, rgb(102 233 121 / 0.14), rgb(65 86 246 / 0.1));
-        box-shadow: inset 0 0 0 1px rgb(102 233 121 / 0.28);
+        background-image: linear-gradient(
+            135deg,
+            rgb(52 211 153 / 0.16),
+            rgb(134 41 252 / 0.12) 60%,
+            rgb(65 86 246 / 0.1)
+        );
+        box-shadow: inset 0 0 0 1px rgb(52 211 153 / 0.3), 0 0 24px -8px rgb(134 41 252 / 0.5);
     }
 
     :global([dir="rtl"]) .top-row-live {

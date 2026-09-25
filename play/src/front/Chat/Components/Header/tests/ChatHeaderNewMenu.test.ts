@@ -5,8 +5,8 @@ import { focusChatSearchRequest, getNewChatOptions, nextMenuIndex } from "../Cha
 const signedIn = { isSignedIn: true, isMatrixGuest: false, chatStatus: "ONLINE", isPeopleListEnabled: true };
 
 describe("getNewChatOptions", () => {
-    it("offers New message, New room and New folder when signed in and online", () => {
-        expect(getNewChatOptions(signedIn)).toEqual(["newMessage", "newRoom", "newFolder"]);
+    it("offers New message, New group, Find a group and New folder when signed in and online", () => {
+        expect(getNewChatOptions(signedIn)).toEqual(["newMessage", "newGroup", "findGroup", "newFolder"]);
     });
 
     it("offers nothing to a guest, so the + is hidden", () => {
@@ -22,7 +22,15 @@ describe("getNewChatOptions", () => {
     });
 
     it("leaves out New message when the map has no People tab", () => {
-        expect(getNewChatOptions({ ...signedIn, isPeopleListEnabled: false })).toEqual(["newRoom", "newFolder"]);
+        expect(getNewChatOptions({ ...signedIn, isPeopleListEnabled: false })).toEqual([
+            "newGroup",
+            "findGroup",
+            "newFolder",
+        ]);
+    });
+
+    it("always keeps New folder, so the first folder can be created", () => {
+        expect(getNewChatOptions(signedIn)).toContain("newFolder");
     });
 });
 

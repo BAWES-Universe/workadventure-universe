@@ -92,16 +92,12 @@ import {
     userIsJitsiDominantSpeakerStore,
 } from "../../Stores/GameStore";
 import {
-    activeSubMenuStore,
     contactPageStore,
     inviteUserActivated,
     mapEditorActivated,
     mapManagerActivated,
-    menuVisiblilityStore,
     roomListActivated,
     screenSharingActivatedStore,
-    SubMenusInterface,
-    subMenusStore,
 } from "../../Stores/MenuStore";
 import type { WasCameraUpdatedEvent } from "../../Api/Events/WasCameraUpdatedEvent";
 import { audioManagerFileStore, bubbleSoundStore } from "../../Stores/AudioManagerStore";
@@ -157,7 +153,7 @@ import { scriptUtils } from "../../Api/ScriptUtils";
 import { statusChanger } from "../../Components/ActionBar/AvailabilityStatus/statusChanger";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { closeCoWebsite, getCoWebSite, openCoWebSite, openCoWebSiteWithoutSource } from "../../Chat/Utils";
-import { navChat } from "../../Chat/Stores/ChatStore";
+import { inviteCardRequestStore, navChat } from "../../Chat/Stores/ChatStore";
 import { ProximityChatRoom } from "../../Chat/Connection/Proximity/ProximityChatRoom";
 import { ProximitySpaceManager } from "../../WebRtc/ProximitySpaceManager";
 import type { SpaceRegistryInterface } from "../../Space/SpaceRegistry/SpaceRegistryInterface";
@@ -1185,6 +1181,8 @@ export class GameScene extends DirtyScene {
             Sentry.captureException(e);
         });
         this.proximitySpaceManager?.destroy();
+        // The chats you had come along to the next map.
+        this._proximityChatRoom?.stashHistoryForNextScene();
         this._proximityChatRoom?.destroy();
         // Area chat rooms are per scene: a new map starts with none. Area-leave handlers don't run when the scene
         // closes, so the rooms of the areas still active are left here, and stay hidden until that leave completes.
@@ -2620,14 +2618,15 @@ ${escapedMessage}
                         switch (chatMessage.options.scope) {
                             case "local": {
                                 room.addExternalMessage("local", chatMessage.message, chatMessage.options.author);
-                                selectedRoomStore.set(room);
+                                // Shows where the message landed, not an older chat left selected.
+                                room.showLatest();
                                 openChat("script");
 
                                 break;
                             }
                             case "bubble": {
                                 room.addExternalMessage("bubble", chatMessage.message);
-                                selectedRoomStore.set(room);
+                                room.showLatest();
                                 openChat("script");
                             }
                         }
@@ -2749,14 +2748,11 @@ ${escapedMessage}
 
         this.iframeSubscriptionList.push(
             iframeListener.openInviteMenuStream.subscribe(() => {
-                const inviteMenu = subMenusStore.findByKey(SubMenusInterface.invite);
-                if (get(menuVisiblilityStore) && activeSubMenuStore.isActive(inviteMenu)) {
-                    menuVisiblilityStore.set(false);
-                    activeSubMenuStore.activateByIndex(0);
-                    return;
-                }
-                activeSubMenuStore.activateByMenuItem(inviteMenu);
-                menuVisiblilityStore.set(true);
+                // The invite lives at the bottom of the chat panel: open the panel and its invite card.
+                if (!get(inviteUserActivated)) return;
+                navChat.switchToChat();
+                chatVisibilityStore.set(true);
+                inviteCardRequestStore.set(true);
             })
         );
 

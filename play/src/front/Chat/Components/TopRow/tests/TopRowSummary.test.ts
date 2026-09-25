@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NameTemplates, TopRowArea, TopRowPerson, TypingTemplates } from "../TopRowSummary";
-import {
-    countWorldPresence,
-    formatHereLine,
-    formatPeopleNames,
-    formatTypingLine,
-    peopleOnThisMap,
-    resolveMeetingAreaName,
-    resolveTopRowState,
-} from "../TopRowSummary";
+import { formatPeopleNames, formatTypingLine, resolveMeetingAreaName, resolveTopRowState } from "../TopRowSummary";
 
 const names: NameTemplates = {
     two: ({ first, second }) => `${first} & ${second}`,
@@ -124,67 +116,5 @@ describe("resolveTopRowState", () => {
         expect(resolveTopRowState({ spaceKind: "bubble", spaceName: "", participants: [omar], areas: matrix })).toEqual(
             { kind: "withPeople", people: [omar], areaName: undefined }
         );
-    });
-});
-
-describe("countWorldPresence", () => {
-    const here = "https://play.example.test/@/org/world/hq";
-    const other = "https://play.example.test/@/org/world/garden";
-
-    it("splits by map and excludes only this tab's own avatar", () => {
-        const users = [
-            { spaceUserId: "me", playUri: here },
-            // A clone of this account, in the same map: it counts.
-            { spaceUserId: "me-tab-2", playUri: here },
-            { spaceUserId: "sara", playUri: here + "?x=1#start" },
-            { spaceUserId: "omar", playUri: other },
-            { spaceUserId: "ghost", playUri: undefined },
-        ];
-        expect(countWorldPresence(users, "me", here)).toEqual({ here: 2, elsewhere: 2 });
-    });
-
-    it("counts everyone when this tab's avatar is unknown", () => {
-        expect(countWorldPresence([{ spaceUserId: "sara", playUri: here }], undefined, here)).toEqual({
-            here: 1,
-            elsewhere: 0,
-        });
-    });
-});
-
-describe("peopleOnThisMap", () => {
-    const here = "http://play.test/_/global/maps.test/map.json";
-    const there = "http://play.test/_/global/maps.test/other.json";
-
-    it("lists everyone on this map except this tab, clones included", () => {
-        const users = [
-            { spaceUserId: "me", playUri: here },
-            { spaceUserId: "omar", playUri: here },
-            { spaceUserId: "me-clone", playUri: here },
-            { spaceUserId: "sara", playUri: there },
-            { spaceUserId: "nowhere", playUri: undefined },
-        ];
-        expect(peopleOnThisMap(users, "me", here).map((user) => user.spaceUserId)).toEqual(["omar", "me-clone"]);
-    });
-});
-
-describe("formatHereLine", () => {
-    const templates = {
-        you: "You",
-        onlyYou: "Only you here",
-        elsewhere: ({ count }: { count: number }) => `${count} elsewhere in this world`,
-        separator: " · ",
-        two: ({ first, second }: { first: string; second: string }) => `${first} & ${second}`,
-        more: ({ first, second, count }: { first: string; second: string; count: number }) =>
-            `${first}, ${second} +${count}`,
-    };
-
-    it("names who is here with you", () => {
-        expect(formatHereLine(["Omar"], 0, templates)).toBe("You & Omar");
-        expect(formatHereLine(["Omar", "Sara", "Lea"], 4, templates)).toBe("You, Omar +2");
-    });
-
-    it("says you're alone, and how many are elsewhere", () => {
-        expect(formatHereLine([], 0, templates)).toBe("Only you here");
-        expect(formatHereLine([], 12, templates)).toBe("Only you here · 12 elsewhere in this world");
     });
 });

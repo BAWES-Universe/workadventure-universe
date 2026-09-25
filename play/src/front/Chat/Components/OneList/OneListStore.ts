@@ -1,6 +1,7 @@
 import { derived, get, readable, writable } from "svelte/store";
 import type { Readable, Unsubscriber } from "svelte/store";
-import type { ChatRoom, RoomFolder } from "../../Connection/ChatConnection";
+import type { ChatMessage, ChatRoom, RoomFolder } from "../../Connection/ChatConnection";
+import type { ProximitySession } from "../../Connection/Proximity/ProximitySessions";
 import type { FolderSnapshot, OneListCandidate, OneListKind } from "./OneListOrder";
 import {
     InvitationClock,
@@ -11,7 +12,7 @@ import {
     summarizeFolder,
 } from "./OneListOrder";
 
-export type OneListEntry = OneListCandidate<ChatRoom | RoomFolder>;
+export type OneListEntry = OneListCandidate<ChatRoom | RoomFolder | ProximitySession<ChatMessage>>;
 
 export interface OneListSources {
     directRooms: Readable<ChatRoom[]>;
@@ -21,6 +22,8 @@ export interface OneListSources {
     /** Area chat rooms: they have their own row and never show in this list. */
     hiddenRoomIds: Readable<ReadonlySet<string>>;
     search: Readable<string>;
+    /** Ready-made rows from elsewhere (the proximity chats you had), sorted in with the rest. */
+    extraEntries?: Readable<OneListEntry[]>;
 }
 
 /** Per tab and in memory: when this tab first saw an invitation whose invite event has no time. */
@@ -85,6 +88,7 @@ export function createOneListStore(
         let folders: RoomFolder[] = [];
         let hiddenRoomIds: ReadonlySet<string> = new Set();
         let search = "";
+        let extraEntries: OneListEntry[] = [];
 
         let active = false;
         let syncing = false;
@@ -138,6 +142,7 @@ export function createOneListStore(
                 });
             }
             clock.retain(invitationIds);
+            candidates.push(...extraEntries);
             return mergeOneList(candidates, hiddenRoomIds, search);
         };
 
@@ -265,6 +270,14 @@ export function createOneListStore(
                 markValues();
             }),
         ];
+        if (sources.extraEntries) {
+            sourceUnsubscribers.push(
+                sources.extraEntries.subscribe((value) => {
+                    extraEntries = value;
+                    markValues();
+                })
+            );
+        }
 
         // The first value is computed right away, so the list never flashes empty.
         active = true;

@@ -110,6 +110,8 @@
     const draftRoomId = room.id;
     const draftId = `${room.id}-${localUserStore.getChatId() ?? "0"}`;
     const hasSpaceDrafts = spaceGenerationOf(room) !== undefined;
+    // The stay the composer opened in: text left when that stay ends is kept there as unsent, never sent on.
+    const mountSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
 
     const selectedChatChatMessageToReplyUnsubscriber = selectedChatMessageToReply.subscribe((chatMessage) => {
         if (chatMessage !== null) {
@@ -429,7 +431,14 @@
 
     onDestroy(() => {
         clearTimeout(uploadErrorTimeout);
-        if (hasSpaceDrafts) {
+        if (
+            room instanceof ProximityChatRoom &&
+            mountSessionId !== undefined &&
+            room.currentSessionId !== mountSessionId
+        ) {
+            // The stay ended while the composer was open: what it still holds belongs to that stay.
+            room.keepUnsentDraft(mountSessionId, message);
+        } else if (hasSpaceDrafts) {
             // Stamped with the space the composer is in now: while the thread stayed open, the text was visible
             // under that space's "Now" line.
             composerDraftStore.save(draftRoomId, {
