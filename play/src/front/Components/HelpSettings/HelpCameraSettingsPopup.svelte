@@ -21,7 +21,7 @@
 
 <!-- Same behaviour as before: Allow shows how to unblock the browser, Continue closes. Restyled in the Universe look. -->
 <form
-    class="helpCameraSettings camera-help u-glass z-[600] self-center pointer-events-auto flex flex-col w-full md:w-2/3 xl:w-[380px] overflow-hidden rounded-2xl text-white text-sm md:text-base"
+    class="helpCameraSettings camera-help u-glass z-[600] self-center mx-auto pointer-events-auto flex flex-col w-[min(380px,calc(100vw-1.5rem))] overflow-hidden rounded-2xl text-white text-sm md:text-base"
     on:submit|preventDefault={close}
     transition:fly={{ y: -50, duration: 500 }}
 >
