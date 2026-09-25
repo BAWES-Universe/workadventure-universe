@@ -587,13 +587,16 @@ const chat: DeepPartial<Translation["chat"]> = {
         copy: "Copier",
         copied: "Copié",
         stopped: "Interrompu à votre départ",
+        proximityTag: "Bulle",
+        meetingTag: "Réunion",
+        roomMessagesTag: "Salle",
         roomMessages: "Messages de la salle",
         roomMessagesHint: "Messages envoyés par les scripts de cette salle",
         findPeople: "Trouver ces personnes",
         goTo: "Aller dans {room}",
         goToRoom: "Aller dans la salle",
         explainer:
-            "Seules les personnes présentes quand vous envoyez un message le voient. Qui arrive après ne voit que ce qui est envoyé ensuite. Rien n'est enregistré sur un serveur.",
+            "Seules les personnes présentes quand vous envoyez un message le voient. Qui arrive après ne voit que ce qui est envoyé ensuite.",
         empty: "Aucun message dans cette bulle de discussion.",
     },
     inviteFooter: {

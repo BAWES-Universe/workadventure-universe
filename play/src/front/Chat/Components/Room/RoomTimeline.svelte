@@ -25,7 +25,7 @@
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
-    import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox, IconScript } from "@wa-icons";
+    import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
 
@@ -368,12 +368,9 @@
                 {/if}
                 {#if isEmptyProximityView && isEnded}
                     <li class="text-center px-3 py-6 text-sm text-white/50">{$LL.chat.session.empty()}</li>
-                {:else if isRoomMessages && isEmptyProximityView}
-                    <li class="text-center px-3 py-6 text-sm text-white/50">
-                        <IconScript font-size="32" />
-                        <div>{$LL.chat.session.roomMessagesHint()}</div>
-                    </li>
-                {:else if $messages.length === 0 || (isEmptyProximityView && !isEnded)}
+                {:else if shownSession && shownSession.isLive}
+                    <!-- In a bubble with nothing written yet: the explainer above is enough. -->
+                {:else if $messages.length === 0 || isEmptyProximityView}
                     {#if room instanceof ProximityChatRoom}
                         <li class="text-center px-3 max-w-md">
                             <img draggable="false" src={getCloseImg} alt="Discussion bubble" />

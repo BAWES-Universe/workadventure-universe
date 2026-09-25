@@ -570,13 +570,15 @@ const chat: DeepPartial<Translation["chat"]> = {
         copy: "نسخ",
         copied: "تم النسخ",
         stopped: "توقف عند مغادرتك",
+        proximityTag: "دردشة القرب",
+        meetingTag: "اجتماع",
+        roomMessagesTag: "الغرفة",
         roomMessages: "رسائل الغرفة",
         roomMessagesHint: "رسائل من سكربتات هذه الغرفة",
         findPeople: "ابحث عن هؤلاء الأشخاص",
         goTo: "اذهب إلى {room}",
         goToRoom: "اذهب إلى الغرفة",
-        explainer:
-            "لا يرى رسالتك إلا من كان هنا عند إرسالها. من ينضم لاحقًا يرى فقط ما يُرسل بعد وصوله. لا يُحفظ شيء على أي خادم.",
+        explainer: "لا يرى رسالتك إلا من كان هنا عند إرسالها. من ينضم لاحقًا يرى فقط ما يُرسل بعد وصوله.",
         empty: "لا توجد رسائل في دردشة القرب هذه.",
     },
     inviteFooter: {

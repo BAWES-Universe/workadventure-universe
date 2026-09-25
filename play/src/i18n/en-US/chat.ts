@@ -585,13 +585,16 @@ const chat: BaseTranslation = {
         copy: "Copy",
         copied: "Copied",
         stopped: "Stopped when you left",
+        proximityTag: "Proximity chat",
+        meetingTag: "Meeting",
+        roomMessagesTag: "Room",
         roomMessages: "Room messages",
         roomMessagesHint: "Messages from this room's scripts",
         findPeople: "Find people",
         goTo: "Go to {room}",
         goToRoom: "Go to room",
         explainer:
-            "Only people here when you send a message see it. Anyone who joins later sees only what's sent after they arrive. Nothing is saved on a server.",
+            "Only people here when you send a message see it. Anyone who joins later sees only what's sent after they arrive.",
         empty: "No messages in this proximity chat.",
     },
     inviteFooter: {

@@ -82,7 +82,7 @@
                         ? $LL.chat.session.roomMessages()
                         : session.isArea
                         ? session.label
-                        : $LL.chat.proximity();
+                        : session.label || $LL.chat.proximity();
                 return {
                     id: `proximity:${session.id}`,
                     kind: "proximity",
@@ -187,8 +187,18 @@
                             {/if}
                         </section>
                     {/if}
+                    {#if $chatConnectionStatus === "ONLINE" || hasProximityHistory}
+                        <!-- One list: proximity chats you had, DMs, groups, invitations and folders, newest first. -->
+                        <div class="px-2 pb-2">
+                            <OneList
+                                extraEntries={proximityEntries}
+                                showEmpty={$chatConnectionStatus === "ONLINE"}
+                                onOpenSession={openSession}
+                            />
+                        </div>
+                    {/if}
                     {#if !$userIsConnected && isMatrixChatEnabled}
-                        <!-- Guests: what already works, what an account adds, and how to get one. Never blocks the list. -->
+                        <!-- Guests: under the conversations, so what you had stays together at the top. -->
                         <section
                             class="u-glass mx-2 mb-2 rounded-2xl px-4 pt-4 pb-4 text-sm text-white/80"
                             aria-labelledby="chatGuestTitle"
@@ -228,16 +238,6 @@
                                 <IconChevronRight font-size="16" class="shrink-0 rtl:-scale-x-100" aria-hidden="true" />
                             </a>
                         </section>
-                    {/if}
-                    {#if $chatConnectionStatus === "ONLINE" || hasProximityHistory}
-                        <!-- One list: proximity chats you had, DMs, groups, invitations and folders, newest first. -->
-                        <div class="px-2 pb-2">
-                            <OneList
-                                extraEntries={proximityEntries}
-                                showEmpty={$chatConnectionStatus === "ONLINE"}
-                                onOpenSession={openSession}
-                            />
-                        </div>
                     {/if}
                 </div>
                 <InviteFooter />
