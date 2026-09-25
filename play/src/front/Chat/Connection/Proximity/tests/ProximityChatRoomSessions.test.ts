@@ -469,6 +469,21 @@ describe("ProximityChatRoom sessions", () => {
         next.destroy();
     });
 
+    it("keeps the proximity chat open after leaving a bubble you were in during a reconnect", async () => {
+        // The proximity chat was already open before the bubble.
+        room.open();
+        await room.joinSpace("bubble", [], true);
+        room.stashHistoryForNextScene();
+        room.destroy();
+
+        const next = nextMapRoom();
+        await next.joinSpace("bubble", [], true);
+        await next.leaveSpace("bubble", true);
+
+        expect(get(selectedRoomStore)).toBe(next);
+        next.destroy();
+    });
+
     it("keeps the chats but opens nothing by itself after leaving the game and coming back", async () => {
         await room.joinSpace("bubble", [], true);
         fake.space.usersStore.set(

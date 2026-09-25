@@ -277,7 +277,7 @@ export class ProximityChatRoom implements ChatRoom {
             const last = stash.messages[stash.messages.length - 1];
             if (last?.date) this.lastMessageTimestamp = last.date.getTime();
             if (stash.chatStateToRestore) {
-                this.currentMatrixRoom = stash.chatStateToRestore.room;
+                this.currentMatrixRoom = stash.chatStateToRestore.proximityChat ? this : stash.chatStateToRestore.room;
                 this.currentChatVisibility = stash.chatStateToRestore.visible;
                 this.keepCarriedChatState = true;
             }
@@ -824,6 +824,7 @@ export class ProximityChatRoom implements ChatRoom {
                               ? undefined
                               : this.currentMatrixRoom,
                       visible: this.currentChatVisibility,
+                      proximityChat: this.currentMatrixRoom === this,
                   }
                 : undefined,
         });
