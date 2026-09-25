@@ -16,6 +16,9 @@
     // The room's own logos (Universe's, from the admin); an empty value from the server means "none".
     const logoErrorSrc = errorScreen?.imageLogo || gameManager?.currentStartedRoom?.loginSceneLogo || undefined;
     const imageErrorSrc = errorScreen?.image || gameManager?.currentStartedRoom?.errorSceneLogo || undefined;
+    // A logo that fails to load shows the name instead; a failed image is left out.
+    let logoFailed = false;
+    let imageFailed = false;
 
     function click() {
         if (errorScreen?.type === "unauthorized") void connectionManager.logout();
@@ -55,9 +58,10 @@
             <div class="icon" bind:this={imageErrorParent} /> -->
             <div class="logo">
                 {#if $errorScreenStore.type !== "reconnecting"}
-                    {#if logoErrorSrc}
+                    {#if logoErrorSrc && !logoFailed}
                         <img
                             src={logoErrorSrc}
+                            on:error={() => (logoFailed = true)}
                             alt="Logo error"
                             style="max-height:25vh; max-width:80%;"
                             draggable="false"
@@ -68,9 +72,15 @@
                 {/if}
             </div>
 
-            {#if imageErrorSrc}
+            {#if imageErrorSrc && !imageFailed}
                 <div class="icon">
-                    <img src={imageErrorSrc} alt="Error" style="height:125px; max-width:100%;" draggable="false" />
+                    <img
+                        src={imageErrorSrc}
+                        alt="Error"
+                        style="height:125px; max-width:100%;"
+                        draggable="false"
+                        on:error={() => (imageFailed = true)}
+                    />
                 </div>
             {/if}
             {#if $errorScreenStore.type !== "retry"}<h2 class="mt-10">{$errorScreenStore.title}</h2>{/if}

@@ -6,6 +6,8 @@
 
     // The room's own loading logo (Universe's, from the admin), else the name.
     const logo = gameManager.currentStartedRoom.loadingLogo;
+    // A logo that fails to load shows the name instead of a broken image.
+    let logoFailed = false;
     const sceneBg = gameManager.currentStartedRoom.backgroundSceneImage ?? bgMap;
     const bgColor = gameManager.currentStartedRoom.backgroundColor ?? "#000000";
     const primary = gameManager.currentStartedRoom.primaryColor ?? "#4056F6";
@@ -24,8 +26,14 @@
             {/if}
             -->
             <div class="mb-4 w-full flex justify-center">
-                {#if logo}
-                    <img draggable="false" src={logo} class="max-h-10 px-4" alt="Logo loading screen" />
+                {#if logo && !logoFailed}
+                    <img
+                        draggable="false"
+                        src={logo}
+                        class="max-h-10 px-4"
+                        alt="Logo loading screen"
+                        on:error={() => (logoFailed = true)}
+                    />
                 {:else}
                     <p class="text-white text-3xl font-bold tracking-wide px-4 m-0">Universe</p>
                 {/if}
