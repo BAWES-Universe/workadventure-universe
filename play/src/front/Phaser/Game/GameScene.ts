@@ -1748,8 +1748,10 @@ export class GameScene extends DirtyScene {
         const networkReady = this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : Promise.resolve();
 
         networkReady
-            .then(() =>
-                connectionManager.connectToRoomSocket(
+            .then(() => {
+                // The scene was closed while we waited for the network: its successor makes its own connection.
+                if (this.cleanupDone) return undefined;
+                return connectionManager.connectToRoomSocket(
                     this.roomUrl,
                     this.playerName,
                     gameManager.getCharacterTextureIds() ?? [],
@@ -1765,9 +1767,15 @@ export class GameScene extends DirtyScene {
                     gameManager.getCompanionTextureId(),
                     get(availabilityStatusStore),
                     this.getGameMap().getLastCommandId()
-                )
-            )
-            .then(async (onConnect: OnConnectInterface) => {
+                );
+            })
+            .then(async (onConnect: OnConnectInterface | undefined) => {
+                if (!onConnect) return;
+                if (this.cleanupDone) {
+                    // Connected after the scene was closed: nobody will use this connection.
+                    onConnect.connection.closeConnection();
+                    return;
+                }
                 this.connection = onConnect.connection;
 
                 // Initialize TURN credentials manager

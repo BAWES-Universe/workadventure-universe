@@ -48,7 +48,6 @@ import { LocalUser } from "./LocalUser";
 import { localUserStore } from "./LocalUserStore";
 import type { OnConnectInterface, PositionInterface, ViewportInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
-import { RECONNECTING_CODE } from "./ReconnectScreen";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
 
@@ -610,8 +609,8 @@ class ConnectionManager {
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
 
-            // Getting back in after a dropped connection: the "Reconnecting" screen stays as it is.
-            if (get(errorScreenStore)?.code !== RECONNECTING_CODE) {
+            // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban).
+            if (!get(errorScreenStore)) {
                 errorScreenStore.setError(
                     ErrorScreenMessage.fromPartial({
                         type: "reconnecting",
