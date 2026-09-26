@@ -73,7 +73,10 @@
     // The minimum width of a media box in pixels
     const minMediaBoxWidth = 160;
 
-    const gameScene = gameManager.getCurrentGameScene();
+    // Whichever map is current when the layout changes: during a reconnect there is none (skip, don't throw).
+    function reposition() {
+        gameManager.tryGetCurrentGameScene()?.reposition();
+    }
 
     $: myCameraStreamable = $myCameraPeerStore.streamable as Writable<MyLocalStreamable | undefined>;
 
@@ -109,7 +112,7 @@
     });
 
     onDestroy(() => {
-        gameScene.reposition();
+        reposition();
     });
 
     $: maxMediaBoxWidth = (oneLineMaxHeight * 16) / 9;
@@ -146,7 +149,7 @@
             videoWidth = layout.videoWidth;
             videoHeight = layout.videoHeight;
         }
-        gameScene.reposition();
+        reposition();
     }
 
     function calculateOptimalLayout(containerWidth: number, containerHeight: number) {

@@ -15,6 +15,7 @@
     import LL from "../../../../../i18n/i18n-svelte";
     import ManageParticipantsModal from "../ManageParticipantsModal.svelte";
     import { gameManager } from "../../../../Phaser/Game/GameManager";
+    import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
     import { scriptUtils } from "../../../../Api/ScriptUtils";
@@ -143,7 +144,13 @@
         return users.find((u) => u.id !== localUserChatId);
     })();
 
-    $: isInTheSameMap = chatUser?.playUri === gameManager.getCurrentGameScene().roomUrl;
+    // During a reconnect there is no map for a moment: not "the same map" then (asking would throw), checked again
+    // once the map is back.
+    $: isInTheSameMap = isOnCurrentMap(chatUser?.playUri, $gameSceneIsLoadedStore);
+    function isOnCurrentMap(playUri: string | undefined, _mapLoaded: boolean): boolean {
+        const currentRoomUrl = gameManager.tryGetCurrentGameScene()?.roomUrl;
+        return currentRoomUrl !== undefined && playUri === currentRoomUrl;
+    }
     $: chatUser = usersWithRoomPlayUri.find((u) => u.chatId === matrixChatUser?.id);
 
     function locateUser() {
