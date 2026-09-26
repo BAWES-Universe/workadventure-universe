@@ -131,7 +131,11 @@ export function openAdminModalFromMenu() {
 
 /** Whether Orbit can be opened for this player (signed in, and Orbit is set up for this room). */
 export function canOpenOrbit(): boolean {
-    return extensionOptions !== null && getAccessTokenFromJwt(extensionOptions.userAccessToken) !== null;
+    return (
+        extensionOptions !== null &&
+        !!extensionOptions.adminUrl &&
+        getAccessTokenFromJwt(extensionOptions.userAccessToken) !== null
+    );
 }
 
 /** Opens Orbit on one of its pages (an /admin path), switching to it if Orbit is already open. */

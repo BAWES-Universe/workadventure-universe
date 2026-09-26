@@ -78,14 +78,15 @@
         pointer-events: auto;
     }
 
-    /* We make the drag handle bigger than it really is to make it more easily selectable (especially on mobile) */
+    /* We make the drag handle bigger than it really is to make it more easily selectable (especially on mobile):
+       the whole bar and a finger's width around it, up to the cameras above. */
     .drag-handle:after {
         content: "";
         position: absolute;
-        top: -20px;
+        top: -12px;
+        bottom: -30px;
         left: -20px;
-        width: 122px;
-        height: 45px;
+        right: -20px;
         /*background-color: rgba(255, 0, 0, 0.5);*/
         border-radius: 4px;
     }

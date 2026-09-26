@@ -184,14 +184,17 @@ describe("CameraManager after gliding back to the player", () => {
 
     it("follows the player again, so an open chat panel keeps the player in the free space", async () => {
         withCanvas();
-        const { manager, camera, scene } = await makeCameraManager();
+        const { manager, camera, currentPlayer, scene } = await makeCameraManager();
 
         manager.followRemotePlayer("stitch");
         finishLastGlide(scene);
+        camera.startFollow.mockClear();
+        scene.reposition.mockClear();
         manager.stopFollowRemotePlayer();
         finishLastGlide(scene);
 
-        expect(scene.reposition).toHaveBeenCalled();
+        expect(camera.startFollow).toHaveBeenCalledWith(currentPlayer, true);
+        expect(scene.reposition).toHaveBeenCalledTimes(1);
         camera.setFollowOffset.mockClear();
         // The chat panel covers the left 300px: the player is centred in the 500px left over.
         manager.updateCameraOffset({ xStart: 300, yStart: 0, xEnd: 800, yEnd: 600 }, true);
@@ -203,7 +206,12 @@ describe("CameraManager after gliding back to the player", () => {
         const { manager, camera, scene } = await makeCameraManager();
 
         manager.followRemotePlayer("stitch");
+        const glide = scene.tweens.addCounter.mock.results[scene.tweens.addCounter.mock.results.length - 1].value as {
+            stop: ReturnType<typeof vi.fn>;
+        };
         manager.setExplorationMode();
+        // The glide is stopped at once, so the explorer's next camera move can animate.
+        expect(glide.stop).toHaveBeenCalled();
         camera.startFollow.mockClear();
         camera.setBounds.mockClear();
         finishLastGlide(scene);
@@ -215,5 +223,23 @@ describe("CameraManager after gliding back to the player", () => {
         camera.setFollowOffset.mockClear();
         manager.updateCameraOffset({ xStart: 300, yStart: 0, xEnd: 800, yEnd: 600 }, true);
         expect(camera.setFollowOffset).not.toHaveBeenCalled();
+    });
+
+    it("a replaced glide's end leaves the newer glide alone", async () => {
+        const { manager, camera, currentPlayer, scene } = await makeCameraManager();
+
+        manager.followRemotePlayer("stitch");
+        const firstGlide = scene.tweens.addCounter.mock.calls[scene.tweens.addCounter.mock.calls.length - 1][0] as {
+            onComplete: () => void;
+        };
+        manager.returnToPlayer();
+        camera.startFollow.mockClear();
+
+        // The first glide's end comes late: it must not end the glide back to the player.
+        firstGlide.onComplete();
+        expect(camera.startFollow).not.toHaveBeenCalled();
+
+        finishLastGlide(scene);
+        expect(camera.startFollow).toHaveBeenCalledWith(currentPlayer, true);
     });
 });

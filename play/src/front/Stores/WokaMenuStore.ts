@@ -1,5 +1,5 @@
 import type { ComponentType } from "svelte";
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { v4 } from "uuid";
 
 export type WokaMenuAction = {
@@ -70,14 +70,14 @@ function createWokaMenuStore() {
         clear: () => {
             set(undefined);
         },
+        /**
+         * Closes the card when it shows this person. Anyone else leaving the map (a whole map of them when it closes)
+         * leaves the card and its subscribers alone.
+         */
         removeRemotePlayer: (userUuid: string) => {
-            update((data) => {
-                if (!data) return data;
-                if (data.userUuid === userUuid) {
-                    return undefined;
-                }
-                return data;
-            });
+            if (get({ subscribe })?.userUuid === userUuid) {
+                set(undefined);
+            }
         },
     };
 }

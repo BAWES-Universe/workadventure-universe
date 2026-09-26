@@ -7,6 +7,7 @@ import { enableUserInputsStore } from "../../Stores/UserInputStore";
 import type { UserInputHandlerInterface } from "../../Interfaces/UserInputHandlerInterface";
 import { mapEditorModeStore } from "../../Stores/MapEditorStore";
 import LL from "../../../i18n/i18n-svelte";
+import { eventClientPoint, isInCameraArea } from "../../Utils/CameraArea";
 
 // Event listeners are valid for the lifetime of the Phaser object and will be garbage collected when the object is destroyed
 /* eslint-disable listeners/no-missing-remove-event-listener, listeners/no-inline-function-event-listener */
@@ -78,6 +79,8 @@ export class UserInputManager {
     private joystickForceThreshold = 60;
     private joystickForceAccuX = 0;
     private joystickForceAccuY = 0;
+    /** The current touch or click started on the camera block (see CameraArea): it neither walks nor steers. */
+    private pointerStartedOnCameras = false;
 
     public userInputHandler: UserInputHandlerInterface;
     private enableUserInputsStoreUnsubscribe: Unsubscriber;
@@ -357,6 +360,10 @@ export class UserInputManager {
             Phaser.Input.Events.POINTER_UP,
             (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
                 this.joystick?.hide(1_000); // Hide the joystick after 1 seconds of inactivity
+                if (this.pointerStartedOnCameras) {
+                    this.pointerStartedOnCameras = false;
+                    return;
+                }
                 this.userInputHandler.handlePointerUpEvent(pointer, gameObjects);
 
                 // Disable focus on iframe (need by Firefox)
@@ -370,6 +377,12 @@ export class UserInputManager {
             Phaser.Input.Events.POINTER_DOWN,
             (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
                 if (this.isInputDisabled) {
+                    return;
+                }
+                // A touch between or around the cameras, or near their resize bar, was meant for them.
+                const point = eventClientPoint(pointer.event);
+                this.pointerStartedOnCameras = point !== undefined && isInCameraArea(point.x, point.y);
+                if (this.pointerStartedOnCameras) {
                     return;
                 }
                 this.userInputHandler.handlePointerDownEvent(pointer, gameObjects);

@@ -38,9 +38,10 @@
     wokaMenuStoreUnsubscriber = wokaMenuStore.subscribe((value) => {
         wokaMenuData = value;
         if (wokaMenuData) {
+            // No map while a reconnect or a map change swaps it: a throw here would stop every store in the app.
             remotePlayer = gameManager
-                .getCurrentGameScene()
-                .getRemotePlayersRepository()
+                .tryGetCurrentGameScene()
+                ?.getRemotePlayersRepository()
                 .getPlayers()
                 .get(wokaMenuData.userId);
             sortedActions = [...wokaMenuData.actions.values()].sort((a, b) => {

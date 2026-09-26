@@ -321,7 +321,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         this.targetReachInProgress = false;
         this.explorerFocusOnTarget = undefined;
         this.stopPan();
-        this.startFollowTween = this.scene.tweens.addCounter({
+        const glide: Phaser.Tweens.Tween = this.scene.tweens.addCounter({
             from: 0,
             to: 1,
             duration,
@@ -344,6 +344,10 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 this.emit(CameraManagerEvent.CameraUpdate, this.getCameraUpdateEventData());
             },
             onComplete: () => {
+                // A glide that was replaced or stopped leaves the camera state to whatever replaced it.
+                if (this.startFollowTween !== glide) {
+                    return;
+                }
                 this.animationInProgress = false;
                 this.startFollowTween = undefined;
                 if (this.explorationRequests !== explorationRequest) {
@@ -356,6 +360,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 this.scene.reposition();
             },
         });
+        this.startFollowTween = glide;
     }
 
     /**
@@ -566,6 +571,12 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         this.cameraLocked = false;
         //this.stopFollow();
         this.explorationRequests++;
+        // A glide back to a player is over as soon as exploring is asked for, so the next camera move can animate.
+        if (this.startFollowTween) {
+            this.startFollowTween.stop();
+            this.startFollowTween = undefined;
+            this.animationInProgress = false;
+        }
         this.setCameraMode(CameraMode.Exploration);
 
         this.camera.setFollowOffset(0, 0);

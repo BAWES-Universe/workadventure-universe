@@ -85,6 +85,7 @@ import type { ItemFactoryInterface } from "../Items/ItemFactoryInterface";
 import { biggestAvailableAreaStore } from "../../Stores/BiggestAvailableAreaStore";
 import { playersStore } from "../../Stores/PlayersStore";
 import { emoteStore } from "../../Stores/EmoteStore";
+import { wokaMenuStore } from "../../Stores/WokaMenuStore";
 import {
     jitsiParticipantsCountStore,
     userIsAdminStore,
@@ -1150,6 +1151,8 @@ export class GameScene extends DirtyScene {
     }
 
     public cleanupClosingScene(): void {
+        // A person card belongs to this map: close it before the map and its players go (a reconnect, a map change).
+        wokaMenuStore.clear();
         // make sure we restart own medias
         mediaManager.disableMyCamera();
         mediaManager.disableMyMicrophone();
