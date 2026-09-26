@@ -28,8 +28,9 @@ export function createSearchFilter(
     return {
         schedule(value, apply) {
             timers.clearTimeout(timer);
+            // Counted now, not when it runs: an older search finishing during this pause can't end the loading state.
+            const run = ++latest;
             timer = timers.setTimeout(() => {
-                const run = ++latest;
                 onLoading(true);
                 apply(value)
                     .catch((e) => console.error(e))
