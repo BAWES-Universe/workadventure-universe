@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
     import type { Unsubscriber } from "svelte/store";
-    import { gameManager } from "../../Phaser/Game/GameManager";
+    import type { GameScene } from "../../Phaser/Game/GameScene";
+    import { whenGameScene } from "../../Phaser/Game/WhenGameScene";
     import Woka from "./Woka.svelte";
 
     export let userId: number | string;
@@ -12,7 +13,14 @@
     let unsubscribe: Unsubscriber | undefined;
 
     onMount(() => {
-        const gameScene = gameManager.getCurrentGameScene();
+        src = placeholderSrc;
+        // During a reconnect there is no map for a moment: find the woka once it is back (asking now would throw).
+        unsubscribe = whenGameScene((gameScene) => {
+            return subscribeToWoka(gameScene);
+        });
+    });
+
+    function subscribeToWoka(gameScene: GameScene): Unsubscriber | undefined {
         let playerWokaPictureStore;
         if (userId === -1) {
             playerWokaPictureStore = gameScene.CurrentPlayer.pictureStore;
@@ -28,11 +36,10 @@
             )?.[1].pictureStore;
         }
 
-        src = placeholderSrc;
-        unsubscribe = playerWokaPictureStore?.subscribe((source) => {
+        return playerWokaPictureStore?.subscribe((source) => {
             src = source ?? placeholderSrc;
         });
-    });
+    }
     onDestroy(() => {
         if (unsubscribe) unsubscribe();
     });

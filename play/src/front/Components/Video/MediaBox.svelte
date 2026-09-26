@@ -23,14 +23,17 @@
         }
     }
 
-    const gameScene = gameManager.getCurrentGameScene();
+    // Whichever map is current when the layout changes: during a reconnect there is none (skip, don't throw).
+    function reposition() {
+        gameManager.tryGetCurrentGameScene()?.reposition();
+    }
 
     onMount(() => {
-        gameScene.reposition();
+        reposition();
     });
 
     onDestroy(() => {
-        gameScene.reposition();
+        reposition();
     });
 
     // Remove the highlight if the video is disabled

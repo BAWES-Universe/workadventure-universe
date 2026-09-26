@@ -2,7 +2,7 @@ import type { CharacterTextureMessage } from "@workadventure/messages";
 import type { GameScene } from "../Game/GameScene";
 import { TexturesHelper } from "../Helpers/TexturesHelper";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
-import { gameManager } from "../Game/GameManager";
+import { waitForGameScene } from "../Game/WhenGameScene";
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
 
 /**
@@ -10,7 +10,12 @@ import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager"
  */
 export class CharacterLayerManager {
     static wokaBase64(characterTextures: CharacterTextureMessage[]): Promise<string> {
-        const scene = gameManager.getCurrentGameScene();
+        // Asked from inside stores: during a reconnect there is no map for a moment, and asking then would throw
+        // (freezing the interface). Draw the woka once the map is back instead.
+        return waitForGameScene().then((scene) => this.drawWokaBase64(scene, characterTextures));
+    }
+
+    private static drawWokaBase64(scene: GameScene, characterTextures: CharacterTextureMessage[]): Promise<string> {
         return lazyLoadPlayerCharacterTextures(
             scene.superLoad,
             characterTextures.map((texture) => ({ id: texture.id, url: texture.url }))
