@@ -89,4 +89,32 @@ describe("LocateManager: a search never opens its card over another one", () => 
 
         expect(stitch.activate).not.toHaveBeenCalled();
     });
+
+    it("ignores an answer that arrives after another card opened", async () => {
+        const { wokaMenuStore, wokaMenuProgressStore } = await import("../../../Stores/WokaMenuStore");
+        const { rememberLocateRequest } = await import("../LocateRequest");
+        const { stream, remotePlayers, stitch } = await makeLocateManager();
+        rememberLocateRequest("Stitch");
+
+        // The player taps themselves before the server answers the search for Stitch.
+        wokaMenuStore.initialize("Me", 42, "me", undefined, true);
+        stream.next({ userId: 5, position: { x: 1, y: 2 } });
+
+        expect(get(wokaMenuStore)?.isSelf).toBe(true);
+        expect(get(wokaMenuProgressStore)).toBeUndefined();
+        remotePlayers.set(5, stitch);
+        vi.advanceTimersByTime(15_000);
+        expect(stitch.activate).not.toHaveBeenCalled();
+    });
+
+    it("still handles the answer when nothing else opened meanwhile", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { rememberLocateRequest } = await import("../LocateRequest");
+        const { stream } = await makeLocateManager();
+        rememberLocateRequest("Stitch");
+
+        stream.next({ userId: 5, position: { x: 1, y: 2 } });
+
+        expect(get(wokaMenuStore)).toMatchObject({ userId: -1, wokaName: "Stitch" });
+    });
 });

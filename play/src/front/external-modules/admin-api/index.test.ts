@@ -149,6 +149,13 @@ describe("Opening Orbit on one of its pages", () => {
         };
     }
 
+    it("doesn't offer Orbit when no Orbit address is configured", async () => {
+        const index = await freshIndex();
+        index.default.init({}, { ...(makeOptions() as object), adminUrl: "" });
+        vi.advanceTimersByTime(3000);
+        expect(index.canOpenOrbit()).toBe(false);
+    });
+
     it("can't open Orbit before the integration is set up (a guest)", async () => {
         const index = await freshIndex();
         expect(index.canOpenOrbit()).toBe(false);
