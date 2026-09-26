@@ -11,6 +11,19 @@ describe("Orbit iframe authentication", () => {
         expect(url.searchParams.has("_token")).toBe(false);
     });
 
+    it("adds the Orbit page to land on when one is asked for", () => {
+        const url = new URL(
+            buildAdminLoginUrl(
+                "https://admin.example.com",
+                "https://play.example.com/@/room",
+                undefined,
+                "/admin/profile"
+            )
+        );
+        expect(url.searchParams.get("redirect")).toBe("/admin/profile");
+        expect(new URL(buildAdminLoginUrl("https://admin.example.com", "r")).searchParams.has("redirect")).toBe(false);
+    });
+
     it("accepts only a versioned ready message with a bounded nonce", () => {
         expect(isOrbitAuthReadyMessage({ type: "orbit-auth-ready-v2", version: 2, nonce: "1234567890abcdef" })).toBe(
             true

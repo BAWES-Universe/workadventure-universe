@@ -1,9 +1,12 @@
+import { get } from "svelte/store";
 import { AskPositionMessage_AskType } from "@workadventure/messages";
+import LL from "../../../../i18n/i18n-svelte";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { scriptUtils } from "../../../Api/ScriptUtils";
 import { WOKA_SPEED } from "../../../Enum/EnvironmentVariable";
 import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
 import { rememberLocateRequest } from "../../../Phaser/Game/LocateRequest";
+import { canOpenOrbit, openOrbitPage } from "../../../external-modules/admin-api/index";
 import type { PersonLocation } from "./PersonTarget";
 import { resolvePersonTarget } from "./PersonTarget";
 
@@ -73,12 +76,38 @@ export function goToPersonRoom(person: PersonLocation): void {
     scriptUtils.goToPage(`${person.playUri}#moveToUser=${person.uuid ?? ""}`);
 }
 
+/** Orbit's page for editing your visit card. */
+export const EDIT_VISIT_CARD_PAGE = "/admin/profile";
+
 /**
- * Your own row: there is no one to look for, so close any open card and bring the camera back to you.
+ * Your own row: there is no one to look for. The camera comes back to you and your own card opens, with your visit
+ * card and, when you can use Orbit, a button to edit it there.
  */
-export function showMyself(): void {
+export function showMyself(userUuid: string | undefined): void {
     const scene = gameManager.tryGetCurrentGameScene();
     if (!scene) return;
-    wokaMenuStore.clear();
     scene.getCameraManager().returnToPlayer();
+    if (userUuid === undefined) {
+        // No account id to show a card for: just close any open card.
+        wokaMenuStore.clear();
+        return;
+    }
+    wokaMenuStore.initialize(
+        gameManager.getPlayerName() ?? "",
+        scene.connection?.getUserId() ?? -1,
+        userUuid,
+        gameManager.myVisitCardUrl ?? undefined,
+        true
+    );
+    if (!canOpenOrbit()) return;
+    wokaMenuStore.addAction({
+        actionName: get(LL).chat.userList.editMyVisitCard(),
+        style: "is-primary",
+        priority: 10,
+        testId: "edit-my-visit-card",
+        callback: () => {
+            wokaMenuStore.clear();
+            openOrbitPage(EDIT_VISIT_CARD_PAGE);
+        },
+    });
 }

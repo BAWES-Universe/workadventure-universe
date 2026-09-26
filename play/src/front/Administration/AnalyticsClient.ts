@@ -1116,6 +1116,14 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
     /** The game was still not back long after a dropped connection: the page reloads itself (or would, if it just did). */
+    /** The interface had stopped updating (see StoreFreezeWatchdog), and whether the page was reloaded. */
+    uiFrozen(properties: { reloaded: boolean }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_ui_frozen", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     reconnectStuck(properties: {
         stuckMs: number;
         screen: "reconnecting" | "none";

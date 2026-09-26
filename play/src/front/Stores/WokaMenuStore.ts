@@ -1,5 +1,5 @@
 import type { ComponentType } from "svelte";
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { v4 } from "uuid";
 
 export type WokaMenuAction = {
@@ -18,6 +18,8 @@ export interface WokaMenuData {
     visitCardUrl?: string;
     userId: number; // -1 if the user is not found yet and woka menu is in progress
     userUuid: string;
+    /** Your own card: shows your woka, and none of the actions meant for other players. */
+    isSelf?: boolean;
 }
 
 function createWokaMenuStore() {
@@ -25,13 +27,20 @@ function createWokaMenuStore() {
 
     return {
         subscribe,
-        initialize: (wokaName: string, userId: number, userUuid: string, visitCardUrl: string | undefined) => {
+        initialize: (
+            wokaName: string,
+            userId: number,
+            userUuid: string,
+            visitCardUrl: string | undefined,
+            isSelf = false
+        ) => {
             set({
                 wokaName,
                 actions: new Array<WokaMenuAction>(),
                 visitCardUrl,
                 userId,
                 userUuid,
+                isSelf,
             });
         },
         addAction: (action: WokaMenuAction) => {
@@ -61,14 +70,14 @@ function createWokaMenuStore() {
         clear: () => {
             set(undefined);
         },
+        /**
+         * Closes the card when it shows this person. Anyone else leaving the map (a whole map of them when it closes)
+         * leaves the card and its subscribers alone.
+         */
         removeRemotePlayer: (userUuid: string) => {
-            update((data) => {
-                if (!data) return data;
-                if (data.userUuid === userUuid) {
-                    return undefined;
-                }
-                return data;
-            });
+            if (get({ subscribe })?.userUuid === userUuid) {
+                set(undefined);
+            }
         },
     };
 }

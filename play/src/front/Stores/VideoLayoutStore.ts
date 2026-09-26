@@ -6,7 +6,7 @@ import { isInRemoteConversation } from "./StreamableCollectionStore";
 import { highlightedEmbedScreen } from "./HighlightedEmbedScreenStore";
 import { activePictureInPictureStore } from "./PeerStore";
 // Time in milliseconds before switching to multi-line mode
-export const SWITCH_TO_MULTILINE_DELAY = 3500;
+export const SWITCH_TO_MULTILINE_DELAY = 2000;
 
 // Store to track the last player movement timestamp
 export const lastPlayerMovement = readable(Date.now(), function start(set) {

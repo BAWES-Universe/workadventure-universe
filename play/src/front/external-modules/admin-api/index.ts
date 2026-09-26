@@ -75,8 +75,8 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     event.source.postMessage(response, adminOrigin);
 }
 
-// Function to open the admin modal
-function openAdminModal(options: ExtensionModuleOptions) {
+// Function to open the admin modal, optionally on a given Orbit page
+function openAdminModal(options: ExtensionModuleOptions, redirect?: string) {
     if (adminModalOpen) return;
 
     const accessToken = getAccessTokenFromJwt(options.userAccessToken);
@@ -93,7 +93,7 @@ function openAdminModal(options: ExtensionModuleOptions) {
 
     let adminDashboardUrl: string;
     try {
-        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href);
+        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href, redirect);
     } catch (error) {
         console.error("Refusing insecure Admin URL:", error);
         return;
@@ -118,6 +118,22 @@ export function openAdminModalFromMenu() {
     if (extensionOptions) {
         openAdminModal(extensionOptions);
     }
+}
+
+/** Whether Orbit can be opened for this player (signed in, and Orbit is set up for this room). */
+export function canOpenOrbit(): boolean {
+    return (
+        extensionOptions !== null &&
+        !!extensionOptions.adminUrl &&
+        getAccessTokenFromJwt(extensionOptions.userAccessToken) !== null
+    );
+}
+
+/** Opens Orbit on one of its pages (an /admin path), switching to it if Orbit is already open. */
+export function openOrbitPage(path: string) {
+    if (!extensionOptions) return;
+    if (adminModalOpen) closeAdminModal();
+    openAdminModal(extensionOptions, path);
 }
 
 // Function to close the admin modal

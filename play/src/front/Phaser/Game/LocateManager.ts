@@ -6,7 +6,7 @@ import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore
 import LL from "../../../i18n/i18n-svelte";
 import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 import type { CameraManager } from "./CameraManager";
-import { locateRequestName } from "./LocateRequest";
+import { cancelLocateRequest, takeLocateRequest } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
 
 /**
@@ -18,6 +18,9 @@ export class LocateManager {
     private locatePositionInterval: ReturnType<typeof setInterval> | undefined = undefined;
     private locatePositionTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
     private locatePositionClearProgressTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
+    private locateActivateTimeout: ReturnType<typeof setTimeout> | undefined = undefined;
+    /** The person the running search's card is for ("" while unknown). */
+    private searchingFor = "";
     private wokaMenuStoreUnsubscriber?: () => void;
 
     constructor(private scene: GameScene, private cameraManager: CameraManager, private connection: RoomConnection) {
@@ -43,10 +46,20 @@ export class LocateManager {
     private subscribeToWokaMenuStore(): void {
         // Subscribe to woka menu store to stop following the remote player when the woka menu is closed
         this.wokaMenuStoreUnsubscriber = wokaMenuStore.subscribe((value) => {
+            // The search's card was closed or replaced (your own card, someone else's): the search ends there, and
+            // never opens its card over the one showing now.
+            if (this.isSearching() && !(value?.userId === -1 && value.userUuid === this.searchingFor)) {
+                this.clearAllTimeouts();
+                wokaMenuProgressStore.set(undefined);
+            }
+            // Another card opened while an answer is still awaited: that answer won't open its card over this one.
+            if (value !== undefined && (value.isSelf || value.userId !== -1)) {
+                cancelLocateRequest();
+            }
             if (value === undefined) {
                 // TODO: Stop following the remote player
                 this.cameraManager.stopFollowRemotePlayer();
-            } else if (value.userUuid !== undefined && value.userUuid !== "") {
+            } else if (!value.isSelf && value.userUuid !== undefined && value.userUuid !== "") {
                 this.cameraManager.followRemotePlayer(value.userUuid);
             }
         });
@@ -54,6 +67,10 @@ export class LocateManager {
 
     private handleLocatePositionMessage(message: LocatePositionMessageProto): void {
         if (!message.position) {
+            return;
+        }
+        const request = takeLocateRequest();
+        if (request?.cancelled) {
             return;
         }
 
@@ -69,11 +86,12 @@ export class LocateManager {
 
         // Get user data to initialize woka menu
         const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
-        const userName = userData?.name ?? locateRequestName() ?? get(LL).locate.userSearching();
+        const userName = userData?.name ?? request?.name ?? get(LL).locate.userSearching();
         const userUuid = userData?.userUuid ?? "";
         const visitCardUrl = userData?.visitCardUrl ?? undefined;
 
         // Initialize woka menu with progress
+        this.searchingFor = userUuid;
         wokaMenuStore.initialize(userName, -1, userUuid, visitCardUrl || undefined);
 
         // Set up progress messages with fun explanations
@@ -156,10 +174,20 @@ export class LocateManager {
     private activateRemoteUser(remoteUser: RemotePlayer): void {
         // Delay activation to allow Phaser to update player state and avoid camera animation glitch
         // This ensures smooth camera transition when the player is created/updated/recreated
-        setTimeout(() => {
+        this.locateActivateTimeout = setTimeout(() => {
+            this.locateActivateTimeout = undefined;
             remoteUser.activate();
             wokaMenuProgressStore.set(undefined);
         }, 300);
+    }
+
+    private isSearching(): boolean {
+        return (
+            this.locatePositionInterval !== undefined ||
+            this.locatePositionTimeout !== undefined ||
+            this.locatePositionClearProgressTimeout !== undefined ||
+            this.locateActivateTimeout !== undefined
+        );
     }
 
     private clearAllTimeouts(): void {
@@ -174,6 +202,10 @@ export class LocateManager {
         if (this.locatePositionClearProgressTimeout !== undefined) {
             clearTimeout(this.locatePositionClearProgressTimeout);
             this.locatePositionClearProgressTimeout = undefined;
+        }
+        if (this.locateActivateTimeout !== undefined) {
+            clearTimeout(this.locateActivateTimeout);
+            this.locateActivateTimeout = undefined;
         }
     }
 }
