@@ -6,7 +6,7 @@ import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore
 import LL from "../../../i18n/i18n-svelte";
 import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 import type { CameraManager } from "./CameraManager";
-import { locateRequestName } from "./LocateRequest";
+import { cancelLocateRequest, takeLocateRequest } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
 
 /**
@@ -52,6 +52,10 @@ export class LocateManager {
                 this.clearAllTimeouts();
                 wokaMenuProgressStore.set(undefined);
             }
+            // Another card opened while an answer is still awaited: that answer won't open its card over this one.
+            if (value !== undefined && (value.isSelf || value.userId !== -1)) {
+                cancelLocateRequest();
+            }
             if (value === undefined) {
                 // TODO: Stop following the remote player
                 this.cameraManager.stopFollowRemotePlayer();
@@ -63,6 +67,10 @@ export class LocateManager {
 
     private handleLocatePositionMessage(message: LocatePositionMessageProto): void {
         if (!message.position) {
+            return;
+        }
+        const request = takeLocateRequest();
+        if (request?.cancelled) {
             return;
         }
 
@@ -78,7 +86,7 @@ export class LocateManager {
 
         // Get user data to initialize woka menu
         const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
-        const userName = userData?.name ?? locateRequestName() ?? get(LL).locate.userSearching();
+        const userName = userData?.name ?? request?.name ?? get(LL).locate.userSearching();
         const userUuid = userData?.userUuid ?? "";
         const visitCardUrl = userData?.visitCardUrl ?? undefined;
 
