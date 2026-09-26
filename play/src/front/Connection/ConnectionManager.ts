@@ -545,92 +545,98 @@ class ConnectionManager {
 
             // The roomJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
             //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
-            connection.roomJoinedMessageStream.subscribe((connect: OnConnectInterface) => {
-                stopWatch();
-                // The map that asked for this connection was closed meanwhile: it is not the app's connection, and
-                // the screen shown now belongs to the map that replaced it. The caller closes it.
-                if (options.cancelled?.()) {
+            connection.roomJoinedMessageStream.subscribe({
+                // Ended without joining or failing: the connection was closed on purpose before the join (the world
+                // is full, the Woka must be chosen again…) and that screen is already up. Nothing to retry.
+                complete: () => stopWatch(),
+                next: (connect: OnConnectInterface) => {
+                    stopWatch();
+                    // A join succeeded: the server is reachable, so the next failure is a first one again.
+                    this.failedSocketAttempts = 0;
+                    // The map that asked for this connection was closed meanwhile: it is not the app's connection, and
+                    // the screen shown now belongs to the map that replaced it. The caller closes it.
+                    if (options.cancelled?.()) {
+                        resolve(connect);
+                        return;
+                    }
+                    // Set the default application integration for the room
+                    const KlaxoonApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.KLAXOON
+                    );
+                    this.klaxoonToolActivated = KlaxoonApp?.enabled ?? KLAXOON_ENABLED;
+
+                    const YoutubeApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.YOUTUBE
+                    );
+                    this.youtubeToolActivated = YoutubeApp?.enabled ?? YOUTUBE_ENABLED;
+
+                    const GoogleDriveApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_DRIVE
+                    );
+                    this.googleDriveToolActivated = GoogleDriveApp?.enabled ?? GOOGLE_DRIVE_ENABLED;
+
+                    const GoogleDocsApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_DOCS
+                    );
+                    this.googleDocsToolActivated = GoogleDocsApp?.enabled ?? GOOGLE_DOCS_ENABLED;
+
+                    const GoogleSheetsApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_SHEETS
+                    );
+                    this.googleSheetsToolActivated = GoogleSheetsApp?.enabled ?? GOOGLE_SHEETS_ENABLED;
+
+                    const GoogleSlidesApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_SLIDES
+                    );
+                    this.googleSlidesToolActivated = GoogleSlidesApp?.enabled ?? GOOGLE_SLIDES_ENABLED;
+
+                    const EraserApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.ERASER
+                    );
+                    this.eraserToolActivated = EraserApp?.enabled ?? ERASER_ENABLED;
+
+                    const ExcalidrawApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.EXCALIDRAW
+                    );
+                    this.excalidrawToolActivated = ExcalidrawApp?.enabled ?? EXCALIDRAW_ENABLED;
+
+                    const CardsApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.CARDS
+                    );
+                    this.cardsToolActivated = CardsApp?.enabled ?? CARDS_ENABLED;
+
+                    const TldrawApp = connect.room.applications?.find(
+                        (app) => app.name === defautlNativeIntegrationAppName.TLDRAW
+                    );
+                    this.tldrawToolActivated = TldrawApp?.enabled ?? TLDRAW_ENABLED;
+
+                    // Set other applications
+                    for (const app of connect.room.applications ?? []) {
+                        if (
+                            defautlNativeIntegrationAppName.KLAXOON === app.name ||
+                            defautlNativeIntegrationAppName.YOUTUBE === app.name ||
+                            defautlNativeIntegrationAppName.GOOGLE_DRIVE === app.name ||
+                            defautlNativeIntegrationAppName.GOOGLE_DOCS === app.name ||
+                            defautlNativeIntegrationAppName.GOOGLE_SHEETS === app.name ||
+                            defautlNativeIntegrationAppName.GOOGLE_SLIDES === app.name ||
+                            defautlNativeIntegrationAppName.ERASER === app.name ||
+                            defautlNativeIntegrationAppName.EXCALIDRAW === app.name ||
+                            defautlNativeIntegrationAppName.CARDS === app.name ||
+                            defautlNativeIntegrationAppName.TLDRAW === app.name
+                        ) {
+                            continue;
+                        }
+
+                        // Save applications in the connection manager to use it in the map editor
+                        if (this._applications.find((a) => a.name === app.name) === undefined) {
+                            this._applications.push(app);
+                        }
+                    }
+                    this._roomConnection = connection;
+                    this._roomConnectionStream.next(connection);
+                    errorScreenStore.delete();
                     resolve(connect);
-                    return;
-                }
-                // Set the default application integration for the room
-                const KlaxoonApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.KLAXOON
-                );
-                this.klaxoonToolActivated = KlaxoonApp?.enabled ?? KLAXOON_ENABLED;
-
-                const YoutubeApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.YOUTUBE
-                );
-                this.youtubeToolActivated = YoutubeApp?.enabled ?? YOUTUBE_ENABLED;
-
-                const GoogleDriveApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_DRIVE
-                );
-                this.googleDriveToolActivated = GoogleDriveApp?.enabled ?? GOOGLE_DRIVE_ENABLED;
-
-                const GoogleDocsApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_DOCS
-                );
-                this.googleDocsToolActivated = GoogleDocsApp?.enabled ?? GOOGLE_DOCS_ENABLED;
-
-                const GoogleSheetsApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_SHEETS
-                );
-                this.googleSheetsToolActivated = GoogleSheetsApp?.enabled ?? GOOGLE_SHEETS_ENABLED;
-
-                const GoogleSlidesApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.GOOGLE_SLIDES
-                );
-                this.googleSlidesToolActivated = GoogleSlidesApp?.enabled ?? GOOGLE_SLIDES_ENABLED;
-
-                const EraserApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.ERASER
-                );
-                this.eraserToolActivated = EraserApp?.enabled ?? ERASER_ENABLED;
-
-                const ExcalidrawApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.EXCALIDRAW
-                );
-                this.excalidrawToolActivated = ExcalidrawApp?.enabled ?? EXCALIDRAW_ENABLED;
-
-                const CardsApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.CARDS
-                );
-                this.cardsToolActivated = CardsApp?.enabled ?? CARDS_ENABLED;
-
-                const TldrawApp = connect.room.applications?.find(
-                    (app) => app.name === defautlNativeIntegrationAppName.TLDRAW
-                );
-                this.tldrawToolActivated = TldrawApp?.enabled ?? TLDRAW_ENABLED;
-
-                // Set other applications
-                for (const app of connect.room.applications ?? []) {
-                    if (
-                        defautlNativeIntegrationAppName.KLAXOON === app.name ||
-                        defautlNativeIntegrationAppName.YOUTUBE === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_DRIVE === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_DOCS === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_SHEETS === app.name ||
-                        defautlNativeIntegrationAppName.GOOGLE_SLIDES === app.name ||
-                        defautlNativeIntegrationAppName.ERASER === app.name ||
-                        defautlNativeIntegrationAppName.EXCALIDRAW === app.name ||
-                        defautlNativeIntegrationAppName.CARDS === app.name ||
-                        defautlNativeIntegrationAppName.TLDRAW === app.name
-                    ) {
-                        continue;
-                    }
-
-                    // Save applications in the connection manager to use it in the map editor
-                    if (this._applications.find((a) => a.name === app.name) === undefined) {
-                        this._applications.push(app);
-                    }
-                }
-                this._roomConnection = connection;
-                this._roomConnectionStream.next(connection);
-                this.failedSocketAttempts = 0;
-                errorScreenStore.delete();
-                resolve(connect);
+                },
             });
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
