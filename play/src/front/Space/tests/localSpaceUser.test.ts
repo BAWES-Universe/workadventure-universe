@@ -26,6 +26,7 @@ vi.mock("../../../i18n/i18n-svelte", () => {
     return { default: readable(fn), LL: readable(fn) };
 });
 
+import { gameSceneIsLoadedStore } from "../../Stores/GameSceneStore";
 import { localSpaceUser } from "../localSpaceUser";
 
 describe("localSpaceUser picture", () => {
@@ -40,6 +41,22 @@ describe("localSpaceUser picture", () => {
             unsubscribe();
         }).not.toThrow();
         expect(picture).toBeUndefined();
+    });
+
+    it("fills in the picture by itself once the map is back", () => {
+        sceneHolder.scene = undefined;
+        gameSceneIsLoadedStore.set(false);
+        const user = localSpaceUser("Me");
+        let picture: string | undefined;
+        const unsubscribe = user.pictureStore.subscribe((value) => {
+            picture = value;
+        });
+        expect(picture).toBeUndefined();
+
+        sceneHolder.scene = { CurrentPlayer: { pictureStore: readable("woka.png") } };
+        gameSceneIsLoadedStore.set(true);
+        expect(picture).toBe("woka.png");
+        unsubscribe();
     });
 
     it("shows the player's picture once there is a map", () => {

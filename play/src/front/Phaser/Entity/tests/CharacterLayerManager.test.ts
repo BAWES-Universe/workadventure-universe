@@ -1,28 +1,38 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-// A reconnect is swapping the map: there is no game scene to draw in.
-vi.mock("../../Game/GameManager", () => {
-    class GameSceneNotFoundError extends Error {}
-    return {
-        GameSceneNotFoundError,
-        gameManager: {
-            getCurrentGameScene: () => {
-                throw new GameSceneNotFoundError("Not the Game Scene");
-            },
-            tryGetCurrentGameScene: () => undefined,
+const sceneHolder = vi.hoisted(() => ({ scene: undefined as unknown }));
+const lazyLoad = vi.hoisted(() => vi.fn(() => new Promise(() => {})));
+
+vi.mock("../../Game/GameManager", () => ({
+    gameManager: {
+        getCurrentGameScene: () => {
+            if (!sceneHolder.scene) throw new Error("Not the Game Scene");
+            return sceneHolder.scene;
         },
-    };
-});
-vi.mock("../PlayerTexturesLoadingManager", () => ({ lazyLoadPlayerCharacterTextures: vi.fn() }));
+        tryGetCurrentGameScene: () => sceneHolder.scene,
+    },
+}));
+vi.mock("../PlayerTexturesLoadingManager", () => ({ lazyLoadPlayerCharacterTextures: lazyLoad }));
 
+import { gameSceneIsLoadedStore } from "../../../Stores/GameSceneStore";
 import { CharacterLayerManager } from "../CharacterLayerManager";
 
-describe("CharacterLayerManager.wokaBase64 with no game scene", () => {
-    it("fails the promise instead of throwing, so the store asking for it keeps working", async () => {
-        let result: Promise<string> | undefined;
-        expect(() => {
-            result = CharacterLayerManager.wokaBase64([{ id: "color_1", url: "color_1.png" }]);
-        }).not.toThrow();
-        await expect(result).rejects.toThrow();
+describe("CharacterLayerManager.wokaBase64 during a reconnect", () => {
+    afterEach(() => {
+        sceneHolder.scene = undefined;
+        gameSceneIsLoadedStore.set(false);
+    });
+
+    it("does not throw while there is no map, and draws the woka once the map is back", async () => {
+        expect(() => CharacterLayerManager.wokaBase64([{ id: "color_1", url: "color_1.png" }])).not.toThrow();
+        await Promise.resolve();
+        expect(lazyLoad).not.toHaveBeenCalled();
+
+        const superLoad = {};
+        sceneHolder.scene = { superLoad };
+        gameSceneIsLoadedStore.set(true);
+        await vi.waitFor(() =>
+            expect(lazyLoad).toHaveBeenCalledWith(superLoad, [{ id: "color_1", url: "color_1.png" }])
+        );
     });
 });

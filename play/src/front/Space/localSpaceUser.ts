@@ -1,7 +1,7 @@
 import { get, readable, writable } from "svelte/store";
 import type { PrivateSpaceEvent, SpaceEvent } from "@workadventure/messages";
 import { localUserStore } from "../Connection/LocalUserStore";
-import { gameManager } from "../Phaser/Game/GameManager";
+import { whenGameScene } from "../Phaser/Game/WhenGameScene";
 import { availabilityStatusStore } from "../Stores/MediaStore";
 import LL from "../../i18n/i18n-svelte";
 import type { SpaceUserExtended } from "./SpaceInterface";
@@ -27,16 +27,12 @@ export const localSpaceUser = (name?: string): SpaceUserExtended => {
         jitsiParticipantId: undefined,
         characterTextures: [],
         pictureStore: readable<string | undefined>(undefined, (set) => {
-            // No map while a reconnect swaps it: no picture yet, rather than throw inside the store (which freezes
-            // the interface).
-            const unsubscribe = gameManager
-                .tryGetCurrentGameScene()
-                ?.CurrentPlayer.pictureStore.subscribe((pictureStore) => {
+            // During a reconnect there is no map for a moment: take the picture once it is back (asking now would throw).
+            return whenGameScene((scene) =>
+                scene.CurrentPlayer.pictureStore.subscribe((pictureStore) => {
                     set(pictureStore);
-                });
-            return () => {
-                unsubscribe?.();
-            };
+                })
+            );
         }),
         emitPrivateEvent: (message: NonNullable<PrivateSpaceEvent["event"]>) => {
             throw new Error("should not be called");
