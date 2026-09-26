@@ -2,6 +2,8 @@ import { AskPositionMessage_AskType } from "@workadventure/messages";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { scriptUtils } from "../../../Api/ScriptUtils";
 import { WOKA_SPEED } from "../../../Enum/EnvironmentVariable";
+import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
+import { rememberLocateRequest } from "../../../Phaser/Game/LocateRequest";
 import type { PersonLocation } from "./PersonTarget";
 import { resolvePersonTarget } from "./PersonTarget";
 
@@ -34,7 +36,7 @@ export function walkToPerson(person: PersonLocation): void {
 /**
  * Locate a person: open the woka menu on their avatar if it is in view, otherwise ask the server for their position.
  */
-export function locatePerson(person: PersonLocation): void {
+export function locatePerson(person: PersonLocation, name?: string): void {
     const scene = gameManager.tryGetCurrentGameScene();
     if (!scene) return;
     const target = resolvePersonTarget(person, scene.roomUrl, (userId) => scene.MapPlayersByKey.has(userId));
@@ -58,6 +60,8 @@ export function locatePerson(person: PersonLocation): void {
         }
     }
 
+    // Their name shows on the card while the search runs.
+    rememberLocateRequest(name);
     scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.LOCATE);
 }
 
@@ -67,4 +71,14 @@ export function locatePerson(person: PersonLocation): void {
 export function goToPersonRoom(person: PersonLocation): void {
     if (!person.playUri) return;
     scriptUtils.goToPage(`${person.playUri}#moveToUser=${person.uuid ?? ""}`);
+}
+
+/**
+ * Your own row: there is no one to look for, so close any open card and bring the camera back to you.
+ */
+export function showMyself(): void {
+    const scene = gameManager.tryGetCurrentGameScene();
+    if (!scene) return;
+    wokaMenuStore.clear();
+    scene.getCameraManager().returnToPlayer();
 }

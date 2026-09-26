@@ -16,7 +16,7 @@
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
     import { getPersonActions, isSelf } from "./PersonActions";
-    import { goToPersonRoom, locatePerson, walkToPerson } from "./PersonNavigation";
+    import { goToPersonRoom, locatePerson, showMyself, walkToPerson } from "./PersonNavigation";
     import { IconDoorIn, IconLoader, IconMessage, IconWalk } from "@wa-icons";
 
     export let user: ChatUser;
@@ -117,12 +117,16 @@
     let loadingDirectRoomAccess = false;
 
     function openWokaMenu() {
+        if (isMe) {
+            showMyself();
+            return;
+        }
         if (user.uuid == undefined) return;
         // Track the open woka menu action
         analyticsClient.openWokaMenu();
         // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
         // otherwise asks the server for the position.
-        locatePerson(user);
+        locatePerson(user, displayName);
     }
 </script>
 

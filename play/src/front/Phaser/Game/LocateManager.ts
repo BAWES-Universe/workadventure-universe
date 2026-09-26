@@ -5,6 +5,7 @@ import type { RemotePlayer } from "../Entity/RemotePlayer";
 import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore";
 import LL from "../../../i18n/i18n-svelte";
 import type { CameraManager } from "./CameraManager";
+import { locateRequestName } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
 
 /**
@@ -67,7 +68,7 @@ export class LocateManager {
 
         // Get user data to initialize woka menu
         const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
-        const userName = userData?.name ?? get(LL).locate.userSearching();
+        const userName = userData?.name ?? locateRequestName() ?? get(LL).locate.userSearching();
         const userUuid = userData?.userUuid ?? "";
         const visitCardUrl = userData?.visitCardUrl ?? undefined;
 

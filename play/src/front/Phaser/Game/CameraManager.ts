@@ -384,6 +384,21 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     }
 
     /**
+     * Brings the camera back to the player (tapping your own row in the People tab), from wherever it was looking.
+     * An area lock stays as it is: the player is inside that area, on screen.
+     */
+    public returnToPlayer(): void {
+        this.followedRemotePlayerUuid = undefined;
+        if (this.cameraMode === CameraMode.Focus) {
+            return;
+        }
+        if (this.cameraMode === CameraMode.Follow && this.playerToFollow === this.scene.CurrentPlayer) {
+            return;
+        }
+        this.startFollowPlayer(this.scene.CurrentPlayer, 1000);
+    }
+
+    /**
      * Updates the offset of the character compared to the center of the screen according to the layout manager
      * (tries to put the character in the center of the remaining space if there is a discussion going on.
      */
