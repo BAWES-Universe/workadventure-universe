@@ -325,6 +325,7 @@
 
 <div
     class="w-full"
+    data-camera-block
     bind:clientHeight={maxContainerHeight}
     class:h-full={!isOnOneLine || (isOnOneLine && oneLineMode === "vertical")}
 >
