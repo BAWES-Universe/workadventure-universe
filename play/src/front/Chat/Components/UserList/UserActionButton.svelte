@@ -11,6 +11,7 @@
     import { showReportScreenStore } from "../../../Stores/ShowReportScreenStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
+    import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import PersonActionButton from "./PersonActionButton.svelte";
     import { locatePerson } from "./PersonNavigation";
     import { openPersonMenuStore } from "./PersonMenuStore";
@@ -151,6 +152,7 @@
 
         // Track the open woka menu action
         analyticsClient.openWokaMenu();
+        peopleCardReturn.tappedPerson();
 
         // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
         // otherwise asks the server for the position.

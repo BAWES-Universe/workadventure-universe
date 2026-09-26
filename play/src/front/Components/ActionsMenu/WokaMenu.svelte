@@ -8,6 +8,7 @@
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 
     import type { WokaMenuAction, WokaMenuData } from "../../Stores/WokaMenuStore";
 
@@ -18,13 +19,18 @@
     let wokaMenuStoreUnsubscriber: Unsubscriber | null;
 
     function onKeyDown(e: KeyboardEvent) {
-        if (e.key === "Escape") {
-            closeActionsMenu();
+        if (e.key === "Escape" && wokaMenuData) {
+            dismiss();
         }
     }
 
     function closeActionsMenu() {
         wokaMenuStore.clear();
+    }
+
+    // Closed without doing anything: on a phone, back to the People tab if the card was opened from it.
+    function dismiss() {
+        peopleCardReturn.dismissCard();
     }
 
     let buttonsLayout: "row" | "column" | "wrap" = "row";
@@ -75,7 +81,7 @@
         <div>
             <div class="w-full bg-cover relative">
                 <div class="absolute top-2 right-2">
-                    <ButtonClose on:click={closeActionsMenu} />
+                    <ButtonClose on:click={dismiss} />
                 </div>
 
                 <div class="flex items-center justify-center p-2">
