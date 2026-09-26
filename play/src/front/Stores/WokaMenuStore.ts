@@ -18,6 +18,8 @@ export interface WokaMenuData {
     visitCardUrl?: string;
     userId: number; // -1 if the user is not found yet and woka menu is in progress
     userUuid: string;
+    /** Your own card: shows your woka, and none of the actions meant for other players. */
+    isSelf?: boolean;
 }
 
 function createWokaMenuStore() {
@@ -25,13 +27,20 @@ function createWokaMenuStore() {
 
     return {
         subscribe,
-        initialize: (wokaName: string, userId: number, userUuid: string, visitCardUrl: string | undefined) => {
+        initialize: (
+            wokaName: string,
+            userId: number,
+            userUuid: string,
+            visitCardUrl: string | undefined,
+            isSelf = false
+        ) => {
             set({
                 wokaName,
                 actions: new Array<WokaMenuAction>(),
                 visitCardUrl,
                 userId,
                 userUuid,
+                isSelf,
             });
         },
         addAction: (action: WokaMenuAction) => {

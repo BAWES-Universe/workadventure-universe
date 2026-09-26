@@ -76,7 +76,6 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     event.source.postMessage(response, adminOrigin);
 }
 
-// Function to open the admin modal
 /**
  * What opened Orbit: the action-bar button, a quest's "Show me", the game asking Orbit for a page, or Orbit opening
  * on its own. Only the button opens it today; Orbit never opens on its own any more, and "auto" stays so the numbers
@@ -84,7 +83,8 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
  */
 export type OrbitOpenSource = "button" | "quest" | "link" | "auto";
 
-function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource) {
+// Function to open the admin modal, optionally on a given Orbit page
+function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource, redirect?: string) {
     if (adminModalOpen) return;
 
     const accessToken = getAccessTokenFromJwt(options.userAccessToken);
@@ -101,7 +101,7 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
 
     let adminDashboardUrl: string;
     try {
-        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href);
+        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href, redirect);
     } catch (error) {
         console.error("Refusing insecure Admin URL:", error);
         return;
@@ -127,6 +127,18 @@ export function openAdminModalFromMenu() {
     if (extensionOptions) {
         openAdminModal(extensionOptions, "button");
     }
+}
+
+/** Whether Orbit can be opened for this player (signed in, and Orbit is set up for this room). */
+export function canOpenOrbit(): boolean {
+    return extensionOptions !== null && getAccessTokenFromJwt(extensionOptions.userAccessToken) !== null;
+}
+
+/** Opens Orbit on one of its pages (an /admin path), switching to it if Orbit is already open. */
+export function openOrbitPage(path: string) {
+    if (!extensionOptions) return;
+    if (adminModalOpen) closeAdminModal();
+    openAdminModal(extensionOptions, "link", path);
 }
 
 // Function to close the admin modal
