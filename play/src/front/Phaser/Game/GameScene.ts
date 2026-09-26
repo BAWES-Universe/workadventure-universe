@@ -117,7 +117,8 @@ import {
 import { LL, locale } from "../../../i18n/i18n-svelte";
 import { GameSceneUserInputHandler } from "../UserInput/GameSceneUserInputHandler";
 import { followUsersColorStore, followUsersStore } from "../../Stores/FollowStore";
-import { axiosWithRetry, hideConnectionIssueMessage, showConnectionIssueMessage } from "../../Connection/AxiosUtils";
+import { axiosWithRetry, hideConnectionIssueMessage } from "../../Connection/AxiosUtils";
+import { RESUME_NETWORK_WAIT_MS, showReconnectingScreen, waitForNetwork } from "../../Connection/ReconnectScreen";
 import { StringUtils } from "../../Utils/StringUtils";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
@@ -586,7 +587,9 @@ export class GameScene extends DirtyScene {
         console.error(error);
 
         // In case an error is already displayed, let's do nothing. We want the first error to be kept visible.
-        if (get(errorScreenStore)) {
+        // The "Reconnecting" screen is not an error: a real one replaces it.
+        const shown = get(errorScreenStore);
+        if (shown && shown.type !== "reconnecting") {
             return;
         }
 
@@ -854,23 +857,15 @@ export class GameScene extends DirtyScene {
                         } catch (err) {
                             console.error("Scene sleep error: ", err);
                         }
-                        if (get(errorScreenStore)) {
-                            // If an error message is already displayed, don't display the "connection lost" message.
-                            console.error(
-                                "Error message store already displayed for CONNECTION_LOST",
-                                get(errorScreenStore)
-                            );
+                        const shown = get(errorScreenStore);
+                        if (shown) {
+                            // Already up: the "Reconnecting" screen shown when the connection dropped, or a real error.
+                            if (shown.type !== "reconnecting") {
+                                console.error("Error message store already displayed for CONNECTION_LOST", shown);
+                            }
                             return;
                         }
-                        errorScreenStore.setError(
-                            ErrorScreenMessage.fromPartial({
-                                type: "reconnecting",
-                                code: "CONNECTION_LOST",
-                                title: get(LL).warning.connectionLostTitle(),
-                                details: get(LL).warning.connectionLostSubtitle(),
-                                image: this._room.errorSceneLogo,
-                            })
-                        );
+                        showReconnectingScreen(this._room.errorSceneLogo);
                     }
                 }, 0);
             } else if (this.connection === undefined) {
@@ -1166,6 +1161,12 @@ export class GameScene extends DirtyScene {
         audioManagerFileStore.unloadAudio();
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
         clearAreaPresence();
+        // Nor does leaving a camera-locking area: end the lock and put the zoom back to what it was before it, or the
+        // next scene (a reconnect) starts zoomed in on the old area, with every resize snapping back to it.
+        if (waScaleManager.getFocusTarget()) {
+            waScaleManager.setFocusTarget();
+            waScaleManager.zoomModifier = waScaleManager.getSaveZoom();
+        }
 
         this.connection?.closeConnection();
         this.outlineManager?.clear();
@@ -1749,26 +1750,38 @@ export class GameScene extends DirtyScene {
      */
     private connect(): void {
         const camera = this.cameraManager.getCamera();
+        // Back in the app with the connection closed: give the phone's network a moment before the first attempt.
+        const networkReady = this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : Promise.resolve();
 
-        connectionManager
-            .connectToRoomSocket(
-                this.roomUrl,
-                this.playerName,
-                gameManager.getCharacterTextureIds() ?? [],
-                {
-                    ...this.startPositionCalculator.startPosition,
-                },
-                {
-                    left: camera.scrollX,
-                    top: camera.scrollY,
-                    right: camera.scrollX + camera.width,
-                    bottom: camera.scrollY + camera.height,
-                },
-                gameManager.getCompanionTextureId(),
-                get(availabilityStatusStore),
-                this.getGameMap().getLastCommandId()
-            )
-            .then(async (onConnect: OnConnectInterface) => {
+        networkReady
+            .then(() => {
+                // The scene was closed while we waited for the network: its successor makes its own connection.
+                if (this.cleanupDone) return undefined;
+                return connectionManager.connectToRoomSocket(
+                    this.roomUrl,
+                    this.playerName,
+                    gameManager.getCharacterTextureIds() ?? [],
+                    {
+                        ...this.startPositionCalculator.startPosition,
+                    },
+                    {
+                        left: camera.scrollX,
+                        top: camera.scrollY,
+                        right: camera.scrollX + camera.width,
+                        bottom: camera.scrollY + camera.height,
+                    },
+                    gameManager.getCompanionTextureId(),
+                    get(availabilityStatusStore),
+                    this.getGameMap().getLastCommandId()
+                );
+            })
+            .then(async (onConnect: OnConnectInterface | undefined) => {
+                if (!onConnect) return;
+                if (this.cleanupDone) {
+                    // Connected after the scene was closed: nobody will use this connection.
+                    onConnect.connection.closeConnection();
+                    return;
+                }
                 this.connection = onConnect.connection;
 
                 // Initialize TURN credentials manager
@@ -1950,7 +1963,8 @@ export class GameScene extends DirtyScene {
                 // The serverDisconnected stream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
                 this.connection.serverDisconnected.subscribe(() => {
-                    showConnectionIssueMessage();
+                    // Nothing failed: the game is getting back in. Say so right away, instead of an error.
+                    showReconnectingScreen(this._room.errorSceneLogo);
                     console.info("Player disconnected from server. Reloading scene.");
                     this.cleanupClosingScene();
 

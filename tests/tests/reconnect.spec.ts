@@ -20,9 +20,11 @@ test.describe("Connection @nomobile @nowebkit", () => {
     //Simulation of offline network
     await page.context().setOffline(true);
 
-    await expect(page.getByText("Connecting...")).toBeVisible({
+    // The calm reconnecting screen, never an error ("You're offline" once it has lasted a while offline).
+    await expect(page.getByRole("heading", { name: /Reconnecting|You're offline/ })).toBeVisible({
         timeout: 180_000,
     });
+    await expect(page.getByText("Unable to connect to the Universe")).toBeHidden();
 
     //Reconnect
     await page.context().setOffline(false);
@@ -42,9 +44,11 @@ test.describe("Connection @nomobile @nowebkit", () => {
     //Simulation of offline network
     await page.context().setOffline(true);
 
-    await expect(page.getByText("Unable to connect to the Universe")).toBeVisible({
+    // The calm reconnecting screen, never an error ("You're offline" once it has lasted a while offline).
+    await expect(page.getByRole("heading", { name: /Reconnecting|You're offline/ })).toBeVisible({
       timeout: 180_000,
     });
+    await expect(page.getByText("Unable to connect to the Universe")).toBeHidden();
 
     //Reconnect
     await page.context().setOffline(false);

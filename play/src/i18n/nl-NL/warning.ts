@@ -15,6 +15,7 @@ const warning: DeepPartial<Translation["warning"]> = {
     connectionLost: "Verbinding verloren. Herverbinden...",
     connectionLostTitle: "Verbinding verloren",
     connectionLostSubtitle: "Herverbinden",
+    reconnectingTitle: "Herverbinden",
     waitingConnectionTitle: "Wachten op verbinding",
     waitingConnectionSubtitle: "Verbinden",
     megaphoneNeeds: "Om de megaphone te gebruiken, moet je je camera of je microfoon inschakelen of je scherm delen.",

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, tick } from "svelte";
+    import { onDestroy, onMount, tick } from "svelte";
     import { derived } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { chatInputFocusStore } from "../../Stores/ChatStore";
@@ -14,6 +14,7 @@
     import ChatActionMenu from "./ChatActionMenu.svelte";
     import ChatHeaderNewMenu from "./Header/ChatHeaderNewMenu.svelte";
     import { focusChatSearchRequest, getNewChatOptions } from "./Header/ChatHeaderNewMenu";
+    import { createSearchFilter } from "./Header/SearchFilter";
     import { IconSearch, IconX } from "@wa-icons";
 
     /**
@@ -32,10 +33,10 @@
     const isMatrixGuest = chat.isGuest;
     const proximityChatRoom = gameScene.proximityChatRoom;
     const proximityUnread = proximityChatRoom.hasUnreadMessages;
-    let typingTimer: ReturnType<typeof setTimeout>;
     let searchLoader = false;
     let searchInput: HTMLInputElement | undefined;
-    const DONE_TYPING_INTERVAL = 2000;
+    const searchFilter = createSearchFilter((loading) => (searchLoader = loading));
+    onDestroy(() => searchFilter.cancel());
 
     // A dot on the Chats tab when any saved conversation or the proximity chat has something unread.
     const savedUnread: Readable<boolean> = derived(
@@ -83,26 +84,21 @@
             }
             return;
         }
-        clearTimeout(typingTimer);
     };
 
-    const handleKeyUp = (event: KeyboardEvent, userProviderMerger: UserProviderMerger) => {
-        if (event.key === "Escape") return;
-        clearTimeout(typingTimer);
-        typingTimer = setTimeout(() => {
-            searchLoader = true;
-            userProviderMerger
-                .setFilter($chatSearchBarValue)
-                .catch((e) => console.error(e))
-                .finally(() => {
-                    searchLoader = false;
-                });
-        }, DONE_TYPING_INTERVAL);
+    // Every change of the field, however it was made, filters the lists: the text as it is now, once typing pauses.
+    const handleInput = (event: Event, userProviderMerger: UserProviderMerger) => {
+        const value = (event.currentTarget as HTMLInputElement).value;
+        // Emptied field: the full lists come back at once, like with the clear button.
+        if (value === "") {
+            clearSearch(false);
+            return;
+        }
+        searchFilter.schedule(value, (text) => userProviderMerger.setFilter(text));
     };
 
     function clearSearch(refocus: boolean) {
-        clearTimeout(typingTimer);
-        searchLoader = false;
+        searchFilter.cancel();
         chatSearchBarValue.set("");
         userProviderMergerPromise
             .then((userProviderMerger) => userProviderMerger.setFilter(""))
@@ -230,7 +226,7 @@
                                 ? $LL.chat.header.searchPeople()
                                 : $LL.chat.header.searchChat()}
                             on:keydown={handleKeyDown}
-                            on:keyup={(event) => handleKeyUp(event, userProviderMerger)}
+                            on:input={(event) => handleInput(event, userProviderMerger)}
                             bind:value={$chatSearchBarValue}
                             on:focusin={focusChatInput}
                             on:focusout={unfocusChatInput}
