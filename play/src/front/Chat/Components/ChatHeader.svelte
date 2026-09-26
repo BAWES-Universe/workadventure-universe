@@ -89,6 +89,11 @@
     // Every change of the field, however it was made, filters the lists: the text as it is now, once typing pauses.
     const handleInput = (event: Event, userProviderMerger: UserProviderMerger) => {
         const value = (event.currentTarget as HTMLInputElement).value;
+        // Emptied field: the full lists come back at once, like with the clear button.
+        if (value === "") {
+            clearSearch(false);
+            return;
+        }
         searchFilter.schedule(value, (text) => userProviderMerger.setFilter(text));
     };
 

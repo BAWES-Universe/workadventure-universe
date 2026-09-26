@@ -57,6 +57,37 @@ describe("createSearchFilter", () => {
         expect(loading).toBe(true);
     });
 
+    it("keeps loading when an older search finishes while the next one is still waiting for the pause", async () => {
+        let loading = false;
+        const filter = createSearchFilter((value) => (loading = value));
+        let finishFirst: () => void = () => undefined;
+        const slow = vi.fn(
+            () =>
+                new Promise<void>((resolve) => {
+                    finishFirst = resolve;
+                })
+        );
+        const next = vi.fn(
+            () =>
+                new Promise<void>(() => {
+                    // Still running.
+                })
+        );
+
+        filter.schedule("a", slow);
+        vi.advanceTimersByTime(SEARCH_FILTER_DELAY_MS);
+        filter.schedule("ab", next);
+        // The first search finishes during the second one's pause.
+        finishFirst();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(loading).toBe(true);
+
+        await vi.runAllTimersAsync();
+        expect(next).toHaveBeenCalledWith("ab");
+        expect(loading).toBe(true);
+    });
+
     it("drops a pending search when cleared", async () => {
         let loading = true;
         const filter = createSearchFilter((value) => (loading = value));

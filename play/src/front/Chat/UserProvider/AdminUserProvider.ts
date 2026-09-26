@@ -9,13 +9,17 @@ import type { UserProviderInterface } from "./UserProviderInterface";
 export class AdminUserProvider implements UserProviderInterface {
     users: Writable<PartialChatUser[]>;
     private _setUsers: ((value: PartialChatUser[]) => void) | undefined;
+    /** Bumped by every query: only the latest query's answer updates the list. */
+    private queryGeneration = 0;
 
     constructor(private connection: RoomConnection) {
         this.users = writable([] as PartialChatUser[], (set) => {
             this._setUsers = set;
+            const generation = ++this.queryGeneration;
             connection
                 .queryChatMembers("")
                 .then(({ members }) => {
+                    if (generation !== this.queryGeneration) return;
                     set(this.mapChatMembersToChatUser(members));
                 })
                 .catch((error) => {
@@ -45,10 +49,16 @@ export class AdminUserProvider implements UserProviderInterface {
     }
 
     setFilter(searchText: string): Promise<void> {
+        const generation = ++this.queryGeneration;
         return new Promise((res, rej) => {
             this.connection
                 .queryChatMembers(searchText)
                 .then(({ members }) => {
+                    // A newer search was typed since: its answer is the one to show.
+                    if (generation !== this.queryGeneration) {
+                        res();
+                        return;
+                    }
                     if (this._setUsers) {
                         this._setUsers(this.mapChatMembersToChatUser(members));
                         res();
