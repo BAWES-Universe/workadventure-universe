@@ -1,3 +1,5 @@
+> **Superseded.** The plan of record is now the living doc [Universe Shell: next-gen layout plan](https://claude.ai/code/artifact/c019fa8a-666d-41b5-ac6b-35663575bc43) (v0.1, with round-1 review consensus). This file is the v0 draft the reviews in `reviews/` were written against; it is kept unchanged so their line references still make sense.
+
 # Universe Shell: next-gen layout concepts
 
 **Status:** v0 draft for cross-model review (Claude, GPT, Hermes, Codex). Nothing here is decided until the Decisions table says so.

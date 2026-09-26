@@ -343,7 +343,7 @@ header.top p.lede{color:var(--muted);max-width:62ch;margin-top:6px}
   };
   const PHONE_MODES = {
     chat:[['hidden','Hidden'],['peek','Sheet · peek 30%'],['tall','Sheet · tall 80%'],['full','Sheet · full'],['full-legacy','Full screen panel (today)']],
-    cams:[['hidden','Hidden'],['top','Strip · top 10%'],['bottom','Strip · above thumb bar'],['bubble','Bubbles'],['full','Full grid'],['strip-legacy','Strip · top (today)']],
+    cams:[['hidden','Hidden'],['top','Strip · top ~72px'],['bottom','Strip · above thumb bar'],['bubble','Bubbles'],['full','Full grid'],['strip-legacy','Strip · top (today)']],
     cow:[['hidden','Hidden'],['sheet','Sheet · 60%'],['full','Full screen'],['top-legacy','Top half (today)']],
     orbit:[['hidden','Hidden'],['sheet','Sheet · 85%'],['full','Full screen'],['side-legacy','Right sheet 80% (today)']],
     card:[['hidden','Hidden'],['sheet','Sheet · 36%'],['bottom-legacy','Bottom panel (today)']],
@@ -406,10 +406,10 @@ header.top p.lede{color:var(--muted);max-width:62ch;margin-top:6px}
       notes:T(['<code>MainLayout.svelte:236</code>: bottom, full width on phones; top-right column on md+.','<code>PeopleCardReturn.ts</code> (idle → armed → returning) reopens People when the card is dismissed.'],
               ['The card is a small sheet on top of the chat sheet, so People stays visible under it; dismissing it is a swipe, and the return logic becomes a shell rule (“restore the surface below”).'])},
     // ---------- CONCEPTS · desktop
-    {id:'c-hangout-d', view:'desktop', kind:'concept', title:'Hangout', desc:'Chat docked right, cameras in a top strip, map center. The everyday layout for a social space.',
-      state:{chat:'right',cams:'top',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'},
+    {id:'c-hangout-d', view:'desktop', kind:'concept', title:'Hangout', desc:'Chat docked on the leading edge, cameras in a top strip, map center. The map shrinks beside the chat instead of hiding under it.',
+      state:{chat:'left',cams:'top',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'},
       notes:T(['Not possible today: chat is fixed to the inline-start edge and cameras to the strip over the map.'],
-              ['Chat on the right keeps the map’s left edge free for the action bar’s chat and people buttons.','Camera strip as a dock means the map is shorter, not covered; the camera rectangle is the center cell.'])},
+              ['Chat stays on the leading edge (decision D5, still open); try Right dock in the Chat select to compare.','Camera strip as a dock means the map is shorter, not covered; the camera rectangle is the center cell.'])},
     {id:'c-studio', view:'desktop', kind:'concept', title:'Studio', desc:'A co-website (docs, board, video call) takes the center, the map becomes a peek window, chat on the left and cameras as a right rail.',
       state:{chat:'left',cams:'right',cow:'center',orbit:'hidden',card:'hidden',modal:'hidden'},
       notes:T(['Today the co-website can only take half the width; the map cannot shrink to a peek.'],
@@ -431,7 +431,7 @@ header.top p.lede{color:var(--muted);max-width:62ch;margin-top:6px}
       notes:T(['Orbit is modal: while it is open, the map is dimmed and blocked.'],
               ['Orbit as a dock lets an owner follow its instructions and act on the map at the same time; the bridge (Quests 1B) tells Orbit which page to show.','Floating windows remember position per device class in <code>localUserStore</code>, synced through the Orbit preference endpoint (Quests 1A).'])},
     // ---------- CONCEPTS · phone
-    {id:'c-hangout-p', view:'phone', kind:'concept', title:'Hangout', desc:'Chat sheet at 80%, video strip 10% at the top, and 10% of map between them. The example from the brief.',
+    {id:'c-hangout-p', view:'phone', kind:'concept', title:'Hangout', desc:'Chat sheet for the rest of the screen, a video strip at the top, and a 96px live map row between them. The example from the brief, with fixed heights.',
       state:{chat:'tall',cams:'top',cow:'hidden',orbit:'hidden',card:'hidden'},
       notes:T(['Not possible today: the chat panel is forced to 100% width and cameras end up under it.'],
               ['The strip is a real dock, so the tiles never overlap the sheet.','The map peek is live: you see people walk up, and tapping it drops the sheet to peek.'])},
@@ -668,7 +668,7 @@ header.top p.lede{color:var(--muted);max-width:62ch;margin-top:6px}
     if (st.chat==='tall') scr.insertAdjacentHTML('beforeend', chatSheet('80%'));
     if (st.chat==='full') scr.insertAdjacentHTML('beforeend', chatSheet('100%'));
     if (st.chat==='full-legacy') scr.insertAdjacentHTML('beforeend', chatSheet('100%', true));
-    if (st.chat==='tall' && st.cams==='top') scr.insertAdjacentHTML('beforeend', `<div class="gest" style="top:14%">map · 10% · live</div>`);
+    if (st.chat==='tall' && st.cams==='top') scr.insertAdjacentHTML('beforeend', `<div class="gest" style="top:14%">map row · 96px · live</div>`);
     if (st.chat==='peek') scr.insertAdjacentHTML('beforeend', `<div class="gest" style="bottom:31%">swipe up · tall / full</div>`);
     // card
     if (st.card==='bottom-legacy') scr.insertAdjacentHTML('beforeend', `<div class="pcard"><b>Sara · Design</b>In Headquarters · fountain<div class="btns"><span>Walk to</span><span>Message</span><span>Locate</span></div></div>`);
