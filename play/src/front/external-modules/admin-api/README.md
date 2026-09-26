@@ -1,10 +1,10 @@
 # Admin API Extension Module
 
-This extension module integrates your Admin API with WorkAdventure. It automatically opens a modal with your Admin API dashboard after authentication and adds a button to reopen it.
+This extension module integrates your Admin API with WorkAdventure. It activates the Orbit button in the action bar after authentication; Orbit opens only when the person asks for it.
 
 ## Features
 
-- **Automatic Modal Opening**: Opens your Admin API dashboard in a modal after user authentication
+- **Opens on request only**: Orbit never opens by itself (not on arrival, a room change or a reconnect)
 - **Action Bar Button**: Adds a button to the action bar apps menu to reopen the dashboard
 - **Unified Authentication**: Uses the same OIDC access token from WorkAdventure authentication
 - **No External Scripts Required**: Everything is self-contained in the extension module
@@ -61,7 +61,7 @@ Your Admin API should:
 
 1. **User Authentication**: When a user authenticates in WorkAdventure, the extension module is initialized
 2. **Token Extraction**: The module extracts the OIDC access token from the JWT stored in localStorage
-3. **Modal Opening**: After a short delay (1.5s), the module automatically opens a modal with your Admin API dashboard
+3. **Modal Opening**: The dashboard opens in a modal when the person clicks the Orbit button; each opening is recorded as `wa_orbit_opened` with its `source`
 4. **Button Addition**: A button is added to the action bar apps menu
 5. **Reopening**: Users can click the button to reopen the modal at any time
 
@@ -97,19 +97,7 @@ The button is removed from the apps menu. The Orbit button in the main action ba
 
 Modify the `openAdminModal` function in `index.ts` to:
 - Change the modal position (`center`, `left`, `right`)
-- Adjust the auto-open delay
 - Modify the dashboard URL structure
-
-### Disabling Auto-Open
-
-To disable automatic modal opening, remove or comment out the `setTimeout` call in `initializeAdminIntegration`:
-
-```typescript
-// Auto-open after a short delay
-// setTimeout(() => {
-//     openAdminModal(options);
-// }, 1500);
-```
 
 ## Troubleshooting
 

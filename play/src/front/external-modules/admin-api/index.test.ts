@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => ({
     modalIframeWindowSet: vi.fn(),
     modalVisibilitySet: vi.fn(),
     modalVisibilitySubscribe: vi.fn(() => vi.fn()),
+    orbitOpened: vi.fn(),
+}));
+
+vi.mock("../../Administration/AnalyticsClient", () => ({
+    analyticsClient: { orbitOpened: mocks.orbitOpened },
 }));
 
 vi.mock("../../Connection/LocalUserStore", () => ({
@@ -49,10 +54,26 @@ interface AdminModuleLike {
     destroy(): void;
 }
 
-async function freshModule(): Promise<AdminModuleLike> {
+interface AdminModuleExports {
+    default: AdminModuleLike;
+    openAdminModalFromMenu(): void;
+}
+
+async function freshExports(): Promise<AdminModuleExports> {
     vi.resetModules();
-    const mod = (await import("./index")) as { default: AdminModuleLike };
-    return mod.default;
+    return (await import("./index")) as AdminModuleExports;
+}
+
+async function freshModule(): Promise<AdminModuleLike> {
+    return (await freshExports()).default;
+}
+
+function expectOrbitNotOpened(): void {
+    expect(mocks.modalVisibilitySet).not.toHaveBeenCalledWith(true);
+    expect(mocks.modalIframeSet).not.toHaveBeenCalledWith(
+        expect.objectContaining({ src: expect.stringContaining("admin.example.com") })
+    );
+    expect(mocks.orbitOpened).not.toHaveBeenCalled();
 }
 
 function makeOptions(userAccessToken = makeAccessTokenJwt()): unknown {
@@ -80,17 +101,50 @@ describe("Admin integration lifecycle", () => {
         vi.unstubAllGlobals();
     });
 
-    it("initializes and opens the admin iframe when NOT destroyed (positive control)", async () => {
+    it("activates the Orbit button on init but never opens Orbit by itself (negative control)", async () => {
+        const mod = await freshModule();
+        mod.init({}, makeOptions());
+        vi.advanceTimersByTime(10_000);
+
+        // The init path really ran (the button is activated), so "not opened" isn't an early return.
+        expect(mocks.adminDashboardActivatedSet).toHaveBeenCalledWith(true);
+        expectOrbitNotOpened();
+    });
+
+    it("does not reopen Orbit on a room change (destroy, then init again)", async () => {
         const mod = await freshModule();
         mod.init({}, makeOptions());
         vi.advanceTimersByTime(3000);
+        mod.destroy();
+        mod.init({}, makeOptions());
+        vi.advanceTimersByTime(10_000);
 
-        // If the timer path is dead, these fail — the test cannot pass on an early return alone.
-        expect(mocks.adminDashboardActivatedSet).toHaveBeenCalledWith(true);
+        expect(mocks.adminDashboardActivatedSet).toHaveBeenLastCalledWith(true);
+        expectOrbitNotOpened();
+    });
+
+    it("does not reopen Orbit on a reconnect (init again without destroy)", async () => {
+        const mod = await freshModule();
+        mod.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        mod.init({}, makeOptions());
+        vi.advanceTimersByTime(10_000);
+
+        expectOrbitNotOpened();
+    });
+
+    it("opens Orbit from the action-bar button and records the source (positive control)", async () => {
+        const exports = await freshExports();
+        exports.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        exports.openAdminModalFromMenu();
+
         expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(true);
         expect(mocks.modalIframeSet).toHaveBeenCalledWith(
             expect.objectContaining({ src: expect.stringContaining("admin.example.com") })
         );
+        expect(mocks.orbitOpened).toHaveBeenCalledTimes(1);
+        expect(mocks.orbitOpened).toHaveBeenCalledWith({ source: "button" });
     });
 
     it("does not initialize or open the iframe after destruction", async () => {
@@ -146,6 +200,7 @@ describe("Opening Orbit on one of its pages", () => {
             default: AdminModuleLike;
             canOpenOrbit(): boolean;
             openOrbitPage(path: string): void;
+            openAdminModalFromMenu(): void;
         };
     }
 
@@ -168,6 +223,8 @@ describe("Opening Orbit on one of its pages", () => {
         index.default.init({}, makeOptions());
         vi.advanceTimersByTime(3000);
         expect(index.canOpenOrbit()).toBe(true);
+        // Orbit never opens on its own: the player opened it from the menu.
+        index.openAdminModalFromMenu();
         mocks.modalIframeSet.mockClear();
 
         index.openOrbitPage("/admin/profile");
@@ -179,5 +236,7 @@ describe("Opening Orbit on one of its pages", () => {
         expect(url.pathname).toBe("/admin/login");
         expect(url.searchParams.get("redirect")).toBe("/admin/profile");
         expect(url.searchParams.get("playUri")).toBe("https://play.example.com/@/room");
+        // Counted as the game asking Orbit for a page.
+        expect(mocks.orbitOpened).toHaveBeenLastCalledWith({ source: "link" });
     });
 });
