@@ -23,7 +23,7 @@
     import { ONE_LIST_FREEZE_CONTEXT } from "../../OneList/OneListStore";
     import { openChatMenuStore } from "../../../Stores/OpenChatMenuStore";
     import RoomOption from "./RoomOption.svelte";
-    import { IconDots, IconLogout, IconUserEdit, IconMute, IconUnMute, IconMapPin, IconCamera } from "@wa-icons";
+    import { IconDots, IconLogout, IconUserEdit, IconMute, IconUnMute, IconMapPin, IconWalk } from "@wa-icons";
 
     export let room: ChatRoom & ChatRoomMembershipManagement & ChatRoomNotificationControl & ChatRoomModeration;
     const areNotificationsMuted = room.areNotificationsMuted;
@@ -202,8 +202,8 @@
     {#if room.type === "direct"}
         <!-- Create Room Option to talk to the user -->
         <RoomOption
-            IconComponent={IconCamera}
-            title={$LL.chat.userList.TalkTo()}
+            IconComponent={IconWalk}
+            title={$LL.chat.userList.walkTo()}
             on:click={talkToUser}
             disabled={chatUser == undefined || chatUser.uuid == undefined}
         />

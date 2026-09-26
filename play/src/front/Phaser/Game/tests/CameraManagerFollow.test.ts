@@ -120,3 +120,50 @@ describe("CameraManager following another player", () => {
         expect(follow).toHaveBeenCalledTimes(1);
     });
 });
+
+describe("CameraManager back to the player (your own row in the People tab)", () => {
+    it("goes back to the player after looking at someone else", async () => {
+        const { manager } = await makeCameraManager();
+        const follow = vi.spyOn(manager, "startFollowPlayer");
+
+        manager.followRemotePlayer("stitch");
+        manager.returnToPlayer();
+
+        expect(follow).toHaveBeenCalledTimes(2);
+        expect(follow.mock.calls[1][0]).toMatchObject({ x: 10, y: 10 });
+        // Closing the card afterwards doesn't move the camera again.
+        manager.stopFollowRemotePlayer();
+        expect(follow).toHaveBeenCalledTimes(2);
+    });
+
+    it("goes back to the player from exploring the map", async () => {
+        const { manager } = await makeCameraManager();
+        manager.setExplorationMode();
+        const follow = vi.spyOn(manager, "startFollowPlayer");
+
+        manager.returnToPlayer();
+
+        expect(follow).toHaveBeenCalledTimes(1);
+        expect(follow.mock.calls[0][0]).toMatchObject({ x: 10, y: 10 });
+    });
+
+    it("keeps an area lock: the player is in it, on screen", async () => {
+        const { manager } = await makeCameraManager();
+        manager.enterFocusMode({ x: 300, y: 300, width: 100, height: 100 }, 0, 0);
+        const follow = vi.spyOn(manager, "startFollowPlayer");
+
+        manager.returnToPlayer();
+
+        expect(follow).not.toHaveBeenCalled();
+    });
+
+    it("does nothing when already following the player", async () => {
+        const { manager, currentPlayer } = await makeCameraManager();
+        manager.startFollowPlayer(currentPlayer as never);
+        const follow = vi.spyOn(manager, "startFollowPlayer");
+
+        manager.returnToPlayer();
+
+        expect(follow).not.toHaveBeenCalled();
+    });
+});

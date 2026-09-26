@@ -18,7 +18,7 @@ import chat from "../../Components/images/chat.png";
 import { userIsConnected } from "../../Stores/MenuStore";
 import RequiresLoginForChatModal from "../../Chat/Components/RequiresLoginForChatModal.svelte";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
-import { IconCamera } from "@wa-icons";
+import { IconWalk } from "@wa-icons";
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -168,7 +168,8 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         });
         if (!blackListManager.isBlackListed(this.userUuid)) {
             actions.push({
-                actionName: get(LL).chat.userList.TalkTo(),
+                // Walks you to them: the same words as the People tab's button.
+                actionName: get(LL).chat.userList.walkTo(),
                 protected: false,
                 priority: 1,
                 style: "bg-white/10 hover:bg-white/30",
@@ -179,7 +180,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                     if (this.scene.connection != undefined)
                         this.scene.connection.emitAskPosition(this.userUuid, this.scene.roomUrl);
                 },
-                actionIcon: IconCamera,
+                actionIcon: IconWalk,
             });
         }
         if (this.chatID != undefined) {

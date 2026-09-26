@@ -154,7 +154,7 @@
 
         // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
         // otherwise asks the server for the position.
-        locatePerson(userToLocate);
+        locatePerson(userToLocate, user.username);
         closeChatUserMenu();
     }
 </script>
