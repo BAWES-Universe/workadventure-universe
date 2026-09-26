@@ -20,8 +20,8 @@ export function sidebarCoversMap(windowWidth: number, sidebarWidth: number): boo
 
 export interface PeopleCardReturnDeps {
     chatVisible: Writable<boolean>;
-    /** The open card (undefined when none). */
-    card: Readable<unknown>;
+    /** The open card (undefined when none), with the person it is for ("" while a search hasn't found them). */
+    card: Readable<{ userUuid: string } | undefined>;
     clearCard: () => void;
     /** Whether the sidebar, as shown now, leaves no room for the card. */
     coversMap: () => boolean;
@@ -41,7 +41,9 @@ export interface PeopleCardReturn {
 
 export function createPeopleCardReturn(deps: PeopleCardReturnDeps): PeopleCardReturn {
     const now = deps.now ?? (() => Date.now());
-    let state: { kind: "idle" } | { kind: "armed"; at: number } | { kind: "returning" } = { kind: "idle" };
+    let state: { kind: "idle" } | { kind: "armed"; at: number } | { kind: "returning"; person: string } = {
+        kind: "idle",
+    };
     let restoreScroll = false;
 
     // Not unsubscribing is ok: one for the app's lifetime.
@@ -52,12 +54,19 @@ export function createPeopleCardReturn(deps: PeopleCardReturnDeps): PeopleCardRe
             if (state.kind === "returning") state = { kind: "idle" };
             return;
         }
+        if (state.kind === "returning") {
+            // Someone else's card replaced it (a tap on the map): closing that one isn't a way back to the list.
+            // The same person's card opening again (the search finding them) keeps it.
+            if (state.person === "") state = { kind: "returning", person: card.userUuid };
+            else if (card.userUuid !== "" && card.userUuid !== state.person) state = { kind: "idle" };
+            return;
+        }
         if (state.kind === "armed") {
             if (now() - state.at > CARD_OPEN_WINDOW_MS) {
                 state = { kind: "idle" };
                 return;
             }
-            state = { kind: "returning" };
+            state = { kind: "returning", person: card.userUuid };
             deps.chatVisible.set(false);
         }
     });

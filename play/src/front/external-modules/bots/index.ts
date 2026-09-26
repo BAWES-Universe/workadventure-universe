@@ -891,6 +891,8 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         if (myInjection === injectionId) isInjectingEmotions = false;
     };
     emotionsMenuUuid = menuData.userUuid;
+    // Only the latest injection may add the display: the menu can close and reopen for the same bot meanwhile.
+    const stillMine = () => myInjection === injectionId && menuStillShows(menuData.userUuid);
 
     try {
         // Wait for DOM to render
@@ -898,7 +900,7 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
             setTimeout(() => resolve(), 100);
         });
 
-        if (!menuStillShows(menuData.userUuid)) return;
+        if (!stillMine()) return;
         const menuElement = document.querySelector('[data-testid="actions-menu"]');
         if (!menuElement) {
             // Retry if menu not ready yet
@@ -940,8 +942,8 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
             console.error("[Bot Extension] Error fetching bot emotions:", error);
         }
 
-        // The menu moved on to someone else while the emotions loaded: they aren't this menu's.
-        if (!menuStillShows(menuData.userUuid)) return;
+        // The menu moved on (someone else, or closed and reopened) while the emotions loaded: they aren't this menu's.
+        if (!stillMine()) return;
 
         // Create container for emotions display
         const container = document.createElement("div");
@@ -954,8 +956,8 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         try {
             // Dynamically import the component (Svelte 4 style)
             const BotEmotionsDisplay = (await import("./components/BotEmotionsDisplay.svelte")).default;
-            // Switched to someone else while loading: the container is already gone with the old menu's display.
-            if (!menuStillShows(menuData.userUuid)) return;
+            // Switched while loading: the container is already gone with the old menu's display.
+            if (!stillMine()) return;
 
             // Mount component with actual emotions (or null if fetch failed)
             // This way tweened values initialize with correct values, no animation from defaults
