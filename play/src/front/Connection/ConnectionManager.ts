@@ -660,10 +660,14 @@ class ConnectionManager {
             return new Promise<OnConnectInterface>((resolve) => {
                 console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => reconnectingTimeout");
 
+                // This retry's own timer. The shared handle (cleared on page unload) may by now hold a newer map's
+                // retry: a cancelled chain must never clear that one.
+                let ownTimeout: NodeJS.Timeout | null = null;
                 const retry = () => {
                     window.removeEventListener("online", retry);
-                    if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
-                    this.reconnectingTimeout = null;
+                    if (ownTimeout) clearTimeout(ownTimeout);
+                    if (this.reconnectingTimeout === ownTimeout) this.reconnectingTimeout = null;
+                    ownTimeout = null;
                     // The page is closing: no new attempt (the pending one was cancelled on beforeunload). Nor when the
                     // map that asked was closed: the map replacing it makes its own attempts.
                     if (this._unloading || options.cancelled?.()) return;
@@ -696,7 +700,8 @@ class ConnectionManager {
                         resolve(connection);
                     });
                 };
-                this.reconnectingTimeout = setTimeout(retry, retryDelay);
+                ownTimeout = setTimeout(retry, retryDelay);
+                this.reconnectingTimeout = ownTimeout;
                 window.addEventListener("online", retry);
             });
         });
