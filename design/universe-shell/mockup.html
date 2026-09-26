@@ -1,0 +1,726 @@
+<title>Universe Shell Studio</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F2F3F7; --surface:#FFFFFF; --surface-2:#E9EBF1; --ink:#1B1F2A; --muted:#5F6778; --line:#D6DAE3; --line-2:#C2C7D3;
+  --os:#CFD5E1; --browser:#FAFBFD; --chrome:#E4E7EE;
+  --c-map:#2A9D8F; --c-chat:#6E56FF; --c-cams:#E9962B; --c-cow:#2F6FEB; --c-orbit:#E0457B; --c-card:#7A8798; --c-modal:#4B5563;
+  --map-a:#BFE3D2; --map-b:#A9D6C1; --map-path:#E6D9B8; --map-ink:#2B5C4E;
+  --shadow:0 12px 32px rgba(20,24,40,.14);
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-display:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0E1016; --surface:#171A23; --surface-2:#1F2330; --ink:#EDF0F7; --muted:#9AA3B6; --line:#2A2F3D; --line-2:#3A4052;
+    --os:#0A0C12; --browser:#12141C; --chrome:#1B1E29;
+    --c-card:#98A3B4; --c-modal:#8B93A3;
+    --map-a:#1E4A40; --map-b:#183D35; --map-path:#4A4530; --map-ink:#9FD8C4;
+    --shadow:0 12px 32px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0E1016; --surface:#171A23; --surface-2:#1F2330; --ink:#EDF0F7; --muted:#9AA3B6; --line:#2A2F3D; --line-2:#3A4052;
+  --os:#0A0C12; --browser:#12141C; --chrome:#1B1E29;
+  --c-card:#98A3B4; --c-modal:#8B93A3;
+  --map-a:#1E4A40; --map-b:#183D35; --map-path:#4A4530; --map-ink:#9FD8C4;
+  --shadow:0 12px 32px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:14px;line-height:1.5}
+.wrap{max-width:1380px;margin:0 auto;padding-inline:16px;padding-block:20px 48px}
+h1,h2,h3{font-family:var(--font-display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:28px;font-weight:700}
+h2{font-size:15px;font-weight:700}
+h3{font-size:13px;font-weight:700}
+p{margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,select:focus-visible{outline:2px solid var(--c-chat);outline-offset:2px}
+.eyebrow{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+header.top{display:flex;flex-wrap:wrap;gap:16px 24px;align-items:end;justify-content:space-between;margin-bottom:20px}
+header.top p.lede{color:var(--muted);max-width:62ch;margin-top:6px}
+.seg{display:inline-flex;border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;padding:8px 14px;font-weight:500;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px}
+.legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+
+.studio{display:grid;grid-template-columns:250px minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:900px){.studio{grid-template-columns:1fr}}
+.rail{display:flex;flex-direction:column;gap:18px;position:sticky;top:12px}
+@media (max-width:900px){.rail{position:static}}
+.rail section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}
+.rail h2{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.rail h2 small{font-family:var(--font-mono);font-size:10px;font-weight:400;color:var(--muted);letter-spacing:.06em}
+.list{display:flex;flex-direction:column;gap:4px}
+.list button{display:block;width:100%;text-align:left;border:1px solid transparent;background:transparent;border-radius:8px;padding:7px 9px;line-height:1.3}
+.list button strong{display:block;font-weight:600;font-size:13px}
+.list button span{display:block;color:var(--muted);font-size:12px}
+.list button:hover{background:var(--surface-2)}
+.list button[aria-current="true"]{background:var(--surface-2);border-color:var(--line-2)}
+
+.stage{display:flex;flex-direction:column;gap:14px;min-width:0}
+.stage-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline}
+.stage-head h2{font-size:20px}
+.pill{font-family:var(--font-mono);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line-2);color:var(--muted)}
+.pill.today{border-color:var(--c-card);color:var(--c-card)}
+.pill.concept{border-color:var(--c-chat);color:var(--c-chat)}
+.stage-head p{color:var(--muted);flex-basis:100%;max-width:80ch}
+
+.frame-wrap{background:var(--os);border:1px solid var(--line);border-radius:14px;overflow:hidden;position:relative;width:100%}
+.frame-wrap.desktop{aspect-ratio:1200/720}
+.frame-wrap.phone{aspect-ratio:1200/720}
+.scaler{position:absolute;inset:0;transform-origin:0 0}
+.os{position:relative;width:1200px;height:720px;background:
+  radial-gradient(900px 500px at 20% 0%, rgba(255,255,255,.18), transparent 60%),var(--os)}
+.os .desk-hint{position:absolute;left:22px;bottom:14px;font-family:var(--font-mono);font-size:11px;color:var(--muted);letter-spacing:.06em}
+
+/* browser window */
+.browser{position:absolute;top:36px;left:40px;width:900px;height:640px;background:var(--browser);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;border:1px solid var(--line)}
+.browser.centered{left:150px}
+.chrome{height:34px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)}
+.chrome i{width:10px;height:10px;border-radius:50%;background:var(--line-2);display:inline-block}
+.chrome .url{margin-left:8px;flex:1;height:20px;border-radius:6px;background:var(--browser);border:1px solid var(--line);font-family:var(--font-mono);font-size:10px;color:var(--muted);display:flex;align-items:center;padding:0 8px}
+.viewport{position:absolute;top:34px;left:0;right:0;bottom:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto minmax(0,1fr) auto;grid-template-areas:"top top top" "left center right" "bottom bottom bottom";background:var(--browser)}
+.dock{display:flex;gap:6px;padding:6px;background:var(--surface-2);min-width:0;min-height:0}
+.dock:empty{display:none}
+.dock.top,.dock.bottom{flex-direction:row}
+.dock.left,.dock.right{flex-direction:column}
+.dock.top{grid-area:top;height:118px}
+.dock.bottom{grid-area:bottom;height:150px}
+.dock.left{grid-area:left;width:var(--w,320px)}
+.dock.right{grid-area:right;width:var(--w,320px)}
+.center{grid-area:center;position:relative;overflow:hidden;min-width:0;min-height:0}
+
+/* surfaces */
+.sf{position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1px solid var(--line);display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
+.sf .bar{height:24px;display:flex;align-items:center;gap:6px;padding:0 8px;font-size:11px;font-weight:600;color:#fff;flex:none}
+.sf .bar .dots{margin-left:auto;font-family:var(--font-mono);font-size:10px;opacity:.85;letter-spacing:.1em}
+.sf .body{flex:1;min-height:0;position:relative;padding:8px;font-size:11px;color:var(--muted);overflow:hidden}
+.sf[data-k="chat"] .bar{background:var(--c-chat)} .sf[data-k="cams"] .bar{background:var(--c-cams)}
+.sf[data-k="cow"] .bar{background:var(--c-cow)} .sf[data-k="orbit"] .bar{background:var(--c-orbit)}
+.sf[data-k="card"] .bar{background:var(--c-card)} .sf[data-k="modal"] .bar{background:var(--c-modal)}
+.sf[data-k="chat"]{border-color:var(--c-chat)} .sf[data-k="cams"]{border-color:var(--c-cams)}
+.sf[data-k="cow"]{border-color:var(--c-cow)} .sf[data-k="orbit"]{border-color:var(--c-orbit)}
+.sf[data-k="card"]{border-color:var(--c-card)} .sf[data-k="modal"]{border-color:var(--c-modal)}
+/* chat body */
+.msgs{display:flex;flex-direction:column;gap:5px}
+.msg{display:flex;gap:6px;align-items:flex-start}
+.msg i{width:16px;height:16px;border-radius:50%;background:var(--c-chat);opacity:.55;flex:none}
+.msg b{display:block;font-size:10px;color:var(--ink)}
+.msg span{display:block;background:var(--surface-2);border-radius:8px;padding:3px 7px;max-width:90%}
+.composer{position:absolute;left:8px;right:8px;bottom:8px;height:26px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);display:flex;align-items:center;padding:0 8px;font-size:10px;color:var(--muted)}
+/* camera tiles */
+.tiles{display:flex;gap:6px;height:100%;width:100%}
+.tiles.col{flex-direction:column}
+.tiles.grid{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr}
+.tile{flex:1;min-width:0;min-height:0;border-radius:8px;background:linear-gradient(160deg,#F6C46B,#C9741F);position:relative;overflow:hidden;aspect-ratio:16/9}
+.tiles.col .tile,.tiles.grid .tile{aspect-ratio:auto}
+.tile:after{content:"";position:absolute;left:50%;bottom:-20%;width:46%;aspect-ratio:1;border-radius:50%;background:rgba(0,0,0,.28);transform:translateX(-50%)}
+.tile b{position:absolute;left:6px;bottom:4px;font-size:9px;color:#fff;font-weight:600;z-index:1;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.tile.you{background:linear-gradient(160deg,#8FD1C4,#2A9D8F)}
+/* iframe-ish */
+.web{height:100%;display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.web div{border-radius:6px;background:var(--surface-2)}
+.web div:first-child{grid-row:span 2}
+.orbit-nav{display:flex;gap:6px;margin-bottom:6px}
+.orbit-nav span{flex:1;height:18px;border-radius:5px;background:var(--surface-2)}
+.orbit-cards{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.orbit-cards span{height:40px;border-radius:6px;background:var(--surface-2)}
+
+/* map */
+.map{position:absolute;inset:0;background-color:var(--map-a);background-image:
+  linear-gradient(var(--map-b) 1px,transparent 1px),linear-gradient(90deg,var(--map-b) 1px,transparent 1px);background-size:32px 32px;overflow:hidden}
+.map .path{position:absolute;left:30%;top:0;bottom:0;width:64px;background:var(--map-path);opacity:.9}
+.map .path.h{left:0;right:0;top:55%;width:auto;height:64px}
+.map .house{position:absolute;width:96px;height:64px;background:var(--map-ink);opacity:.35;border-radius:4px}
+.map .avatar{position:absolute;width:18px;height:22px;border-radius:5px 5px 3px 3px;background:#fff;border:2px solid var(--map-ink);box-shadow:0 2px 0 rgba(0,0,0,.25)}
+.map .avatar.me{background:#FFD166}
+.map .label{position:absolute;font-family:var(--font-mono);font-size:10px;color:var(--map-ink);letter-spacing:.08em;text-transform:uppercase;opacity:.8}
+.map.peek{position:absolute;inset:auto auto 12px 12px;width:180px;height:112px;border-radius:10px;border:2px solid #fff;box-shadow:var(--shadow);z-index:5}
+.map.peek .label{left:6px;top:4px}
+.actionbar{position:absolute;left:50%;transform:translateX(-50%);height:36px;border-radius:10px;background:rgba(20,24,40,.82);color:#fff;display:flex;align-items:center;gap:10px;padding:0 12px;font-size:11px;z-index:6;white-space:nowrap}
+.actionbar.top{top:10px} .actionbar.bottom{bottom:10px}
+.actionbar i{width:18px;height:18px;border-radius:5px;background:rgba(255,255,255,.22);display:inline-block}
+.actionbar .orbit-btn{background:var(--c-orbit);border-radius:6px;padding:2px 8px;font-weight:600}
+.express{position:absolute;right:12px;bottom:12px;width:36px;height:36px;border-radius:50%;background:var(--c-chat);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;z-index:6;box-shadow:var(--shadow)}
+/* overlays in center */
+.ov-strip{position:absolute;left:8px;right:8px;top:54px;height:96px;z-index:4;display:flex;gap:6px}
+.ov-strip .tile{max-width:170px}
+.ov-highlight{position:absolute;left:12%;right:12%;top:160px;bottom:60px;z-index:4;border-radius:10px;background:linear-gradient(160deg,#F6C46B,#C9741F);border:2px solid var(--c-cams)}
+.ov-highlight b{position:absolute;left:10px;bottom:8px;color:#fff;font-size:11px}
+.ov-chat{position:absolute;left:0;top:0;bottom:0;width:335px;z-index:7;background:rgba(23,26,35,.86);backdrop-filter:blur(6px);color:#fff;display:flex;flex-direction:column}
+.ov-chat .bar{background:var(--c-chat)}
+.ov-chat .body{color:#cfd3dd}
+.ov-chat .msg b{color:#fff}
+.ov-chat .msg span{background:rgba(255,255,255,.12)}
+.ov-chat .grip{position:absolute;right:4px;top:50%;width:4px;height:120px;background:#fff;border-radius:2px;transform:translateY(-50%)}
+.pad-marker{position:absolute;left:335px;top:0;bottom:0;border-left:2px dashed var(--c-chat);z-index:3;opacity:.7}
+.pad-marker span{position:absolute;left:6px;top:50%;transform:rotate(90deg) translateX(-50%);transform-origin:left top;font-family:var(--font-mono);font-size:9px;color:var(--c-chat);white-space:nowrap}
+.backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);z-index:8}
+.sheet{position:absolute;top:0;bottom:0;z-index:9;display:flex}
+.sheet.right{right:0;width:33%} .sheet.center{left:12.5%;right:12.5%;top:12.5%;bottom:12.5%}
+.sheet .sf{border-radius:0}
+.sheet.center .sf{border-radius:12px}
+.float{position:absolute;z-index:7;box-shadow:var(--shadow)}
+.float .sf{height:100%}
+.full{position:absolute;inset:0;z-index:9}
+.full .sf{height:100%;border-radius:0}
+.split{display:grid;grid-template-columns:1fr 1fr;position:absolute;inset:0}
+.split .sf{border-radius:0}
+.dockbar{position:absolute;left:50%;transform:translateX(-50%);bottom:8px;z-index:6;display:flex;gap:6px;padding:5px;border-radius:12px;background:rgba(20,24,40,.82);backdrop-filter:blur(6px)}
+.dockbar span{display:inline-flex;align-items:center;gap:5px;color:#fff;font-size:10px;padding:3px 8px;border-radius:8px;background:rgba(255,255,255,.1)}
+.dockbar i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.dockbar .k{position:absolute;top:-16px;left:8px;font-family:var(--font-mono);font-size:9px;color:#fff;opacity:.8;letter-spacing:.06em}
+/* popouts on the OS */
+.popout{position:absolute;width:230px;box-shadow:var(--shadow);border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.popout .sf{height:100%;border-radius:0}
+.popout .os-title{height:22px;background:var(--chrome);display:flex;align-items:center;gap:5px;padding:0 8px;font-family:var(--font-mono);font-size:9px;color:var(--muted)}
+.popout .os-title i{width:8px;height:8px;border-radius:50%;background:var(--line-2)}
+.tag{position:absolute;font-family:var(--font-mono);font-size:9px;letter-spacing:.06em;padding:2px 6px;border-radius:4px;background:var(--ink);color:var(--bg);z-index:12;opacity:.9}
+
+/* phone */
+.device{position:absolute;left:420px;top:20px;width:360px;height:680px;border-radius:38px;background:#111;padding:10px;box-shadow:var(--shadow)}
+.device .screen{position:relative;width:100%;height:100%;border-radius:30px;overflow:hidden;background:var(--browser)}
+.device .notch{position:absolute;left:50%;top:8px;transform:translateX(-50%);width:96px;height:22px;border-radius:12px;background:#111;z-index:20}
+.device .pmap{position:absolute;inset:0}
+.device .layer{position:absolute;left:0;right:0;z-index:10}
+.device .strip{height:10%;padding:36px 8px 6px;display:flex;gap:6px;background:linear-gradient(rgba(0,0,0,.45),transparent)}
+.device .strip.top{top:0;height:12%}
+.device .strip.bottom{bottom:52px;height:11%;padding:6px 8px;background:linear-gradient(transparent,rgba(0,0,0,.45))}
+.device .strip .tile{aspect-ratio:16/9;max-width:33%}
+.device .strip.legacy{top:0;height:24%;padding:36px 8px 6px;background:none}
+.device .strip.legacy .tile{aspect-ratio:auto}
+.device .bubbles{position:absolute;right:10px;top:44px;z-index:10;display:flex;flex-direction:column;gap:-6px}
+.device .bubbles .tile{width:44px;height:44px;border-radius:50%;aspect-ratio:1;border:2px solid #fff;margin-top:-8px}
+.device .bubbles .tile:first-child{margin-top:0}
+.device .bubbles .tile b{display:none}
+.device .psheet{position:absolute;left:0;right:0;bottom:0;z-index:12;background:var(--surface);border-radius:18px 18px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden}
+.device .psheet .handle{width:40px;height:4px;border-radius:2px;background:var(--line-2);margin:8px auto 4px;flex:none}
+.device .psheet .bar{height:26px;display:flex;align-items:center;gap:6px;padding:0 10px;font-size:11px;font-weight:600;flex:none}
+.device .psheet.chat .bar{color:var(--c-chat)} .device .psheet.orbit .bar{color:var(--c-orbit)} .device .psheet.cow .bar{color:var(--c-cow)} .device .psheet.card .bar{color:var(--c-card)}
+.device .psheet .bar .dots{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.device .psheet .body{flex:1;min-height:0;position:relative;padding:8px 10px;font-size:11px;color:var(--muted);overflow:hidden}
+.device .psheet.legacy{border-radius:0;background:rgba(23,26,35,.94);color:#fff}
+.device .psheet.legacy .bar{color:#fff;background:var(--c-chat)}
+.device .psheet.legacy .msg b{color:#fff} .device .psheet.legacy .msg span{background:rgba(255,255,255,.12)}
+.device .psheet.legacy .body{color:#cfd3dd}
+.device .tabs{display:flex;gap:14px;padding:4px 10px 6px;font-size:11px;font-weight:600;border-bottom:1px solid var(--line);flex:none}
+.device .tabs span+span{color:var(--muted);font-weight:400}
+.device .pbar{position:absolute;left:8px;right:8px;bottom:8px;height:44px;border-radius:14px;background:rgba(20,24,40,.85);z-index:11;display:flex;align-items:center;justify-content:space-around;padding:0 6px;color:#fff;font-size:11px}
+.device .pbar i{width:22px;height:22px;border-radius:7px;background:rgba(255,255,255,.22);display:inline-block}
+.device .pbar .orbit-btn{background:var(--c-orbit);border-radius:7px;padding:3px 8px;font-weight:600}
+.device .pexpress{position:absolute;right:12px;bottom:62px;width:40px;height:40px;border-radius:50%;background:var(--c-chat);color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px;z-index:11;box-shadow:var(--shadow)}
+.device .pside{position:absolute;top:0;bottom:0;right:0;width:80%;z-index:13;background:var(--surface);display:flex;flex-direction:column}
+.device .pside .bar{height:26px;display:flex;align-items:center;padding:0 10px;font-size:11px;font-weight:600;color:#fff;background:var(--c-orbit)}
+.device .pfull{position:absolute;inset:0;z-index:13;background:var(--surface);display:flex;flex-direction:column}
+.device .pfull .bar{height:26px;display:flex;align-items:center;padding:0 10px;font-size:11px;font-weight:600;color:#fff}
+.device .pfull .bar.cams{background:var(--c-cams)} .device .pfull .bar.orbit{background:var(--c-orbit)} .device .pfull .bar.cow{background:var(--c-cow)}
+.device .pfull .body{flex:1;padding:8px;min-height:0}
+.device .pfull .tiles.grid{height:100%}
+.device .ptop{position:absolute;left:0;right:0;top:0;height:50%;z-index:10;background:var(--surface);border-bottom:3px solid var(--c-cow);display:flex;flex-direction:column}
+.device .ptop .bar{height:26px;display:flex;align-items:center;padding:0 10px;font-size:11px;font-weight:600;color:#fff;background:var(--c-cow);padding-top:8px;height:34px}
+.device .ptop .body{flex:1;padding:8px}
+.device .pbackdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);z-index:12}
+.device .gest{position:absolute;left:50%;transform:translateX(-50%);z-index:14;font-family:var(--font-mono);font-size:9px;color:#fff;background:rgba(20,24,40,.8);padding:2px 8px;border-radius:999px;letter-spacing:.06em;white-space:nowrap}
+.device .pcard{position:absolute;left:0;right:0;bottom:0;z-index:12;background:var(--surface);border-top:3px solid var(--c-card);padding:10px;height:36%;font-size:11px;color:var(--muted)}
+.device .pcard b{display:block;color:var(--ink);font-size:13px;margin-bottom:6px}
+.device .pcard .btns{display:flex;gap:6px;margin-top:8px}
+.device .pcard .btns span{flex:1;height:26px;border-radius:7px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink)}
+.side-note{position:absolute;left:24px;top:40px;width:340px;font-size:12px;color:var(--muted);line-height:1.5}
+.side-note h3{margin-bottom:6px;color:var(--ink)}
+.side-note ul{margin:0;padding-left:16px}
+.side-note li{margin-bottom:4px}
+.side-note.r{left:auto;right:24px}
+
+/* controls and notes */
+.controls{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px 14px}
+.controls label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600}
+.controls label i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
+.controls select{font:inherit;font-size:12px;font-weight:400;padding:6px 8px;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink)}
+.controls .hint{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.notes{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:760px){.notes{grid-template-columns:1fr}}
+.note{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.note h3{margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.note ul{margin:0;padding-left:18px;color:var(--muted);font-size:13px}
+.note li{margin-bottom:5px}
+.note code{font-family:var(--font-mono);font-size:11px;background:var(--surface-2);padding:1px 5px;border-radius:4px;color:var(--ink)}
+.principles{margin-top:28px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.principles h2{font-size:18px;margin-bottom:10px}
+.principles ol{margin:0;padding-left:20px;columns:2;column-gap:28px;color:var(--muted);font-size:13px}
+@media (max-width:760px){.principles ol{columns:1}}
+.principles li{break-inside:avoid;margin-bottom:8px}
+.principles li b{color:var(--ink)}
+@media (prefers-reduced-motion:no-preference){.sf,.psheet,.float{transition:all .25s ease}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <p class="eyebrow">Universe · layout concepts · 2026-09-26</p>
+      <h1>Universe Shell Studio</h1>
+      <p class="lede">Every surface that takes screen space today (chat, cameras, co-website iframes, Orbit, cards, script modals), where the code puts it now, and where a shell could let people put it. Pick a scenario, then move surfaces with the selects.</p>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div class="seg" role="group" aria-label="Device">
+      <button id="v-desktop" aria-pressed="true">Desktop</button>
+      <button id="v-phone" aria-pressed="false">Phone</button>
+    </div>
+  </header>
+
+  <div class="studio">
+    <aside class="rail">
+      <section>
+        <h2>Today <small>AS SHIPPED</small></h2>
+        <div class="list" id="list-today"></div>
+      </section>
+      <section>
+        <h2>Concepts <small>PROPOSED</small></h2>
+        <div class="list" id="list-concept"></div>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div class="stage-head">
+        <h2 id="s-title">Idle</h2>
+        <span class="pill" id="s-pill">today</span>
+        <p id="s-desc"></p>
+      </div>
+      <div class="frame-wrap desktop" id="frame-wrap"><div class="scaler" id="scaler"></div></div>
+      <div class="controls" id="controls"></div>
+      <div class="notes">
+        <div class="note"><h3><i style="width:10px;height:10px;border-radius:3px;background:var(--c-card);display:inline-block"></i>What the code does today</h3><ul id="n-today"></ul></div>
+        <div class="note"><h3><i style="width:10px;height:10px;border-radius:3px;background:var(--c-chat);display:inline-block"></i>What the shell changes</h3><ul id="n-concept"></ul></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="principles">
+    <h2>Shell principles this mockup assumes</h2>
+    <ol>
+      <li><b>Surfaces, not components.</b> Chat, cameras, co-websites, Orbit, cards and modals register with one shell as surfaces with a size, a minimum, and the moves they allow (dock, float, pop out, full).</li>
+      <li><b>The map is a surface too.</b> It can shrink to a peek window and come back. The Phaser camera reads the shell's free rectangle instead of scanning the DOM for <code>.screen-blocker</code>.</li>
+      <li><b>One layer order.</b> A registry replaces the twenty hard-coded z-indexes: map, docks, floating, sheets, modal, system, toast.</li>
+      <li><b>Phones get sheets and strips.</b> Bottom sheets with snap points (peek, tall, full) and a video strip that can sit at the top, the bottom, or collapse into bubbles.</li>
+      <li><b>Desktop gets docks and windows.</b> Left, right, top, bottom docks, floating windows, and true pop-outs through the Document Picture-in-Picture API the camera code already uses.</li>
+      <li><b>Every existing hook keeps working.</b> <code>WA.nav.openCoWebSite</code>, <code>WA.ui.modal</code>, <code>WA.ui.website</code>, <code>WA.chat</code>, zone properties and extension modules map onto shell intents; the shell adds a layout API instead of replacing them.</li>
+      <li><b>Presets, then freedom.</b> Named layouts (Hangout, Meeting, Studio, Focus) cover most people; dragging a surface to another dock is for the rest, and is remembered per device class.</li>
+      <li><b>Nothing is removed.</b> Same rule as the Chat and Express epic: any surface or action that exists today has a home in the shell.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+(function(){
+  const $ = (s, r=document) => r.querySelector(s);
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+
+  const SURF = {
+    chat:  {label:'Chat', color:'--c-chat'},
+    cams:  {label:'Cameras', color:'--c-cams'},
+    cow:   {label:'Co-website', color:'--c-cow'},
+    orbit: {label:'Orbit', color:'--c-orbit'},
+    card:  {label:'Person card', color:'--c-card'},
+    modal: {label:'Script modal', color:'--c-modal'},
+  };
+  const DESK_REGIONS = [
+    ['hidden','Hidden (in dock bar)'],['left','Left dock'],['right','Right dock'],['top','Top dock'],['bottom','Bottom dock'],
+    ['center','Center (map peeks)'],['float','Floating window'],['popout','Popped out (OS window)'],['full','Full screen'],
+    ['overlay-left','Overlay left (today)'],['strip-top','Strip over map (today)'],['split-right','Split right (today)'],['sheet-right','Right sheet (today)'],['sheet-center','Centered modal (today)'],
+  ];
+  const DESK_ALLOWED = {
+    chat:['hidden','left','right','bottom','center','float','popout','full','overlay-left'],
+    cams:['hidden','left','right','top','bottom','center','float','popout','full','strip-top'],
+    cow:['hidden','left','right','bottom','center','float','popout','full','split-right'],
+    orbit:['hidden','left','right','center','float','popout','full','sheet-right'],
+    card:['hidden','right','float','popout'],
+    modal:['hidden','center','float','full','sheet-center'],
+  };
+  const PHONE_MODES = {
+    chat:[['hidden','Hidden'],['peek','Sheet · peek 30%'],['tall','Sheet · tall 80%'],['full','Sheet · full'],['full-legacy','Full screen panel (today)']],
+    cams:[['hidden','Hidden'],['top','Strip · top 10%'],['bottom','Strip · above thumb bar'],['bubble','Bubbles'],['full','Full grid'],['strip-legacy','Strip · top (today)']],
+    cow:[['hidden','Hidden'],['sheet','Sheet · 60%'],['full','Full screen'],['top-legacy','Top half (today)']],
+    orbit:[['hidden','Hidden'],['sheet','Sheet · 85%'],['full','Full screen'],['side-legacy','Right sheet 80% (today)']],
+    card:[['hidden','Hidden'],['sheet','Sheet · 36%'],['bottom-legacy','Bottom panel (today)']],
+  };
+
+  const T = (t, c) => ({today:t, concept:c});
+  const S = [
+    // ---------- TODAY · desktop
+    {id:'d-idle', view:'desktop', kind:'today', title:'Idle on a map', desc:'Nothing open. The action bar sits at the top on desktop; the Express button and zoom column sit bottom-right.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'}, legacy:true,
+      notes:T(['<code>MainLayout.svelte:134</code> flips the column so the action bar is on top on desktop, at the bottom on phones.','The map fills <code>#game</code>; its size only changes for a co-website (<code>CoWebsiteStore.ts:83</code>).'],
+              ['Same idle look. A thin dock bar can list hidden surfaces (chat, Orbit) as chips so they read as windows you can bring back.','Hotkeys already exist (C, U). The shell adds a command palette so every surface is reachable from the keyboard.'])},
+    {id:'d-chat', view:'desktop', kind:'today', title:'Chat open', desc:'The chat panel slides in from the left as a 335px overlay. The map is not resized; the rest of the UI is padded by the same width.',
+      state:{chat:'overlay-left',cams:'hidden',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'}, legacy:true,
+      notes:T(['<code>ChatSidebar.svelte:109</code> is <code>position:absolute; z-index:2000</code> with a drag bar clamped between 200px and half the viewport.','<code>MainLayout.svelte:106</code> pads everything else by the chat width, so cameras and cards squeeze into what is left.','The Phaser camera avoids it because the panel carries <code>screen-blocker</code> (<code>BiggestAvailableAreaStore.ts:139</code>).'],
+              ['Chat becomes a docked surface. Left stays the default, but right, bottom, floating and popped-out are one drag away.','The map is resized by the shell, so nothing is hidden behind the panel and the camera gets an exact free rectangle.'])},
+    {id:'d-bubble', view:'desktop', kind:'today', title:'In a bubble, standing still', desc:'Cameras render as a strip over the top of the map. After 3.5s without moving, tiles expand into a grid and a pinned person fills the middle.',
+      state:{chat:'hidden',cams:'strip-top',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'}, legacy:true, still:true,
+      notes:T(['<code>PresentationLayout.svelte</code> is the only layout: a strip, then the highlighted media below.','<code>VideoLayoutStore.ts:53</code> decides one line vs grid from movement, conversation, pin and PiP.','The grid height ratio (0.1 to 0.9) is dragged and saved as <code>cameraContainerHeight</code>.','<code>LayoutMode.VideoChat</code> exists but nothing switches to it.'],
+              ['Cameras are a surface with three shapes: strip, rail, grid. The strip can live in the top or bottom dock, the rail on either side, the grid in the center with the map peeking.','The movement rule stays, but as a shell policy (“expand when still”) that a preset can turn off.'])},
+    {id:'d-cow', view:'desktop', kind:'today', title:'Co-website open', desc:'The one real split: App.svelte gives the iframe half the width and shrinks the game canvas. Tabs at the top switch between several co-websites.',
+      state:{chat:'hidden',cams:'hidden',cow:'split-right',orbit:'hidden',card:'hidden',modal:'hidden'}, legacy:true,
+      notes:T(['<code>App.svelte:252</code>: landscape puts the co-website right, portrait puts it on top.','The ratio comes from <code>widthPercent</code> only; <code>position</code> and <code>lazy</code> from <code>WA.nav.openCoWebSite</code> are dropped (<code>Chat/Utils.ts:20</code>).','The ratio is not persisted; fullscreen hides <code>#game</code> entirely.'],
+              ['Co-websites become the first surfaces to honour <code>position</code>: right dock, bottom dock, floating, popped out.','The same tab strip lives inside the surface, so multi co-website behaviour is unchanged.'])},
+    {id:'d-orbit', view:'desktop', kind:'today', title:'Orbit open', desc:'Orbit is the script iframe modal with position "right": a third of the screen, dimmed backdrop, Esc closes, optional fullscreen at lg.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'sheet-right',card:'hidden',modal:'hidden'}, legacy:true,
+      notes:T(['<code>admin-api/index.ts:102</code> sets <code>modalIframeStore</code> with <code>position:"right"</code>.','<code>Modal.svelte:128</code>: right/left = 33% width, 80% (max 400px) under 992px; the backdrop blocks the map.','Only one iframe modal can exist; opening Orbit replaces any script modal.'],
+              ['Orbit becomes a persistent surface (the Quests epic already asks for a persistent shell and Back everywhere).','It can dock left as a sidebar while you keep playing, float while you fill a form, or pop out onto a second monitor for owners.'])},
+    {id:'d-modal', view:'desktop', kind:'today', title:'Script modal, centered', desc:'A map script opened WA.ui.modal.openModal with position "center": a 75% by 75% box with a backdrop.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'hidden',card:'hidden',modal:'sheet-center'}, legacy:true,
+      notes:T(['<code>Modal.svelte:150</code>: center = 75% × 75%, forced full screen on phones.','<code>MainLayout.svelte:122</code> paints the backdrop; the fullscreen toggle is a stub.'],
+              ['Keeps the same call and the same look by default. The shell adds an optional <code>mode:"window"</code> so a script can ask for a floating, non-blocking window instead.'])},
+    {id:'d-all', view:'desktop', kind:'today', title:'Everything at once', desc:'Chat overlay, camera strip and a co-website together. This is the layout most people hit in a working session, and the one that feels most like a web app.',
+      state:{chat:'overlay-left',cams:'strip-top',cow:'split-right',orbit:'hidden',card:'hidden',modal:'hidden'}, legacy:true,
+      notes:T(['Three sizing systems fight: the co-website ratio resizes the canvas, the chat pads the overlay layer, the camera grid keeps its own height ratio.','Camera tiles start 335px in because of the padding; the strip overlaps the action bar area on narrow windows and the bar hides itself under 285px of free width.'],
+              ['One grid: chat left dock, cameras top dock, co-website right dock, map center. No overlaps, no padding tricks, and the camera rectangle is exact.'])},
+    // ---------- TODAY · phone
+    {id:'p-idle', view:'phone', kind:'today', title:'Idle on a phone', desc:'Action bar at the bottom, Express above the menu button, map full bleed.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'hidden',card:'hidden'}, legacy:true,
+      notes:T(['The <code>mobile:</code> Tailwind variant (small and coarse pointer) moves the action bar to the bottom.','Three different “phone” definitions coexist: the variant, <code>windowSize.width &lt; 768</code>, and <code>isMediaBreakpointUp("md")</code> which means ≤ 991.'],
+              ['The shell owns one device class decision (phone, tablet, desktop) and exposes it as a store every surface reads.','A thumb bar replaces the action bar: chat, people, mic, camera, Orbit, menu, in reach of one thumb.'])},
+    {id:'p-chat', view:'phone', kind:'today', title:'Chat open on a phone', desc:'Under 768px the chat panel is forced to 100% width. It covers the map and the camera strip; the close button is the way back.',
+      state:{chat:'full-legacy',cams:'hidden',cow:'hidden',orbit:'hidden',card:'hidden'}, legacy:true,
+      notes:T(['<code>ChatSidebar.svelte:143</code> and <code>chat.scss:25</code> force <code>width:100% !important</code> under 768px.','<code>MainLayout</code> still pads by the stored width (250px initial on phones), so cameras end up under the panel.','<code>PeopleCardReturn.ts</code> already reasons about “does the panel leave room for the map” to close chat when a card opens.'],
+              ['Chat is a bottom sheet with three snap points: peek (30%), tall (80%), full. The map keeps a peek at the top so you never lose where you are.','Swipe down to peek, swipe up for full. The keyboard pushes the sheet, not the page (ViewportGuard already holds the page still).'])},
+    {id:'p-bubble', view:'phone', kind:'today', title:'In a bubble on a phone', desc:'Cameras use the same strip as desktop, top of the screen, with a small top margin. Your own camera is not shown under 768px.',
+      state:{chat:'hidden',cams:'strip-legacy',cow:'hidden',orbit:'hidden',card:'hidden'}, legacy:true,
+      notes:T(['<code>StreamableCollectionStore.ts:195</code> skips your own tile under 768px.','<code>PresentationLayout.svelte:81</code> adds <code>mobile:mt-3</code>; otherwise there is no phone video layout.','Pinning fills the screen (<code>MainLayout.svelte:126</code>) and hides the action bar.'],
+              ['The strip is a surface with a phone shape: a 10% top strip, a strip above the thumb bar, or bubbles (round faces that stack top-right like chat heads).','Tap a bubble to expand; pinned goes full grid with chat as a peek sheet under it.'])},
+    {id:'p-cow', view:'phone', kind:'today', title:'Co-website on a phone', desc:'In portrait the iframe takes the top half and the map the bottom half, with a horizontal drag bar between.',
+      state:{chat:'hidden',cams:'hidden',cow:'top-legacy',orbit:'hidden',card:'hidden'}, legacy:true,
+      notes:T(['<code>App.svelte:252</code>: <code>portrait:flex-col-reverse</code>.','The drag bar works with touch; no snap points, no persistence.'],
+              ['Co-websites become a bottom sheet (60%) with the same snap points as chat, or full screen with a Back in the thumb bar.','Docs, Jitsi and BBB keep their components; only the container changes.'])},
+    {id:'p-orbit', view:'phone', kind:'today', title:'Orbit on a phone', desc:'Orbit keeps position "right": 80% of the width up to 400px, with a backdrop. Center modals are forced full screen, right ones are not.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'side-legacy',card:'hidden'}, legacy:true,
+      notes:T(['<code>Modal.svelte:57</code>: only <code>center</code> is forced full screen on phones.','A 20% sliver of map stays visible but is behind the backdrop and cannot be used.'],
+              ['Orbit is a tall sheet (85%) with a handle, a Back row, and the map peeking at the top; owners doing longer tasks go full screen.','This matches the Quests epic rule: bigger tasks use a full-screen view of the same window, never a new tab.'])},
+    {id:'p-card', view:'phone', kind:'today', title:'Person card on a phone', desc:'Tapping someone in People closes the chat and shows their card as a full-width bottom panel over the map.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'hidden',card:'bottom-legacy'}, legacy:true,
+      notes:T(['<code>MainLayout.svelte:236</code>: bottom, full width on phones; top-right column on md+.','<code>PeopleCardReturn.ts</code> (idle → armed → returning) reopens People when the card is dismissed.'],
+              ['The card is a small sheet on top of the chat sheet, so People stays visible under it; dismissing it is a swipe, and the return logic becomes a shell rule (“restore the surface below”).'])},
+    // ---------- CONCEPTS · desktop
+    {id:'c-hangout-d', view:'desktop', kind:'concept', title:'Hangout', desc:'Chat docked right, cameras in a top strip, map center. The everyday layout for a social space.',
+      state:{chat:'right',cams:'top',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'},
+      notes:T(['Not possible today: chat is fixed to the inline-start edge and cameras to the strip over the map.'],
+              ['Chat on the right keeps the map’s left edge free for the action bar’s chat and people buttons.','Camera strip as a dock means the map is shorter, not covered; the camera rectangle is the center cell.'])},
+    {id:'c-studio', view:'desktop', kind:'concept', title:'Studio', desc:'A co-website (docs, board, video call) takes the center, the map becomes a peek window, chat on the left and cameras as a right rail.',
+      state:{chat:'left',cams:'right',cow:'center',orbit:'hidden',card:'hidden',modal:'hidden'},
+      notes:T(['Today the co-website can only take half the width; the map cannot shrink to a peek.'],
+              ['The map peek keeps proximity and movement alive: you still see who walks up. Click it to swap back.','Camera rail on the right mirrors what Google Meet does with a companion sidebar.'])},
+    {id:'c-meeting', view:'desktop', kind:'concept', title:'Meeting', desc:'Cameras fill the center as a grid, chat docked right, map peeking bottom-left.',
+      state:{chat:'right',cams:'center',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'},
+      notes:T(['The closest thing today is a pinned person going full screen, which hides the action bar and everything else.'],
+              ['This is LayoutMode.VideoChat, finally real. Applied automatically when someone shares a screen, if the preset says so.'])},
+    {id:'c-popout', view:'desktop', kind:'concept', title:'Popped out', desc:'A chat thread and Orbit live in their own OS windows; the browser keeps the map and cameras. Same tab, same Matrix client, same WebRTC.',
+      state:{chat:'popout',cams:'top',cow:'hidden',orbit:'popout',card:'hidden',modal:'hidden'},
+      notes:T(['<code>PictureInPicture.svelte:110</code> already moves the camera DOM into a Document Picture-in-Picture window and copies stylesheets.','Nothing else can leave the tab.'],
+              ['Document PiP shares the page’s JavaScript, so the popped-out chat uses the same Matrix session and stores; no second login, no sync problem.','Browsers without it (Firefox, Safari) fall back to a floating window inside the page. A window.open fallback is possible but needs a message bridge.'])},
+    {id:'c-focus', view:'desktop', kind:'concept', title:'Focus', desc:'Everything minimised to the dock bar; the map is the whole window. Chips show unread counts and who is talking.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'hidden',card:'hidden',modal:'hidden'}, dockbar:['chat','cams','orbit'],
+      notes:T(['Closing chat today drops its state (tab, scroll). Cameras cannot be minimised while in a bubble.'],
+              ['Minimised surfaces stay mounted, so a chip shows “3 unread” or a talking indicator; clicking restores the surface to the dock it came from.'])},
+    {id:'c-builder', view:'desktop', kind:'concept', title:'Builder', desc:'Orbit docked left as a sidebar while you walk the map; chat floating; cameras floating. For owners setting up a quest or a room.',
+      state:{chat:'float',cams:'float',cow:'hidden',orbit:'left',card:'hidden',modal:'hidden'},
+      notes:T(['Orbit is modal: while it is open, the map is dimmed and blocked.'],
+              ['Orbit as a dock lets an owner follow its instructions and act on the map at the same time; the bridge (Quests 1B) tells Orbit which page to show.','Floating windows remember position per device class in <code>localUserStore</code>, synced through the Orbit preference endpoint (Quests 1A).'])},
+    // ---------- CONCEPTS · phone
+    {id:'c-hangout-p', view:'phone', kind:'concept', title:'Hangout', desc:'Chat sheet at 80%, video strip 10% at the top, and 10% of map between them. The example from the brief.',
+      state:{chat:'tall',cams:'top',cow:'hidden',orbit:'hidden',card:'hidden'},
+      notes:T(['Not possible today: the chat panel is forced to 100% width and cameras end up under it.'],
+              ['The strip is a real dock, so the tiles never overlap the sheet.','The map peek is live: you see people walk up, and tapping it drops the sheet to peek.'])},
+    {id:'c-peek', view:'phone', kind:'concept', title:'Peek', desc:'Chat sheet at 30% with cameras as bubbles. You walk the map with a conversation in your pocket.',
+      state:{chat:'peek',cams:'bubble',cow:'hidden',orbit:'hidden',card:'hidden'},
+      notes:T(['Today it is all or nothing: chat covers everything or is closed.'],
+              ['Peek shows the top row (who you are with, last message, typing). Bubbles show faces and who is talking; tap to expand to the strip or the grid.'])},
+    {id:'c-call', view:'phone', kind:'concept', title:'Call', desc:'Cameras full grid with the chat sheet at peek under it. Pinning is a tap on a tile.',
+      state:{chat:'peek',cams:'full',cow:'hidden',orbit:'hidden',card:'hidden'},
+      notes:T(['A pinned tile goes full screen and hides the action bar; there is no grid on phones.'],
+              ['The thumb bar stays under the grid; chat peeks below it. Same shape as a FaceTime or Meet call so it needs no learning.'])},
+    {id:'c-orbit-p', view:'phone', kind:'concept', title:'Orbit sheet', desc:'Orbit as a tall sheet with a handle and a Back row; the map peeks above it.',
+      state:{chat:'hidden',cams:'hidden',cow:'hidden',orbit:'sheet',card:'hidden'},
+      notes:T(['An 80% right sheet with a dimmed, unusable sliver of map.'],
+              ['Swipe down to close, swipe up for full screen. The keyboard pushes the sheet up rather than the page.'])},
+    {id:'c-cow-p', view:'phone', kind:'concept', title:'Co-website sheet', desc:'A shared doc as a 60% sheet, map on top, chat hidden in the thumb bar with an unread badge.',
+      state:{chat:'hidden',cams:'bubble',cow:'sheet',orbit:'hidden',card:'hidden'},
+      notes:T(['The iframe takes the top half with a drag bar; no snap points.'],
+              ['Same sheet component as chat and Orbit, so one gesture vocabulary for every surface.'])},
+  ];
+
+  let view = 'desktop';
+  let current = null;
+  let state = {};
+  let still = true;
+
+  // ------- legend
+  const legend = $('#legend');
+  legend.appendChild(Object.assign(el('span',null,'<i style="background:var(--c-map)"></i>Map'),{}));
+  for (const k in SURF) legend.appendChild(el('span',null,`<i style="background:var(${SURF[k].color})"></i>${SURF[k].label}`));
+
+  // ------- lists
+  function buildLists(){
+    for (const kind of ['today','concept']){
+      const host = $('#list-'+kind); host.innerHTML='';
+      S.filter(s=>s.kind===kind && s.view===view).forEach(s=>{
+        const b = el('button',null,`<strong>${s.title}</strong><span>${s.desc.split('.')[0]}.</span>`);
+        b.setAttribute('aria-current', current && current.id===s.id ? 'true':'false');
+        b.addEventListener('click',()=>load(s.id));
+        host.appendChild(b);
+      });
+    }
+  }
+
+  function load(id){
+    current = S.find(s=>s.id===id);
+    state = Object.assign({}, current.state);
+    still = current.still !== false;
+    $('#s-title').textContent = current.title;
+    const pill = $('#s-pill'); pill.textContent = current.kind==='today' ? 'today, as shipped' : 'concept';
+    pill.className = 'pill '+current.kind;
+    $('#s-desc').textContent = current.desc;
+    $('#n-today').innerHTML = current.notes.today.map(x=>`<li>${x}</li>`).join('');
+    $('#n-concept').innerHTML = current.notes.concept.map(x=>`<li>${x}</li>`).join('');
+    buildLists(); buildControls(); render();
+  }
+
+  // ------- controls
+  function buildControls(){
+    const host = $('#controls'); host.innerHTML='';
+    const keys = view==='desktop' ? Object.keys(SURF) : Object.keys(PHONE_MODES);
+    keys.forEach(k=>{
+      const lab = el('label',null,`<span><i style="background:var(${SURF[k].color})"></i>${SURF[k].label}</span>`);
+      const sel = el('select'); sel.id = 'ctl-'+k;
+      const opts = view==='desktop' ? DESK_REGIONS.filter(r=>DESK_ALLOWED[k].includes(r[0])) : PHONE_MODES[k];
+      opts.forEach(([v,l])=>{ const o = el('option',null,l); o.value=v; if (state[k]===v) o.selected=true; sel.appendChild(o); });
+      sel.addEventListener('change',()=>{ state[k]=sel.value; markModified(); render(); });
+      lab.appendChild(sel); host.appendChild(lab);
+    });
+    if (view==='desktop'){
+      const lab = el('label',null,'<span>Player</span>');
+      const sel = el('select'); sel.id='ctl-still';
+      [['still','Standing still (grid, pin shown)'],['moving','Moving (one strip)']].forEach(([v,l])=>{const o=el('option',null,l);o.value=v;o.selected=(v==='still')===still;sel.appendChild(o);});
+      sel.addEventListener('change',()=>{ still = sel.value==='still'; render(); });
+      lab.appendChild(sel); host.appendChild(lab);
+    }
+    host.appendChild(el('p','hint', view==='desktop'
+      ? 'Options marked (today) draw the behaviour shipped now. The others are shell regions. Mixing them is allowed; that is the point of a brainstorm.'
+      : 'Sheet sizes are snap points. Anything marked (today) is the current phone behaviour.'));
+  }
+  function markModified(){ const p=$('#s-pill'); if(!/modified/.test(p.textContent)) p.textContent += ' · modified'; }
+
+  // ------- pieces
+  const chatBody = (dark) => `<div class="body"><div class="msgs">
+      <div class="msg"><i></i><div><b>Sara</b><span>walk over? we’re by the fountain</span></div></div>
+      <div class="msg"><i style="background:#2A9D8F"></i><div><b>You</b><span>on my way</span></div></div>
+      <div class="msg"><i style="background:#E0457B"></i><div><b>Omar</b><span>bringing the board</span></div></div>
+      <div class="msg"><i></i><div><b>Sara</b><span>Sara is typing…</span></div></div>
+    </div><div class="composer">Message…</div></div>`;
+  const people = ['Sara','Omar','Lina','Jad'];
+  const tiles = (shape, n=4, withYou=true) => {
+    const list = people.slice(0,n).map(p=>`<div class="tile"><b>${p}</b></div>`);
+    if (withYou) list.push('<div class="tile you"><b>You</b></div>');
+    return `<div class="tiles ${shape}">${list.join('')}</div>`;
+  };
+  const cowBody = () => `<div class="body"><div class="web"><div></div><div></div><div></div></div></div>`;
+  const orbitBody = () => `<div class="body"><div class="orbit-nav"><span></span><span></span><span></span></div><div class="orbit-cards"><span></span><span></span><span></span><span></span></div></div>`;
+  const cardBody = () => `<div class="body"><b style="color:var(--ink);font-size:12px">Sara · Design</b><br>In Headquarters · 2 min ago<div class="orbit-nav" style="margin-top:8px"><span></span><span></span><span></span></div></div>`;
+  const modalBody = () => `<div class="body"><div class="orbit-cards"><span></span><span></span></div><p style="margin-top:8px">Script content from the map (WA.ui.modal)</p></div>`;
+  function surface(k, shape){
+    const titles = {chat:'Chat · Sara & Omar', cams:'Cameras · 5', cow:'Co-website · Shared doc', orbit:'Orbit', card:'Person card', modal:'Script modal'};
+    let body;
+    if (k==='chat') body = chatBody();
+    else if (k==='cams') body = `<div class="body" style="padding:6px">${tiles(shape||'row')}</div>`;
+    else if (k==='cow') body = cowBody();
+    else if (k==='orbit') body = orbitBody();
+    else if (k==='card') body = cardBody();
+    else body = modalBody();
+    return `<div class="sf" data-k="${k}"><div class="bar">${titles[k]}<span class="dots">— ▢ ✕</span></div>${body}</div>`;
+  }
+  const mapHtml = (peek, label) => `<div class="map${peek?' peek':''}">
+      <div class="path"></div><div class="path h"></div>
+      <div class="house" style="left:12%;top:18%"></div><div class="house" style="left:62%;top:70%;width:140px"></div>
+      <div class="avatar me" style="left:46%;top:47%"></div><div class="avatar" style="left:52%;top:44%"></div><div class="avatar" style="left:50%;top:52%"></div><div class="avatar" style="left:36%;top:60%"></div>
+      <span class="label" style="left:12px;bottom:8px">${label||'Headquarters · fountain'}</span></div>`;
+
+  // ------- desktop render
+  function renderDesktop(){
+    const os = el('div','os');
+    const popouts = Object.keys(state).filter(k=>state[k]==='popout');
+    const browser = el('div','browser'+(popouts.length?'':' centered'));
+    browser.innerHTML = `<div class="chrome"><i></i><i></i><i></i><div class="url">universe.bawes.net/@/hq/lobby</div></div>`;
+    const vp = el('div','viewport');
+    const docks = {top:el('div','dock top'),left:el('div','dock left'),right:el('div','dock right'),bottom:el('div','dock bottom')};
+    const center = el('div','center');
+    let mapPeek = false, centerSurface = null;
+    const overlays = [];
+    const floats = [];
+    let fullS = null;
+
+    for (const k of Object.keys(state)){
+      const r = state[k];
+      if (r==='hidden' || r==='popout') continue;
+      if (r in docks){
+        const shape = (k==='cams') ? ((r==='left'||r==='right') ? 'col' : 'row') : null;
+        const s = el('div'); s.innerHTML = surface(k, shape); docks[r].appendChild(s.firstChild);
+        if (k==='chat' && (r==='left'||r==='right')) docks[r].style.setProperty('--w','320px');
+        if (k==='cams' && (r==='left'||r==='right')) docks[r].style.setProperty('--w', docks[r].style.getPropertyValue('--w')||'200px');
+        if (k==='orbit' && (r==='left'||r==='right')) docks[r].style.setProperty('--w','340px');
+        if (k==='cow' && (r==='left'||r==='right')) docks[r].style.setProperty('--w','380px');
+      } else if (r==='center'){ centerSurface = k; mapPeek = true; }
+      else if (r==='float'){ floats.push(k); }
+      else if (r==='full'){ fullS = k; }
+      else overlays.push([k,r]);
+    }
+
+    // center content
+    if (centerSurface){
+      const s = el('div'); s.style.cssText='position:absolute;inset:6px;display:flex'; s.innerHTML = surface(centerSurface, 'grid');
+      center.appendChild(s);
+      center.insertAdjacentHTML('beforeend', mapHtml(true,'map · peek'));
+    } else {
+      center.insertAdjacentHTML('beforeend', mapHtml(false));
+    }
+    // legacy split (co-website today)
+    if (overlays.some(([k,r])=>r==='split-right')){
+      center.innerHTML = '';
+      const split = el('div','split');
+      split.innerHTML = `<div style="position:relative;overflow:hidden">${mapHtml(false)}<div class="actionbar top"><i></i><i></i> <i></i><i></i><i></i> <span class="orbit-btn">Orbit</span></div><div class="express">☺</div></div>${surface('cow')}`;
+      center.appendChild(split);
+      center.dataset.split = '1';
+    }
+    // action bar and express (top on desktop) unless split already drew them or a full surface
+    if (!center.dataset.split && !fullS){
+      center.insertAdjacentHTML('beforeend', `<div class="actionbar top"><i></i><i></i> <i></i><i></i><i></i> <span class="orbit-btn">Orbit</span></div><div class="express">☺</div>`);
+    }
+    // legacy overlays
+    for (const [k,r] of overlays){
+      if (r==='strip-top'){
+        const target = center.dataset.split ? center.querySelector('.split > div') : center;
+        const stripLeft = state.chat==='overlay-left' ? 'style="left:343px"' : '';
+        target.insertAdjacentHTML('beforeend', `<div class="ov-strip" ${stripLeft}>${people.map(p=>`<div class="tile"><b>${p}</b></div>`).join('')}</div>` + (still ? `<div class="ov-highlight"><b>Sara · pinned</b></div>`:''));
+      }
+      if (r==='overlay-left'){
+        vp.insertAdjacentHTML('beforeend', `<div class="ov-chat"><div class="bar" style="height:24px;display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600">Chat · Sara & Omar</div>${chatBody(true)}<div class="grip"></div></div><div class="pad-marker"><span>padding-inline-start = chat width</span></div>`);
+      }
+      if (r==='sheet-right'){
+        vp.insertAdjacentHTML('beforeend', `<div class="backdrop"></div><div class="sheet right">${surface(k)}</div>`);
+      }
+      if (r==='sheet-center'){
+        vp.insertAdjacentHTML('beforeend', `<div class="backdrop"></div><div class="sheet center">${surface(k)}</div>`);
+      }
+    }
+    // floats
+    floats.forEach((k,i)=>{
+      const sizes = {chat:[300,300], cams:[340,120], cow:[360,240], orbit:[360,280], card:[240,160], modal:[380,240]};
+      const [w,h] = sizes[k];
+      center.insertAdjacentHTML('beforeend', `<div class="float" style="width:${w}px;height:${h}px;right:${20+i*40}px;top:${60+i*150}px">${surface(k, k==='cams'?'row':null)}</div>`);
+    });
+    if (fullS) vp.insertAdjacentHTML('beforeend', `<div class="full">${surface(fullS,'grid')}</div>`);
+
+    // dock bar (concept): hidden surfaces as chips
+    const hiddenList = (current.dockbar) || Object.keys(state).filter(k=>state[k]==='hidden' && k!=='modal' && k!=='card');
+    if (current.kind==='concept' && hiddenList.length){
+      center.insertAdjacentHTML('beforeend', `<div class="dockbar"><span class="k">DOCK BAR</span>${hiddenList.map(k=>`<span><i style="background:var(${SURF[k].color})"></i>${SURF[k].label}${k==='chat'?' · 3':''}</span>`).join('')}</div>`);
+    }
+
+    vp.appendChild(docks.top); vp.appendChild(docks.left); vp.appendChild(center); vp.appendChild(docks.right); vp.appendChild(docks.bottom);
+    browser.appendChild(vp);
+    os.appendChild(browser);
+    popouts.forEach((k,i)=>{
+      const h = k==='cams'?150:300;
+      os.insertAdjacentHTML('beforeend', `<div class="popout" style="left:960px;top:${40+i*330}px;height:${h}px"><div class="os-title"><i></i> Universe · ${SURF[k].label} (Document PiP)</div>${surface(k,'row')}</div>`);
+    });
+    os.insertAdjacentHTML('beforeend', `<div class="desk-hint">${popouts.length ? 'OS desktop · pop-outs share the tab’s JavaScript (Document Picture-in-Picture)' : 'OS desktop'}</div>`);
+    return os;
+  }
+
+  // ------- phone render
+  function renderPhone(){
+    const os = el('div','os');
+    const phone = el('div','device');
+    const scr = el('div','screen');
+    scr.innerHTML = `<div class="notch"></div><div class="pmap">${mapHtml(false)}</div>`;
+    const st = state;
+    const anyFull = st.chat==='full' || st.chat==='full-legacy' || st.cams==='full' || st.orbit==='full' || st.cow==='full' || st.orbit==='side-legacy';
+    // cameras
+    if (st.cams==='top') scr.insertAdjacentHTML('beforeend', `<div class="layer strip top">${people.slice(0,3).map(p=>`<div class="tile"><b>${p}</b></div>`).join('')}</div>`);
+    if (st.cams==='strip-legacy') scr.insertAdjacentHTML('beforeend', `<div class="layer strip legacy">${people.slice(0,3).map(p=>`<div class="tile"><b>${p}</b></div>`).join('')}</div>`);
+    if (st.cams==='bottom') scr.insertAdjacentHTML('beforeend', `<div class="layer strip bottom">${people.slice(0,3).map(p=>`<div class="tile"><b>${p}</b></div>`).join('')}</div>`);
+    if (st.cams==='bubble') scr.insertAdjacentHTML('beforeend', `<div class="bubbles">${people.slice(0,3).map(p=>`<div class="tile"><b>${p}</b></div>`).join('')}</div>`);
+    if (st.cams==='full') scr.insertAdjacentHTML('beforeend', `<div class="pfull" style="bottom:${st.chat==='peek'?'30%':'0'};z-index:11"><div class="bar cams">Cameras · 5<span style="margin-left:auto;font-family:var(--font-mono);font-size:10px">✕</span></div><div class="body">${tiles('grid',3)}</div></div>`);
+    // co-website
+    if (st.cow==='top-legacy') scr.insertAdjacentHTML('beforeend', `<div class="ptop"><div class="bar">Shared doc<span style="margin-left:auto;font-family:var(--font-mono);font-size:10px">⤢ ✕</span></div>${cowBody()}</div><div class="gest" style="top:50%;margin-top:-10px">drag bar</div>`);
+    if (st.cow==='sheet') scr.insertAdjacentHTML('beforeend', `<div class="psheet cow" style="height:60%"><div class="handle"></div><div class="bar">Shared doc<span class="dots">⤢ ✕</span></div>${cowBody()}</div>`);
+    if (st.cow==='full') scr.insertAdjacentHTML('beforeend', `<div class="pfull"><div class="bar cow">‹ Back · Shared doc</div>${cowBody()}</div>`);
+    // orbit
+    if (st.orbit==='side-legacy') scr.insertAdjacentHTML('beforeend', `<div class="pbackdrop"></div><div class="pside"><div class="bar" style="padding-top:34px;height:60px">Admin Dashboard</div>${orbitBody()}</div>`);
+    if (st.orbit==='sheet') scr.insertAdjacentHTML('beforeend', `<div class="psheet orbit" style="height:85%"><div class="handle"></div><div class="bar">‹ Back · Orbit<span class="dots">⤢</span></div>${orbitBody()}</div><div class="gest" style="top:6%">map peek · tap to drop sheet</div>`);
+    if (st.orbit==='full') scr.insertAdjacentHTML('beforeend', `<div class="pfull"><div class="bar orbit" style="padding-top:34px;height:60px">‹ Back · Orbit</div>${orbitBody()}</div>`);
+    // chat
+    const chatSheet = (h, legacy) => `<div class="psheet chat${legacy?' legacy':''}" style="height:${h}">${legacy?'':'<div class="handle"></div>'}<div class="bar" ${legacy?'style="padding-top:34px;height:60px"':''}>Chat<span class="dots">${legacy?'✕':'⤢'}</span></div><div class="tabs"><span>Chats</span><span>People</span></div>${chatBody()}</div>`;
+    if (st.chat==='peek') scr.insertAdjacentHTML('beforeend', chatSheet('30%'));
+    if (st.chat==='tall') scr.insertAdjacentHTML('beforeend', chatSheet('80%'));
+    if (st.chat==='full') scr.insertAdjacentHTML('beforeend', chatSheet('100%'));
+    if (st.chat==='full-legacy') scr.insertAdjacentHTML('beforeend', chatSheet('100%', true));
+    if (st.chat==='tall' && st.cams==='top') scr.insertAdjacentHTML('beforeend', `<div class="gest" style="top:14%">map · 10% · live</div>`);
+    if (st.chat==='peek') scr.insertAdjacentHTML('beforeend', `<div class="gest" style="bottom:31%">swipe up · tall / full</div>`);
+    // card
+    if (st.card==='bottom-legacy') scr.insertAdjacentHTML('beforeend', `<div class="pcard"><b>Sara · Design</b>In Headquarters · fountain<div class="btns"><span>Walk to</span><span>Message</span><span>Locate</span></div></div>`);
+    if (st.card==='sheet') scr.insertAdjacentHTML('beforeend', `<div class="psheet card" style="height:36%;z-index:14"><div class="handle"></div><div class="bar">Sara · Design<span class="dots">✕</span></div><div class="body">In Headquarters · fountain<div class="orbit-nav" style="margin-top:8px"><span></span><span></span><span></span></div></div></div>`);
+    // thumb bar
+    const showBar = !(st.chat==='full-legacy' || st.chat==='full' || st.orbit==='full' || st.cow==='full' || st.orbit==='side-legacy' || (current.kind==='today' && st.cams==='full'));
+    if (showBar){
+      scr.insertAdjacentHTML('beforeend', `<div class="pbar"><i></i><i></i><i></i><i></i><span class="orbit-btn">Orbit</span><i></i></div>`);
+      if (current.kind==='today' && st.chat==='hidden' && st.card==='hidden') scr.insertAdjacentHTML('beforeend', `<div class="pexpress">☺</div>`);
+    }
+    phone.appendChild(scr); os.appendChild(phone);
+    // side notes
+    const left = el('div','side-note');
+    left.innerHTML = current.kind==='today'
+      ? `<h3>Today</h3><ul>${current.notes.today.slice(0,3).map(x=>`<li>${x}</li>`).join('')}</ul>`
+      : `<h3>Gestures</h3><ul><li>Handle: drag to the next snap point (peek 30%, tall 80%, full).</li><li>Map peek: tap to drop the sheet to peek.</li><li>Bubbles: tap to expand to the strip; long press to pin.</li><li>Back: closes only the foremost surface, as the Quests epic requires.</li></ul>`;
+    os.appendChild(left);
+    const right = el('div','side-note r');
+    right.innerHTML = current.kind==='today'
+      ? `<h3>Why it feels like a web app</h3><ul><li>Surfaces replace each other instead of sharing the screen.</li><li>No gesture vocabulary: everything is a button and a close X.</li><li>The map disappears the moment you talk to someone.</li></ul>`
+      : `<h3>Shell rule</h3><ul>${current.notes.concept.slice(0,3).map(x=>`<li>${x}</li>`).join('')}</ul>`;
+    os.appendChild(right);
+    os.insertAdjacentHTML('beforeend', `<div class="desk-hint">phone · 390 × 780 logical</div>`);
+    return os;
+  }
+
+  function render(){
+    const scaler = $('#scaler'); scaler.innerHTML='';
+    scaler.appendChild(view==='desktop' ? renderDesktop() : renderPhone());
+    fit();
+  }
+  function fit(){
+    const wrap = $('#frame-wrap'); const w = wrap.clientWidth; const s = w/1200;
+    $('#scaler').style.transform = `scale(${s})`;
+  }
+  window.addEventListener('resize', fit);
+
+  function setView(v){
+    view = v;
+    $('#v-desktop').setAttribute('aria-pressed', v==='desktop');
+    $('#v-phone').setAttribute('aria-pressed', v==='phone');
+    $('#frame-wrap').className = 'frame-wrap '+v;
+    const first = S.find(s=>s.view===v && s.kind==='today');
+    load(first.id);
+    try { localStorage.setItem('uss-view', v); } catch(e){}
+  }
+  $('#v-desktop').addEventListener('click',()=>setView('desktop'));
+  $('#v-phone').addEventListener('click',()=>setView('phone'));
+
+  let startView = 'desktop';
+  try { const v = localStorage.getItem('uss-view'); if (v==='phone'||v==='desktop') startView = v; } catch(e){}
+  if (location.hash === '#phone') startView = 'phone';
+  setView(startView);
+})();
+</script>
