@@ -1,6 +1,7 @@
 import { get } from "svelte/store";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { wokaMenuStore } from "../../Stores/WokaMenuStore";
+import { gameManager } from "../../Phaser/Game/GameManager";
 import { chatSidebarWidthStore } from "../ChatSidebarWidthStore";
 import { navChat } from "./ChatStore";
 import { createPeopleCardReturn, sidebarCoversMap } from "./PeopleCardReturn";
@@ -15,5 +16,8 @@ export const peopleCardReturn = createPeopleCardReturn({
         const shownWidth = document.getElementById("chat")?.getBoundingClientRect().width;
         return sidebarCoversMap(window.innerWidth, shownWidth ?? get(chatSidebarWidthStore));
     },
-    showPeople: () => navChat.switchToUserList(),
+    // Between maps (a room change, a reconnect) there is no scene to read the room's list settings from.
+    showPeople: () => {
+        if (gameManager.tryGetCurrentGameScene()) navChat.switchToUserList();
+    },
 });
