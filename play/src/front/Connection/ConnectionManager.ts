@@ -651,8 +651,9 @@ class ConnectionManager {
                 );
             }
             // Let's retry in 4-6 seconds, sooner the first time (a phone coming back to the app often just needed its
-            // network), and right away when the browser comes back online.
-            this.failedSocketAttempts++;
+            // network), and right away when the browser comes back online. A closed map's failure isn't counted: the map
+            // replacing it would otherwise wait the longer delay on its own first failure.
+            if (!options.cancelled?.()) this.failedSocketAttempts++;
             const retryDelay =
                 this.failedSocketAttempts === 1
                     ? 1000 + Math.floor(Math.random() * 1000)
