@@ -292,9 +292,12 @@ describe("The Orbit bridge", () => {
         for (const listener of listeners) listener({ data, source, origin } as MessageEvent<unknown>);
     }
 
-    function lastOpenedUrl(): URL {
-        const calls = mocks.modalIframeSet.mock.calls.filter((call) => call[0]);
-        return new URL((calls[calls.length - 1][0] as { src: string }).src);
+    /** The room revision the game sent Orbit in its last init message. */
+    function lastInitRevision(): string {
+        const inits = frame.postMessage.mock.calls
+            .map((call) => call[0] as { type: string; roomRevision: string })
+            .filter((message) => message.type === "orbit-bridge-init");
+        return inits[inits.length - 1].roomRevision;
     }
 
     it("opens Orbit for a page request, and sends it only once Orbit has signed in and is ready", async () => {
@@ -304,11 +307,11 @@ describe("The Orbit bridge", () => {
 
         expect(index.requestOrbitPage("new-universe")).toBe(true);
         expect(mocks.orbitOpened).toHaveBeenLastCalledWith({ source: "link" });
-        const revision = lastOpenedUrl().searchParams.get("rev");
-        expect(revision).toMatch(/^rev-/);
         expect(frame.postMessage).not.toHaveBeenCalled();
 
         fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["navigate", "event"] });
+        const revision = lastInitRevision();
+        expect(revision).toMatch(/^rev-/);
 
         expect(frame.postMessage).toHaveBeenNthCalledWith(
             1,
@@ -339,13 +342,15 @@ describe("The Orbit bridge", () => {
         index.default.init({}, makeOptions());
         vi.advanceTimersByTime(3000);
         index.openAdminModalFromMenu();
-        const first = lastOpenedUrl().searchParams.get("rev");
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+        const first = lastInitRevision();
 
         index.default.destroy();
         index.default.init({}, makeOptions());
         vi.advanceTimersByTime(3000);
         index.openAdminModalFromMenu();
-        const second = lastOpenedUrl().searchParams.get("rev");
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+        const second = lastInitRevision();
 
         expect(first).toMatch(/^rev-/);
         expect(second).toMatch(/^rev-/);

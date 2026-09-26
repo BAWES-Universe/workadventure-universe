@@ -123,13 +123,7 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
 
     let adminDashboardUrl: string;
     try {
-        adminDashboardUrl = buildAdminLoginUrl(
-            adminUrl,
-            options.roomId,
-            window.location.href,
-            redirect,
-            bridge?.roomRevision
-        );
+        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href, redirect);
     } catch (error) {
         console.error("Refusing insecure Admin URL:", error);
         return;
