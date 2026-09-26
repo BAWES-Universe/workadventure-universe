@@ -152,7 +152,7 @@
 
         // Track the open woka menu action
         analyticsClient.openWokaMenu();
-        peopleCardReturn.tappedPerson();
+        peopleCardReturn.tappedPerson(userToLocate.uuid);
 
         // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
         // otherwise asks the server for the position.
