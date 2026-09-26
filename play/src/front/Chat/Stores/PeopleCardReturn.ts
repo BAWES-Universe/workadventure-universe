@@ -20,8 +20,8 @@ export function sidebarCoversMap(windowWidth: number, sidebarWidth: number): boo
 
 export interface PeopleCardReturnDeps {
     chatVisible: Writable<boolean>;
-    /** The open card (undefined when none). */
-    card: Readable<unknown>;
+    /** The open card (undefined when none), with the person it is for ("" while a search hasn't found them). */
+    card: Readable<{ userUuid: string } | undefined>;
     clearCard: () => void;
     /** Whether the sidebar, as shown now, leaves no room for the card. */
     coversMap: () => boolean;
@@ -31,8 +31,8 @@ export interface PeopleCardReturnDeps {
 }
 
 export interface PeopleCardReturn {
-    /** Someone was tapped in the People tab: their card is about to open. */
-    tappedPerson(): void;
+    /** Someone (their uuid) was tapped in the People tab: their card is about to open. */
+    tappedPerson(userUuid: string): void;
     /** The card was closed without doing anything (X, Escape, no one found): back to the People tab if it was hidden. */
     dismissCard(): void;
     /** Whether the People list should scroll back to where it was (read once, when the list shows again). */
@@ -41,7 +41,14 @@ export interface PeopleCardReturn {
 
 export function createPeopleCardReturn(deps: PeopleCardReturnDeps): PeopleCardReturn {
     const now = deps.now ?? (() => Date.now());
-    let state: { kind: "idle" } | { kind: "armed"; at: number } | { kind: "returning" } = { kind: "idle" };
+    let state:
+        | { kind: "idle" }
+        | { kind: "armed"; at: number; person: string }
+        | { kind: "returning"; person: string } = { kind: "idle" };
+    // A card for someone other than the person tapped (a tap on the map) isn't this tap's. A card that doesn't know
+    // who yet ("" while the search runs) is.
+    const isSomeoneElse = (card: { userUuid: string }, person: string) =>
+        card.userUuid !== "" && card.userUuid !== person;
     let restoreScroll = false;
 
     // Not unsubscribing is ok: one for the app's lifetime.
@@ -52,12 +59,18 @@ export function createPeopleCardReturn(deps: PeopleCardReturnDeps): PeopleCardRe
             if (state.kind === "returning") state = { kind: "idle" };
             return;
         }
+        if (state.kind === "returning") {
+            // Someone else's card replaced it: closing that one isn't a way back to the list. The same person's
+            // card opening again (the search finding them) keeps it.
+            if (isSomeoneElse(card, state.person)) state = { kind: "idle" };
+            return;
+        }
         if (state.kind === "armed") {
-            if (now() - state.at > CARD_OPEN_WINDOW_MS) {
+            if (now() - state.at > CARD_OPEN_WINDOW_MS || isSomeoneElse(card, state.person)) {
                 state = { kind: "idle" };
                 return;
             }
-            state = { kind: "returning" };
+            state = { kind: "returning", person: state.person };
             deps.chatVisible.set(false);
         }
     });
@@ -69,12 +82,12 @@ export function createPeopleCardReturn(deps: PeopleCardReturnDeps): PeopleCardRe
     });
 
     return {
-        tappedPerson() {
+        tappedPerson(userUuid: string) {
             if (!get(deps.chatVisible) || !deps.coversMap()) {
                 state = { kind: "idle" };
                 return;
             }
-            state = { kind: "armed", at: now() };
+            state = { kind: "armed", at: now(), person: userUuid };
         },
         dismissCard() {
             const returning = state.kind === "returning";

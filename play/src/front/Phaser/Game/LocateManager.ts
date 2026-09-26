@@ -135,8 +135,10 @@ export class LocateManager {
                     if (remoteUser) {
                         this.activateRemoteUser(remoteUser);
                     } else {
-                        // No one found: like closing the card (on a phone, back to the People tab it came from).
-                        peopleCardReturn.dismissCard();
+                        // No one found: like closing the card (on a phone, back to the People tab it came from). Only
+                        // if the card is still this search's: another card opened meanwhile stays.
+                        const card = get(wokaMenuStore);
+                        if (card?.userId === -1 && card.userUuid === userUuid) peopleCardReturn.dismissCard();
                     }
                     this.locatePositionClearProgressTimeout = undefined;
                 }, 3000);
