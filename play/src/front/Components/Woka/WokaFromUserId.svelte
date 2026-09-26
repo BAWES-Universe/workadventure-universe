@@ -12,7 +12,10 @@
     let unsubscribe: Unsubscriber | undefined;
 
     onMount(() => {
-        const gameScene = gameManager.getCurrentGameScene();
+        src = placeholderSrc;
+        // No map while a reconnect swaps it: keep the placeholder rather than throw (which freezes the interface).
+        const gameScene = gameManager.tryGetCurrentGameScene();
+        if (!gameScene) return;
         let playerWokaPictureStore;
         if (userId === -1) {
             playerWokaPictureStore = gameScene.CurrentPlayer.pictureStore;
@@ -28,7 +31,6 @@
             )?.[1].pictureStore;
         }
 
-        src = placeholderSrc;
         unsubscribe = playerWokaPictureStore?.subscribe((source) => {
             src = source ?? placeholderSrc;
         });

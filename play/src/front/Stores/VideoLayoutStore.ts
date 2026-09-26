@@ -10,7 +10,7 @@ export const SWITCH_TO_MULTILINE_DELAY = 2000;
 
 // Store to track the last player movement timestamp
 export const lastPlayerMovement = readable(Date.now(), function start(set) {
-    const currentPlayer = gameManager.getCurrentGameScene()?.CurrentPlayer;
+    const currentPlayer = gameManager.tryGetCurrentGameScene()?.CurrentPlayer;
 
     if (!currentPlayer) {
         console.error("No current player found when initializing lastPlayerMovement");

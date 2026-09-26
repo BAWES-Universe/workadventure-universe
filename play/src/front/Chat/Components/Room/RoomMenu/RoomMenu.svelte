@@ -143,7 +143,12 @@
         return users.find((u) => u.id !== localUserChatId);
     })();
 
-    $: isInTheSameMap = chatUser?.playUri === gameManager.getCurrentGameScene().roomUrl;
+    // No map while a reconnect swaps it: not "the same map" then, rather than throw (which freezes the interface).
+    $: isInTheSameMap = isOnCurrentMap(chatUser?.playUri);
+    function isOnCurrentMap(playUri: string | undefined): boolean {
+        const currentRoomUrl = gameManager.tryGetCurrentGameScene()?.roomUrl;
+        return currentRoomUrl !== undefined && playUri === currentRoomUrl;
+    }
     $: chatUser = usersWithRoomPlayUri.find((u) => u.chatId === matrixChatUser?.id);
 
     function locateUser() {

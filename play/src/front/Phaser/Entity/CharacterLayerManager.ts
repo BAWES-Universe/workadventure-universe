@@ -2,7 +2,7 @@ import type { CharacterTextureMessage } from "@workadventure/messages";
 import type { GameScene } from "../Game/GameScene";
 import { TexturesHelper } from "../Helpers/TexturesHelper";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
-import { gameManager } from "../Game/GameManager";
+import { gameManager, GameSceneNotFoundError } from "../Game/GameManager";
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
 
 /**
@@ -10,7 +10,12 @@ import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager"
  */
 export class CharacterLayerManager {
     static wokaBase64(characterTextures: CharacterTextureMessage[]): Promise<string> {
-        const scene = gameManager.getCurrentGameScene();
+        // Callers ask for this from inside a store: while a reconnect swaps the map there is no scene, and throwing
+        // here would stop every store in the interface from updating. Fail the promise instead (callers catch it).
+        const scene = gameManager.tryGetCurrentGameScene();
+        if (!scene) {
+            return Promise.reject(new GameSceneNotFoundError("No game scene to draw the woka in"));
+        }
         return lazyLoadPlayerCharacterTextures(
             scene.superLoad,
             characterTextures.map((texture) => ({ id: texture.id, url: texture.url }))

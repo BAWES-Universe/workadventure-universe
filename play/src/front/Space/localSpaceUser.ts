@@ -27,13 +27,15 @@ export const localSpaceUser = (name?: string): SpaceUserExtended => {
         jitsiParticipantId: undefined,
         characterTextures: [],
         pictureStore: readable<string | undefined>(undefined, (set) => {
+            // No map while a reconnect swaps it: no picture yet, rather than throw inside the store (which freezes
+            // the interface).
             const unsubscribe = gameManager
-                .getCurrentGameScene()
-                .CurrentPlayer.pictureStore.subscribe((pictureStore) => {
+                .tryGetCurrentGameScene()
+                ?.CurrentPlayer.pictureStore.subscribe((pictureStore) => {
                     set(pictureStore);
                 });
             return () => {
-                unsubscribe();
+                unsubscribe?.();
             };
         }),
         emitPrivateEvent: (message: NonNullable<PrivateSpaceEvent["event"]>) => {
