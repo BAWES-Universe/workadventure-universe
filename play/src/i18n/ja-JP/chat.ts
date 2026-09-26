@@ -13,6 +13,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     users: "ユーザー",
     chat: "チャット",
     userList: {
+        editMyVisitCard: "自分の名刺を編集",
         disconnected: "オフライン",
         isHere: "このマップ",
         inAnotherMap: "別のマップ",

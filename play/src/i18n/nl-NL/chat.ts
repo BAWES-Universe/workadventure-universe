@@ -13,6 +13,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     users: "Gebruikers",
     chat: "Chat",
     userList: {
+        editMyVisitCard: "Mijn visitekaartje bewerken",
         disconnected: "Offline",
         isHere: "Op deze kaart",
         inAnotherMap: "Op een andere kaart",
