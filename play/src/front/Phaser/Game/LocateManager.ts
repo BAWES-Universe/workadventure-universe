@@ -4,6 +4,7 @@ import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { RemotePlayer } from "../Entity/RemotePlayer";
 import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore";
 import LL from "../../../i18n/i18n-svelte";
+import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 import type { CameraManager } from "./CameraManager";
 import { locateRequestName } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
@@ -134,7 +135,8 @@ export class LocateManager {
                     if (remoteUser) {
                         this.activateRemoteUser(remoteUser);
                     } else {
-                        wokaMenuStore.clear();
+                        // No one found: like closing the card (on a phone, back to the People tab it came from).
+                        peopleCardReturn.dismissCard();
                     }
                     this.locatePositionClearProgressTimeout = undefined;
                 }, 3000);
