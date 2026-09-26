@@ -83,10 +83,15 @@ export const EDIT_VISIT_CARD_PAGE = "/admin/profile";
  * Your own row: there is no one to look for. The camera comes back to you and your own card opens, with your visit
  * card and, when you can use Orbit, a button to edit it there.
  */
-export function showMyself(userUuid: string): void {
+export function showMyself(userUuid: string | undefined): void {
     const scene = gameManager.tryGetCurrentGameScene();
     if (!scene) return;
     scene.getCameraManager().returnToPlayer();
+    if (userUuid === undefined) {
+        // No account id to show a card for: just close any open card.
+        wokaMenuStore.clear();
+        return;
+    }
     wokaMenuStore.initialize(
         gameManager.getPlayerName() ?? "",
         scene.connection?.getUserId() ?? -1,

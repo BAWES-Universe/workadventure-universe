@@ -77,6 +77,17 @@ describe("showMyself", () => {
         expect(get(wokaMenuStore)?.actions).toEqual([]);
     });
 
+    it("without an account id, closes the open card and brings the camera back", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { showMyself } = await import("./PersonNavigation");
+        wokaMenuStore.initialize("Imagine [Music]", 7, "bot-imagine", undefined);
+
+        showMyself(undefined);
+
+        expect(get(wokaMenuStore)).toBeUndefined();
+        expect(returnToPlayer).toHaveBeenCalledTimes(1);
+    });
+
     it("does nothing while no map is loaded (a reconnect)", async () => {
         const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
         const { showMyself } = await import("./PersonNavigation");

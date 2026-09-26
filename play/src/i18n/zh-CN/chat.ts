@@ -10,6 +10,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     },
     typing: "在打字...",
     userList: {
+        editMyVisitCard: "编辑我的名片",
         follow: "定位",
     },
 };

@@ -327,7 +327,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
             duration,
             ease: Easing.SineEaseOut,
             onUpdate: (tween: Phaser.Tweens.Tween) => {
-                if (!this.playerToFollow) {
+                // Exploring was asked for meanwhile: the camera is no longer this glide's to move.
+                if (!this.playerToFollow || this.explorationRequests !== explorationRequest) {
                     return;
                 }
                 const progress = tween.getValue() ?? 0;
@@ -343,13 +344,13 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 this.emit(CameraManagerEvent.CameraUpdate, this.getCameraUpdateEventData());
             },
             onComplete: () => {
-                this.camera.startFollow(player, true);
                 this.animationInProgress = false;
-                this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
                 this.startFollowTween = undefined;
                 if (this.explorationRequests !== explorationRequest) {
                     return;
                 }
+                this.camera.startFollow(player, true);
+                this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
                 // Back to following: the player is placed in the space the chat panel and videos leave free again.
                 this.setCameraMode(CameraMode.Follow);
                 this.scene.reposition();

@@ -204,8 +204,13 @@ describe("CameraManager after gliding back to the player", () => {
 
         manager.followRemotePlayer("stitch");
         manager.setExplorationMode();
+        camera.startFollow.mockClear();
+        camera.setBounds.mockClear();
         finishLastGlide(scene);
 
+        // The explorer keeps its free camera: not snapped back onto the player, map bounds not restored.
+        expect(camera.startFollow).not.toHaveBeenCalled();
+        expect(camera.setBounds).not.toHaveBeenCalled();
         expect(scene.reposition).not.toHaveBeenCalled();
         camera.setFollowOffset.mockClear();
         manager.updateCameraOffset({ xStart: 300, yStart: 0, xEnd: 800, yEnd: 600 }, true);
