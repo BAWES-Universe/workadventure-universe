@@ -57,6 +57,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     private waScaleManager: WaScaleManager;
 
     private cameraMode: CameraMode = CameraMode.Positioned;
+    /** Bumped each time exploration mode starts, so a glide back to a player knows if someone else asked for it. */
+    private explorationRequests = 0;
     /** The other player the camera follows (their woka menu is open), if any. */
     private followedRemotePlayerUuid: string | undefined;
 
@@ -305,6 +307,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
             return;
         }
         this.setExplorationMode();
+        // The glide below runs in exploration mode; it ends in follow mode unless exploring was asked for meanwhile.
+        const explorationRequest = this.explorationRequests;
         if (!this.explorerFocusOn) {
             this.explorerFocusOn = { x: this.camera.centerX, y: this.camera.centerY };
             this.camera.startFollow(this.explorerFocusOn, true);
@@ -343,6 +347,12 @@ export class CameraManager extends Phaser.Events.EventEmitter {
                 this.animationInProgress = false;
                 this.camera.setBounds(0, 0, this.mapSize.width, this.mapSize.height);
                 this.startFollowTween = undefined;
+                if (this.explorationRequests !== explorationRequest) {
+                    return;
+                }
+                // Back to following: the player is placed in the space the chat panel and videos leave free again.
+                this.setCameraMode(CameraMode.Follow);
+                this.scene.reposition();
             },
         });
     }
@@ -554,6 +564,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     public setExplorationMode(): void {
         this.cameraLocked = false;
         //this.stopFollow();
+        this.explorationRequests++;
         this.setCameraMode(CameraMode.Exploration);
 
         this.camera.setFollowOffset(0, 0);

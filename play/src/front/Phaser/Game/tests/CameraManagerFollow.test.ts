@@ -71,8 +71,9 @@ async function makeCameraManager() {
         MapPlayersByKey: new Map([[1, remote]]),
         markDirty: vi.fn(),
         game: { events: { on: vi.fn(), off: vi.fn() } },
-        tweens: { addCounter: vi.fn(() => ({ stop: vi.fn() })) },
+        tweens: { addCounter: vi.fn((_config: { onComplete?: () => void }) => ({ stop: vi.fn() })) },
         scale: { zoom: 1 },
+        reposition: vi.fn(),
         events: { on: vi.fn(), off: vi.fn() },
     };
     const scale = {
@@ -84,7 +85,7 @@ async function makeCameraManager() {
         getTargetZoomModifierFor: () => 1,
     };
     const manager = new CameraManager(scene as never, { width: 1000, height: 1000 }, scale as never);
-    return { manager, camera, currentPlayer, remote };
+    return { manager, camera, currentPlayer, remote, scene };
 }
 
 describe("CameraManager following another player", () => {
@@ -165,5 +166,49 @@ describe("CameraManager back to the player (your own row in the People tab)", ()
         manager.returnToPlayer();
 
         expect(follow).not.toHaveBeenCalled();
+    });
+});
+
+describe("CameraManager after gliding back to the player", () => {
+    /** Ends the most recent camera animation, as Phaser does when its tween completes. */
+    function finishLastGlide(scene: { tweens: { addCounter: ReturnType<typeof vi.fn> } }) {
+        const calls = scene.tweens.addCounter.mock.calls;
+        const config = calls[calls.length - 1][0] as { onComplete?: () => void };
+        config.onComplete?.();
+    }
+
+    async function withCanvas() {
+        const { HtmlUtils } = await import("../../../WebRtc/HtmlUtils");
+        vi.mocked(HtmlUtils.querySelectorOrFail).mockReturnValue({ offsetWidth: 800, offsetHeight: 600 } as never);
+    }
+
+    it("follows the player again, so an open chat panel keeps the player in the free space", async () => {
+        await withCanvas();
+        const { manager, camera, scene } = await makeCameraManager();
+
+        manager.followRemotePlayer("stitch");
+        finishLastGlide(scene);
+        manager.stopFollowRemotePlayer();
+        finishLastGlide(scene);
+
+        expect(scene.reposition).toHaveBeenCalled();
+        camera.setFollowOffset.mockClear();
+        // The chat panel covers the left 300px: the player is centred in the 500px left over.
+        manager.updateCameraOffset({ xStart: 300, yStart: 0, xEnd: 800, yEnd: 600 }, true);
+        expect(camera.setFollowOffset).toHaveBeenCalledWith(150, 0);
+    });
+
+    it("stays in exploration when exploring was asked for during the glide", async () => {
+        await withCanvas();
+        const { manager, camera, scene } = await makeCameraManager();
+
+        manager.followRemotePlayer("stitch");
+        manager.setExplorationMode();
+        finishLastGlide(scene);
+
+        expect(scene.reposition).not.toHaveBeenCalled();
+        camera.setFollowOffset.mockClear();
+        manager.updateCameraOffset({ xStart: 300, yStart: 0, xEnd: 800, yEnd: 600 }, true);
+        expect(camera.setFollowOffset).not.toHaveBeenCalled();
     });
 });
