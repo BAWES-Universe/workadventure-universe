@@ -1048,6 +1048,20 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    /** The window size had changed without a `resize` (found when the page was shown again): the app was resized. */
+    viewportResync(properties: {
+        fromWidth: number;
+        fromHeight: number;
+        toWidth: number;
+        toHeight: number;
+        reason: string;
+    }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_viewport_resync", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     /** The page was found zoomed in (the app enlarged, cut off at the edges) and was put back. */
     pageZoomReset(properties: { scale: number; reason: string }): void {
         this.posthogPromise
