@@ -119,6 +119,7 @@ import { GameSceneUserInputHandler } from "../UserInput/GameSceneUserInputHandle
 import { followUsersColorStore, followUsersStore } from "../../Stores/FollowStore";
 import { axiosWithRetry, hideConnectionIssueMessage } from "../../Connection/AxiosUtils";
 import { RESUME_NETWORK_WAIT_MS, showReconnectingScreen, waitForNetwork } from "../../Connection/ReconnectScreen";
+import { reconnectWatchdog } from "../../Connection/AppReconnectWatchdog";
 import { StringUtils } from "../../Utils/StringUtils";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
@@ -866,6 +867,7 @@ export class GameScene extends DirtyScene {
                             return;
                         }
                         showReconnectingScreen(this._room.errorSceneLogo);
+                        reconnectWatchdog.arm();
                     }
                 }, 0);
             } else if (this.connection === undefined) {
@@ -1772,7 +1774,9 @@ export class GameScene extends DirtyScene {
                     },
                     gameManager.getCompanionTextureId(),
                     get(availabilityStatusStore),
-                    this.getGameMap().getLastCommandId()
+                    this.getGameMap().getLastCommandId(),
+                    // Once this map is closed, its retries stop and a late success leaves the screen alone.
+                    { cancelled: () => this.cleanupDone }
                 );
             })
             .then(async (onConnect: OnConnectInterface | undefined) => {
@@ -1965,6 +1969,8 @@ export class GameScene extends DirtyScene {
                 this.connection.serverDisconnected.subscribe(() => {
                     // Nothing failed: the game is getting back in. Say so right away, instead of an error.
                     showReconnectingScreen(this._room.errorSceneLogo);
+                    // If getting back in stalls anywhere, the page refreshes itself (as a manual refresh would).
+                    reconnectWatchdog.arm();
                     console.info("Player disconnected from server. Reloading scene.");
                     this.cleanupClosingScene();
 

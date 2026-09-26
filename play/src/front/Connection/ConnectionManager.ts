@@ -48,8 +48,14 @@ import { LocalUser } from "./LocalUser";
 import { localUserStore } from "./LocalUserStore";
 import type { OnConnectInterface, PositionInterface, ViewportInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
+import { watchConnectAttempt } from "./ConnectAttemptWatch";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
+
+export interface ConnectOptions {
+    /** Whether whoever asked no longer wants this connection (the map was closed): no more retries, no screen changes. */
+    cancelled?: () => boolean;
+}
 
 class ConnectionManager {
     private localUser!: LocalUser;
@@ -463,7 +469,8 @@ class ConnectionManager {
         viewport: ViewportInterface,
         companionTextureId: string | null,
         availabilityStatus: AvailabilityStatus,
-        lastCommandId?: string
+        lastCommandId?: string,
+        options: ConnectOptions = {}
     ): Promise<OnConnectInterface> {
         return new Promise<OnConnectInterface>((resolve, reject) => {
             const connection = new RoomConnection(
@@ -478,9 +485,20 @@ class ConnectionManager {
                 lastCommandId
             );
 
+            // A socket that never opens nor fails (a phone back from another app) is dropped, and retried below. Once
+            // open, a slow join is left alone: the ping watchdog closes a silent socket.
+            const stopWatch = watchConnectAttempt((reason, pendingMs) => {
+                if (connection.isSocketOpen) return;
+                console.info("[ConnectionManager] Connection attempt still pending: dropping it", reason, pendingMs);
+                analyticsClient.connectAttemptDropped({ reason, pendingMs });
+                connection.closeConnection();
+                reject(new Error(`Connection attempt dropped (${reason}) after ${pendingMs} ms`));
+            });
+
             // The roomJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
             //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
             connection.websocketErrorStream.subscribe((error: Event) => {
+                stopWatch();
                 console.info("onConnectError => An error occurred while connecting to socket server. Retrying", error);
                 reject(asError(error));
             });
@@ -488,6 +506,7 @@ class ConnectionManager {
             // The roomJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
             //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
             connection.connectionErrorStream.subscribe((event: CloseEvent) => {
+                stopWatch();
                 console.info(
                     "An error occurred while connecting to socket server. Retrying => Event: ",
                     event.reason,
@@ -527,6 +546,13 @@ class ConnectionManager {
             // The roomJoinedMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
             //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
             connection.roomJoinedMessageStream.subscribe((connect: OnConnectInterface) => {
+                stopWatch();
+                // The map that asked for this connection was closed meanwhile: it is not the app's connection, and
+                // the screen shown now belongs to the map that replaced it. The caller closes it.
+                if (options.cancelled?.()) {
+                    resolve(connect);
+                    return;
+                }
                 // Set the default application integration for the room
                 const KlaxoonApp = connect.room.applications?.find(
                     (app) => app.name === defautlNativeIntegrationAppName.KLAXOON
@@ -610,7 +636,7 @@ class ConnectionManager {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
 
             // Keep any screen already shown: the "Reconnecting" one, or a real error the server sent (e.g. a ban).
-            if (!get(errorScreenStore)) {
+            if (!get(errorScreenStore) && !options.cancelled?.()) {
                 errorScreenStore.setError(
                     ErrorScreenMessage.fromPartial({
                         type: "reconnecting",
@@ -638,8 +664,9 @@ class ConnectionManager {
                     window.removeEventListener("online", retry);
                     if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
                     this.reconnectingTimeout = null;
-                    // The page is closing: no new attempt (the pending one was cancelled on beforeunload).
-                    if (this._unloading) return;
+                    // The page is closing: no new attempt (the pending one was cancelled on beforeunload). Nor when the
+                    // map that asked was closed: the map replacing it makes its own attempts.
+                    if (this._unloading || options.cancelled?.()) return;
                     //todo: allow a way to break recursion?
                     //todo: find a way to avoid recursive function. Otherwise, the call stack will grow indefinitely.
                     console.info(
@@ -662,9 +689,10 @@ class ConnectionManager {
                         viewport,
                         companionTextureId,
                         availabilityStatus,
-                        lastCommandId
+                        lastCommandId,
+                        options
                     ).then((connection) => {
-                        this._roomConnectionStream.next(connection.connection);
+                        if (!options.cancelled?.()) this._roomConnectionStream.next(connection.connection);
                         resolve(connection);
                     });
                 };
