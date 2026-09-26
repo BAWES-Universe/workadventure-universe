@@ -12,7 +12,19 @@ import {
     resolveCredentialUrl,
     type OrbitAuthTokenMessage,
 } from "./iframeAuth";
+import {
+    OrbitBridge,
+    isOrbitBridgeAckMessage,
+    isOrbitBridgeReadyMessage,
+    newRoomRevision,
+    type OrbitEventTopic,
+    type OrbitNavigateIntent,
+} from "./orbitBridge";
 let adminModalOpen = false;
+/** The bridge for this visit (a new one on every room join or reconnect). */
+let bridge: OrbitBridge | null = null;
+/** The control that opened Orbit, to give focus back to when Orbit closes. */
+let launcher: HTMLElement | null = null;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
@@ -61,10 +73,20 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
         !extensionOptions ||
         !adminOrigin ||
         event.origin !== adminOrigin ||
-        event.source !== get(modalIframeWindowStore) ||
-        !isOrbitAuthReadyMessage(event.data)
+        !event.source ||
+        event.source !== get(modalIframeWindowStore)
     )
         return;
+    // After signing in, Orbit's bridge says it is ready and answers requests (see orbitBridge.ts).
+    if (isOrbitBridgeReadyMessage(event.data)) {
+        bridge?.onReady();
+        return;
+    }
+    if (isOrbitBridgeAckMessage(event.data)) {
+        bridge?.onAck(event.data);
+        return;
+    }
+    if (!isOrbitAuthReadyMessage(event.data)) return;
     const accessToken = getAccessTokenFromJwt(extensionOptions.userAccessToken);
     if (!accessToken || !event.source) return;
     const response: OrbitAuthTokenMessage = {
@@ -101,7 +123,13 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
 
     let adminDashboardUrl: string;
     try {
-        adminDashboardUrl = buildAdminLoginUrl(adminUrl, options.roomId, window.location.href, redirect);
+        adminDashboardUrl = buildAdminLoginUrl(
+            adminUrl,
+            options.roomId,
+            window.location.href,
+            redirect,
+            bridge?.roomRevision
+        );
     } catch (error) {
         console.error("Refusing insecure Admin URL:", error);
         return;
@@ -116,6 +144,7 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
         allowFullScreen: true,
     };
 
+    launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     modalIframeStore.set(modalEvent);
     modalVisibilityStore.set(true);
     adminModalOpen = true;
@@ -145,12 +174,39 @@ export function openOrbitPage(path: string) {
     openAdminModal(extensionOptions, "link", path);
 }
 
+/**
+ * Asks Orbit for one of its pages by intent (Orbit decides the page, and whether this player may see it; anything it
+ * does not allow lands on its home). Opens Orbit when it is closed; the request waits until Orbit has signed in.
+ * Returns false when Orbit can't be opened for this player.
+ */
+export function requestOrbitPage(intent: OrbitNavigateIntent, params?: Record<string, string>): boolean {
+    if (!extensionOptions || !bridge || !canOpenOrbit()) return false;
+    if (!adminModalOpen) openAdminModal(extensionOptions, "link");
+    bridge.navigate(intent, params);
+    return true;
+}
+
+/** Tells an open Orbit that something it shows changed (a hint to fetch again; it trusts nothing in it). */
+export function notifyOrbitChanged(topic: OrbitEventTopic) {
+    if (!adminModalOpen || !bridge) return;
+    bridge.notifyChanged(topic);
+}
+
 // Function to close the admin modal
 function closeAdminModal() {
     modalVisibilityStore.set(false);
     modalIframeStore.set(null);
     modalIframeWindowStore.set(null);
     adminModalOpen = false;
+    bridge?.onClosed();
+}
+
+/** Orbit closed (by the player, or by Orbit through WA.ui.modal.closeModal): give focus back to what opened it. */
+function onOrbitClosed() {
+    bridge?.onClosed();
+    const target = launcher;
+    launcher = null;
+    if (target?.isConnected) target.focus();
 }
 
 // Function to initialize the admin integration
@@ -175,6 +231,19 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
         return;
     }
     extensionOptions = options;
+    // A new visit: a new room revision, so nothing from an earlier Orbit frame can act on this one.
+    bridge?.onClosed();
+    bridge = new OrbitBridge(
+        {
+            post: (message) => {
+                const frame = get(modalIframeWindowStore);
+                if (frame && adminOrigin) frame.postMessage(message, adminOrigin);
+            },
+            setTimeout: (callback, ms) => setTimeout(callback, ms),
+            clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+        },
+        newRoomRevision()
+    );
     window.removeEventListener("message", handleAdminAuthMessage);
     window.addEventListener("message", handleAdminAuthMessage);
 
@@ -215,6 +284,7 @@ const adminExtensionModule: ExtensionModule = {
         unsubscribeModal = modalVisibilityStore.subscribe((visible) => {
             if (!visible && adminModalOpen) {
                 adminModalOpen = false;
+                onOrbitClosed();
             }
         });
     },
@@ -232,9 +302,11 @@ const adminExtensionModule: ExtensionModule = {
         // Deactivate the Orbit button
         adminDashboardActivatedStore.set(false);
         window.removeEventListener("message", handleAdminAuthMessage);
+        closeAdminModal();
+        bridge = null;
+        launcher = null;
         extensionOptions = null;
         adminOrigin = null;
-        closeAdminModal();
     },
 };
 
