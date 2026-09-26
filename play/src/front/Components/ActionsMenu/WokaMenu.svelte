@@ -86,13 +86,13 @@
 
                 <div class="flex items-center justify-center p-2">
                     <div class="text-white flex flex-col justify-center items-center font-bold text-xl">
-                        {#if wokaMenuData.userId != undefined && wokaMenuData.userId != -1}
+                        {#if wokaMenuData.isSelf || (wokaMenuData.userId != undefined && wokaMenuData.userId != -1)}
                             <div
                                 id="woka"
                                 class=" bt-3 overflow-hidden mt-9 border w-fit h-fit pt-3 rounded-lg cursor-not-allowed bg-[rgb(103,185,133)]"
                             >
                                 <WokaFromUserId
-                                    userId={wokaMenuData.userId}
+                                    userId={wokaMenuData.isSelf ? -1 : wokaMenuData.userId}
                                     placeholderSrc="/assets/placeholder-woka.png"
                                     customWidth="4rem"
                                 />

@@ -32,7 +32,8 @@ vi.mock("../../../Stores/MapEditorStore", async () => {
     const { writable } = await import("svelte/store");
     return { mapEditorModeStore: writable(false) };
 });
-vi.mock("../../../WebRtc/HtmlUtils", () => ({ HtmlUtils: { querySelectorOrFail: vi.fn() } }));
+const querySelectorOrFail = vi.hoisted(() => vi.fn());
+vi.mock("../../../WebRtc/HtmlUtils", () => ({ HtmlUtils: { querySelectorOrFail } }));
 vi.mock("../../Player/Player", () => ({ hasMovedEventName: "hasMoved" }));
 vi.mock("../../UserInput/UserInputManager", () => ({ UserInputEvent: {} }));
 vi.mock("../../../Utils/Debuggers", () => ({ debugZoom: () => undefined }));
@@ -177,13 +178,12 @@ describe("CameraManager after gliding back to the player", () => {
         config.onComplete?.();
     }
 
-    async function withCanvas() {
-        const { HtmlUtils } = await import("../../../WebRtc/HtmlUtils");
-        vi.mocked(HtmlUtils.querySelectorOrFail).mockReturnValue({ offsetWidth: 800, offsetHeight: 600 } as never);
+    function withCanvas() {
+        querySelectorOrFail.mockReturnValue({ offsetWidth: 800, offsetHeight: 600 });
     }
 
     it("follows the player again, so an open chat panel keeps the player in the free space", async () => {
-        await withCanvas();
+        withCanvas();
         const { manager, camera, scene } = await makeCameraManager();
 
         manager.followRemotePlayer("stitch");
@@ -199,7 +199,7 @@ describe("CameraManager after gliding back to the player", () => {
     });
 
     it("stays in exploration when exploring was asked for during the glide", async () => {
-        await withCanvas();
+        withCanvas();
         const { manager, camera, scene } = await makeCameraManager();
 
         manager.followRemotePlayer("stitch");

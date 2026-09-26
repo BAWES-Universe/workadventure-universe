@@ -119,7 +119,10 @@
 
     function openWokaMenu() {
         if (isMe) {
-            showMyself();
+            if (user.uuid == undefined) return;
+            // Like anyone else's card: on a phone the sidebar makes way for it, and comes back when it is closed.
+            peopleCardReturn.tappedPerson(user.uuid);
+            showMyself(user.uuid);
             return;
         }
         if (user.uuid == undefined) return;

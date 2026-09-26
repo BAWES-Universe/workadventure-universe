@@ -46,7 +46,7 @@ export class LocateManager {
             if (value === undefined) {
                 // TODO: Stop following the remote player
                 this.cameraManager.stopFollowRemotePlayer();
-            } else if (value.userUuid !== undefined && value.userUuid !== "") {
+            } else if (!value.isSelf && value.userUuid !== undefined && value.userUuid !== "") {
                 this.cameraManager.followRemotePlayer(value.userUuid);
             }
         });

@@ -122,3 +122,55 @@ describe("Admin integration lifecycle", () => {
         expect(mocks.adminDashboardActivatedSet).not.toHaveBeenCalledWith(true);
     });
 });
+
+describe("Opening Orbit on one of its pages", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.clearAllMocks();
+        mocks.isLogged.mockReturnValue(true);
+        vi.stubGlobal("window", {
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            location: { href: "https://play.example.com/@/room" },
+        });
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    async function freshIndex() {
+        vi.resetModules();
+        return (await import("./index")) as unknown as {
+            default: AdminModuleLike;
+            canOpenOrbit(): boolean;
+            openOrbitPage(path: string): void;
+        };
+    }
+
+    it("can't open Orbit before the integration is set up (a guest)", async () => {
+        const index = await freshIndex();
+        expect(index.canOpenOrbit()).toBe(false);
+        index.openOrbitPage("/admin/profile");
+        expect(mocks.modalIframeSet).not.toHaveBeenCalled();
+    });
+
+    it("opens Orbit on the requested page, switching to it when Orbit is already open", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        expect(index.canOpenOrbit()).toBe(true);
+        mocks.modalIframeSet.mockClear();
+
+        index.openOrbitPage("/admin/profile");
+
+        // Closed, then opened again on the page.
+        expect(mocks.modalIframeSet).toHaveBeenNthCalledWith(1, null);
+        const opened = mocks.modalIframeSet.mock.calls[1][0] as { src: string };
+        const url = new URL(opened.src);
+        expect(url.pathname).toBe("/admin/login");
+        expect(url.searchParams.get("redirect")).toBe("/admin/profile");
+        expect(url.searchParams.get("playUri")).toBe("https://play.example.com/@/room");
+    });
+});
