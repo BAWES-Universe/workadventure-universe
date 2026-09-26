@@ -4,6 +4,7 @@ import { localUserStore } from "../../Connection/LocalUserStore";
 import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
 import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
+import { analyticsClient } from "../../Administration/AnalyticsClient";
 import {
     ORBIT_AUTH_VERSION,
     buildAdminLoginUrl,
@@ -76,7 +77,14 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
 }
 
 // Function to open the admin modal
-function openAdminModal(options: ExtensionModuleOptions) {
+/**
+ * What opened Orbit: the action-bar button, a quest's "Show me", the game asking Orbit for a page, or Orbit opening
+ * on its own. Only the button opens it today; Orbit never opens on its own any more, and "auto" stays so the numbers
+ * show it at zero.
+ */
+export type OrbitOpenSource = "button" | "quest" | "link" | "auto";
+
+function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource) {
     if (adminModalOpen) return;
 
     const accessToken = getAccessTokenFromJwt(options.userAccessToken);
@@ -111,12 +119,13 @@ function openAdminModal(options: ExtensionModuleOptions) {
     modalIframeStore.set(modalEvent);
     modalVisibilityStore.set(true);
     adminModalOpen = true;
+    analyticsClient.orbitOpened({ source });
 }
 
 // Export function to open admin modal from menu item
 export function openAdminModalFromMenu() {
     if (extensionOptions) {
-        openAdminModal(extensionOptions);
+        openAdminModal(extensionOptions, "button");
     }
 }
 
@@ -153,13 +162,9 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     window.removeEventListener("message", handleAdminAuthMessage);
     window.addEventListener("message", handleAdminAuthMessage);
 
-    // Activate the Orbit button in the action bar (highest priority)
+    // Activate the Orbit button in the action bar (highest priority). Orbit opens only when asked: this runs on every
+    // room join and reconnect, so opening here would bring Orbit back each time.
     adminDashboardActivatedStore.set(true);
-
-    // Auto-open after a short delay
-    schedulePending(() => {
-        openAdminModal(options);
-    }, 1500);
 }
 
 const adminExtensionModule: ExtensionModule = {
