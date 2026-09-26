@@ -1048,6 +1048,20 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    /** The window size had changed without a `resize` (found when the page was shown again): the app was resized. */
+    viewportResync(properties: {
+        fromWidth: number;
+        fromHeight: number;
+        toWidth: number;
+        toHeight: number;
+        reason: string;
+    }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_viewport_resync", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     /** The page was found zoomed in (the app enlarged, cut off at the edges) and was put back. */
     pageZoomReset(properties: { scale: number; reason: string }): void {
         this.posthogPromise
@@ -1090,6 +1104,27 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_connection_resumed", properties);
+            })
+            .catch((e) => console.error(e));
+    }
+    /** A connection attempt that neither joined nor failed was dropped (and retried): after the time limit, or on resume. */
+    connectAttemptDropped(properties: { reason: "timeout" | "resume"; pendingMs: number }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_connect_attempt_dropped", properties);
+            })
+            .catch((e) => console.error(e));
+    }
+    /** The game was still not back long after a dropped connection: the page reloads itself (or would, if it just did). */
+    reconnectStuck(properties: {
+        stuckMs: number;
+        screen: "reconnecting" | "none";
+        sceneLoaded: boolean;
+        reloaded: boolean;
+    }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_reconnect_stuck", properties);
             })
             .catch((e) => console.error(e));
     }

@@ -819,6 +819,15 @@ let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
 let emotionsComponentInstance: SvelteComponent<any> | null = null;
 let emotionsContainerElement: HTMLElement | null = null;
 let isInjectingEmotions = false; // Guard to prevent concurrent injections
+// Which injection holds the guard: one that was overtaken (the menu switched) must not release the next one's.
+let injectionId = 0;
+// The menu (by user uuid) the emotions display or its injection belongs to: another menu gets its own.
+let emotionsMenuUuid: string | null = null;
+
+/** Whether the woka menu still shows this user: a slower injection for someone else must not land in it. */
+function menuStillShows(userUuid: string): boolean {
+    return get(wokaMenuStore)?.userUuid === userUuid;
+}
 
 // Cleanup emotions display
 function cleanupEmotionsDisplay(): void {
@@ -853,6 +862,7 @@ function cleanupEmotionsDisplay(): void {
         }
         emotionsContainerElement = null;
     }
+    emotionsMenuUuid = null;
 }
 
 // Inject emotions display into WokaMenu for bots
@@ -876,6 +886,13 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
 
     // Set guard immediately to prevent concurrent calls
     isInjectingEmotions = true;
+    const myInjection = ++injectionId;
+    const release = () => {
+        if (myInjection === injectionId) isInjectingEmotions = false;
+    };
+    emotionsMenuUuid = menuData.userUuid;
+    // Only the latest injection may add the display: the menu can close and reopen for the same bot meanwhile.
+    const stillMine = () => myInjection === injectionId && menuStillShows(menuData.userUuid);
 
     try {
         // Wait for DOM to render
@@ -883,19 +900,20 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
             setTimeout(() => resolve(), 100);
         });
 
+        if (!stillMine()) return;
         const menuElement = document.querySelector('[data-testid="actions-menu"]');
         if (!menuElement) {
             // Retry if menu not ready yet
-            // eslint-disable-next-line require-atomic-updates
-            isInjectingEmotions = false; // Release guard before retry
-            setTimeout(() => void injectEmotionsIntoWokaMenu(menuData), 100);
+            release(); // Release guard before retry
+            setTimeout(() => {
+                if (menuStillShows(menuData.userUuid)) void injectEmotionsIntoWokaMenu(menuData);
+            }, 100);
             return;
         }
 
         // Check if already injected (simple check - if any emotion container exists, return)
         if (menuElement.querySelector("[data-bot-emotions]")) {
-            // eslint-disable-next-line require-atomic-updates
-            isInjectingEmotions = false; // Release guard
+            release(); // Release guard
             return;
         }
 
@@ -905,8 +923,7 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         const actionsDiv = menuElement.querySelector(".flex.items-center.bg-contrast");
 
         if (!contentDiv || !actionsDiv) {
-            // eslint-disable-next-line require-atomic-updates
-            isInjectingEmotions = false; // Release guard
+            release(); // Release guard
             return;
         }
 
@@ -925,6 +942,9 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
             console.error("[Bot Extension] Error fetching bot emotions:", error);
         }
 
+        // The menu moved on (someone else, or closed and reopened) while the emotions loaded: they aren't this menu's.
+        if (!stillMine()) return;
+
         // Create container for emotions display
         const container = document.createElement("div");
         container.setAttribute("data-bot-emotions", botId);
@@ -936,6 +956,8 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         try {
             // Dynamically import the component (Svelte 4 style)
             const BotEmotionsDisplay = (await import("./components/BotEmotionsDisplay.svelte")).default;
+            // Switched while loading: the container is already gone with the old menu's display.
+            if (!stillMine()) return;
 
             // Mount component with actual emotions (or null if fetch failed)
             // This way tweened values initialize with correct values, no animation from defaults
@@ -953,8 +975,7 @@ async function injectEmotionsIntoWokaMenu(menuData: WokaMenuData): Promise<void>
         }
     } finally {
         // Always release guard
-        // eslint-disable-next-line require-atomic-updates
-        isInjectingEmotions = false;
+        release();
     }
 }
 
@@ -967,8 +988,16 @@ function setupWokaMenuHook() {
             lastProcessedMenu = null;
 
             isInjectingEmotions = false; // Reset guard
+            injectionId++;
             void cleanupEmotionsDisplay();
             return;
+        }
+
+        // The menu now shows someone else (the card switched without closing): the previous bot's emotions go.
+        if (emotionsMenuUuid !== null && emotionsMenuUuid !== menuData.userUuid) {
+            isInjectingEmotions = false;
+            injectionId++;
+            cleanupEmotionsDisplay();
         }
 
         // Inject emotions display for bots

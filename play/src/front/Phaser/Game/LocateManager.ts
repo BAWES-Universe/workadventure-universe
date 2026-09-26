@@ -4,7 +4,9 @@ import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { RemotePlayer } from "../Entity/RemotePlayer";
 import { wokaMenuStore, wokaMenuProgressStore } from "../../Stores/WokaMenuStore";
 import LL from "../../../i18n/i18n-svelte";
+import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
 import type { CameraManager } from "./CameraManager";
+import { locateRequestName } from "./LocateRequest";
 import type { GameScene } from "./GameScene";
 
 /**
@@ -67,7 +69,7 @@ export class LocateManager {
 
         // Get user data to initialize woka menu
         const userData = this.scene.getRemotePlayersRepository().getPlayers().get(message.userId);
-        const userName = userData?.name ?? get(LL).locate.userSearching();
+        const userName = userData?.name ?? locateRequestName() ?? get(LL).locate.userSearching();
         const userUuid = userData?.userUuid ?? "";
         const visitCardUrl = userData?.visitCardUrl ?? undefined;
 
@@ -133,7 +135,10 @@ export class LocateManager {
                     if (remoteUser) {
                         this.activateRemoteUser(remoteUser);
                     } else {
-                        wokaMenuStore.clear();
+                        // No one found: like closing the card (on a phone, back to the People tab it came from). Only
+                        // if the card is still this search's: another card opened meanwhile stays.
+                        const card = get(wokaMenuStore);
+                        if (card?.userId === -1 && card.userUuid === userUuid) peopleCardReturn.dismissCard();
                     }
                     this.locatePositionClearProgressTimeout = undefined;
                 }, 3000);

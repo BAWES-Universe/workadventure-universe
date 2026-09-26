@@ -884,6 +884,11 @@ export class RoomConnection implements RoomConnection {
         });
     }
 
+    /** Whether the socket has opened (an attempt that never opens is the one that hangs on a phone back from the background). */
+    public get isSocketOpen(): boolean {
+        return this.socket?.readyState === WebSocket.OPEN;
+    }
+
     public closeConnection(): void {
         this.pingWatchdog.stop();
         this.socket?.close();

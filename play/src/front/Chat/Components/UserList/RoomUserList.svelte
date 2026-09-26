@@ -1,4 +1,10 @@
+<script lang="ts" context="module">
+    // Where the People list was scrolled to when it last closed (in memory, for this visit).
+    let lastScrollTop = 0;
+</script>
+
 <script lang="ts">
+    import { onDestroy, onMount, tick } from "svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { LL } from "../../../../i18n/i18n-svelte";
@@ -6,6 +12,7 @@
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import ChatHeader from "../ChatHeader.svelte";
     import InviteFooter from "../InviteFooter.svelte";
+    import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import UserList from "./UserList.svelte";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
 
@@ -32,6 +39,18 @@
     $: usersByRoom = userProviderMerger.usersByRoomStore;
     $: query = $chatSearchBarValue.trim().toLocaleLowerCase();
     $: isSearching = query !== "";
+
+    let listElement: HTMLDivElement | undefined;
+
+    // Back from a person's card on a phone: the list is where it was left.
+    onMount(async () => {
+        if (!peopleCardReturn.takeScrollRestore()) return;
+        await tick();
+        if (listElement) listElement.scrollTop = lastScrollTop;
+    });
+    onDestroy(() => {
+        lastScrollTop = listElement?.scrollTop ?? 0;
+    });
 
     function matches(user: ChatUser): boolean {
         if (!isSearching) return true;
@@ -96,7 +115,7 @@
 
 <div class="flex flex-col h-full">
     <ChatHeader />
-    <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-2" data-testid="peopleList">
+    <div bind:this={listElement} class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-2" data-testid="peopleList">
         {#if hereAll.length > 0 && (!isSearching || hereShown.length > 0)}
             <section class="flex flex-col" data-testid="peopleHere">
                 <h3
