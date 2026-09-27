@@ -582,6 +582,7 @@ const chat: BaseTranslation = {
         sessions: "{count} sessions",
         showSessions: "Show {userName}'s {count} sessions",
         hideSessions: "Hide {userName}'s sessions",
+        sessionNumber: "Session {number}",
         sessionLabel: "Session {number} · {room}",
     },
     session: {

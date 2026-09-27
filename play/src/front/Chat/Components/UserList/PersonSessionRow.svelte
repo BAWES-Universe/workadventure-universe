@@ -22,8 +22,13 @@
     const currentGameScene = gameManager.tryGetCurrentGameScene();
 
     $: status = session.availabilityStatus;
-    $: roomName = session.roomName?.trim() || $LL.chat.peopleTab.thisRoom();
-    $: label = $LL.chat.peopleTab.sessionLabel({ number, room: roomName });
+    // The room is only named when the session is in another room of this world than yours.
+    $: inMyRoom = !!session.playUri && session.playUri === currentGameScene?.roomUrl;
+    $: roomName = session.roomName?.trim() || session.playUri || "";
+    $: label =
+        inMyRoom || !roomName
+            ? $LL.chat.peopleTab.sessionNumber({ number })
+            : $LL.chat.peopleTab.sessionLabel({ number, room: roomName });
 
     // Always another session than this tab: it can be reached like anyone else, never messaged.
     $: actions = getPersonActions({
