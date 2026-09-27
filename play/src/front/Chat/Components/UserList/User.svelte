@@ -66,7 +66,8 @@
     $: userStatus = isMe ? availabilityStatusStore : sessionsStatus;
 
     // Under the toggle: your other sessions, or all of someone else's, each reachable on its own.
-    $: listedSessions = isMe ? sessions.slice(1) : sessions;
+    // Only for someone with more than one session.
+    $: listedSessions = sessions.length < 2 ? [] : isMe ? sessions.slice(1) : sessions;
     $: firstSessionNumber = isMe ? 2 : 1;
     let sessionsOpen = false;
 
