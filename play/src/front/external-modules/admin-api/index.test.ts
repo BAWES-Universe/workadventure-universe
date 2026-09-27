@@ -579,7 +579,7 @@ describe("Orbit and the Back button (1C)", () => {
         expect(mocks.modalVisibilitySet).not.toHaveBeenCalled();
     });
 
-    it("switches to the full-screen view when Orbit asks, and tells Orbit about size changes", async () => {
+    it("tells Orbit which view it is in when the game's maximise button changes it", async () => {
         await openedIndex();
         fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["navigate", "event", "view"] });
         expect(frame.postMessage).toHaveBeenCalledWith(
@@ -587,24 +587,15 @@ describe("Orbit and the Back button (1C)", () => {
             ADMIN
         );
 
-        fromOrbit({ type: "orbit-view-request", version: 1, view: "full" });
-        expect(mocks.fullScreen.value).toBe(true);
+        mocks.fullScreen.update((full) => !full);
         expect(frame.postMessage).toHaveBeenLastCalledWith({ type: "orbit-view", version: 1, view: "full" }, ADMIN);
-
-        // The game's own button works too, and Orbit hears about it.
         mocks.fullScreen.update((full) => !full);
         expect(frame.postMessage).toHaveBeenLastCalledWith({ type: "orbit-view", version: 1, view: "compact" }, ADMIN);
     });
 
-    it("ignores a view request from another window", async () => {
+    it("never changes the view because the frame asked", async () => {
         await openedIndex();
-        for (const listener of listeners) {
-            listener({
-                data: { type: "orbit-view-request", version: 1, view: "full" },
-                source: { postMessage: vi.fn() },
-                origin: ADMIN,
-            } as unknown as MessageEvent<unknown>);
-        }
+        fromOrbit({ type: "orbit-view-request", version: 1, view: "full" });
         expect(mocks.fullScreen.value).toBe(false);
     });
 

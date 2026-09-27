@@ -4,7 +4,6 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
-    isOrbitViewRequestMessage,
     newRoomRevision,
     type OrbitBridgeOutgoing,
 } from "./orbitBridge";
@@ -48,12 +47,6 @@ describe("Orbit bridge messages", () => {
         expect(isOrbitBridgeAckMessage({ ...ack, roomRevision: "short" })).toBe(false);
         expect(isOrbitBridgeAckMessage({ ...ack, ok: "yes" })).toBe(false);
         expect(isOrbitBridgeAckMessage({ ...ack, requestId: "" })).toBe(false);
-    });
-
-    it("accepts only a well-formed view request", () => {
-        expect(isOrbitViewRequestMessage({ type: "orbit-view-request", version: 1, view: "full" })).toBe(true);
-        expect(isOrbitViewRequestMessage({ type: "orbit-view-request", version: 1, view: "huge" })).toBe(false);
-        expect(isOrbitViewRequestMessage({ type: "orbit-view-request", version: 2, view: "full" })).toBe(false);
     });
 
     it("gives every visit a new room revision Orbit accepts", () => {

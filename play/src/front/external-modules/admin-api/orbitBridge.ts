@@ -4,8 +4,8 @@
  * agree on everything here.
  *
  * The game uses it to tell Orbit which page to show (`orbit-navigate`), when something changed (`orbit-event`, a
- * refresh hint only) and which view its frame is in (`orbit-view`: the compact panel or the full-screen view). Orbit
- * asks for the other view with `orbit-view-request`. Nothing sent over it proves anything: Orbit resolves and
+ * refresh hint only) and which view its frame is in (`orbit-view`: the compact panel or the full-screen view, which
+ * only the game's own maximise button changes). Nothing sent over it proves anything: Orbit resolves and
  * authorises every page itself. Orbit's actions on the game (closing, visiting a room) stay on the WorkAdventure
  * scripting API (`WA.*`), so the bridge has no message for them.
  *
@@ -77,12 +77,6 @@ export interface OrbitBridgeAckMessage {
     error?: string;
 }
 
-export interface OrbitViewRequestMessage {
-    type: "orbit-view-request";
-    version: typeof ORBIT_BRIDGE_VERSION;
-    view: OrbitView;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object";
 }
@@ -111,15 +105,6 @@ export function isOrbitBridgeAckMessage(value: unknown): value is OrbitBridgeAck
         isBoundedString(value.roomRevision, 16, 128) &&
         typeof value.ok === "boolean" &&
         (value.error === undefined || isBoundedString(value.error, 1, 64))
-    );
-}
-
-export function isOrbitViewRequestMessage(value: unknown): value is OrbitViewRequestMessage {
-    return (
-        isRecord(value) &&
-        value.type === "orbit-view-request" &&
-        value.version === ORBIT_BRIDGE_VERSION &&
-        (value.view === "compact" || value.view === "full")
     );
 }
 

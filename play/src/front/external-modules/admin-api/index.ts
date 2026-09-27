@@ -22,7 +22,6 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
-    isOrbitViewRequestMessage,
     newRoomRevision,
     type OrbitEventTopic,
     type OrbitNavigateIntent,
@@ -142,11 +141,6 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     }
     if (isOrbitBridgeAckMessage(event.data)) {
         bridge?.onAck(event.data);
-        return;
-    }
-    // Orbit asks for the compact or the full-screen view (its own toggle; the game's is desktop-only).
-    if (isOrbitViewRequestMessage(event.data)) {
-        if (adminModalOpen) modalFullScreenStore.set(event.data.view === "full");
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
