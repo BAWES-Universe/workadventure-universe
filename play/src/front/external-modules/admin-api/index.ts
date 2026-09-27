@@ -27,8 +27,6 @@ import {
     type OrbitNavigateIntent,
 } from "./orbitBridge";
 let adminModalOpen = false;
-/** Orbit is being reopened on another page: not a real close (no focus change, the history entry stays). */
-let reopening = false;
 /** The bridge for this visit (a new one on every room join or reconnect). */
 let bridge: OrbitBridge | null = null;
 /** The control that opened Orbit, to give focus back to when Orbit closes. */
@@ -60,37 +58,45 @@ function cancelPendingTimers() {
  *
  * Opening Orbit adds one entry, so the Back button (Android's, the browser's, a swipe) walks through Orbit's own pages
  * first (they share the tab's history) and then, on this entry, closes Orbit, never leaving the room. Closing Orbit
- * any other way takes the entry out again, so the next Back does what it did before Orbit opened.
+ * any other way steps back toward the room. Iframe navigations share the browser's history, so an old marker can
+ * remain after an iframe closes; every opening has its own ID and older markers are stepped over, never reopened.
  */
-const ORBIT_HISTORY_STATE = { orbit: true } as const;
-let ownsHistoryEntry = false;
+let historyEntryId: string | null = null;
 
 function isOrbitHistoryState(state: unknown): boolean {
     return !!state && typeof state === "object" && (state as { orbit?: unknown }).orbit === true;
 }
 
+function isCurrentOrbitHistoryState(state: unknown): boolean {
+    return (
+        historyEntryId !== null &&
+        isOrbitHistoryState(state) &&
+        (state as { orbitVisit?: unknown }).orbitVisit === historyEntryId
+    );
+}
+
 function pushHistoryEntry() {
-    if (ownsHistoryEntry) return;
+    if (historyEntryId !== null) return;
     try {
-        history.pushState(ORBIT_HISTORY_STATE, "");
-        ownsHistoryEntry = true;
+        const nextId = crypto.randomUUID();
+        history.pushState({ orbit: true, orbitVisit: nextId }, "");
+        historyEntryId = nextId;
     } catch (error) {
         console.warn("Could not add Orbit to the history", error);
     }
 }
 
 function dropHistoryEntry() {
-    if (!ownsHistoryEntry) return;
-    ownsHistoryEntry = false;
-    if (isOrbitHistoryState(history.state)) history.back();
+    const wasCurrent = isCurrentOrbitHistoryState(history.state);
+    historyEntryId = null;
+    if (wasCurrent) history.back();
 }
 
 function handlePopState(event: PopStateEvent) {
-    if (adminModalOpen && !isOrbitHistoryState(event.state)) {
+    if (adminModalOpen && !isCurrentOrbitHistoryState(event.state)) {
         // Back, on Orbit's entry: Orbit closes, and the room stays.
-        ownsHistoryEntry = false;
+        historyEntryId = null;
         closeAdminModal();
-        return;
     }
     if (!adminModalOpen && isOrbitHistoryState(event.state)) {
         // An entry left behind by an earlier visit (Orbit was open during a room change): step over it.
@@ -164,7 +170,7 @@ export type OrbitOpenSource = "button" | "quest" | "link" | "auto";
 
 // Function to open the admin modal, optionally on a given Orbit page
 function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource, redirect?: string) {
-    if (adminModalOpen) return;
+    if (adminModalOpen && redirect === undefined) return;
 
     const accessToken = getAccessTokenFromJwt(options.userAccessToken);
     if (!accessToken) {
@@ -187,7 +193,7 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
     }
 
     const modalEvent: ModalEvent = {
-        title: "Admin Dashboard",
+        title: "Orbit",
         src: adminDashboardUrl,
         allow: "fullscreen",
         allowApi: true,
@@ -195,7 +201,16 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
         allowFullScreen: true,
     };
 
-    if (!reopening) launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (adminModalOpen) {
+        // Svelte batches synchronous visibility toggles, so closing and reopening in one turn never remounts the
+        // iframe. Replace its reactive URL instead and keep its WindowProxy, launcher, view and history marker.
+        bridge?.onClosed();
+        modalIframeStore.set(modalEvent);
+        analyticsClient.orbitOpened({ source });
+        return;
+    }
+
+    launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     clearHeldMovement();
     modalFullScreenStore.set(false);
     modalIframeStore.set(modalEvent);
@@ -224,17 +239,6 @@ export function canOpenOrbit(): boolean {
 /** Opens Orbit on one of its pages (an /admin path), switching to it if Orbit is already open. */
 export function openOrbitPage(path: string) {
     if (!extensionOptions) return;
-    if (adminModalOpen) {
-        // Not a real close: focus and the history entry stay where they are.
-        reopening = true;
-        try {
-            closeAdminModal();
-            openAdminModal(extensionOptions, "link", path);
-        } finally {
-            reopening = false;
-        }
-        return;
-    }
     openAdminModal(extensionOptions, "link", path);
 }
 
@@ -272,7 +276,6 @@ function closeAdminModal() {
  */
 function onOrbitClosed() {
     bridge?.onClosed();
-    if (reopening) return;
     dropHistoryEntry();
     const target = launcher;
     launcher = null;
@@ -384,7 +387,7 @@ const adminExtensionModule: ExtensionModule = {
         unsubscribeFullScreen = null;
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
-        ownsHistoryEntry = false;
+        historyEntryId = null;
         bridge = null;
         launcher = null;
         extensionOptions = null;

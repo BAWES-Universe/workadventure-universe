@@ -57,7 +57,7 @@
         //}
     });
 
-    let modalUrl = $modalIframeStore
+    $: modalUrl = $modalIframeStore
         ? new URL($modalIframeStore.src, gameManager.currentStartedRoom.mapUrl).toString()
         : undefined;
 
@@ -97,6 +97,8 @@
                     <button
                         class="btn btn-light btn-ghost rounded hidden @lg/main-layout:block"
                         on:click={() => modalFullScreenStore.update((full) => !full)}
+                        aria-label={isFullScreened ? "Return to compact view" : "Open full-screen view"}
+                        title={isFullScreened ? "Return to compact view" : "Open full-screen view"}
                     >
                         {#if isFullScreened}
                             <IconArrowsMinimize font-size="20" class="text-white" />
@@ -111,6 +113,8 @@
                 class="btn btn-danger rounded m-0"
                 style={isFullScreened == true ? "" : "margin: 0px;"}
                 data-testid="close-modal-button"
+                aria-label={`Close ${$modalIframeStore?.title || "window"}`}
+                title={`Close ${$modalIframeStore?.title || "window"}`}
             >
                 <IconX font-size="20" class="text-white" />
             </button>

@@ -297,9 +297,9 @@ describe("Opening Orbit on one of its pages", () => {
 
         index.openOrbitPage("/admin/profile");
 
-        // Closed, then opened again on the page.
-        expect(mocks.modalIframeSet).toHaveBeenNthCalledWith(1, null);
-        const opened = mocks.modalIframeSet.mock.calls[1][0] as { src: string };
+        // The existing frame changes its URL in place; clearing it would lose its bridge WindowProxy.
+        expect(mocks.modalIframeSet).toHaveBeenCalledTimes(1);
+        const opened = mocks.modalIframeSet.mock.calls[0][0] as { src: string };
         const url = new URL(opened.src);
         expect(url.pathname).toBe("/admin/login");
         expect(url.searchParams.get("redirect")).toBe("/admin/profile");
@@ -543,7 +543,7 @@ describe("Orbit and the Back button (1C)", () => {
     it("adds one history entry when Orbit opens, forgets held movement, and starts compact", async () => {
         await openedIndex();
         expect(fakeHistory.pushState).toHaveBeenCalledTimes(1);
-        expect(fakeHistory.state).toEqual({ orbit: true });
+        expect(fakeHistory.state).toEqual({ orbit: true, orbitVisit: expect.any(String) });
         expect(mocks.clearHeldMovement).toHaveBeenCalledTimes(1);
         expect(mocks.fullScreen.set).toHaveBeenCalledWith(false);
     });
@@ -554,6 +554,30 @@ describe("Orbit and the Back button (1C)", () => {
         expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(false);
         // The entry Back took away isn't taken away again.
         expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes a new opening when Back reaches an older Orbit marker, then skips that stale marker", async () => {
+        // A child iframe navigation can consume the close-time history.back(), leaving its parent's marker behind.
+        fakeHistory.pushState({ orbit: true, orbitVisit: "an-earlier-opening" });
+        await openedIndex();
+        expect(fakeHistory.state).not.toEqual({ orbit: true, orbitVisit: "an-earlier-opening" });
+        mocks.modalVisibilitySet.mockClear();
+
+        backPressed();
+
+        expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(false);
+        expect(fakeHistory.back).toHaveBeenCalledTimes(2);
+        expect(fakeHistory.state).toBeNull();
+    });
+
+    it("does not close for a popstate still within the current opening", async () => {
+        await openedIndex();
+        mocks.modalVisibilitySet.mockClear();
+
+        for (const listener of popStateListeners) listener({ state: fakeHistory.state } as PopStateEvent);
+
+        expect(mocks.modalVisibilitySet).not.toHaveBeenCalled();
+        expect(fakeHistory.back).not.toHaveBeenCalled();
     });
 
     it("takes its entry out of the history when Orbit is closed any other way", async () => {
@@ -604,6 +628,21 @@ describe("Orbit and the Back button (1C)", () => {
         index.openOrbitPage("/admin/profile");
         expect(fakeHistory.pushState).toHaveBeenCalledTimes(1);
         expect(fakeHistory.back).not.toHaveBeenCalled();
-        expect(fakeHistory.state).toEqual({ orbit: true });
+        expect(fakeHistory.state).toEqual({ orbit: true, orbitVisit: expect.any(String) });
+    });
+
+    it("keeps the live frame window and full-screen view when changing Orbit pages", async () => {
+        const index = await openedIndex();
+        mocks.fullScreen.set(true);
+        mocks.modalIframeWindowSet.mockClear();
+        mocks.modalVisibilitySet.mockClear();
+
+        index.openOrbitPage("/admin/profile");
+
+        // Svelte batches visibility changes in one turn: false -> true never remounts Modal. The existing WindowProxy
+        // must remain registered for the replacement page's sign-in handshake and bridge ready message.
+        expect(mocks.modalIframeWindowSet).not.toHaveBeenCalledWith(null);
+        expect(mocks.modalVisibilitySet).not.toHaveBeenCalledWith(false);
+        expect(mocks.fullScreen.value).toBe(true);
     });
 });
