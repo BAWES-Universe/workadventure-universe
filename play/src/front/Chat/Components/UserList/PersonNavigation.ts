@@ -111,3 +111,12 @@ export function showMyself(userUuid: string | undefined): void {
         },
     });
 }
+
+/** Your own avatar tapped or clicked on the map: your card opens, and the next tap closes it. */
+export function toggleMyCard(userUuid: string | undefined): void {
+    if (get(wokaMenuStore)?.isSelf) {
+        wokaMenuStore.clear();
+        return;
+    }
+    showMyself(userUuid);
+}
