@@ -3,10 +3,11 @@
  * (`orbit-auth-*-v2`, see iframeAuth.ts). Orbit's end is `lib/orbit-bridge.ts` in the Orbit repository; the two must
  * agree on everything here.
  *
- * The game uses it to tell Orbit which page to show (`orbit-navigate`) and when something changed (`orbit-event`, a
- * refresh hint only). Nothing sent over it proves anything: Orbit resolves and authorises every page itself. Orbit's
- * actions on the game (closing, visiting a room) stay on the WorkAdventure scripting API (`WA.*`), so the bridge has no
- * message for them.
+ * The game uses it to tell Orbit which page to show (`orbit-navigate`), when something changed (`orbit-event`, a
+ * refresh hint only) and which view its frame is in (`orbit-view`: the compact panel or the full-screen view). Orbit
+ * asks for the other view with `orbit-view-request`. Nothing sent over it proves anything: Orbit resolves and
+ * authorises every page itself. Orbit's actions on the game (closing, visiting a room) stay on the WorkAdventure
+ * scripting API (`WA.*`), so the bridge has no message for them.
  *
  * Every visit (a room join or a reconnect) gets a new room revision. Requests carry it; Orbit refuses one from another
  * revision, and the game ignores answers from another revision, so an old Orbit frame can't act after a room or
@@ -15,10 +16,13 @@
 export const ORBIT_BRIDGE_VERSION = 1 as const;
 
 /** Pages the game may ask Orbit for. Orbit sends anything it does not know to its home. */
-export type OrbitNavigateIntent = "new-universe" | "world-members";
+export type OrbitNavigateIntent = "new-universe" | "world-members" | "visit-card";
 
 /** What changed, for a refresh hint. */
 export type OrbitEventTopic = "all" | "universes" | "worlds" | "rooms" | "profile" | "memberships";
+
+/** The two sizes of Orbit's frame. */
+export type OrbitView = "compact" | "full";
 
 /** How long the game waits for Orbit to acknowledge a request before giving up on it. */
 export const ORBIT_REQUEST_TIMEOUT_MS = 10_000;
@@ -29,6 +33,7 @@ export interface OrbitBridgeInitMessage {
     version: typeof ORBIT_BRIDGE_VERSION;
     roomRevision: string;
     capabilities: string[];
+    view: OrbitView;
 }
 
 export interface OrbitNavigateMessage {
@@ -48,7 +53,13 @@ export interface OrbitEventMessage {
     topic: OrbitEventTopic;
 }
 
-export type OrbitBridgeOutgoing = OrbitBridgeInitMessage | OrbitNavigateMessage | OrbitEventMessage;
+export interface OrbitViewMessage {
+    type: "orbit-view";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    view: OrbitView;
+}
+
+export type OrbitBridgeOutgoing = OrbitBridgeInitMessage | OrbitNavigateMessage | OrbitEventMessage | OrbitViewMessage;
 
 // Orbit → game
 export interface OrbitBridgeReadyMessage {
@@ -64,6 +75,12 @@ export interface OrbitBridgeAckMessage {
     roomRevision: string;
     ok: boolean;
     error?: string;
+}
+
+export interface OrbitViewRequestMessage {
+    type: "orbit-view-request";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    view: OrbitView;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -97,6 +114,15 @@ export function isOrbitBridgeAckMessage(value: unknown): value is OrbitBridgeAck
     );
 }
 
+export function isOrbitViewRequestMessage(value: unknown): value is OrbitViewRequestMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-view-request" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        (value.view === "compact" || value.view === "full")
+    );
+}
+
 /** A fresh room revision for a new visit. */
 export function newRoomRevision(): string {
     return `rev-${crypto.randomUUID()}`;
@@ -119,20 +145,22 @@ type PendingRequest =
  */
 export class OrbitBridge {
     private ready = false;
+    private view: OrbitView = "compact";
     private waiting: PendingRequest[] = [];
     private readonly inFlight = new Map<string, unknown>();
     private nextRequest = 0;
 
     constructor(private readonly env: OrbitBridgeEnv, readonly roomRevision: string) {}
 
-    /** Orbit is signed in and listening: tell it which visit this is, then send what was waiting. */
+    /** Orbit is signed in and listening: tell it which visit and view this is, then send what was waiting. */
     onReady(): void {
         this.ready = true;
         this.env.post({
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
             roomRevision: this.roomRevision,
-            capabilities: ["navigate", "event"],
+            capabilities: ["navigate", "event", "view"],
+            view: this.view,
         });
         const waiting = this.waiting;
         this.waiting = [];
@@ -155,6 +183,12 @@ export class OrbitBridge {
         this.waiting = [];
         for (const timer of this.inFlight.values()) this.env.clearTimeout(timer);
         this.inFlight.clear();
+    }
+
+    /** The frame changed size (or Orbit is about to open in this size): Orbit lays itself out for it. */
+    setView(view: OrbitView): void {
+        this.view = view;
+        if (this.ready) this.env.post({ type: "orbit-view", version: ORBIT_BRIDGE_VERSION, view });
     }
 
     navigate(intent: OrbitNavigateIntent, params?: Record<string, string>): void {
