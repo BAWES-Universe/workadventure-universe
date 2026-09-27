@@ -1,5 +1,6 @@
 <script lang="ts">
     import { blur } from "svelte/transition";
+
     import { onDestroy, onMount } from "svelte";
     import { get } from "svelte/store";
     import { iframeListener } from "../../Api/IframeListener";
@@ -12,6 +13,13 @@
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
+
+    /** The device asks for less motion: the panel appears and goes at once, without the blur. */
+    function prefersReducedMotion(): boolean {
+        return (
+            typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+        );
+    }
 
     let modalIframe: HTMLIFrameElement;
     let mainModal: HTMLDivElement;
@@ -73,12 +81,15 @@
 <svelte:window on:keydown={onKeyDown} />
 
 <div
-    class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all {shouldForceMobileFullScreen
+    class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all motion-reduce:transition-none {shouldForceMobileFullScreen
         ? 'mobile'
         : $modalIframeStore?.position} {isFullScreened ? 'fullscreened' : ''}"
     bind:this={mainModal}
 >
-    <div class="w-full h-full bg-contrast/80 backdrop-blur rounded" transition:blur={{ amount: 10, duration: 250 }}>
+    <div
+        class="w-full h-full bg-contrast/80 backdrop-blur rounded"
+        transition:blur={{ amount: 10, duration: prefersReducedMotion() ? 0 : 250 }}
+    >
         <div
             class={`flex justify-center items-center content-center bg-contrast/80 backdrop-blur p-2 space-x-0 @lg/main-layout:space-x-2 rounded-lg absolute z-50
                 ${
