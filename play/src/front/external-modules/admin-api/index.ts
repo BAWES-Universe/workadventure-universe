@@ -81,10 +81,15 @@ let renewal: { gameToken: string; promise: Promise<string | null> } | null = nul
  * the player signed out, or the token it renewed from was replaced meanwhile. Keeping such a late answer would
  * restore a signed-out token or overwrite a newer one.
  */
-async function renewGameToken(options: ExtensionModuleOptions, gameToken: string): Promise<string | null> {
+async function renewGameToken(
+    options: ExtensionModuleOptions,
+    gameToken: string,
+    force: boolean
+): Promise<string | null> {
     try {
         const response = await axiosToPusher.get("me", {
-            params: { token: gameToken, playUri: options.roomId },
+            // `refresh` makes the pusher renew an access token the provider still accepts but Orbit refused.
+            params: { token: gameToken, playUri: options.roomId, ...(force ? { refresh: "true" } : {}) },
         });
         const parsed = MeResponse.parse(response.data);
         if (parsed.status !== "ok" || !("authToken" in parsed) || typeof parsed.authToken !== "string") return null;
@@ -122,7 +127,7 @@ async function freshAccessToken(force: boolean): Promise<string | null> {
 
     let inFlight = renewal?.gameToken === gameToken ? renewal : null;
     if (!inFlight) {
-        const promise: Promise<string | null> = renewGameToken(options, gameToken).finally(() => {
+        const promise: Promise<string | null> = renewGameToken(options, gameToken, force).finally(() => {
             if (renewal?.promise === promise) renewal = null;
         });
         inFlight = renewal = { gameToken, promise };

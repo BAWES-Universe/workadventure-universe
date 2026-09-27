@@ -324,6 +324,10 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await openedWith(makeAccessTokenJwt(opaque));
         await orbitAsks(true);
         expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+        // The pusher is told to renew even though the provider may still accept the old token.
+        expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
+            params: { token: makeAccessTokenJwt(opaque), playUri: "https://play.example.com/@/room", refresh: "true" },
+        });
         expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: renewed }), ADMIN);
     });
 
