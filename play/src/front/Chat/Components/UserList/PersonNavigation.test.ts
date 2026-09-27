@@ -99,3 +99,38 @@ describe("showMyself", () => {
         expect(get(wokaMenuStore)).toBeUndefined();
     });
 });
+
+describe("toggleMyCard", () => {
+    beforeEach(async () => {
+        returnToPlayer.mockClear();
+        canOpenOrbit.mockReturnValue(true);
+        scene = {
+            getCameraManager: () => ({ returnToPlayer }),
+            connection: { emitAskPosition, getUserId: () => 42 },
+        };
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        wokaMenuStore.clear();
+    });
+
+    it("opens your card on the first tap of your avatar and closes it on the next", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { toggleMyCard } = await import("./PersonNavigation");
+
+        toggleMyCard("me-uuid");
+        expect(get(wokaMenuStore)).toMatchObject({ isSelf: true, userUuid: "me-uuid" });
+        expect(get(wokaMenuStore)?.actions.map((action) => action.testId)).toEqual(["edit-my-visit-card"]);
+
+        toggleMyCard("me-uuid");
+        expect(get(wokaMenuStore)).toBeUndefined();
+    });
+
+    it("replaces someone else's open card with yours", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { toggleMyCard } = await import("./PersonNavigation");
+        wokaMenuStore.initialize("Imagine", 7, "imagine-uuid", undefined);
+
+        toggleMyCard("me-uuid");
+
+        expect(get(wokaMenuStore)).toMatchObject({ isSelf: true, userUuid: "me-uuid", wokaName: "Khalid" });
+    });
+});
