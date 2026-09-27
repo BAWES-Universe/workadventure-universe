@@ -366,13 +366,17 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     /**
      * Follow a remote player by their UUID. Centers the camera on them and shows a popup.
      */
-    public followRemotePlayer(userUuid: string): void {
-        // Find the remote player by UUID
-        let remotePlayer = null;
-        for (const [, player] of this.scene.MapPlayersByKey) {
-            if (player.userUuid === userUuid) {
-                remotePlayer = player;
-                break;
+    public followRemotePlayer(userUuid: string, userId?: number): void {
+        // That exact avatar when its id is known (one person can have several, one per tab or device), else the
+        // first avatar of that account.
+        let remotePlayer = userId !== undefined ? this.scene.MapPlayersByKey.get(userId) ?? null : null;
+        if (remotePlayer?.userUuid !== userUuid) remotePlayer = null;
+        if (!remotePlayer) {
+            for (const [, player] of this.scene.MapPlayersByKey) {
+                if (player.userUuid === userUuid) {
+                    remotePlayer = player;
+                    break;
+                }
             }
         }
 

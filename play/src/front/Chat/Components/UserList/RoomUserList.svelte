@@ -5,6 +5,9 @@
 
 <script lang="ts">
     import { onDestroy, onMount, tick } from "svelte";
+    import { get } from "svelte/store";
+    import type { AvailabilityStatus } from "@workadventure/messages";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { LL } from "../../../../i18n/i18n-svelte";
@@ -14,21 +17,27 @@
     import InviteFooter from "../InviteFooter.svelte";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import UserList from "./UserList.svelte";
+    import type { SelfIdentity } from "./PersonActions";
+    import type { PersonGroup } from "./PersonSessions";
+    import { groupSessions } from "./PersonSessions";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
 
     /**
      * The People tab, in three parts: the room you're in first ("Test · 3 here", you at the top), then everyone
      * else online in this world under the name of their room, then the world's members who aren't online,
      * folded shut with a line saying who they are. Searching unfolds whatever matches.
+     * Each person is one row however many sessions they have open; the counts still count sessions.
      */
     export let userProviderMerger: UserProviderMerger;
 
     const USERS_BY_ROOM_LIMITATION = 200;
 
+    type Person = PersonGroup<ChatUser>;
+
     interface RoomGroup {
         key: string;
         name: string;
-        users: ChatUser[];
+        people: Person[];
     }
 
     const gameScene = gameManager.getCurrentGameScene();
@@ -57,18 +66,30 @@
         return user.username ? user.username.toLocaleLowerCase().includes(query) : false;
     }
 
-    function sortPeople(users: ChatUser[]): ChatUser[] {
-        const mySpaceUserId = gameScene.connection?.getSpaceUserId();
-        return [...users].sort((a, b) => {
-            if (a.spaceUserId === mySpaceUserId) return -1;
-            if (b.spaceUserId === mySpaceUserId) return 1;
-            return a.username?.localeCompare(b.username || "") || -1;
+    function statusOf(user: ChatUser): AvailabilityStatus | undefined {
+        return get(user.availabilityStatus);
+    }
+
+    function myIdentity(): SelfIdentity {
+        return {
+            spaceUserId: gameScene.connection?.getSpaceUserId(),
+            chatId: localUserStore.getChatId() ?? undefined,
+            uuid: localUserStore.getLocalUser()?.uuid,
+        };
+    }
+
+    // You first, then everyone by name.
+    function sortPeople(people: Person[]): Person[] {
+        return [...people].sort((a, b) => {
+            if (a.isMe) return -1;
+            if (b.isMe) return 1;
+            return a.primary.username?.localeCompare(b.primary.username || "") || -1;
         });
     }
 
     // Search first, then cap what is rendered: someone past the first 200 can still be found, and counts stay true.
-    function shown(users: ChatUser[]): ChatUser[] {
-        return users.filter(matches).slice(0, USERS_BY_ROOM_LIMITATION);
+    function shown(people: Person[]): Person[] {
+        return people.filter((person) => matches(person.primary)).slice(0, USERS_BY_ROOM_LIMITATION);
     }
 
     function roomNameOf(playUri: string, roomName: string | undefined): string {
@@ -80,26 +101,54 @@
         }
     }
 
-    // Everyone, split by where they are. Counts are of everyone in the section, before the search filters it.
+    // Counts are of sessions (one per open tab or device), before the search filters them: "26 here" is unchanged.
     $: hereEntry = $usersByRoom.get(currentRoomUrl);
-    $: hereAll = hereEntry ? sortPeople(hereEntry.users) : [];
-    $: hereShown = shown(hereAll);
+    $: hereCount = hereEntry?.users.length ?? 0;
     $: hereName = hereEntry?.roomName?.trim() || mapRoomName || $LL.chat.peopleTab.thisRoom();
-
-    $: elsewhereGroups = Array.from($usersByRoom.entries())
+    $: elsewhereCount = Array.from($usersByRoom.entries())
         .filter(([playUri]) => playUri !== undefined && playUri !== currentRoomUrl)
-        .map(([playUri, entry]): RoomGroup => {
-            const uri = playUri ?? "";
-            return { key: uri, name: roomNameOf(uri, entry.roomName), users: sortPeople(entry.users) };
-        })
-        .filter((group) => group.users.length > 0)
-        .sort((a, b) => a.name.localeCompare(b.name));
-    $: elsewhereCount = elsewhereGroups.reduce((total, group) => total + group.users.length, 0);
-    $: elsewhereShown = elsewhereGroups
-        .map((group) => ({ ...group, users: shown(group.users) }))
-        .filter((group) => group.users.length > 0);
+        .reduce((total, [, entry]) => total + entry.users.length, 0);
 
-    $: offlineAll = sortPeople($usersByRoom.get(undefined)?.users ?? []);
+    // Rows are of people: all the sessions of one account make one row, shown with the room of its primary session
+    // (this tab for you, one on this map when there is one).
+    $: onlinePeople = groupSessions(
+        Array.from($usersByRoom.entries())
+            .filter(([playUri]) => playUri !== undefined)
+            .flatMap(([, entry]) => entry.users),
+        myIdentity(),
+        currentRoomUrl,
+        statusOf
+    );
+
+    $: hereAll = sortPeople(onlinePeople.filter((person) => person.primary.playUri === currentRoomUrl));
+    $: hereShown = shown(hereAll);
+
+    $: elsewhereGroups = Array.from(
+        onlinePeople
+            .filter((person) => person.primary.playUri !== currentRoomUrl)
+            .reduce((groups, person) => {
+                const uri = person.primary.playUri ?? "";
+                const group = groups.get(uri) ?? {
+                    key: uri,
+                    name: roomNameOf(uri, $usersByRoom.get(uri)?.roomName ?? person.primary.roomName),
+                    people: [],
+                };
+                group.people.push(person);
+                groups.set(uri, group);
+                return groups;
+            }, new Map<string, RoomGroup>())
+            .values()
+    )
+        .map((group) => ({ ...group, people: sortPeople(group.people) }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    $: elsewhereShown = elsewhereGroups
+        .map((group) => ({ ...group, people: shown(group.people) }))
+        .filter((group) => group.people.length > 0);
+
+    $: offlineCount = $usersByRoom.get(undefined)?.users.length ?? 0;
+    $: offlineAll = sortPeople(
+        groupSessions($usersByRoom.get(undefined)?.users ?? [], myIdentity(), currentRoomUrl, statusOf)
+    );
     $: offlineShown = shown(offlineAll);
 
     // Searching unfolds the sections that match; clearing the search goes back to what you had unfolded.
@@ -125,14 +174,14 @@
                     <span class="u-live-dot shrink-0" aria-hidden="true" />
                     <span class="truncate">{hereName}</span>
                     <span class="u-count shrink-0 font-normal"
-                        >{$LL.chat.peopleTab.countHere({ count: hereAll.length })}</span
+                        >{$LL.chat.peopleTab.countHere({ count: hereCount })}</span
                     >
                 </h3>
-                <UserList userList={hereShown} {isMatrixChatEnabled} />
+                <UserList people={hereShown} {isMatrixChatEnabled} />
             </section>
         {/if}
 
-        {#if elsewhereCount > 0 && (!isSearching || elsewhereShown.length > 0)}
+        {#if elsewhereGroups.length > 0 && (!isSearching || elsewhereShown.length > 0)}
             <section class="flex flex-col" data-testid="peopleElsewhere">
                 <button
                     type="button"
@@ -160,7 +209,7 @@
                             <IconMapPin font-size="13" class="shrink-0 text-white/40" aria-hidden="true" />
                             <span class="truncate">{group.name}</span>
                         </div>
-                        <UserList userList={group.users} {isMatrixChatEnabled} />
+                        <UserList people={group.people} {isMatrixChatEnabled} />
                     {/each}
                 {/if}
             </section>
@@ -179,7 +228,7 @@
                     on:click={() => toggle("offline")}
                 >
                     <span class="u-eyebrow truncate">{$LL.chat.peopleTab.offline()}</span>
-                    <span class="u-count shrink-0">{offlineAll.length}</span>
+                    <span class="u-count shrink-0">{offlineCount}</span>
                     <span class="grow" />
                     <IconChevronDown
                         font-size="18"
@@ -190,7 +239,7 @@
                 </button>
                 {#if offlineOpen}
                     <p class="m-0 px-4 pb-2 text-xs text-white/50">{$LL.chat.peopleTab.offlineHint()}</p>
-                    <UserList userList={offlineShown} {isMatrixChatEnabled} />
+                    <UserList people={offlineShown} {isMatrixChatEnabled} />
                 {/if}
             </section>
         {/if}

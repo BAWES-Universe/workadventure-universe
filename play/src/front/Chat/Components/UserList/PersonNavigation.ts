@@ -8,11 +8,29 @@ import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
 import { rememberLocateRequest } from "../../../Phaser/Game/LocateRequest";
 import { canOpenOrbit, openOrbitPage } from "../../../external-modules/admin-api/index";
 import type { PersonLocation } from "./PersonTarget";
-import { resolvePersonTarget } from "./PersonTarget";
+import { avatarIdOf, resolvePersonTarget } from "./PersonTarget";
+import type { Session } from "./PersonSessions";
+import { pickSessionToReach } from "./PersonSessions";
+
+/**
+ * Of a person's sessions (tabs, devices) on this map, the one closest to you; `fallback` when none of them is in view.
+ */
+export function nearestSessionOnThisMap<T extends Session>(sessions: T[], fallback: T): T {
+    const scene = gameManager.tryGetCurrentGameScene();
+    if (!scene || sessions.length < 2) return fallback;
+    const players = scene.getRemotePlayersRepository().getPlayers();
+    const me = scene.CurrentPlayer;
+    return pickSessionToReach(
+        { primary: fallback, sessions },
+        scene.roomUrl,
+        me ? { x: me.x, y: me.y } : undefined,
+        (userId) => players.get(userId)?.position
+    );
+}
 
 /**
  * Walk to a person on this map. When their avatar is known locally we walk to that exact avatar (so another tab of
- * the same account is reachable); otherwise we ask the server by uuid, as before.
+ * the same account is reachable); otherwise we ask the server, naming that avatar when we know which one it is.
  */
 export function walkToPerson(person: PersonLocation): void {
     // Nothing to walk on while a reconnect swaps the map.
@@ -32,7 +50,7 @@ export function walkToPerson(person: PersonLocation): void {
         }
     }
     if (target.kind === "account" && target.playUri) {
-        scene.connection?.emitAskPosition(target.uuid, target.playUri);
+        scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.MOVE, target.userId);
     }
 }
 
@@ -47,7 +65,7 @@ export function locatePerson(person: PersonLocation, name?: string): void {
     if (target.kind === "avatar") {
         const remotePlayer = scene.MapPlayersByKey.get(target.userId);
         if (remotePlayer) {
-            remotePlayer.activate();
+            remotePlayer.showCard();
             return;
         }
     }
@@ -58,22 +76,25 @@ export function locatePerson(person: PersonLocation, name?: string): void {
         const remotePlayerData = scene.getRemotePlayersRepository().getPlayerByUuid(target.uuid);
         const remotePlayer = remotePlayerData ? scene.MapPlayersByKey.get(remotePlayerData.userId) : undefined;
         if (remotePlayer) {
-            remotePlayer.activate();
+            remotePlayer.showCard();
             return;
         }
     }
 
     // Their name shows on the card while the search runs.
     rememberLocateRequest(name);
-    scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.LOCATE);
+    scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.LOCATE, target.userId);
 }
 
 /**
- * Go to the map a person is on. The destination map can only look the person up by account uuid.
+ * Go to the map a person is on, then walk to them there: to that exact avatar when it is known (one person can have
+ * several, one per tab or device), else to the first one of their account.
  */
 export function goToPersonRoom(person: PersonLocation): void {
     if (!person.playUri) return;
-    scriptUtils.goToPage(`${person.playUri}#moveToUser=${person.uuid ?? ""}`);
+    const avatarId = avatarIdOf(person);
+    const avatar = avatarId !== undefined ? `&moveToAvatar=${avatarId}` : "";
+    scriptUtils.goToPage(`${person.playUri}#moveToUser=${person.uuid ?? ""}${avatar}`);
 }
 
 /** Orbit's page for editing your visit card. */

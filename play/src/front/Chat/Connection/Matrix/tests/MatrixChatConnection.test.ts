@@ -530,6 +530,7 @@ describe("MatrixChatConnection", () => {
                     startup: vi.fn(),
                 },
                 initRustCrypto: vi.fn(),
+                getUserId: vi.fn().mockReturnValue("@me:matrix.test"),
                 startClient: mockStartClient,
                 createRoom: vi.fn().mockResolvedValue(expected),
             } as unknown as MatrixClient;
@@ -572,6 +573,7 @@ describe("MatrixChatConnection", () => {
                     startup: vi.fn(),
                 },
                 initRustCrypto: vi.fn(),
+                getUserId: vi.fn().mockReturnValue("@me:matrix.test"),
                 startClient: mockStartClient,
                 createRoom: vi.fn().mockResolvedValue(expected),
                 getRoom: vi.fn(),
@@ -600,6 +602,29 @@ describe("MatrixChatConnection", () => {
             expect(matrixChatConnection["addDMRoomInAccountData"]).toHaveBeenCalledOnce();
             //eslint-disable-next-line @typescript-eslint/unbound-method
             expect(mockMatrixClient.getRoom).toHaveBeenCalledOnce();
+        });
+        it("should never open or create a direct room with yourself", async () => {
+            const mockMatrixClient = {
+                isGuest: vi.fn(),
+                on: vi.fn(),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                getUserId: vi.fn().mockReturnValue("@me:matrix.test"),
+                startClient: vi.fn(),
+                createRoom: vi.fn(),
+                getRoom: vi.fn(),
+            } as unknown as MatrixClient;
+
+            const clientPromise = Promise.resolve(mockMatrixClient);
+            const matrixChatConnection = await getMatrixConnection(clientPromise);
+            await clientPromise;
+
+            // You are a member of every direct room you have: your own id must not pick one of them.
+            expect(matrixChatConnection.getDirectRoomFor("@me:matrix.test")).toBeUndefined();
+            await expect(matrixChatConnection.createDirectRoom("@me:matrix.test")).rejects.toThrow();
+            expect(mockMatrixClient["createRoom"]).not.toHaveBeenCalled();
         });
     });
     describe("searchAccessibleRooms", () => {

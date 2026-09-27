@@ -9,6 +9,15 @@ describe("wokaMenuStore when players leave the map", () => {
         expect(get(wokaMenuStore)).toBeUndefined();
     });
 
+    it("closes only that avatar's card when one of a person's sessions leaves", () => {
+        wokaMenuStore.initialize("Mona", 7, "mona", undefined);
+        // Another tab or device of Mona leaves the map: her card for avatar 7 stays.
+        wokaMenuStore.removeRemotePlayer("mona", 8);
+        expect(get(wokaMenuStore)?.userId).toBe(7);
+        wokaMenuStore.removeRemotePlayer("mona", 7);
+        expect(get(wokaMenuStore)).toBeUndefined();
+    });
+
     it("leaves the card and its subscribers alone when someone else leaves", () => {
         wokaMenuStore.initialize("Mona", 7, "mona", undefined);
         const listener = vi.fn();

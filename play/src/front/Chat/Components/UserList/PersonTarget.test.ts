@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolvePersonTarget, userIdOnThisMap } from "./PersonTarget";
+import { avatarIdOf, resolvePersonTarget, userIdOnThisMap } from "./PersonTarget";
 
 const HERE = "http://play.test/_/global/maps/here.json";
 const ELSEWHERE = "http://play.test/_/global/maps/elsewhere.json";
@@ -28,6 +28,18 @@ describe("userIdOnThisMap", () => {
     });
 });
 
+describe("avatarIdOf", () => {
+    it("reads the avatar id of a session in another room, so that room can walk to that exact session", () => {
+        expect(avatarIdOf({ spaceUserId: `${ELSEWHERE}_7` })).toBe(7);
+    });
+
+    it("is undefined without a usable space user id", () => {
+        expect(avatarIdOf({})).toBeUndefined();
+        expect(avatarIdOf({ spaceUserId: "no-number" })).toBeUndefined();
+        expect(avatarIdOf({ spaceUserId: `${ELSEWHERE}_` })).toBeUndefined();
+    });
+});
+
 describe("resolvePersonTarget", () => {
     const known = new Set([7, 8]);
     const isKnown = (userId: number) => known.has(userId);
@@ -39,12 +51,14 @@ describe("resolvePersonTarget", () => {
         });
     });
 
-    it("asks the server by uuid, flagged as an avatar on this map, when the avatar is not known locally", () => {
+    it("asks the server for that exact avatar when it is on this map but not known locally", () => {
+        // Out of view: the server is asked by uuid and avatar id, so another tab of the same account is not picked.
         expect(resolvePersonTarget({ spaceUserId: `${HERE}_9`, uuid: "same", playUri: HERE }, HERE, isKnown)).toEqual({
             kind: "account",
             uuid: "same",
             playUri: HERE,
             avatarOnThisMap: true,
+            userId: 9,
         });
     });
 

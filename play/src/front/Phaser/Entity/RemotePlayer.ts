@@ -14,6 +14,7 @@ import { iframeListener } from "../../Api/IframeListener";
 import banIcon from "../../Components/images/ban-icon.svg";
 import { openDirectChatRoom } from "../../Chat/Utils";
 import { userIsConnected } from "../../Stores/MenuStore";
+import { localUserStore } from "../../Connection/LocalUserStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { IconMessage, IconWalk } from "@wa-icons";
 
@@ -85,7 +86,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
             priority: action.priority ?? 0,
             callback: () => {
                 action.callback();
-                wokaMenuStore.removeRemotePlayer(this.userUuid);
+                wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
             },
         });
     }
@@ -98,12 +99,21 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         this.toggleActionsMenu();
     }
 
+    /**
+     * Shows this avatar's card, and leaves it as it is when it already shows (Locate, from the People tab or a
+     * search): unlike a click on the avatar, it never closes the card.
+     */
+    public showCard(): void {
+        if (this.isCardShown()) return;
+        this.openActionsMenu();
+    }
+
     public deactivate(): void {
-        wokaMenuStore.removeRemotePlayer(this.userUuid);
+        wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
     }
 
     public destroy(): void {
-        wokaMenuStore.removeRemotePlayer(this.userUuid);
+        wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
         super.destroy();
     }
 
@@ -111,20 +121,24 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         return this.isClickable();
     }
 
-    private toggleActionsMenu(): void {
-        // Track the open woka menu action
-        analyticsClient.openWokaMenu();
+    /** This avatar's card is the one showing (not a card of another tab or device of the same person). */
+    private isCardShown(): boolean {
+        const card = get(wokaMenuStore);
+        return card !== undefined && !card.isSelf && card.userId === this.userId && card.userUuid === this.userUuid;
+    }
 
-        // Close the woka menu if it is already open by the same remote player
-        const wokaMenuStoreValue = get(wokaMenuStore);
-        if (
-            wokaMenuStoreValue?.userUuid !== undefined &&
-            wokaMenuStoreValue.userUuid !== "" &&
-            wokaMenuStoreValue.userUuid === this.userUuid
-        ) {
-            wokaMenuStore.removeRemotePlayer(this.userUuid);
+    private toggleActionsMenu(): void {
+        // Close the woka menu if it is already open for this avatar
+        if (this.isCardShown()) {
+            wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
             return;
         }
+        this.openActionsMenu();
+    }
+
+    private openActionsMenu(): void {
+        // Track the open woka menu action
+        analyticsClient.openWokaMenu();
 
         // Initialize the woka menu
         wokaMenuStore.initialize(this.playerName, this.userId, this.userUuid, this.visitCardUrl ?? undefined);
@@ -181,9 +195,12 @@ export class RemotePlayer extends Character implements ActivatableInterface {
             });
         }
         // Only a signed-in player gets a chat id, so this shows when you are both signed in: the same button,
-        // words and flow as the People tab's Message, between Walk to and Block.
+        // words and flow as the People tab's Message, between Walk to and Block. Never on another of your own tabs
+        // or devices: there is no chat with yourself.
         const chatID = this.getChatID();
-        if (chatID !== undefined && get(userIsConnected)) {
+        const isMyOtherSession =
+            chatID === localUserStore.getChatId() || this.userUuid === localUserStore.getLocalUser()?.uuid;
+        if (chatID !== undefined && get(userIsConnected) && !isMyOtherSession) {
             actions.push({
                 actionName: get(LL).chat.userList.message(),
                 protected: false,
