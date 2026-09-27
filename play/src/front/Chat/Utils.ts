@@ -4,6 +4,7 @@ import { get } from "svelte/store";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { iframeListener } from "../Api/IframeListener";
 import { connectionManager } from "../Connection/ConnectionManager";
+import { localUserStore } from "../Connection/LocalUserStore";
 import type { CoWebsite } from "../WebRtc/CoWebsite/CoWebsite";
 import { SimpleCoWebsite } from "../WebRtc/CoWebsite/SimpleCoWebsite";
 import { coWebsites } from "../Stores/CoWebsiteStore";
@@ -75,6 +76,8 @@ export const openDirectChatRoom = async (chatID: string) => {
             openModal(RequiresLoginForChatModal);
             return;
         }
+        // There is no chat with yourself (another of your tabs or devices has your chat id).
+        if (chatID === localUserStore.getChatId()) return;
         const chatConnection = await gameManager.getChatConnection();
         let room = chatConnection.getDirectRoomFor(chatID);
         if (!room) room = await chatConnection.createDirectRoom(chatID);

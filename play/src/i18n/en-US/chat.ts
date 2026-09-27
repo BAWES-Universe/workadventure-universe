@@ -72,6 +72,7 @@ const chat: BaseTranslation = {
         online: "Online",
         away: "Away",
         unavailable: "Unavailable",
+        silent: "Silent",
         back_in_a_moment: "Back in a moment",
         do_not_disturb: "Do not disturb",
         busy: "Busy",
@@ -578,6 +579,10 @@ const chat: BaseTranslation = {
         offlineHint: "Members of this world who aren't online.",
         collapse: "Collapse {section}",
         expand: "Expand {section}",
+        sessions: "{count} sessions",
+        showSessions: "Show {userName}'s {count} sessions",
+        hideSessions: "Hide {userName}'s sessions",
+        sessionLabel: "Session {number} · {room}",
     },
     session: {
         live: "Live",

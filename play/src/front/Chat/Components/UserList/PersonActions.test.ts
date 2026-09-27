@@ -130,6 +130,12 @@ describe("getPersonActions", () => {
         expect(getPersonActions(input({ chatId: undefined })).message).toBe("hidden");
     });
 
+    it("never offers Message to your own account, but keeps Walk to your other session", () => {
+        const actions = getPersonActions(input({ isMyAccount: true }));
+        expect(actions.message).toBe("hidden");
+        expect(actions.walkTo).toBe(true);
+    });
+
     it("hides Message when the Matrix chat is disabled or a room is being created", () => {
         expect(getPersonActions(input({ isMatrixChatEnabled: false })).message).toBe("hidden");
         expect(getPersonActions(input({ roomCreationInProgress: true })).message).toBe("hidden");

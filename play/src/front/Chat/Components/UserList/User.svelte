@@ -2,6 +2,7 @@
     import { AvailabilityStatus } from "@workadventure/messages";
     import * as Sentry from "@sentry/svelte";
     import highlightWords from "highlight-words";
+    import { derived } from "svelte/store";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { availabilityStatusStore } from "../../../Stores/MediaStore";
     import { getColorHexOfStatus } from "../../../Utils/AvailabilityStatus";
@@ -16,11 +17,22 @@
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
+    import PersonSessionRow from "./PersonSessionRow.svelte";
     import { getPersonActions, isSelf } from "./PersonActions";
-    import { goToPersonRoom, locatePerson, showMyself, walkToPerson } from "./PersonNavigation";
-    import { IconDoorIn, IconLoader, IconMessage, IconWalk } from "@wa-icons";
+    import { bestStatus, isMyAccount } from "./PersonSessions";
+    import { statusLabel } from "./PersonStatus";
+    import {
+        goToPersonRoom,
+        locatePerson,
+        nearestSessionOnThisMap,
+        showMyself,
+        walkToPerson,
+    } from "./PersonNavigation";
+    import { IconChevronDown, IconDoorIn, IconLoader, IconMessage, IconWalk } from "@wa-icons";
 
     export let user: ChatUser;
+    /** All of this person's sessions (tabs, devices), `user` first. One row stands for all of them. */
+    export let sessions: ChatUser[] = [user];
 
     export let isMatrixChatEnabled = true;
 
@@ -34,13 +46,29 @@
     const iAmAdmin = connection?.hasTag("admin") ?? false;
 
     // "Yourself" is this tab's own avatar: other tabs of the same account are other people here.
-    $: isMe = isSelf(user, {
+    const me = {
         spaceUserId: connection?.getSpaceUserId(),
         chatId: localUserStore.getChatId() ?? undefined,
         uuid: localUserStore.getLocalUser()?.uuid,
-    });
+    };
+    $: isMe = isSelf(user, me);
+    // Your own account seen from somewhere else (another of your tabs is listed before this one is): no chat with it.
+    $: isMine = !isMe && isMyAccount(user, me);
 
-    $: userStatus = isMe ? availabilityStatusStore : availabilityStatus;
+    // Someone with several sessions shows as available as their most available one.
+    $: sessionsStatus =
+        sessions.length > 1
+            ? derived(
+                  sessions.map((session) => session.availabilityStatus),
+                  (statuses) => bestStatus(statuses) ?? AvailabilityStatus.UNCHANGED
+              )
+            : availabilityStatus;
+    $: userStatus = isMe ? availabilityStatusStore : sessionsStatus;
+
+    // Under the toggle: your other sessions, or all of someone else's, each reachable on its own.
+    $: listedSessions = isMe ? sessions.slice(1) : sessions;
+    $: firstSessionNumber = isMe ? 2 : 1;
+    let sessionsOpen = false;
 
     $: chunks = highlightWords({
         text: displayName,
@@ -51,6 +79,7 @@
 
     $: actions = getPersonActions({
         isSelf: isMe,
+        isMyAccount: isMine,
         status: $userStatus,
         uuid: user.uuid,
         chatId: user.chatId,
@@ -67,7 +96,8 @@
     function walkTo() {
         if (!user.uuid || !user.playUri) return;
         analyticsClient.goToUser();
-        walkToPerson(user);
+        // Of their sessions on this map, the one closest to you.
+        walkToPerson(nearestSessionOnThisMap(sessions, user));
     }
 
     function goToRoom() {
@@ -91,30 +121,6 @@
         analyticsClient.sendMessageFromUserList();
     }
 
-    function getNameOfAvailabilityStatus(status: AvailabilityStatus) {
-        switch (status) {
-            case AvailabilityStatus.ONLINE:
-                return $LL.chat.status.online();
-            case AvailabilityStatus.AWAY:
-                return $LL.chat.status.away();
-            case AvailabilityStatus.BUSY:
-                return $LL.chat.status.busy();
-            case AvailabilityStatus.DO_NOT_DISTURB:
-                return $LL.chat.status.do_not_disturb();
-            case AvailabilityStatus.BACK_IN_A_MOMENT:
-                return $LL.chat.status.back_in_a_moment();
-            case AvailabilityStatus.JITSI:
-            case AvailabilityStatus.BBB:
-            case AvailabilityStatus.LIVEKIT:
-                return $LL.chat.status.meeting();
-            case AvailabilityStatus.SPEAKER:
-                return $LL.chat.status.megaphone();
-            case AvailabilityStatus.SILENT:
-            default:
-                return $LL.chat.status.unavailable();
-        }
-    }
-
     let loadingDirectRoomAccess = false;
 
     function openWokaMenu() {
@@ -131,7 +137,7 @@
         peopleCardReturn.tappedPerson(user.uuid);
         // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
         // otherwise asks the server for the position.
-        locatePerson(user, displayName);
+        locatePerson(nearestSessionOnThisMap(sessions, user), displayName);
     }
 </script>
 
@@ -204,12 +210,30 @@
                                     style="background:{getColorHexOfStatus($userStatus)}"
                                 />
                             {/if}
-                            {getNameOfAvailabilityStatus($userStatus ?? 0)}
+                            {statusLabel($userStatus, $LL)}
                         </div>
                     {:else}
                         {$LL.chat.userList.disconnected()}
                     {/if}
                 </div>
+                {#if listedSessions.length > 0}
+                    <button
+                        type="button"
+                        class="m-0 mt-1 flex items-center gap-1 rounded border-0 bg-white/10 px-1.5 py-0.5 text-xxs font-semibold text-white/80 hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary"
+                        aria-expanded={sessionsOpen}
+                        aria-label={sessionsOpen
+                            ? $LL.chat.peopleTab.hideSessions({ userName: displayName })
+                            : $LL.chat.peopleTab.showSessions({ userName: displayName, count: sessions.length })}
+                        data-testid={`sessions-toggle-${user.username}`}
+                        on:click|stopPropagation={() => (sessionsOpen = !sessionsOpen)}
+                    >
+                        {$LL.chat.peopleTab.sessions({ count: sessions.length })}
+                        <IconChevronDown
+                            font-size="12"
+                            class="transition-transform {sessionsOpen ? '' : '-rotate-90 rtl:rotate-90'}"
+                        />
+                    </button>
+                {/if}
             </div>
             <div class="flex shrink-0 items-center gap-1">
                 {#if actions.walkTo}
@@ -259,6 +283,13 @@
                 {/if}
             </div>
         </div>
+        {#if sessionsOpen && listedSessions.length > 0}
+            <ul class="m-0 list-none p-0" data-testid={`sessions-${user.username}`}>
+                {#each listedSessions as session, index (session.spaceUserId ?? index)}
+                    <PersonSessionRow {session} number={firstSessionNumber + index} {displayName} />
+                {/each}
+            </ul>
+        {/if}
     </div>
 
     <style lang="scss">

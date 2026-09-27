@@ -40,6 +40,8 @@ function matchesAccount(person: PersonIdentity, me: SelfIdentity): boolean {
 
 export interface PersonActionsInput {
     isSelf: boolean;
+    /** The person is your own account, seen from another of your sessions: you can reach it, not message it. */
+    isMyAccount?: boolean;
     /** Current availability status of the person; UNCHANGED (0) or undefined means disconnected. */
     status: AvailabilityStatus | undefined;
     uuid: string | undefined;
@@ -61,7 +63,8 @@ export interface PersonActions {
     /** Visible "Go to room" button (person on another map). */
     goToRoom: boolean;
     /**
-     * Visible "Message" button, only for people who can receive a direct message (they have a chat id).
+     * Visible "Message" button, only for people who can receive a direct message (they have a chat id), never for
+     * your own account: there is no chat with yourself.
      * People without one (bots, guests) are reached by walking up to them, so no greyed-out button is shown;
      * they get the button automatically once they have a chat id.
      */
@@ -92,7 +95,7 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
     const ban = connected && input.iAmAdmin;
 
     let message: MessageAction = "hidden";
-    if (!input.isSelf && input.isMatrixChatEnabled && !input.roomCreationInProgress) {
+    if (!input.isSelf && !input.isMyAccount && input.isMatrixChatEnabled && !input.roomCreationInProgress) {
         message = input.chatId ? "enabled" : "hidden";
     }
 

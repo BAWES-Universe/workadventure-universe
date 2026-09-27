@@ -14,6 +14,7 @@ import { iframeListener } from "../../Api/IframeListener";
 import banIcon from "../../Components/images/ban-icon.svg";
 import { openDirectChatRoom } from "../../Chat/Utils";
 import { userIsConnected } from "../../Stores/MenuStore";
+import { localUserStore } from "../../Connection/LocalUserStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { IconMessage, IconWalk } from "@wa-icons";
 
@@ -181,9 +182,12 @@ export class RemotePlayer extends Character implements ActivatableInterface {
             });
         }
         // Only a signed-in player gets a chat id, so this shows when you are both signed in: the same button,
-        // words and flow as the People tab's Message, between Walk to and Block.
+        // words and flow as the People tab's Message, between Walk to and Block. Never on another of your own tabs
+        // or devices: there is no chat with yourself.
         const chatID = this.getChatID();
-        if (chatID !== undefined && get(userIsConnected)) {
+        const isMyOtherSession =
+            chatID === localUserStore.getChatId() || this.userUuid === localUserStore.getLocalUser()?.uuid;
+        if (chatID !== undefined && get(userIsConnected) && !isMyOtherSession) {
             actions.push({
                 actionName: get(LL).chat.userList.message(),
                 protected: false,

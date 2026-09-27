@@ -9,6 +9,24 @@ import { rememberLocateRequest } from "../../../Phaser/Game/LocateRequest";
 import { canOpenOrbit, openOrbitPage } from "../../../external-modules/admin-api/index";
 import type { PersonLocation } from "./PersonTarget";
 import { resolvePersonTarget } from "./PersonTarget";
+import type { Session } from "./PersonSessions";
+import { pickSessionToReach } from "./PersonSessions";
+
+/**
+ * Of a person's sessions (tabs, devices) on this map, the one closest to you; `fallback` when none of them is in view.
+ */
+export function nearestSessionOnThisMap<T extends Session>(sessions: T[], fallback: T): T {
+    const scene = gameManager.tryGetCurrentGameScene();
+    if (!scene || sessions.length < 2) return fallback;
+    const players = scene.getRemotePlayersRepository().getPlayers();
+    const me = scene.CurrentPlayer;
+    return pickSessionToReach(
+        { primary: fallback, sessions },
+        scene.roomUrl,
+        me ? { x: me.x, y: me.y } : undefined,
+        (userId) => players.get(userId)?.position
+    );
+}
 
 /**
  * Walk to a person on this map. When their avatar is known locally we walk to that exact avatar (so another tab of
