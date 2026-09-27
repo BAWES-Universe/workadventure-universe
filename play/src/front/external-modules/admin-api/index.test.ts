@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
     modalVisibilitySet: vi.fn(),
     modalVisibilitySubscribe: vi.fn(() => vi.fn()),
     orbitOpened: vi.fn(),
+    // The Orbit frame's window, as the modal store holds it (none unless a test sets one).
+    frame: undefined as unknown,
 }));
 
 vi.mock("../../Administration/AnalyticsClient", () => ({
@@ -29,7 +31,13 @@ vi.mock("../../Stores/MenuStore", () => ({
 
 vi.mock("../../Stores/ModalStore", () => ({
     modalIframeStore: { set: mocks.modalIframeSet },
-    modalIframeWindowStore: { set: mocks.modalIframeWindowSet, subscribe: vi.fn(() => vi.fn()) },
+    modalIframeWindowStore: {
+        set: mocks.modalIframeWindowSet,
+        subscribe: (callback: (value: unknown) => void) => {
+            callback(mocks.frame);
+            return () => undefined;
+        },
+    },
     modalVisibilityStore: {
         set: mocks.modalVisibilitySet,
         subscribe: mocks.modalVisibilitySubscribe,
@@ -238,5 +246,150 @@ describe("Opening Orbit on one of its pages", () => {
         expect(url.searchParams.get("playUri")).toBe("https://play.example.com/@/room");
         // Counted as the game asking Orbit for a page.
         expect(mocks.orbitOpened).toHaveBeenLastCalledWith({ source: "link" });
+    });
+});
+
+describe("The Orbit bridge", () => {
+    const ADMIN = "https://admin.example.com";
+    let frame: { postMessage: ReturnType<typeof vi.fn> };
+    let listeners: ((event: MessageEvent<unknown>) => void)[];
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.clearAllMocks();
+        mocks.isLogged.mockReturnValue(true);
+        frame = { postMessage: vi.fn() };
+        mocks.frame = frame;
+        listeners = [];
+        vi.stubGlobal("window", {
+            addEventListener: vi.fn((type: string, listener: (event: MessageEvent<unknown>) => void) => {
+                if (type === "message") listeners.push(listener);
+            }),
+            removeEventListener: vi.fn((type: string, listener: (event: MessageEvent<unknown>) => void) => {
+                listeners = listeners.filter((candidate) => candidate !== listener);
+            }),
+            location: { href: "https://play.example.com/@/room" },
+        });
+    });
+
+    afterEach(() => {
+        mocks.frame = undefined;
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    async function freshIndex() {
+        vi.resetModules();
+        return (await import("./index")) as unknown as {
+            default: AdminModuleLike;
+            requestOrbitPage(intent: string, params?: Record<string, string>): boolean;
+            notifyOrbitChanged(topic: string): void;
+            openAdminModalFromMenu(): void;
+        };
+    }
+
+    function fromOrbit(data: unknown, source: unknown = frame, origin = ADMIN) {
+        for (const listener of listeners) listener({ data, source, origin } as MessageEvent<unknown>);
+    }
+
+    /** The room revision the game sent Orbit in its last init message. */
+    function lastInitRevision(): string {
+        const inits = frame.postMessage.mock.calls
+            .map((call) => call[0] as { type: string; roomRevision: string })
+            .filter((message) => message.type === "orbit-bridge-init");
+        return inits[inits.length - 1].roomRevision;
+    }
+
+    it("opens Orbit for a page request, and sends it only once Orbit has signed in and is ready", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+
+        expect(index.requestOrbitPage("new-universe")).toBe(true);
+        expect(mocks.orbitOpened).toHaveBeenLastCalledWith({ source: "link" });
+        expect(frame.postMessage).not.toHaveBeenCalled();
+
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["navigate", "event"] });
+        const revision = lastInitRevision();
+        expect(revision).toMatch(/^rev-/);
+
+        expect(frame.postMessage).toHaveBeenNthCalledWith(
+            1,
+            { type: "orbit-bridge-init", version: 1, roomRevision: revision, capabilities: ["navigate", "event"] },
+            ADMIN
+        );
+        expect(frame.postMessage).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ type: "orbit-navigate", intent: "new-universe", roomRevision: revision }),
+            ADMIN
+        );
+    });
+
+    it("ignores a ready message from another window or origin", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.requestOrbitPage("new-universe");
+
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] }, { postMessage: vi.fn() });
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] }, frame, "https://evil.example.com");
+
+        expect(frame.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("starts a new visit on every reconnect, so an earlier Orbit frame's revision no longer applies", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.openAdminModalFromMenu();
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+        const first = lastInitRevision();
+
+        index.default.destroy();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.openAdminModalFromMenu();
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+        const second = lastInitRevision();
+
+        expect(first).toMatch(/^rev-/);
+        expect(second).toMatch(/^rev-/);
+        expect(second).not.toBe(first);
+    });
+
+    it("doesn't wake a closed Orbit for a refresh hint", async () => {
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.notifyOrbitChanged("universes");
+        expect(mocks.modalVisibilitySet).not.toHaveBeenCalledWith(true);
+        expect(frame.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("can't ask for a page before the integration is set up (a guest)", async () => {
+        const index = await freshIndex();
+        expect(index.requestOrbitPage("new-universe")).toBe(false);
+        expect(mocks.modalIframeSet).not.toHaveBeenCalled();
+    });
+
+    it("gives focus back to the control that opened Orbit when Orbit closes", async () => {
+        let onVisibility: ((visible: boolean) => void) | undefined;
+        mocks.modalVisibilitySubscribe.mockImplementation(((callback: (visible: boolean) => void) => {
+            onVisibility = callback;
+            return vi.fn();
+        }) as unknown as () => ReturnType<typeof vi.fn>);
+        const button = document.createElement("button");
+        document.body.append(button);
+        button.focus();
+
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.openAdminModalFromMenu();
+        (document.activeElement as HTMLElement | null)?.blur();
+
+        onVisibility?.(false);
+        expect(document.activeElement).toBe(button);
+        button.remove();
     });
 });
