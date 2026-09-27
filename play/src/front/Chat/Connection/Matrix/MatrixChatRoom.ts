@@ -52,6 +52,9 @@ import { matrixSecurity } from "./MatrixSecurity";
 import { MatrixChatRoomMember } from "./MatrixChatRoomMember";
 import { isInvitationGoneError } from "./isInvitationGoneError";
 
+/** How long leaving waits for pending invitations to be withdrawn before it leaves anyway. */
+const INVITE_WITHDRAWAL_DEADLINE_MS = 3000;
+
 type EventId = string;
 
 type ModerationAction = "ban" | "kick" | "invite" | "redact";
@@ -537,9 +540,17 @@ export class MatrixChatRoom
     async leaveRoom(): Promise<void> {
         try {
             if (this.matrixRoom.getMyMembership() === KnownMembership.Join) {
-                await this.withdrawPendingInvitesIfLastMember().catch((error) => {
-                    console.warn("Unable to withdraw the pending invitations", error);
-                });
+                // Bounded: a slow member load or kick must not keep the user in the room.
+                let deadline: ReturnType<typeof setTimeout> | undefined;
+                await Promise.race([
+                    this.withdrawPendingInvitesIfLastMember().catch((error) => {
+                        console.warn("Unable to withdraw the pending invitations", error);
+                    }),
+                    new Promise<void>((resolve) => {
+                        deadline = setTimeout(resolve, INVITE_WITHDRAWAL_DEADLINE_MS);
+                    }),
+                ]);
+                clearTimeout(deadline);
             }
             await this.matrixRoom.client.leave(this.id);
             return;

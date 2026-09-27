@@ -72,8 +72,11 @@ function accessTokenExpiry(accessToken: string): number | null {
 /** Don't hand out a token about to run out: Orbit's sign-in would fail a moment later. */
 const ACCESS_TOKEN_MARGIN_MS = 60_000;
 
-/** The /me renewal in flight, shared by every Orbit request made with the same game token. */
-let renewal: { gameToken: string; promise: Promise<string | null> } | null = null;
+/**
+ * The /me renewal in flight, shared by every Orbit request made with the same game token. A forced request
+ * doesn't join an unforced one: that one may hand back the very token Orbit just refused.
+ */
+let renewal: { gameToken: string; force: boolean; promise: Promise<string | null> } | null = null;
 
 /**
  * Renews the game token through the pusher's /me and keeps the result, returning the renewed OIDC access token.
@@ -125,12 +128,12 @@ async function freshAccessToken(force: boolean): Promise<string | null> {
     const stale = expiry !== null && expiry < Date.now() + ACCESS_TOKEN_MARGIN_MS;
     if (!force && !stale) return current;
 
-    let inFlight = renewal?.gameToken === gameToken ? renewal : null;
+    let inFlight = renewal?.gameToken === gameToken && (renewal.force || !force) ? renewal : null;
     if (!inFlight) {
         const promise: Promise<string | null> = renewGameToken(options, gameToken, force).finally(() => {
             if (renewal?.promise === promise) renewal = null;
         });
-        inFlight = renewal = { gameToken, promise };
+        inFlight = renewal = { gameToken, force, promise };
     }
     const renewed = await inFlight.promise;
     // Torn down or signed out meanwhile: nothing to hand Orbit.

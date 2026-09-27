@@ -356,8 +356,8 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         const renewed = makeOidcToken(nowSeconds() + 3600);
         const release = pendingMe();
         await openedWith(makeAccessTokenJwt(expired));
-        orbitSends();
         orbitSends(true);
+        orbitSends();
         await vi.runAllTimersAsync();
         expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
 
@@ -367,6 +367,21 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         expect(frame.postMessage).toHaveBeenCalledTimes(2);
         for (const [message] of frame.postMessage.mock.calls)
             expect(message).toEqual(expect.objectContaining({ accessToken: renewed }));
+    });
+
+    it("starts a forced renewal rather than joining an unforced one already running", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const release = pendingMe();
+        await openedWith(makeAccessTokenJwt(expired));
+        orbitSends();
+        orbitSends(true);
+        await vi.runAllTimersAsync();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(2);
+        expect(mocks.pusherGet.mock.calls[1][1]).toEqual(
+            expect.objectContaining({ params: expect.objectContaining({ refresh: "true" }) })
+        );
+        release(makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)));
+        await vi.runAllTimersAsync();
     });
 
     it("keeps nothing, and answers nothing, when /me comes back after Orbit's integration was torn down", async () => {
