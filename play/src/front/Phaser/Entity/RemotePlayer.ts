@@ -2,7 +2,6 @@ import * as Sentry from "@sentry/svelte";
 import { get } from "svelte/store";
 import type CancelablePromise from "cancelable-promise";
 import type { PositionMessage, PositionMessage_Direction, SayMessage } from "@workadventure/messages";
-import { openModal } from "svelte-modals";
 import type { WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { wokaMenuStore } from "../../Stores/WokaMenuStore";
 import { Character } from "../Entity/Character";
@@ -14,11 +13,9 @@ import { showReportScreenStore } from "../../Stores/ShowReportScreenStore";
 import { iframeListener } from "../../Api/IframeListener";
 import banIcon from "../../Components/images/ban-icon.svg";
 import { openDirectChatRoom } from "../../Chat/Utils";
-import chat from "../../Components/images/chat.png";
 import { userIsConnected } from "../../Stores/MenuStore";
-import RequiresLoginForChatModal from "../../Chat/Components/RequiresLoginForChatModal.svelte";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
-import { IconWalk } from "@wa-icons";
+import { IconMessage, IconWalk } from "@wa-icons";
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -171,7 +168,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 // Walks you to them: the same words as the People tab's button.
                 actionName: get(LL).chat.userList.walkTo(),
                 protected: false,
-                priority: 1,
+                priority: 2,
                 style: "bg-white/10 hover:bg-white/30",
                 callback: () => {
                     // Track the talk to user action
@@ -183,38 +180,51 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 actionIcon: IconWalk,
             });
         }
-        if (this.chatID != undefined) {
+        // Only a signed-in player gets a chat id, so this shows when you are both signed in: the same button,
+        // words and flow as the People tab's Message, between Walk to and Block.
+        const chatID = this.getChatID();
+        if (chatID !== undefined && get(userIsConnected)) {
             actions.push({
-                actionName: get(LL).chat.userList.sendMessage(),
+                actionName: get(LL).chat.userList.message(),
                 protected: false,
-                priority: 2,
+                priority: 1,
                 style: "bg-white/10 hover:bg-white/30",
+                testId: "wokamenu-message-button",
                 callback: () => {
                     // Track the opened chat action
                     analyticsClient.openedChat();
 
-                    if (!get(userIsConnected)) {
-                        openModal(RequiresLoginForChatModal);
-                        return;
-                    }
-
-                    openDirectChatRoom(this.chatID!).catch((error) => {
+                    openDirectChatRoom(chatID).catch((error) => {
                         console.error("Error opening direct chat room:", error);
                         Sentry.captureException(error, {
                             extra: {
                                 userId: this.userUuid,
-                                chatId: this.chatID!,
+                                chatId: chatID,
                                 playUri: this.scene.roomUrl,
                                 username: this.playerName,
                             },
                         });
                     });
                 },
-                actionIcon: chat,
+                actionIcon: IconMessage,
             });
         }
 
         return actions;
+    }
+
+    /**
+     * Their chat id. A player's chat connects after they arrive on the map, so the id they joined with is often
+     * empty; the world space (the People tab's source) gets it once their chat is up.
+     */
+    private getChatID(): string | undefined {
+        if (this.chatID) return this.chatID;
+        const users = get(this.scene.allUsersInWorldStore);
+        if (!users) return undefined;
+        for (const user of users.values()) {
+            if (user.uuid === this.userUuid && user.chatID) return user.chatID;
+        }
+        return undefined;
     }
 
     private bindEventHandlers(): void {
