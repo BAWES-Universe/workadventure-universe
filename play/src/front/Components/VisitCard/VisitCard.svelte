@@ -65,7 +65,7 @@
                 src="{visitCardUrl}&embed={isEmbedded}"
                 class="max-h-lg"
                 allow="clipboard-read; clipboard-write {visitCardUrl}"
-                style="width: {isEmbedded ? '100%' : w}; height: {Math.min(h, maxHeigth)}px"
+                style="width: {isEmbedded ? '100%' : w}; height: {Math.min(h, maxHeigth)}px; color-scheme: dark"
                 class:hidden
                 bind:this={cvIframe}
             />
@@ -106,6 +106,8 @@
         iframe {
             border: 0;
             overflow: hidden;
+            /* The profile inside declares a dark scheme too: when the two differ, the browser paints the frame
+               opaque (white), instead of letting the card sit on the panel. */
 
             &.hidden {
                 visibility: hidden;
