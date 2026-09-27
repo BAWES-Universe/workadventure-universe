@@ -1,7 +1,15 @@
 import { AvailabilityStatus } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
 import type { Session } from "./PersonSessions";
-import { availabilityRank, bestStatus, groupSessions, isMyAccount, pickSessionToReach } from "./PersonSessions";
+import {
+    availabilityRank,
+    bestStatus,
+    groupSessions,
+    isMyAccount,
+    pickSessionToReach,
+    sessionCount,
+    splitBots,
+} from "./PersonSessions";
 
 const HERE = "http://play.test/_/global/maps/here.json";
 const ELSEWHERE = "http://play.test/_/global/maps/elsewhere.json";
@@ -144,5 +152,31 @@ describe("isMyAccount", () => {
         expect(isMyAccount({ spaceUserId: `${HERE}_9`, uuid: "uuid-me" }, me)).toBe(true);
         expect(isMyAccount({ chatId: "@me:matrix.test" }, me)).toBe(true);
         expect(isMyAccount({ spaceUserId: `${HERE}_2`, uuid: "uuid-bob", chatId: "@bob:matrix.test" }, me)).toBe(false);
+    });
+});
+
+describe("splitBots", () => {
+    const row = (name: string, isBot: boolean, sessions = 1) => ({
+        primary: { username: name, isBot },
+        sessions: Array.from({ length: sessions }, () => name),
+    });
+
+    it("puts bots in their own list and keeps the order of each", () => {
+        const { people, bots } = splitBots([
+            row("Anas", false),
+            row("Attio", true),
+            row("Yousef", false),
+            row("Dosu", true),
+        ]);
+        expect(people.map((p) => p.primary.username)).toEqual(["Anas", "Yousef"]);
+        expect(bots.map((b) => b.primary.username)).toEqual(["Attio", "Dosu"]);
+    });
+
+    it("counts sessions, so the groups add up to the room's count", () => {
+        const all = [row("Khalid", false, 3), row("Anas", false), row("Attio", true)];
+        const { people, bots } = splitBots(all);
+        expect(sessionCount(people)).toBe(4);
+        expect(sessionCount(bots)).toBe(1);
+        expect(sessionCount(people) + sessionCount(bots)).toBe(sessionCount(all));
     });
 });

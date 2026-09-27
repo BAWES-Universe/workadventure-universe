@@ -139,3 +139,16 @@ export function pickSessionToReach<T extends Session>(
     }
     return nearest ?? group.primary;
 }
+
+/** People and bots of a list, each in the list's order. */
+export function splitBots<G extends { primary: { isBot?: boolean } }>(groups: G[]): { people: G[]; bots: G[] } {
+    const people: G[] = [];
+    const bots: G[] = [];
+    for (const group of groups) (group.primary.isBot ? bots : people).push(group);
+    return { people, bots };
+}
+
+/** How many sessions a list of rows stands for: the People tab counts sessions, not rows. */
+export function sessionCount(groups: { sessions: unknown[] }[]): number {
+    return groups.reduce((total, group) => total + group.sessions.length, 0);
+}

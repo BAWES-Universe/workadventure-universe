@@ -42,6 +42,8 @@ export interface PersonActionsInput {
     isSelf: boolean;
     /** The person is your own account, seen from another of your sessions: you can reach it, not message it. */
     isMyAccount?: boolean;
+    /** A bot: reached with two direct buttons (Walk to, Locate) instead of a menu. */
+    isBot?: boolean;
     /** Current availability status of the person; UNCHANGED (0) or undefined means disconnected. */
     status: AvailabilityStatus | undefined;
     uuid: string | undefined;
@@ -71,6 +73,8 @@ export interface PersonActions {
     message: MessageAction;
     /** Menu entries. Locate is listed on the same map; the menu greys it out until the person can be located. */
     locate: boolean;
+    /** Visible "Locate" button beside Walk to, for bots on this map, in place of the menu entry. */
+    locateButton: boolean;
     businessCard: boolean;
     ban: boolean;
     /** Whether the "more" menu has anything to show. */
@@ -90,9 +94,12 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
 
     const walkTo = connected && hasPosition;
     const goToRoom = connected && hasPlayUri && !sameMap;
-    const locate = connected && sameMap;
-    const businessCard = connected && !!input.visitCardUrl;
-    const ban = connected && input.iAmAdmin;
+    // Bots get no menu: Locate is a button of its own, and there is no one to ban or to hand a card.
+    const bot = !!input.isBot;
+    const locateButton = bot && connected && sameMap;
+    const locate = !bot && connected && sameMap;
+    const businessCard = !bot && connected && !!input.visitCardUrl;
+    const ban = !bot && connected && input.iAmAdmin;
 
     let message: MessageAction = "hidden";
     if (!input.isSelf && !input.isMyAccount && input.isMatrixChatEnabled && !input.roomCreationInProgress) {
@@ -104,6 +111,7 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
         goToRoom,
         message,
         locate,
+        locateButton,
         businessCard,
         ban,
         hasMenu: locate || businessCard || ban,

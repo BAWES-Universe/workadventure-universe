@@ -38,6 +38,7 @@ const chat: BaseTranslation = {
         editMyVisitCard: "Edit my visit card",
         goToRoom: "Go to room",
         goToRoomOfUser: "Go to {userName}'s room",
+        locateUser: "Locate {userName}",
         message: "Message",
         messageUser: "Message {userName}",
         moreActions: "More actions for {userName}",
@@ -584,6 +585,8 @@ const chat: BaseTranslation = {
         hideSessions: "Hide {userName}'s sessions",
         sessionNumber: "Session {number}",
         sessionLabel: "Session {number} · {room}",
+        people: "People",
+        bots: "Bots",
     },
     session: {
         live: "Live",
