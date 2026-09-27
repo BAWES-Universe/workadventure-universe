@@ -33,6 +33,10 @@
         peopleCardReturn.dismissCard();
     }
 
+    function displayName(name: string): string {
+        return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+
     let buttonsLayout: "row" | "column" | "wrap" = "row";
 
     wokaMenuStoreUnsubscriber = wokaMenuStore.subscribe((value) => {
@@ -100,7 +104,8 @@
                             </div>
                         {/if}
                         <div class=" w-max mt-[29px]">
-                            <h3>{wokaMenuData.wokaName}</h3>
+                            <!-- The name as its owner saved it, first letter capitalised; never all capitals. -->
+                            <h3 class="normal-case">{displayName(wokaMenuData.wokaName)}</h3>
                         </div>
                     </div>
                 </div>
