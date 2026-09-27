@@ -537,7 +537,9 @@ export class MatrixChatRoom
     async leaveRoom(): Promise<void> {
         try {
             if (this.matrixRoom.getMyMembership() === KnownMembership.Join) {
-                await this.withdrawPendingInvitesIfLastMember();
+                await this.withdrawPendingInvitesIfLastMember().catch((error) => {
+                    console.warn("Unable to withdraw the pending invitations", error);
+                });
             }
             await this.matrixRoom.client.leave(this.id);
             return;
