@@ -8,7 +8,7 @@ import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
 import { rememberLocateRequest } from "../../../Phaser/Game/LocateRequest";
 import { canOpenOrbit, openOrbitPage } from "../../../external-modules/admin-api/index";
 import type { PersonLocation } from "./PersonTarget";
-import { resolvePersonTarget } from "./PersonTarget";
+import { avatarIdOf, resolvePersonTarget } from "./PersonTarget";
 import type { Session } from "./PersonSessions";
 import { pickSessionToReach } from "./PersonSessions";
 
@@ -65,7 +65,7 @@ export function locatePerson(person: PersonLocation, name?: string): void {
     if (target.kind === "avatar") {
         const remotePlayer = scene.MapPlayersByKey.get(target.userId);
         if (remotePlayer) {
-            remotePlayer.activate();
+            remotePlayer.showCard();
             return;
         }
     }
@@ -76,7 +76,7 @@ export function locatePerson(person: PersonLocation, name?: string): void {
         const remotePlayerData = scene.getRemotePlayersRepository().getPlayerByUuid(target.uuid);
         const remotePlayer = remotePlayerData ? scene.MapPlayersByKey.get(remotePlayerData.userId) : undefined;
         if (remotePlayer) {
-            remotePlayer.activate();
+            remotePlayer.showCard();
             return;
         }
     }
@@ -87,11 +87,14 @@ export function locatePerson(person: PersonLocation, name?: string): void {
 }
 
 /**
- * Go to the map a person is on. The destination map can only look the person up by account uuid.
+ * Go to the map a person is on, then walk to them there: to that exact avatar when it is known (one person can have
+ * several, one per tab or device), else to the first one of their account.
  */
 export function goToPersonRoom(person: PersonLocation): void {
     if (!person.playUri) return;
-    scriptUtils.goToPage(`${person.playUri}#moveToUser=${person.uuid ?? ""}`);
+    const avatarId = avatarIdOf(person);
+    const avatar = avatarId !== undefined ? `&moveToAvatar=${avatarId}` : "";
+    scriptUtils.goToPage(`${person.playUri}#moveToUser=${person.uuid ?? ""}${avatar}`);
 }
 
 /** Orbit's page for editing your visit card. */

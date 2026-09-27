@@ -166,7 +166,7 @@
             // Get the actual RemotePlayer sprite from MapPlayersByKey using userId
             const remotePlayer = currentScerne.MapPlayersByKey.get(remotePlayerData.userId);
             if (remotePlayer != undefined) {
-                remotePlayer.activate();
+                remotePlayer.showCard();
                 toggleRoomOptions();
                 return;
             }

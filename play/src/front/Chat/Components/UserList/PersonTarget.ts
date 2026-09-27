@@ -19,7 +19,15 @@ export interface PersonLocation {
  * Returns undefined for someone on another map, or when the space user id is missing or not in the expected form.
  */
 export function userIdOnThisMap(person: PersonLocation, currentRoomUrl: string | undefined): number | undefined {
-    if (!person.spaceUserId || !currentRoomUrl || person.playUri !== currentRoomUrl) {
+    if (!currentRoomUrl || person.playUri !== currentRoomUrl) {
+        return undefined;
+    }
+    return avatarIdOf(person);
+}
+
+/** The avatar id (userId) of a person in their own room, taken from their space user id, whichever map it is on. */
+export function avatarIdOf(person: PersonLocation): number | undefined {
+    if (!person.spaceUserId) {
         return undefined;
     }
     const match = /_(\d+)$/.exec(person.spaceUserId);

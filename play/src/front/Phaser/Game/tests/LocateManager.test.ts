@@ -25,8 +25,8 @@ async function makeLocateManager() {
         cameraManager as never,
         { locatePositionMessageStream: stream } as never
     );
-    const stitch = { userId: 5, activate: vi.fn() };
-    return { manager, stream, remotePlayers, stitch };
+    const stitch = { userId: 5, showCard: vi.fn() };
+    return { manager, stream, remotePlayers, stitch, cameraManager };
 }
 
 describe("LocateManager: a search never opens its card over another one", () => {
@@ -47,7 +47,7 @@ describe("LocateManager: a search never opens its card over another one", () => 
         remotePlayers.set(5, stitch);
         vi.advanceTimersByTime(1000 + 300);
 
-        expect(stitch.activate).toHaveBeenCalledTimes(1);
+        expect(stitch.showCard).toHaveBeenCalledTimes(1);
     });
 
     it("ends the search when your own card replaces it: no progress bar on it, no card opened over it", async () => {
@@ -61,7 +61,7 @@ describe("LocateManager: a search never opens its card over another one", () => 
         expect(get(wokaMenuProgressStore)).toBeUndefined();
         remotePlayers.set(5, stitch);
         vi.advanceTimersByTime(15_000);
-        expect(stitch.activate).not.toHaveBeenCalled();
+        expect(stitch.showCard).not.toHaveBeenCalled();
         expect(get(wokaMenuStore)?.isSelf).toBe(true);
     });
 
@@ -74,7 +74,7 @@ describe("LocateManager: a search never opens its card over another one", () => 
         remotePlayers.set(5, stitch);
         vi.advanceTimersByTime(15_000);
 
-        expect(stitch.activate).not.toHaveBeenCalled();
+        expect(stitch.showCard).not.toHaveBeenCalled();
     });
 
     it("doesn't open the card over one that replaced it in the last moment before it opens", async () => {
@@ -87,7 +87,7 @@ describe("LocateManager: a search never opens its card over another one", () => 
         wokaMenuStore.initialize("Me", 42, "me", undefined, true);
         vi.advanceTimersByTime(300);
 
-        expect(stitch.activate).not.toHaveBeenCalled();
+        expect(stitch.showCard).not.toHaveBeenCalled();
     });
 
     it("ignores an answer that arrives after another card opened", async () => {
@@ -104,7 +104,7 @@ describe("LocateManager: a search never opens its card over another one", () => 
         expect(get(wokaMenuProgressStore)).toBeUndefined();
         remotePlayers.set(5, stitch);
         vi.advanceTimersByTime(15_000);
-        expect(stitch.activate).not.toHaveBeenCalled();
+        expect(stitch.showCard).not.toHaveBeenCalled();
     });
 
     it("still handles the answer when nothing else opened meanwhile", async () => {
@@ -116,5 +116,50 @@ describe("LocateManager: a search never opens its card over another one", () => 
         stream.next({ userId: 5, position: { x: 1, y: 2 } });
 
         expect(get(wokaMenuStore)).toMatchObject({ userId: -1, wokaName: "Stitch" });
+    });
+
+    it("opens the found person's card over their own search card, the second time too", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { stream, remotePlayers, stitch } = await makeLocateManager();
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            stream.next({ userId: 5, position: { x: 1, y: 2 } });
+            // Known by the repository: the search card already names Stitch.
+            expect(get(wokaMenuStore)).toMatchObject({ userId: -1, userUuid: "stitch" });
+            remotePlayers.set(5, stitch);
+            vi.advanceTimersByTime(1000 + 300);
+            expect(stitch.showCard).toHaveBeenCalledTimes(attempt);
+        }
+    });
+});
+
+describe("LocateManager: the camera and the open card", () => {
+    afterEach(async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        wokaMenuStore.clear();
+    });
+
+    it("points the camera once per avatar, not on every update of the card", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { cameraManager } = await makeLocateManager();
+
+        wokaMenuStore.initialize("Stitch", 5, "stitch", "https://card.test");
+        wokaMenuStore.addAction({ actionName: "Walk to", callback: () => {} });
+        wokaMenuStore.addAction({ actionName: "Message", callback: () => {} });
+        expect(cameraManager.followRemotePlayer).toHaveBeenCalledTimes(1);
+        expect(cameraManager.followRemotePlayer).toHaveBeenCalledWith("stitch", 5);
+
+        // Another session of the same person: the camera turns to that avatar.
+        wokaMenuStore.initialize("Stitch", 6, "stitch", "https://card.test");
+        expect(cameraManager.followRemotePlayer).toHaveBeenCalledTimes(2);
+        expect(cameraManager.followRemotePlayer).toHaveBeenLastCalledWith("stitch", 6);
+    });
+
+    it("leaves the camera where a search centred it while the avatar isn't found yet", async () => {
+        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
+        const { cameraManager } = await makeLocateManager();
+
+        wokaMenuStore.initialize("Stitch", -1, "stitch", undefined);
+
+        expect(cameraManager.followRemotePlayer).not.toHaveBeenCalled();
     });
 });

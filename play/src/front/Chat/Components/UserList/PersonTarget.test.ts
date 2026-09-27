@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolvePersonTarget, userIdOnThisMap } from "./PersonTarget";
+import { avatarIdOf, resolvePersonTarget, userIdOnThisMap } from "./PersonTarget";
 
 const HERE = "http://play.test/_/global/maps/here.json";
 const ELSEWHERE = "http://play.test/_/global/maps/elsewhere.json";
@@ -25,6 +25,18 @@ describe("userIdOnThisMap", () => {
         expect(userIdOnThisMap({ spaceUserId: "no-number", playUri: HERE }, HERE)).toBeUndefined();
         expect(userIdOnThisMap({ spaceUserId: `${HERE}_`, playUri: HERE }, HERE)).toBeUndefined();
         expect(userIdOnThisMap({ spaceUserId: `${HERE}_42`, playUri: HERE }, undefined)).toBeUndefined();
+    });
+});
+
+describe("avatarIdOf", () => {
+    it("reads the avatar id of a session in another room, so that room can walk to that exact session", () => {
+        expect(avatarIdOf({ spaceUserId: `${ELSEWHERE}_7` })).toBe(7);
+    });
+
+    it("is undefined without a usable space user id", () => {
+        expect(avatarIdOf({})).toBeUndefined();
+        expect(avatarIdOf({ spaceUserId: "no-number" })).toBeUndefined();
+        expect(avatarIdOf({ spaceUserId: `${ELSEWHERE}_` })).toBeUndefined();
     });
 });
 
