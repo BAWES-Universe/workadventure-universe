@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
     // The Orbit frame's window, as the modal store holds it (none unless a test sets one).
     frame: undefined as unknown,
     clearHeldMovement: vi.fn(),
+    playerName: "Khalid" as string | null,
+    setPlayerName: vi.fn(),
+    rejoinCurrentRoom: vi.fn(),
+    setLocalName: vi.fn(),
     // The modal's size, as a small writable.
     fullScreen: (() => {
         let value = false;
@@ -70,7 +74,16 @@ vi.mock("../../Administration/AnalyticsClient", () => ({
 }));
 
 vi.mock("../../Connection/LocalUserStore", () => ({
-    localUserStore: { isLogged: mocks.isLogged },
+    localUserStore: { isLogged: mocks.isLogged, setName: mocks.setLocalName },
+}));
+
+vi.mock("../../Connection/Capabilities", () => ({
+    hasCapability: (name: string) => name === "api/save-name",
+}));
+
+vi.mock("../../Connection/LocalUserUtils", () => ({
+    maxUserNameLength: 25,
+    isUserNameValid: (value: unknown) => typeof value === "string" && value.length > 0 && value.length <= 25,
 }));
 
 vi.mock("../../Stores/MenuStore", () => ({
@@ -81,6 +94,9 @@ vi.mock("../../Stores/MenuStore", () => ({
 vi.mock("../../Phaser/Game/GameManager", () => ({
     gameManager: {
         tryGetCurrentGameScene: () => ({ userInputManager: { clearHeldMovement: mocks.clearHeldMovement } }),
+        getPlayerName: () => mocks.playerName,
+        setPlayerName: mocks.setPlayerName,
+        rejoinCurrentRoom: mocks.rejoinCurrentRoom,
     },
 }));
 
@@ -385,8 +401,9 @@ describe("The Orbit bridge", () => {
                 type: "orbit-bridge-init",
                 version: 1,
                 roomRevision: revision,
-                capabilities: ["navigate", "event", "view"],
+                capabilities: ["navigate", "event", "view", "profile"],
                 view: "compact",
+                maxNameLength: 25,
             },
             ADMIN
         );
@@ -442,6 +459,41 @@ describe("The Orbit bridge", () => {
         const index = await freshIndex();
         expect(index.requestOrbitPage("new-universe")).toBe(false);
         expect(mocks.modalIframeSet).not.toHaveBeenCalled();
+    });
+
+    async function openAndRename(name: string, revision?: string) {
+        let onVisibility: ((visible: boolean) => void) | undefined;
+        mocks.modalVisibilitySubscribe.mockImplementation(((callback: (visible: boolean) => void) => {
+            onVisibility = callback;
+            return vi.fn();
+        }) as unknown as () => ReturnType<typeof vi.fn>);
+        const index = await freshIndex();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.openAdminModalFromMenu();
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: [] });
+        fromOrbit({ type: "orbit-profile-changed", version: 1, roomRevision: revision ?? lastInitRevision(), name });
+        return () => onVisibility?.(false);
+    }
+
+    it("shows a name saved in Orbit once Orbit closes, by rejoining the room as a rename in the game does", async () => {
+        mocks.playerName = "Khalid";
+        const close = await openAndRename("  Khalid A  ");
+        expect(mocks.rejoinCurrentRoom).not.toHaveBeenCalled();
+        close();
+        expect(mocks.setPlayerName).toHaveBeenCalledWith("Khalid A");
+        expect(mocks.rejoinCurrentRoom).toHaveBeenCalledTimes(1);
+        // Signed in: the server already has it.
+        expect(mocks.setLocalName).not.toHaveBeenCalled();
+    });
+
+    it("doesn't rejoin for the same name, a name the game refuses, or another visit's frame", async () => {
+        mocks.playerName = "Khalid";
+        (await openAndRename("Khalid"))();
+        (await openAndRename("x".repeat(40)))();
+        (await openAndRename("Someone", "rev-from-an-earlier-visit-0000"))();
+        expect(mocks.setPlayerName).not.toHaveBeenCalled();
+        expect(mocks.rejoinCurrentRoom).not.toHaveBeenCalled();
     });
 
     it("gives focus back to the control that opened Orbit when Orbit closes", async () => {

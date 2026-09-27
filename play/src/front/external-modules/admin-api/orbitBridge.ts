@@ -7,7 +7,8 @@
  * refresh hint only) and which view its frame is in (`orbit-view`: the compact panel or the full-screen view, which
  * only the game's own maximise button changes). Nothing sent over it proves anything: Orbit resolves and
  * authorises every page itself. Orbit's actions on the game (closing, visiting a room) stay on the WorkAdventure
- * scripting API (`WA.*`), so the bridge has no message for them.
+ * scripting API (`WA.*`), so the bridge has no message for them. The one thing Orbit tells the game is that you
+ * renamed yourself in your profile (`orbit-profile-changed`), which the game applies as its own rename does.
  *
  * Every visit (a room join or a reconnect) gets a new room revision. Requests carry it; Orbit refuses one from another
  * revision, and the game ignores answers from another revision, so an old Orbit frame can't act after a room or
@@ -34,6 +35,8 @@ export interface OrbitBridgeInitMessage {
     roomRevision: string;
     capabilities: string[];
     view: OrbitView;
+    /** The longest name the game accepts, so Orbit's profile form can say so. */
+    maxNameLength?: number;
 }
 
 export interface OrbitNavigateMessage {
@@ -77,6 +80,14 @@ export interface OrbitBridgeAckMessage {
     error?: string;
 }
 
+/** You saved a new name in your Orbit profile (already stored); the game shows it once Orbit closes. */
+export interface OrbitProfileChangedMessage {
+    type: "orbit-profile-changed";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    roomRevision: string;
+    name: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object";
 }
@@ -108,6 +119,16 @@ export function isOrbitBridgeAckMessage(value: unknown): value is OrbitBridgeAck
     );
 }
 
+export function isOrbitProfileChangedMessage(value: unknown): value is OrbitProfileChangedMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-profile-changed" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        isBoundedString(value.name, 1, 128)
+    );
+}
+
 /** A fresh room revision for a new visit. */
 export function newRoomRevision(): string {
     return `rev-${crypto.randomUUID()}`;
@@ -135,7 +156,11 @@ export class OrbitBridge {
     private readonly inFlight = new Map<string, unknown>();
     private nextRequest = 0;
 
-    constructor(private readonly env: OrbitBridgeEnv, readonly roomRevision: string) {}
+    constructor(
+        private readonly env: OrbitBridgeEnv,
+        readonly roomRevision: string,
+        private readonly maxNameLength?: number
+    ) {}
 
     /** Orbit is signed in and listening: tell it which visit and view this is, then send what was waiting. */
     onReady(): void {
@@ -144,8 +169,9 @@ export class OrbitBridge {
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
             roomRevision: this.roomRevision,
-            capabilities: ["navigate", "event", "view"],
+            capabilities: ["navigate", "event", "view", "profile"],
             view: this.view,
+            ...(this.maxNameLength ? { maxNameLength: this.maxNameLength } : {}),
         });
         const waiting = this.waiting;
         this.waiting = [];

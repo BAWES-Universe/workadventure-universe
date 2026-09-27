@@ -4,6 +4,7 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitBridgeOutgoing,
 } from "./orbitBridge";
@@ -70,7 +71,7 @@ describe("OrbitBridge", () => {
             type: "orbit-bridge-init",
             version: 1,
             roomRevision: revision,
-            capabilities: ["navigate", "event", "view"],
+            capabilities: ["navigate", "event", "view", "profile"],
             view: "compact",
         });
         expect(posted[1]).toEqual({
@@ -139,5 +140,19 @@ describe("OrbitBridge", () => {
         expect(timers.size).toBe(0);
         bridge.navigate("world-members", { worldId: "w1" });
         expect(posted).toHaveLength(2);
+    });
+
+    it("accepts a profile rename only in its exact shape", () => {
+        const good = {
+            type: "orbit-profile-changed",
+            version: 1,
+            roomRevision: "rev-0123456789abcdef",
+            name: "Khalid",
+        };
+        expect(isOrbitProfileChangedMessage(good)).toBe(true);
+        expect(isOrbitProfileChangedMessage({ ...good, name: "" })).toBe(false);
+        expect(isOrbitProfileChangedMessage({ ...good, name: 5 })).toBe(false);
+        expect(isOrbitProfileChangedMessage({ ...good, version: 2 })).toBe(false);
+        expect(isOrbitProfileChangedMessage({ ...good, roomRevision: "short" })).toBe(false);
     });
 });

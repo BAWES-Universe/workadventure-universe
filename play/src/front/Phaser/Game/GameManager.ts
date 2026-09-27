@@ -222,6 +222,15 @@ export class GameManager {
     }
 
     /**
+     * Rejoins the current room, after a rename for example: the same as leaving it for a login step and coming back.
+     */
+    public rejoinCurrentRoom(): void {
+        if (!this.currentGameSceneName) return;
+        this.closeGameScene();
+        this.tryResumingGame(SelectCharacterSceneName);
+    }
+
+    /**
      * Tries to stop the current scene.
      * @param fallbackSceneName
      */

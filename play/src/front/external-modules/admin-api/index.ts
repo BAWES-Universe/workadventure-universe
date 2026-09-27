@@ -9,6 +9,8 @@ import {
     modalVisibilityStore,
 } from "../../Stores/ModalStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
+import { hasCapability } from "../../Connection/Capabilities";
+import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import {
@@ -22,6 +24,7 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitEventTopic,
     type OrbitNavigateIntent,
@@ -36,6 +39,8 @@ let unsubscribeModal: (() => void) | null = null;
 let unsubscribeFullScreen: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
 let adminOrigin: string | null = null;
+/** A name you saved in your Orbit profile, shown in the game once Orbit closes. */
+let pendingPlayerName: string | null = null;
 const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
 function schedulePending(callback: () => void, delay: number) {
@@ -147,6 +152,13 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     }
     if (isOrbitBridgeAckMessage(event.data)) {
         bridge?.onAck(event.data);
+        return;
+    }
+    if (isOrbitProfileChangedMessage(event.data)) {
+        // Orbit already saved it; the game only shows it, and only for this visit's frame.
+        const name = event.data.name.trim();
+        if (bridge && event.data.roomRevision === bridge.roomRevision && isUserNameValid(name))
+            pendingPlayerName = name;
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
@@ -280,6 +292,21 @@ function onOrbitClosed() {
     const target = launcher;
     launcher = null;
     if (target?.isConnected) target.focus();
+    applyPendingPlayerName();
+}
+
+/**
+ * You renamed yourself in Orbit: the game takes the new name and rejoins the room, as renaming in the game does, so
+ * everyone sees it. Nothing happens when the name didn't change.
+ */
+function applyPendingPlayerName() {
+    const name = pendingPlayerName;
+    pendingPlayerName = null;
+    if (!name || name === gameManager.getPlayerName()) return;
+    gameManager.setPlayerName(name);
+    // Signed-in players get their name from the server, which Orbit already updated; others keep it locally.
+    if (!hasCapability("api/save-name")) localUserStore.setName(name);
+    gameManager.rejoinCurrentRoom();
 }
 
 // Function to initialize the admin integration
@@ -315,7 +342,8 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
             setTimeout: (callback, ms) => setTimeout(callback, ms),
             clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
         },
-        newRoomRevision()
+        newRoomRevision(),
+        maxUserNameLength
     );
     window.removeEventListener("message", handleAdminAuthMessage);
     window.addEventListener("message", handleAdminAuthMessage);
@@ -388,6 +416,7 @@ const adminExtensionModule: ExtensionModule = {
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
         historyEntryId = null;
+        pendingPlayerName = null;
         bridge = null;
         launcher = null;
         extensionOptions = null;
