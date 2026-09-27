@@ -37,9 +37,9 @@ export type PersonTarget =
      * Only the account is known: ask the server by uuid.
      * `avatarOnThisMap` is true when the person is on this map but their avatar is not among the known remote players
      * (for instance out of view). In that case, looking up a visible avatar by uuid could pick another tab of the
-     * same account, so callers should go straight to the server.
+     * same account, so callers should go straight to the server, passing `userId` so it answers for that avatar.
      */
-    | { kind: "account"; uuid: string; playUri: string; avatarOnThisMap: boolean }
+    | { kind: "account"; uuid: string; playUri: string; avatarOnThisMap: boolean; userId?: number }
     | { kind: "none" };
 
 export function resolvePersonTarget(
@@ -57,6 +57,7 @@ export function resolvePersonTarget(
             uuid: person.uuid,
             playUri: person.playUri ?? "",
             avatarOnThisMap: userId !== undefined,
+            userId,
         };
     }
     return { kind: "none" };

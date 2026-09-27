@@ -906,6 +906,9 @@ message AskPositionMessage{
     LOCATE = 1;
   }
   AskType askType = 3;
+  // The avatar (user id in the room) to reach, when the asker knows which one: one account can have several
+  // avatars in a room (one per tab or device), and userIdentifier alone resolves to the first one found.
+  optional int32 userId = 4;
 }
 
 // A request sent within a space to mute the audio of a specific user

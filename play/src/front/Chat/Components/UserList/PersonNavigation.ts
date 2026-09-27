@@ -30,7 +30,7 @@ export function nearestSessionOnThisMap<T extends Session>(sessions: T[], fallba
 
 /**
  * Walk to a person on this map. When their avatar is known locally we walk to that exact avatar (so another tab of
- * the same account is reachable); otherwise we ask the server by uuid, as before.
+ * the same account is reachable); otherwise we ask the server, naming that avatar when we know which one it is.
  */
 export function walkToPerson(person: PersonLocation): void {
     // Nothing to walk on while a reconnect swaps the map.
@@ -50,7 +50,7 @@ export function walkToPerson(person: PersonLocation): void {
         }
     }
     if (target.kind === "account" && target.playUri) {
-        scene.connection?.emitAskPosition(target.uuid, target.playUri);
+        scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.MOVE, target.userId);
     }
 }
 
@@ -83,7 +83,7 @@ export function locatePerson(person: PersonLocation, name?: string): void {
 
     // Their name shows on the card while the search runs.
     rememberLocateRequest(name);
-    scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.LOCATE);
+    scene.connection?.emitAskPosition(target.uuid, target.playUri, AskPositionMessage_AskType.LOCATE, target.userId);
 }
 
 /**

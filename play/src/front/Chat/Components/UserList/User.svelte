@@ -94,14 +94,26 @@
 
     $: displayName = username.match(/\[\d*]/) ? username.substring(0, username.search(/\[\d*]/)) : username;
 
+    // Someone else with several sessions: Walk to, Go to room and Locate open the list, so you pick which one.
+    $: choosesSession = !isMe && listedSessions.length > 0;
+    $: showLocateInMenu = actions.locate && !choosesSession;
+    $: hasMenu = showLocateInMenu || actions.businessCard || actions.ban;
+
     function walkTo() {
+        if (choosesSession) {
+            sessionsOpen = !sessionsOpen;
+            return;
+        }
         if (!user.uuid || !user.playUri) return;
         analyticsClient.goToUser();
-        // Of their sessions on this map, the one closest to you.
-        walkToPerson(nearestSessionOnThisMap(sessions, user));
+        walkToPerson(user);
     }
 
     function goToRoom() {
+        if (choosesSession) {
+            sessionsOpen = !sessionsOpen;
+            return;
+        }
         if (!user.playUri) return;
         analyticsClient.goToUser();
         goToPersonRoom(user);
@@ -244,6 +256,7 @@
                         label={$LL.chat.userList.walkTo()}
                         ariaLabel={$LL.chat.userList.walkToUser({ userName: displayName })}
                         testId={`walk-to-${user.username}`}
+                        expanded={choosesSession ? sessionsOpen : undefined}
                         on:click={walkTo}
                     >
                         <IconWalk font-size="20" />
@@ -255,6 +268,7 @@
                         label={$LL.chat.userList.goToRoom()}
                         ariaLabel={$LL.chat.userList.goToRoomOfUser({ userName: displayName })}
                         testId={`go-to-room-${user.username}`}
+                        expanded={choosesSession ? sessionsOpen : undefined}
                         on:click={goToRoom}
                     >
                         <IconDoorIn font-size="20" />
@@ -274,10 +288,10 @@
                         <IconLoader class="animate-spin" />
                     </div>
                 {/if}
-                {#if actions.hasMenu}
+                {#if hasMenu}
                     <UserActionButton
                         {user}
-                        showLocate={actions.locate}
+                        showLocate={showLocateInMenu}
                         showBusinessCard={actions.businessCard}
                         showBan={actions.ban}
                     />
