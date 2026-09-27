@@ -1,4 +1,5 @@
 import { get } from "svelte/store";
+import { MeResponse } from "@workadventure/messages";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { axiosToPusher } from "../../Connection/AxiosUtils";
@@ -71,6 +72,39 @@ function accessTokenExpiry(accessToken: string): number | null {
 /** Don't hand out a token about to run out: Orbit's sign-in would fail a moment later. */
 const ACCESS_TOKEN_MARGIN_MS = 60_000;
 
+/** The /me renewal in flight, shared by every Orbit request made with the same game token. */
+let renewal: { gameToken: string; promise: Promise<string | null> } | null = null;
+
+/**
+ * Renews the game token through the pusher's /me and keeps the result, returning the renewed OIDC access token.
+ * Null when it couldn't renew, or when the answer came back too late to keep: Orbit's integration was torn down,
+ * the player signed out, or the token it renewed from was replaced meanwhile. Keeping such a late answer would
+ * restore a signed-out token or overwrite a newer one.
+ */
+async function renewGameToken(options: ExtensionModuleOptions, gameToken: string): Promise<string | null> {
+    try {
+        const response = await axiosToPusher.get("me", {
+            params: { token: gameToken, playUri: options.roomId },
+        });
+        const parsed = MeResponse.parse(response.data);
+        if (parsed.status !== "ok" || !("authToken" in parsed) || typeof parsed.authToken !== "string") return null;
+        const renewed = getAccessTokenFromJwt(parsed.authToken);
+        if (!renewed) return null;
+        const stillCurrent =
+            extensionOptions === options &&
+            options.userAccessToken === gameToken &&
+            localUserStore.getAuthToken() !== null;
+        if (!stillCurrent) return null;
+        // The rest of the game uses the renewed token from here on too.
+        options.userAccessToken = parsed.authToken;
+        localUserStore.setAuthToken(parsed.authToken);
+        return renewed;
+    } catch (error) {
+        console.warn("Orbit sign-in: could not renew the access token", error);
+        return null;
+    }
+}
+
 /**
  * The OIDC access token to sign Orbit in with. The one inside the game's token lasts an hour or so; the game's
  * own token lasts weeks and carries a refresh token, so when the access token has run out (or Orbit says it was
@@ -79,28 +113,25 @@ const ACCESS_TOKEN_MARGIN_MS = 60_000;
 async function freshAccessToken(force: boolean): Promise<string | null> {
     const options = extensionOptions;
     if (!options) return null;
-    const current = getAccessTokenFromJwt(options.userAccessToken);
-    if (!current) return null;
+    const gameToken = options.userAccessToken;
+    const current = getAccessTokenFromJwt(gameToken);
+    if (!gameToken || !current) return null;
     const expiry = accessTokenExpiry(current);
     const stale = expiry !== null && expiry < Date.now() + ACCESS_TOKEN_MARGIN_MS;
     if (!force && !stale) return current;
-    try {
-        const response = await axiosToPusher.get("me", {
-            params: { token: options.userAccessToken, playUri: options.roomId },
+
+    let inFlight = renewal?.gameToken === gameToken ? renewal : null;
+    if (!inFlight) {
+        const promise: Promise<string | null> = renewGameToken(options, gameToken).finally(() => {
+            if (renewal?.promise === promise) renewal = null;
         });
-        const { MeResponse } = await import("@workadventure/messages");
-        const parsed = MeResponse.parse(response.data);
-        if (parsed.status !== "ok" || !("authToken" in parsed) || typeof parsed.authToken !== "string") return current;
-        const renewed = getAccessTokenFromJwt(parsed.authToken);
-        if (!renewed) return current;
-        // The rest of the game uses the renewed token from here on too (unless the room changed meanwhile).
-        if (extensionOptions === options) options.userAccessToken = parsed.authToken;
-        localUserStore.setAuthToken(parsed.authToken);
-        return renewed;
-    } catch (error) {
-        console.warn("Orbit sign-in: could not renew the access token", error);
-        return current;
+        inFlight = renewal = { gameToken, promise };
     }
+    const renewed = await inFlight.promise;
+    // Torn down or signed out meanwhile: nothing to hand Orbit.
+    if (extensionOptions !== options || localUserStore.getAuthToken() === null) return null;
+    // Couldn't renew (or another renewal got there first): answer with the newest token there is.
+    return renewed ?? getAccessTokenFromJwt(options.userAccessToken);
 }
 
 function handleAdminAuthMessage(event: MessageEvent<unknown>) {
@@ -283,6 +314,7 @@ const adminExtensionModule: ExtensionModule = {
         window.removeEventListener("message", handleAdminAuthMessage);
         extensionOptions = null;
         adminOrigin = null;
+        renewal = null;
         closeAdminModal();
     },
 };

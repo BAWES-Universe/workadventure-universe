@@ -14,19 +14,16 @@ const mocks = vi.hoisted(() => ({
     // The Orbit frame's window, as the modal store holds it (none unless a test sets one).
     frame: undefined as unknown,
     setAuthToken: vi.fn(),
+    getAuthToken: vi.fn((): string | null => "game-token"),
     pusherGet: vi.fn(),
 }));
 
 vi.mock("../../Connection/LocalUserStore", () => ({
-    localUserStore: { isLogged: mocks.isLogged, setAuthToken: mocks.setAuthToken },
+    localUserStore: { isLogged: mocks.isLogged, setAuthToken: mocks.setAuthToken, getAuthToken: mocks.getAuthToken },
 }));
 
 vi.mock("../../Connection/AxiosUtils", () => ({
     axiosToPusher: { get: mocks.pusherGet },
-}));
-
-vi.mock("@workadventure/messages", () => ({
-    MeResponse: { parse: (value: unknown) => value },
 }));
 
 vi.mock("../../Stores/MenuStore", () => ({
@@ -216,6 +213,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         mocks.isLogged.mockReturnValue(true);
+        mocks.getAuthToken.mockReturnValue("game-token");
         frame = { postMessage: vi.fn() };
         mocks.frame = frame;
         listeners = [];
@@ -237,6 +235,42 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
 
     const nowSeconds = () => Math.floor(Date.now() / 1000);
 
+    /** A /me answer as the pusher sends it, which the real MeResponse parser accepts. */
+    function meAnswer(authToken: string) {
+        return {
+            data: {
+                status: "ok",
+                authToken,
+                userUuid: "user-1",
+                isCharacterTexturesValid: true,
+                isCompanionTextureValid: true,
+            },
+        };
+    }
+
+    /** A /me answer the test releases when it wants to. */
+    function pendingMe() {
+        let resolve: (value: unknown) => void = () => {};
+        mocks.pusherGet.mockImplementationOnce(
+            () =>
+                new Promise((done) => {
+                    resolve = done;
+                })
+        );
+        return (authToken: string) => resolve(meAnswer(authToken));
+    }
+
+    function orbitSends(refresh?: boolean) {
+        const data = {
+            type: "orbit-auth-ready-v2",
+            version: 2,
+            nonce: "n".repeat(16),
+            ...(refresh ? { refresh } : {}),
+        };
+        for (const listener of listeners)
+            listener({ data, source: frame, origin: ADMIN } as unknown as MessageEvent<unknown>);
+    }
+
     async function openedWith(gameToken: string) {
         vi.resetModules();
         const index = (await import("./index")) as { default: AdminModuleLike };
@@ -246,14 +280,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
     }
 
     async function orbitAsks(refresh?: boolean) {
-        const data = {
-            type: "orbit-auth-ready-v2",
-            version: 2,
-            nonce: "n".repeat(16),
-            ...(refresh ? { refresh } : {}),
-        };
-        for (const listener of listeners)
-            listener({ data, source: frame, origin: ADMIN } as unknown as MessageEvent<unknown>);
+        orbitSends(refresh);
         // The answer comes after the (possible) renewal.
         await vi.runAllTimersAsync();
     }
@@ -273,7 +300,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         const expired = makeOidcToken(nowSeconds() - 10);
         const renewed = makeOidcToken(nowSeconds() + 3600);
         const renewedGameToken = makeAccessTokenJwt(renewed);
-        mocks.pusherGet.mockResolvedValue({ data: { status: "ok", authToken: renewedGameToken } });
+        mocks.pusherGet.mockResolvedValue(meAnswer(renewedGameToken));
         await openedWith(makeAccessTokenJwt(expired));
         await orbitAsks();
         expect(mocks.pusherGet).toHaveBeenCalledWith("me", {
@@ -293,7 +320,7 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
     it("renews when Orbit says the token was refused, even if it doesn't look expired", async () => {
         const opaque = makeOidcToken();
         const renewed = makeOidcToken(nowSeconds() + 3600);
-        mocks.pusherGet.mockResolvedValue({ data: { status: "ok", authToken: makeAccessTokenJwt(renewed) } });
+        mocks.pusherGet.mockResolvedValue(meAnswer(makeAccessTokenJwt(renewed)));
         await openedWith(makeAccessTokenJwt(opaque));
         await orbitAsks(true);
         expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
@@ -307,6 +334,62 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await orbitAsks();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
         expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: expired }), ADMIN);
+    });
+
+    it("keeps nothing from a /me answer that doesn't match the pusher's schema", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        mocks.pusherGet.mockResolvedValue({
+            data: { status: "ok", authToken: makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)) },
+        });
+        await openedWith(makeAccessTokenJwt(expired));
+        await orbitAsks();
+        expect(mocks.setAuthToken).not.toHaveBeenCalled();
+        expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: expired }), ADMIN);
+    });
+
+    it("shares one /me renewal between Orbit requests that overlap", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        const release = pendingMe();
+        await openedWith(makeAccessTokenJwt(expired));
+        orbitSends();
+        orbitSends(true);
+        await vi.runAllTimersAsync();
+        expect(mocks.pusherGet).toHaveBeenCalledTimes(1);
+
+        release(makeAccessTokenJwt(renewed));
+        await vi.runAllTimersAsync();
+        expect(mocks.setAuthToken).toHaveBeenCalledTimes(1);
+        expect(frame.postMessage).toHaveBeenCalledTimes(2);
+        for (const [message] of frame.postMessage.mock.calls)
+            expect(message).toEqual(expect.objectContaining({ accessToken: renewed }));
+    });
+
+    it("keeps nothing, and answers nothing, when /me comes back after Orbit's integration was torn down", async () => {
+        const release = pendingMe();
+        const index = await openedWith(makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10)));
+        orbitSends();
+        await vi.runAllTimersAsync();
+        index.default.destroy();
+
+        release(makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)));
+        await vi.runAllTimersAsync();
+        expect(mocks.setAuthToken).not.toHaveBeenCalled();
+        expect(frame.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("doesn't bring a token back when /me comes back after the player signed out", async () => {
+        const release = pendingMe();
+        await openedWith(makeAccessTokenJwt(makeOidcToken(nowSeconds() - 10)));
+        orbitSends();
+        await vi.runAllTimersAsync();
+        // Logging out clears the stored token before redirecting.
+        mocks.getAuthToken.mockReturnValue(null);
+
+        release(makeAccessTokenJwt(makeOidcToken(nowSeconds() + 3600)));
+        await vi.runAllTimersAsync();
+        expect(mocks.setAuthToken).not.toHaveBeenCalled();
+        expect(frame.postMessage).not.toHaveBeenCalled();
     });
 
     it("says nothing to a window that isn't Orbit's frame", async () => {
