@@ -4,6 +4,8 @@ export interface OrbitAuthReadyMessage {
     type: "orbit-auth-ready-v2";
     version: typeof ORBIT_AUTH_VERSION;
     nonce: string;
+    /** Orbit was refused with the last token it got: get a fresh one before answering. */
+    refresh?: boolean;
 }
 
 export interface OrbitAuthTokenMessage {
@@ -21,7 +23,8 @@ export function isOrbitAuthReadyMessage(value: unknown): value is OrbitAuthReady
         message.version === ORBIT_AUTH_VERSION &&
         typeof message.nonce === "string" &&
         message.nonce.length >= 16 &&
-        message.nonce.length <= 128
+        message.nonce.length <= 128 &&
+        (message.refresh === undefined || typeof message.refresh === "boolean")
     );
 }
 
