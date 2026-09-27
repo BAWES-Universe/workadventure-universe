@@ -91,6 +91,14 @@ export interface ChatRoom {
     readonly inviterName?: string;
 }
 
+/** Accepting an invitation failed because it no longer exists (the room was left or the invite withdrawn). */
+export class InvitationNoLongerAvailableError extends Error {
+    constructor(options?: { cause?: unknown }) {
+        super("Invitation no longer available", options);
+        this.name = "InvitationNoLongerAvailableError";
+    }
+}
+
 export interface ChatRoomMembershipManagement {
     readonly name: Readable<string>;
     readonly myMembership: Readable<ChatRoomMembership>;

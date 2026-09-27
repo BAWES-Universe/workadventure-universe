@@ -487,6 +487,7 @@ const chat: BaseTranslation = {
     loginTokenError: "An error occurred. Please try to reconnect",
     reconnect: "Reconnect",
     failedToJoinRoom: "Failed to join group",
+    invitationNoLongerAvailable: "This invitation is no longer available",
     failedToLeaveRoom: "Failed to leave group",
     refreshChat: "Refresh Chat",
     dismiss: "Dismiss",

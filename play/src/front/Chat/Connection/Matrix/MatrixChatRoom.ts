@@ -23,6 +23,7 @@ import {
     TimelineWindow,
     EventTimeline,
 } from "matrix-js-sdk";
+import { KnownMembership } from "matrix-js-sdk/lib/@types/membership";
 import type { Readable, Writable } from "svelte/store";
 import { derived, get, readable, writable } from "svelte/store";
 import type { MediaEventContent, MediaEventInfo } from "matrix-js-sdk/lib/@types/media";
@@ -37,7 +38,7 @@ import type {
     ChatRoomNotificationControl,
     memberTypingInformation,
 } from "../ChatConnection";
-import { ChatPermissionLevel } from "../ChatConnection";
+import { ChatPermissionLevel, InvitationNoLongerAvailableError } from "../ChatConnection";
 import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -49,6 +50,7 @@ import { MatrixChatMessage } from "./MatrixChatMessage";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
 import { MatrixChatRoomMember } from "./MatrixChatRoomMember";
+import { isInvitationGoneError } from "./isInvitationGoneError";
 
 type EventId = string;
 
@@ -520,12 +522,23 @@ export class MatrixChatRoom
             return;
         } catch (error) {
             console.error("Unable to join", error);
-            return Promise.reject(new Error("Failed to leave room"));
+            // The server refused the invite for good (the room is empty because everyone left, or the invite
+            // was withdrawn): reject it so the stale Accept/Decline row goes away instead of failing forever.
+            if (this.matrixRoom.getMyMembership() === KnownMembership.Invite && isInvitationGoneError(error)) {
+                await this.matrixRoom.client.leave(this.id).catch((leaveError) => {
+                    console.error("Unable to reject the stale invitation", leaveError);
+                });
+                throw new InvitationNoLongerAvailableError({ cause: error });
+            }
+            throw new Error("Failed to join room", { cause: error });
         }
     }
 
     async leaveRoom(): Promise<void> {
         try {
+            if (this.matrixRoom.getMyMembership() === KnownMembership.Join) {
+                await this.withdrawPendingInvitesIfLastMember();
+            }
             await this.matrixRoom.client.leave(this.id);
             return;
         } catch (error) {
@@ -533,6 +546,29 @@ export class MatrixChatRoom
             throw new Error("Failed to leave room", { cause: error });
         }
     }
+
+    /**
+     * Leaving a room nobody else has joined strands its pending invites: the invitees still see Accept, but no
+     * server can let them in anymore. The last joined member withdraws them first, so they disappear for the
+     * invitees too. Best effort: a missing power level or a network error must not block leaving.
+     */
+    private async withdrawPendingInvitesIfLastMember(): Promise<void> {
+        // The count comes from the room summary, so it holds even when members are lazily loaded.
+        if (this.matrixRoom.getJoinedMemberCount() > 1) return;
+
+        await this.matrixRoom.loadMembersIfNeeded().catch((error) => {
+            console.warn("Unable to load the room members", error);
+        });
+        const invited = this.matrixRoom.getMembersWithMembership(KnownMembership.Invite);
+        await Promise.all(
+            invited.map((member) =>
+                this.matrixRoom.client.kick(this.id, member.userId).catch((error) => {
+                    console.warn("Unable to withdraw the invitation of", member.userId, error);
+                })
+            )
+        );
+    }
+
     async inviteUsers(userIds: string[]): Promise<void> {
         const userInvitationPromises = userIds.map((userId) => this.matrixRoom.client.invite(this.id, userId));
         try {
