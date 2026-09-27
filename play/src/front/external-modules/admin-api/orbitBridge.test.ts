@@ -4,6 +4,7 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitBridgeOutgoing,
 } from "./orbitBridge";
@@ -70,7 +71,8 @@ describe("OrbitBridge", () => {
             type: "orbit-bridge-init",
             version: 1,
             roomRevision: revision,
-            capabilities: ["navigate", "event"],
+            capabilities: ["navigate", "event", "view", "profile"],
+            view: "compact",
         });
         expect(posted[1]).toEqual({
             type: "orbit-navigate",
@@ -115,6 +117,16 @@ describe("OrbitBridge", () => {
         expect(ORBIT_REQUEST_TIMEOUT_MS).toBeGreaterThan(0);
     });
 
+    it("tells Orbit the view once ready, and carries a view set before that in the init", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.setView("full");
+        expect(posted).toEqual([]);
+        bridge.onReady();
+        expect(posted[0]).toMatchObject({ type: "orbit-bridge-init", view: "full" });
+        bridge.setView("compact");
+        expect(posted[1]).toEqual({ type: "orbit-view", version: 1, view: "compact" });
+    });
+
     it("drops waiting requests when Orbit closes, and needs Orbit to be ready again", () => {
         const { bridge, posted, timers } = makeBridge();
         bridge.navigate("new-universe");
@@ -128,5 +140,19 @@ describe("OrbitBridge", () => {
         expect(timers.size).toBe(0);
         bridge.navigate("world-members", { worldId: "w1" });
         expect(posted).toHaveLength(2);
+    });
+
+    it("accepts a profile rename only in its exact shape", () => {
+        const good = {
+            type: "orbit-profile-changed",
+            version: 1,
+            roomRevision: "rev-0123456789abcdef",
+            name: "Khalid",
+        };
+        expect(isOrbitProfileChangedMessage(good)).toBe(true);
+        expect(isOrbitProfileChangedMessage({ ...good, name: "" })).toBe(false);
+        expect(isOrbitProfileChangedMessage({ ...good, name: 5 })).toBe(false);
+        expect(isOrbitProfileChangedMessage({ ...good, version: 2 })).toBe(false);
+        expect(isOrbitProfileChangedMessage({ ...good, roomRevision: "short" })).toBe(false);
     });
 });

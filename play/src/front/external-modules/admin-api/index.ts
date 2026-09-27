@@ -2,7 +2,15 @@ import { get } from "svelte/store";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
-import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
+import {
+    modalFullScreenStore,
+    modalIframeStore,
+    modalIframeWindowStore,
+    modalVisibilityStore,
+} from "../../Stores/ModalStore";
+import { gameManager } from "../../Phaser/Game/GameManager";
+import { hasCapability } from "../../Connection/Capabilities";
+import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import {
@@ -16,6 +24,7 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitProfileChangedMessage,
     newRoomRevision,
     type OrbitEventTopic,
     type OrbitNavigateIntent,
@@ -27,8 +36,11 @@ let bridge: OrbitBridge | null = null;
 let launcher: HTMLElement | null = null;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
+let unsubscribeFullScreen: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
 let adminOrigin: string | null = null;
+/** A name you saved in your Orbit profile, shown in the game once Orbit closes. */
+let pendingPlayerName: string | null = null;
 const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
 function schedulePending(callback: () => void, delay: number) {
@@ -44,6 +56,62 @@ function cancelPendingTimers() {
         clearTimeout(timer);
     }
     pendingTimers.clear();
+}
+
+/**
+ * Orbit's place in the browser's history.
+ *
+ * Opening Orbit adds one entry, so the Back button (Android's, the browser's, a swipe) walks through Orbit's own pages
+ * first (they share the tab's history) and then, on this entry, closes Orbit, never leaving the room. Closing Orbit
+ * any other way steps back toward the room. Iframe navigations share the browser's history, so an old marker can
+ * remain after an iframe closes; every opening has its own ID and older markers are stepped over, never reopened.
+ */
+let historyEntryId: string | null = null;
+
+function isOrbitHistoryState(state: unknown): boolean {
+    return !!state && typeof state === "object" && (state as { orbit?: unknown }).orbit === true;
+}
+
+function isCurrentOrbitHistoryState(state: unknown): boolean {
+    return (
+        historyEntryId !== null &&
+        isOrbitHistoryState(state) &&
+        (state as { orbitVisit?: unknown }).orbitVisit === historyEntryId
+    );
+}
+
+function pushHistoryEntry() {
+    if (historyEntryId !== null) return;
+    try {
+        const nextId = crypto.randomUUID();
+        history.pushState({ orbit: true, orbitVisit: nextId }, "");
+        historyEntryId = nextId;
+    } catch (error) {
+        console.warn("Could not add Orbit to the history", error);
+    }
+}
+
+function dropHistoryEntry() {
+    const wasCurrent = isCurrentOrbitHistoryState(history.state);
+    historyEntryId = null;
+    if (wasCurrent) history.back();
+}
+
+function handlePopState(event: PopStateEvent) {
+    if (adminModalOpen && !isCurrentOrbitHistoryState(event.state)) {
+        // Back, on Orbit's entry: Orbit closes, and the room stays.
+        historyEntryId = null;
+        closeAdminModal();
+    }
+    if (!adminModalOpen && isOrbitHistoryState(event.state)) {
+        // An entry left behind by an earlier visit (Orbit was open during a room change): step over it.
+        history.back();
+    }
+}
+
+/** A key or a joystick held when Orbit opens would keep walking: its release never reaches the game. */
+function clearHeldMovement() {
+    gameManager.tryGetCurrentGameScene()?.userInputManager?.clearHeldMovement();
 }
 
 // Helper to extract OIDC access token from JWT
@@ -86,6 +154,13 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
         bridge?.onAck(event.data);
         return;
     }
+    if (isOrbitProfileChangedMessage(event.data)) {
+        // Orbit already saved it; the game only shows it, and only for this visit's frame.
+        const name = event.data.name.trim();
+        if (bridge && event.data.roomRevision === bridge.roomRevision && isUserNameValid(name))
+            pendingPlayerName = name;
+        return;
+    }
     if (!isOrbitAuthReadyMessage(event.data)) return;
     const accessToken = getAccessTokenFromJwt(extensionOptions.userAccessToken);
     if (!accessToken || !event.source) return;
@@ -107,7 +182,7 @@ export type OrbitOpenSource = "button" | "quest" | "link" | "auto";
 
 // Function to open the admin modal, optionally on a given Orbit page
 function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource, redirect?: string) {
-    if (adminModalOpen) return;
+    if (adminModalOpen && redirect === undefined) return;
 
     const accessToken = getAccessTokenFromJwt(options.userAccessToken);
     if (!accessToken) {
@@ -130,7 +205,7 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
     }
 
     const modalEvent: ModalEvent = {
-        title: "Admin Dashboard",
+        title: "Orbit",
         src: adminDashboardUrl,
         allow: "fullscreen",
         allowApi: true,
@@ -138,10 +213,22 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
         allowFullScreen: true,
     };
 
+    if (adminModalOpen) {
+        // Svelte batches synchronous visibility toggles, so closing and reopening in one turn never remounts the
+        // iframe. Replace its reactive URL instead and keep its WindowProxy, launcher, view and history marker.
+        bridge?.onClosed();
+        modalIframeStore.set(modalEvent);
+        analyticsClient.orbitOpened({ source });
+        return;
+    }
+
     launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    clearHeldMovement();
+    modalFullScreenStore.set(false);
     modalIframeStore.set(modalEvent);
     modalVisibilityStore.set(true);
     adminModalOpen = true;
+    pushHistoryEntry();
     analyticsClient.orbitOpened({ source });
 }
 
@@ -164,7 +251,6 @@ export function canOpenOrbit(): boolean {
 /** Opens Orbit on one of its pages (an /admin path), switching to it if Orbit is already open. */
 export function openOrbitPage(path: string) {
     if (!extensionOptions) return;
-    if (adminModalOpen) closeAdminModal();
     openAdminModal(extensionOptions, "link", path);
 }
 
@@ -191,16 +277,36 @@ function closeAdminModal() {
     modalVisibilityStore.set(false);
     modalIframeStore.set(null);
     modalIframeWindowStore.set(null);
+    modalFullScreenStore.set(false);
     adminModalOpen = false;
     bridge?.onClosed();
 }
 
-/** Orbit closed (by the player, or by Orbit through WA.ui.modal.closeModal): give focus back to what opened it. */
+/**
+ * Orbit closed (by the player, by Orbit through WA.ui.modal.closeModal, or by Back): its history entry goes, and
+ * focus returns to what opened it.
+ */
 function onOrbitClosed() {
     bridge?.onClosed();
+    dropHistoryEntry();
     const target = launcher;
     launcher = null;
     if (target?.isConnected) target.focus();
+    applyPendingPlayerName();
+}
+
+/**
+ * You renamed yourself in Orbit: the game takes the new name and rejoins the room, as renaming in the game does, so
+ * everyone sees it. Nothing happens when the name didn't change.
+ */
+function applyPendingPlayerName() {
+    const name = pendingPlayerName;
+    pendingPlayerName = null;
+    if (!name || name === gameManager.getPlayerName()) return;
+    gameManager.setPlayerName(name);
+    // Signed-in players get their name from the server, which Orbit already updated; others keep it locally.
+    if (!hasCapability("api/save-name")) localUserStore.setName(name);
+    gameManager.rejoinCurrentRoom();
 }
 
 // Function to initialize the admin integration
@@ -236,10 +342,18 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
             setTimeout: (callback, ms) => setTimeout(callback, ms),
             clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
         },
-        newRoomRevision()
+        newRoomRevision(),
+        maxUserNameLength
     );
     window.removeEventListener("message", handleAdminAuthMessage);
     window.addEventListener("message", handleAdminAuthMessage);
+    window.removeEventListener("popstate", handlePopState);
+    window.addEventListener("popstate", handlePopState);
+    // Orbit lays itself out for the frame's size, whoever changed it.
+    unsubscribeFullScreen?.();
+    unsubscribeFullScreen = modalFullScreenStore.subscribe((full) => {
+        bridge?.setView(full ? "full" : "compact");
+    });
 
     // Activate the Orbit button in the action bar (highest priority). Orbit opens only when asked: this runs on every
     // room join and reconnect, so opening here would bring Orbit back each time.
@@ -296,7 +410,13 @@ const adminExtensionModule: ExtensionModule = {
         // Deactivate the Orbit button
         adminDashboardActivatedStore.set(false);
         window.removeEventListener("message", handleAdminAuthMessage);
+        window.removeEventListener("popstate", handlePopState);
+        unsubscribeFullScreen?.();
+        unsubscribeFullScreen = null;
         closeAdminModal();
+        // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
+        historyEntryId = null;
+        pendingPlayerName = null;
         bridge = null;
         launcher = null;
         extensionOptions = null;
