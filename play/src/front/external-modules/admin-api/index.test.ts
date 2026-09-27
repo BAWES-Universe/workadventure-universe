@@ -14,7 +14,56 @@ const mocks = vi.hoisted(() => ({
     orbitOpened: vi.fn(),
     // The Orbit frame's window, as the modal store holds it (none unless a test sets one).
     frame: undefined as unknown,
+    clearHeldMovement: vi.fn(),
+    // The modal's size, as a small writable.
+    fullScreen: (() => {
+        let value = false;
+        const subscribers = new Set<(value: boolean) => void>();
+        return {
+            get value() {
+                return value;
+            },
+            set: vi.fn((next: boolean) => {
+                value = next;
+                subscribers.forEach((subscriber) => subscriber(value));
+            }),
+            update(fn: (value: boolean) => boolean) {
+                this.set(fn(value));
+            },
+            subscribe(subscriber: (value: boolean) => void) {
+                subscribers.add(subscriber);
+                subscriber(value);
+                return () => subscribers.delete(subscriber);
+            },
+            reset() {
+                value = false;
+                subscribers.clear();
+                this.set.mockClear();
+            },
+        };
+    })(),
 }));
+
+/** The browser's history, small enough to see through: entries and the one being shown. */
+function makeHistory() {
+    const entries: unknown[] = [null];
+    let index = 0;
+    const history = {
+        get state() {
+            return entries[index];
+        },
+        pushState: vi.fn((state: unknown) => {
+            entries.splice(index + 1);
+            entries.push(state);
+            index = entries.length - 1;
+        }),
+        back: vi.fn(() => {
+            if (index > 0) index -= 1;
+        }),
+        entries,
+    };
+    return history;
+}
 
 vi.mock("../../Administration/AnalyticsClient", () => ({
     analyticsClient: { orbitOpened: mocks.orbitOpened },
@@ -29,7 +78,14 @@ vi.mock("../../Stores/MenuStore", () => ({
     adminDashboardActivatedStore: { set: mocks.adminDashboardActivatedSet },
 }));
 
+vi.mock("../../Phaser/Game/GameManager", () => ({
+    gameManager: {
+        tryGetCurrentGameScene: () => ({ userInputManager: { clearHeldMovement: mocks.clearHeldMovement } }),
+    },
+}));
+
 vi.mock("../../Stores/ModalStore", () => ({
+    modalFullScreenStore: mocks.fullScreen,
     modalIframeStore: { set: mocks.modalIframeSet },
     modalIframeWindowStore: {
         set: mocks.modalIframeWindowSet,
@@ -97,6 +153,8 @@ describe("Admin integration lifecycle", () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         mocks.isLogged.mockReturnValue(true);
+        mocks.fullScreen.reset();
+        vi.stubGlobal("history", makeHistory());
         vi.stubGlobal("window", {
             addEventListener: vi.fn(),
             removeEventListener: vi.fn(),
@@ -190,6 +248,8 @@ describe("Opening Orbit on one of its pages", () => {
         vi.useFakeTimers();
         vi.clearAllMocks();
         mocks.isLogged.mockReturnValue(true);
+        mocks.fullScreen.reset();
+        vi.stubGlobal("history", makeHistory());
         vi.stubGlobal("window", {
             addEventListener: vi.fn(),
             removeEventListener: vi.fn(),
@@ -253,6 +313,7 @@ describe("The Orbit bridge", () => {
     const ADMIN = "https://admin.example.com";
     let frame: { postMessage: ReturnType<typeof vi.fn> };
     let listeners: ((event: MessageEvent<unknown>) => void)[];
+    let popStateListeners: ((event: PopStateEvent) => void)[];
 
     beforeEach(() => {
         vi.useFakeTimers();
@@ -261,12 +322,17 @@ describe("The Orbit bridge", () => {
         frame = { postMessage: vi.fn() };
         mocks.frame = frame;
         listeners = [];
+        popStateListeners = [];
+        mocks.fullScreen.reset();
+        vi.stubGlobal("history", makeHistory());
         vi.stubGlobal("window", {
-            addEventListener: vi.fn((type: string, listener: (event: MessageEvent<unknown>) => void) => {
-                if (type === "message") listeners.push(listener);
+            addEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
+                if (type === "message") listeners.push(listener as (event: MessageEvent<unknown>) => void);
+                if (type === "popstate") popStateListeners.push(listener as (event: PopStateEvent) => void);
             }),
-            removeEventListener: vi.fn((type: string, listener: (event: MessageEvent<unknown>) => void) => {
+            removeEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
                 listeners = listeners.filter((candidate) => candidate !== listener);
+                popStateListeners = popStateListeners.filter((candidate) => candidate !== listener);
             }),
             location: { href: "https://play.example.com/@/room" },
         });
@@ -315,7 +381,13 @@ describe("The Orbit bridge", () => {
 
         expect(frame.postMessage).toHaveBeenNthCalledWith(
             1,
-            { type: "orbit-bridge-init", version: 1, roomRevision: revision, capabilities: ["navigate", "event"] },
+            {
+                type: "orbit-bridge-init",
+                version: 1,
+                roomRevision: revision,
+                capabilities: ["navigate", "event", "view"],
+                view: "compact",
+            },
             ADMIN
         );
         expect(frame.postMessage).toHaveBeenNthCalledWith(
@@ -391,5 +463,156 @@ describe("The Orbit bridge", () => {
         onVisibility?.(false);
         expect(document.activeElement).toBe(button);
         button.remove();
+    });
+});
+
+describe("Orbit and the Back button (1C)", () => {
+    const ADMIN = "https://admin.example.com";
+    let frame: { postMessage: ReturnType<typeof vi.fn> };
+    let listeners: ((event: MessageEvent<unknown>) => void)[];
+    let popStateListeners: ((event: PopStateEvent) => void)[];
+    let onVisibility: ((visible: boolean) => void) | undefined;
+    let fakeHistory: ReturnType<typeof makeHistory>;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.clearAllMocks();
+        mocks.isLogged.mockReturnValue(true);
+        frame = { postMessage: vi.fn() };
+        mocks.frame = frame;
+        listeners = [];
+        popStateListeners = [];
+        onVisibility = undefined;
+        mocks.modalVisibilitySubscribe.mockImplementation(((callback: (visible: boolean) => void) => {
+            onVisibility = callback;
+            return vi.fn();
+        }) as unknown as () => ReturnType<typeof vi.fn>);
+        mocks.fullScreen.reset();
+        fakeHistory = makeHistory();
+        vi.stubGlobal("history", fakeHistory);
+        vi.stubGlobal("window", {
+            addEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
+                if (type === "message") listeners.push(listener as (event: MessageEvent<unknown>) => void);
+                if (type === "popstate") popStateListeners.push(listener as (event: PopStateEvent) => void);
+            }),
+            removeEventListener: vi.fn((type: string, listener: (event: Event) => void) => {
+                listeners = listeners.filter((candidate) => candidate !== listener);
+                popStateListeners = popStateListeners.filter((candidate) => candidate !== listener);
+            }),
+            location: { href: "https://play.example.com/@/room" },
+        });
+    });
+
+    afterEach(() => {
+        mocks.frame = undefined;
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    type Index = {
+        default: AdminModuleLike;
+        openAdminModalFromMenu(): void;
+        openOrbitPage(path: string): void;
+        requestOrbitPage(intent: string): boolean;
+    };
+
+    async function openedIndex(): Promise<Index> {
+        vi.resetModules();
+        const index = (await import("./index")) as unknown as Index;
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        index.openAdminModalFromMenu();
+        return index;
+    }
+
+    function fromOrbit(data: unknown) {
+        for (const listener of listeners)
+            listener({ data, source: frame, origin: ADMIN } as unknown as MessageEvent<unknown>);
+    }
+
+    function backPressed() {
+        fakeHistory.back();
+        for (const listener of popStateListeners) listener({ state: fakeHistory.state } as PopStateEvent);
+    }
+
+    /** What the game does when the modal goes (the X, Escape, WA.ui.modal.closeModal): the visibility store flips. */
+    function modalClosedByGame() {
+        onVisibility?.(false);
+    }
+
+    it("adds one history entry when Orbit opens, forgets held movement, and starts compact", async () => {
+        await openedIndex();
+        expect(fakeHistory.pushState).toHaveBeenCalledTimes(1);
+        expect(fakeHistory.state).toEqual({ orbit: true });
+        expect(mocks.clearHeldMovement).toHaveBeenCalledTimes(1);
+        expect(mocks.fullScreen.set).toHaveBeenCalledWith(false);
+    });
+
+    it("closes Orbit on Back and stays in the room", async () => {
+        await openedIndex();
+        backPressed();
+        expect(mocks.modalVisibilitySet).toHaveBeenCalledWith(false);
+        // The entry Back took away isn't taken away again.
+        expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+    });
+
+    it("takes its entry out of the history when Orbit is closed any other way", async () => {
+        await openedIndex();
+        modalClosedByGame();
+        expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+        expect(fakeHistory.state).toBeNull();
+        // Opening again adds a fresh entry.
+        mocks.modalVisibilitySubscribe.mockClear();
+    });
+
+    it("steps over an entry left behind by an earlier visit", async () => {
+        const index = await openedIndex();
+        index.default.destroy();
+        // The room changed with Orbit open: the entry stays, and Back on it is stepped over.
+        expect(fakeHistory.back).not.toHaveBeenCalled();
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        mocks.modalVisibilitySet.mockClear();
+        for (const listener of popStateListeners) listener({ state: { orbit: true } } as PopStateEvent);
+        expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+        // Stepping over it neither opens nor closes Orbit.
+        expect(mocks.modalVisibilitySet).not.toHaveBeenCalled();
+    });
+
+    it("switches to the full-screen view when Orbit asks, and tells Orbit about size changes", async () => {
+        await openedIndex();
+        fromOrbit({ type: "orbit-bridge-ready", version: 1, capabilities: ["navigate", "event", "view"] });
+        expect(frame.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "orbit-bridge-init", view: "compact" }),
+            ADMIN
+        );
+
+        fromOrbit({ type: "orbit-view-request", version: 1, view: "full" });
+        expect(mocks.fullScreen.value).toBe(true);
+        expect(frame.postMessage).toHaveBeenLastCalledWith({ type: "orbit-view", version: 1, view: "full" }, ADMIN);
+
+        // The game's own button works too, and Orbit hears about it.
+        mocks.fullScreen.update((full) => !full);
+        expect(frame.postMessage).toHaveBeenLastCalledWith({ type: "orbit-view", version: 1, view: "compact" }, ADMIN);
+    });
+
+    it("ignores a view request from another window", async () => {
+        await openedIndex();
+        for (const listener of listeners) {
+            listener({
+                data: { type: "orbit-view-request", version: 1, view: "full" },
+                source: { postMessage: vi.fn() },
+                origin: ADMIN,
+            } as unknown as MessageEvent<unknown>);
+        }
+        expect(mocks.fullScreen.value).toBe(false);
+    });
+
+    it("keeps one history entry and the launcher when switching Orbit to another page", async () => {
+        const index = await openedIndex();
+        index.openOrbitPage("/admin/profile");
+        expect(fakeHistory.pushState).toHaveBeenCalledTimes(1);
+        expect(fakeHistory.back).not.toHaveBeenCalled();
+        expect(fakeHistory.state).toEqual({ orbit: true });
     });
 });

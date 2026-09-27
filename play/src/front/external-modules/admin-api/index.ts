@@ -2,7 +2,13 @@ import { get } from "svelte/store";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
-import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
+import {
+    modalFullScreenStore,
+    modalIframeStore,
+    modalIframeWindowStore,
+    modalVisibilityStore,
+} from "../../Stores/ModalStore";
+import { gameManager } from "../../Phaser/Game/GameManager";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import {
@@ -16,17 +22,21 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitViewRequestMessage,
     newRoomRevision,
     type OrbitEventTopic,
     type OrbitNavigateIntent,
 } from "./orbitBridge";
 let adminModalOpen = false;
+/** Orbit is being reopened on another page: not a real close (no focus change, the history entry stays). */
+let reopening = false;
 /** The bridge for this visit (a new one on every room join or reconnect). */
 let bridge: OrbitBridge | null = null;
 /** The control that opened Orbit, to give focus back to when Orbit closes. */
 let launcher: HTMLElement | null = null;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
+let unsubscribeFullScreen: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
 let adminOrigin: string | null = null;
 const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -44,6 +54,54 @@ function cancelPendingTimers() {
         clearTimeout(timer);
     }
     pendingTimers.clear();
+}
+
+/**
+ * Orbit's place in the browser's history.
+ *
+ * Opening Orbit adds one entry, so the Back button (Android's, the browser's, a swipe) walks through Orbit's own pages
+ * first (they share the tab's history) and then, on this entry, closes Orbit, never leaving the room. Closing Orbit
+ * any other way takes the entry out again, so the next Back does what it did before Orbit opened.
+ */
+const ORBIT_HISTORY_STATE = { orbit: true } as const;
+let ownsHistoryEntry = false;
+
+function isOrbitHistoryState(state: unknown): boolean {
+    return !!state && typeof state === "object" && (state as { orbit?: unknown }).orbit === true;
+}
+
+function pushHistoryEntry() {
+    if (ownsHistoryEntry) return;
+    try {
+        history.pushState(ORBIT_HISTORY_STATE, "");
+        ownsHistoryEntry = true;
+    } catch (error) {
+        console.warn("Could not add Orbit to the history", error);
+    }
+}
+
+function dropHistoryEntry() {
+    if (!ownsHistoryEntry) return;
+    ownsHistoryEntry = false;
+    if (isOrbitHistoryState(history.state)) history.back();
+}
+
+function handlePopState(event: PopStateEvent) {
+    if (adminModalOpen && !isOrbitHistoryState(event.state)) {
+        // Back, on Orbit's entry: Orbit closes, and the room stays.
+        ownsHistoryEntry = false;
+        closeAdminModal();
+        return;
+    }
+    if (!adminModalOpen && isOrbitHistoryState(event.state)) {
+        // An entry left behind by an earlier visit (Orbit was open during a room change): step over it.
+        history.back();
+    }
+}
+
+/** A key or a joystick held when Orbit opens would keep walking: its release never reaches the game. */
+function clearHeldMovement() {
+    gameManager.tryGetCurrentGameScene()?.userInputManager?.clearHeldMovement();
 }
 
 // Helper to extract OIDC access token from JWT
@@ -84,6 +142,11 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     }
     if (isOrbitBridgeAckMessage(event.data)) {
         bridge?.onAck(event.data);
+        return;
+    }
+    // Orbit asks for the compact or the full-screen view (its own toggle; the game's is desktop-only).
+    if (isOrbitViewRequestMessage(event.data)) {
+        if (adminModalOpen) modalFullScreenStore.set(event.data.view === "full");
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
@@ -138,10 +201,13 @@ function openAdminModal(options: ExtensionModuleOptions, source: OrbitOpenSource
         allowFullScreen: true,
     };
 
-    launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!reopening) launcher = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    clearHeldMovement();
+    modalFullScreenStore.set(false);
     modalIframeStore.set(modalEvent);
     modalVisibilityStore.set(true);
     adminModalOpen = true;
+    pushHistoryEntry();
     analyticsClient.orbitOpened({ source });
 }
 
@@ -164,7 +230,17 @@ export function canOpenOrbit(): boolean {
 /** Opens Orbit on one of its pages (an /admin path), switching to it if Orbit is already open. */
 export function openOrbitPage(path: string) {
     if (!extensionOptions) return;
-    if (adminModalOpen) closeAdminModal();
+    if (adminModalOpen) {
+        // Not a real close: focus and the history entry stay where they are.
+        reopening = true;
+        try {
+            closeAdminModal();
+            openAdminModal(extensionOptions, "link", path);
+        } finally {
+            reopening = false;
+        }
+        return;
+    }
     openAdminModal(extensionOptions, "link", path);
 }
 
@@ -191,13 +267,19 @@ function closeAdminModal() {
     modalVisibilityStore.set(false);
     modalIframeStore.set(null);
     modalIframeWindowStore.set(null);
+    modalFullScreenStore.set(false);
     adminModalOpen = false;
     bridge?.onClosed();
 }
 
-/** Orbit closed (by the player, or by Orbit through WA.ui.modal.closeModal): give focus back to what opened it. */
+/**
+ * Orbit closed (by the player, by Orbit through WA.ui.modal.closeModal, or by Back): its history entry goes, and
+ * focus returns to what opened it.
+ */
 function onOrbitClosed() {
     bridge?.onClosed();
+    if (reopening) return;
+    dropHistoryEntry();
     const target = launcher;
     launcher = null;
     if (target?.isConnected) target.focus();
@@ -240,6 +322,13 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     );
     window.removeEventListener("message", handleAdminAuthMessage);
     window.addEventListener("message", handleAdminAuthMessage);
+    window.removeEventListener("popstate", handlePopState);
+    window.addEventListener("popstate", handlePopState);
+    // Orbit lays itself out for the frame's size, whoever changed it.
+    unsubscribeFullScreen?.();
+    unsubscribeFullScreen = modalFullScreenStore.subscribe((full) => {
+        bridge?.setView(full ? "full" : "compact");
+    });
 
     // Activate the Orbit button in the action bar (highest priority). Orbit opens only when asked: this runs on every
     // room join and reconnect, so opening here would bring Orbit back each time.
@@ -296,7 +385,12 @@ const adminExtensionModule: ExtensionModule = {
         // Deactivate the Orbit button
         adminDashboardActivatedStore.set(false);
         window.removeEventListener("message", handleAdminAuthMessage);
+        window.removeEventListener("popstate", handlePopState);
+        unsubscribeFullScreen?.();
+        unsubscribeFullScreen = null;
         closeAdminModal();
+        // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
+        ownsHistoryEntry = false;
         bridge = null;
         launcher = null;
         extensionOptions = null;

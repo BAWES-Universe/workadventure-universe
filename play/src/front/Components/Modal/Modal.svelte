@@ -3,7 +3,12 @@
     import { onDestroy, onMount } from "svelte";
     import { get } from "svelte/store";
     import { iframeListener } from "../../Api/IframeListener";
-    import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
+    import {
+        modalFullScreenStore,
+        modalIframeStore,
+        modalIframeWindowStore,
+        modalVisibilityStore,
+    } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
@@ -11,7 +16,8 @@
     let modalIframe: HTMLIFrameElement;
     let mainModal: HTMLDivElement;
 
-    let isFullScreened = false;
+    // The size is a store, so the page inside the frame (Orbit) can ask for the other one through the bridge.
+    $: isFullScreened = $modalFullScreenStore;
 
     function close() {
         modalVisibilityStore.set(false);
@@ -39,6 +45,7 @@
     });
 
     onDestroy(() => {
+        modalFullScreenStore.set(false);
         if (get(modalIframeWindowStore) === modalIframe.contentWindow) {
             modalIframeWindowStore.set(null);
         }
@@ -89,7 +96,7 @@
                 {#if $modalIframeStore?.allowFullScreen}
                     <button
                         class="btn btn-light btn-ghost rounded hidden @lg/main-layout:block"
-                        on:click={() => (isFullScreened = !isFullScreened)}
+                        on:click={() => modalFullScreenStore.update((full) => !full)}
                     >
                         {#if isFullScreened}
                             <IconArrowsMinimize font-size="20" class="text-white" />

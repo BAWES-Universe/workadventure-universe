@@ -4,6 +4,7 @@ import {
     OrbitBridge,
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
+    isOrbitViewRequestMessage,
     newRoomRevision,
     type OrbitBridgeOutgoing,
 } from "./orbitBridge";
@@ -49,6 +50,12 @@ describe("Orbit bridge messages", () => {
         expect(isOrbitBridgeAckMessage({ ...ack, requestId: "" })).toBe(false);
     });
 
+    it("accepts only a well-formed view request", () => {
+        expect(isOrbitViewRequestMessage({ type: "orbit-view-request", version: 1, view: "full" })).toBe(true);
+        expect(isOrbitViewRequestMessage({ type: "orbit-view-request", version: 1, view: "huge" })).toBe(false);
+        expect(isOrbitViewRequestMessage({ type: "orbit-view-request", version: 2, view: "full" })).toBe(false);
+    });
+
     it("gives every visit a new room revision Orbit accepts", () => {
         const first = newRoomRevision();
         expect(first.length).toBeGreaterThanOrEqual(16);
@@ -70,7 +77,8 @@ describe("OrbitBridge", () => {
             type: "orbit-bridge-init",
             version: 1,
             roomRevision: revision,
-            capabilities: ["navigate", "event"],
+            capabilities: ["navigate", "event", "view"],
+            view: "compact",
         });
         expect(posted[1]).toEqual({
             type: "orbit-navigate",
@@ -113,6 +121,16 @@ describe("OrbitBridge", () => {
         giveUp();
         expect(warn).toHaveBeenCalled();
         expect(ORBIT_REQUEST_TIMEOUT_MS).toBeGreaterThan(0);
+    });
+
+    it("tells Orbit the view once ready, and carries a view set before that in the init", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.setView("full");
+        expect(posted).toEqual([]);
+        bridge.onReady();
+        expect(posted[0]).toMatchObject({ type: "orbit-bridge-init", view: "full" });
+        bridge.setView("compact");
+        expect(posted[1]).toEqual({ type: "orbit-view", version: 1, view: "compact" });
     });
 
     it("drops waiting requests when Orbit closes, and needs Orbit to be ready again", () => {
