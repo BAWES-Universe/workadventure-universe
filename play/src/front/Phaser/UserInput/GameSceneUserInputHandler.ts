@@ -6,6 +6,8 @@ import type { UserInputHandlerInterface } from "../../Interfaces/UserInputHandle
 import type { GameScene } from "../Game/GameScene";
 import { mapEditorModeStore } from "../../Stores/MapEditorStore";
 import { isActivatable } from "../Game/ActivatableInterface";
+import { toggleMyCard } from "../../Chat/Components/UserList/PersonNavigation";
+import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapManagerActivated } from "../../Stores/MenuStore";
 import { displayEmote, isEmoteIndex } from "../../Stores/EmoteStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
@@ -15,6 +17,7 @@ import { openChat } from "../../Chat/openChat";
 import { expressTrayStore } from "../../Stores/ExpressStore";
 import { isPopupJustClosed } from "../Game/Say/SayManager";
 import LL from "../../../i18n/i18n-svelte";
+import { isQuickTap } from "./QuickTap";
 import type { Shortcut } from "./UserInputManager";
 
 export class GameSceneUserInputHandler implements UserInputHandlerInterface {
@@ -107,6 +110,15 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
                     this.gameScene.getActivatablesManager().handlePointerDownEvent(object);
                     return;
                 }
+            }
+            // Your own avatar: a quick tap or click opens your card (a hold or a joystick drag from it doesn't).
+            if (
+                this.gameScene.userInputManager.isControlsEnabled &&
+                isQuickTap(pointer) &&
+                gameObjects.includes(this.gameScene.CurrentPlayer)
+            ) {
+                toggleMyCard(localUserStore.getLocalUser()?.uuid);
+                return;
             }
         }
 

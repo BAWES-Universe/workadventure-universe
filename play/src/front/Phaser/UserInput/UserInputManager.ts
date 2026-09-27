@@ -258,6 +258,18 @@ export class UserInputManager {
         return this.keysCode;
     }
 
+    /**
+     * Forgets every key and joystick direction held right now. For when another surface takes over the input
+     * (Orbit opening over the map): a key released inside it never reaches the game, so it must not keep walking.
+     */
+    clearHeldMovement(): void {
+        this.scene.input.keyboard?.resetKeys();
+        this.joystickEvents = new ActiveEventList();
+        this.joystickForceAccuX = 0;
+        this.joystickForceAccuY = 0;
+        this.joystick?.hide(0);
+    }
+
     get isControlsEnabled() {
         return !this.isInputDisabled;
     }

@@ -1,17 +1,31 @@
 <script lang="ts">
     import { blur } from "svelte/transition";
+
     import { onDestroy, onMount } from "svelte";
     import { get } from "svelte/store";
     import { iframeListener } from "../../Api/IframeListener";
-    import { modalIframeStore, modalIframeWindowStore, modalVisibilityStore } from "../../Stores/ModalStore";
+    import {
+        modalFullScreenStore,
+        modalIframeStore,
+        modalIframeWindowStore,
+        modalVisibilityStore,
+    } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
+    /** The device asks for less motion: the panel appears and goes at once, without the blur. */
+    function prefersReducedMotion(): boolean {
+        return (
+            typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+        );
+    }
+
     let modalIframe: HTMLIFrameElement;
     let mainModal: HTMLDivElement;
 
-    let isFullScreened = false;
+    // The size is a store, so the page inside the frame (Orbit) can ask for the other one through the bridge.
+    $: isFullScreened = $modalFullScreenStore;
 
     function close() {
         modalVisibilityStore.set(false);
@@ -39,6 +53,7 @@
     });
 
     onDestroy(() => {
+        modalFullScreenStore.set(false);
         if (get(modalIframeWindowStore) === modalIframe.contentWindow) {
             modalIframeWindowStore.set(null);
         }
@@ -50,7 +65,7 @@
         //}
     });
 
-    let modalUrl = $modalIframeStore
+    $: modalUrl = $modalIframeStore
         ? new URL($modalIframeStore.src, gameManager.currentStartedRoom.mapUrl).toString()
         : undefined;
 
@@ -66,12 +81,15 @@
 <svelte:window on:keydown={onKeyDown} />
 
 <div
-    class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all {shouldForceMobileFullScreen
+    class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all motion-reduce:transition-none {shouldForceMobileFullScreen
         ? 'mobile'
         : $modalIframeStore?.position} {isFullScreened ? 'fullscreened' : ''}"
     bind:this={mainModal}
 >
-    <div class="w-full h-full bg-contrast/80 backdrop-blur rounded" transition:blur={{ amount: 10, duration: 250 }}>
+    <div
+        class="w-full h-full bg-contrast/80 backdrop-blur rounded"
+        transition:blur={{ amount: 10, duration: prefersReducedMotion() ? 0 : 250 }}
+    >
         <div
             class={`flex justify-center items-center content-center bg-contrast/80 backdrop-blur p-2 space-x-0 @lg/main-layout:space-x-2 rounded-lg absolute z-50
                 ${
@@ -89,7 +107,9 @@
                 {#if $modalIframeStore?.allowFullScreen}
                     <button
                         class="btn btn-light btn-ghost rounded hidden @lg/main-layout:block"
-                        on:click={() => (isFullScreened = !isFullScreened)}
+                        on:click={() => modalFullScreenStore.update((full) => !full)}
+                        aria-label={isFullScreened ? "Return to compact view" : "Open full-screen view"}
+                        title={isFullScreened ? "Return to compact view" : "Open full-screen view"}
                     >
                         {#if isFullScreened}
                             <IconArrowsMinimize font-size="20" class="text-white" />
@@ -104,6 +124,8 @@
                 class="btn btn-danger rounded m-0"
                 style={isFullScreened == true ? "" : "margin: 0px;"}
                 data-testid="close-modal-button"
+                aria-label={`Close ${$modalIframeStore?.title || "window"}`}
+                title={`Close ${$modalIframeStore?.title || "window"}`}
             >
                 <IconX font-size="20" class="text-white" />
             </button>
