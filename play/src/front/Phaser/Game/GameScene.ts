@@ -14,6 +14,7 @@ import CancelablePromise from "cancelable-promise";
 import { Deferred } from "ts-deferred";
 import type { GroupUsersUpdateMessage } from "@workadventure/messages";
 import {
+    AskPositionMessage_AskType,
     AvailabilityStatus,
     availabilityStatusToJSON,
     ErrorScreenMessage,
@@ -3431,7 +3432,10 @@ ${escapedMessage}
     private tryMovePlayerWithMoveToUserParameter(): void {
         const uuidParam = urlManager.getHashParameter("moveToUser");
         if (uuidParam) {
-            this.connection?.emitAskPosition(uuidParam, this.roomUrl);
+            // The exact avatar when the link names one (another tab or device of the same person), else the first.
+            const avatarParam = urlManager.getHashParameter("moveToAvatar");
+            const avatarId = avatarParam && /^\d+$/.test(avatarParam) ? Number(avatarParam) : undefined;
+            this.connection?.emitAskPosition(uuidParam, this.roomUrl, AskPositionMessage_AskType.MOVE, avatarId);
             urlManager.clearHashParameter();
         }
     }

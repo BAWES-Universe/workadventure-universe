@@ -196,7 +196,7 @@ export class AuthenticateController extends BaseHttpController {
             if (query === undefined) {
                 return;
             }
-            const { token, playUri, localStorageCompanionTextureId, chatID } = query;
+            const { token, playUri, localStorageCompanionTextureId, chatID, refresh } = query;
             let localStorageCharacterTextureIds = query["localStorageCharacterTextureIds[]"];
             if (typeof localStorageCharacterTextureIds === "string") {
                 localStorageCharacterTextureIds = [localStorageCharacterTextureIds];
@@ -238,6 +238,44 @@ export class AuthenticateController extends BaseHttpController {
                     return;
                 }
 
+                const { refreshToken } = authTokenData;
+                // Answers with a game token carrying a renewed access token; false when the refresh fails.
+                let refreshTried = false;
+                const respondWithRefreshedToken = async (): Promise<boolean> => {
+                    if (!refreshToken || refreshTried) return false;
+                    refreshTried = true;
+                    try {
+                        const refreshed = await openIDClient.refreshAccessToken(refreshToken);
+                        const resCheckTokenAuth = await openIDClient.checkTokenAuth(refreshed.access_token);
+                        const newAuthToken = jwtTokenManager.createAuthToken({
+                            identifier: authTokenData.identifier,
+                            accessToken: refreshed.access_token,
+                            refreshToken: refreshed.refresh_token ?? refreshToken,
+                            username: authTokenData.username,
+                            locale: authTokenData.locale,
+                            tags: authTokenData.tags,
+                            matrixUserId: authTokenData.matrixUserId,
+                        });
+                        res.json({
+                            username: authTokenData?.username,
+                            authToken: newAuthToken,
+                            locale: authTokenData?.locale,
+                            matrixUserId: authTokenData?.matrixUserId,
+                            matrixServerUrl: (resCheckTokenAuth.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
+                            ...resUserData,
+                            ...resCheckTokenAuth,
+                        } satisfies MeResponse);
+                        return true;
+                    } catch (refreshErr) {
+                        console.warn("OIDC silent refresh failed, forcing re-login", refreshErr);
+                        return false;
+                    }
+                };
+
+                // The caller says this access token was refused: renew it even if the provider still accepts it.
+                // If that fails, fall through to the usual check, which keeps a token that is still good.
+                if (refresh === "true" && (await respondWithRefreshedToken())) return;
+
                 try {
                     const resCheckTokenAuth = await openIDClient.checkTokenAuth(authTokenData.accessToken);
                     res.json({
@@ -251,34 +289,7 @@ export class AuthenticateController extends BaseHttpController {
                         ...resCheckTokenAuth,
                     } satisfies MeResponse);
                 } catch (err) {
-                    if (authTokenData.refreshToken && shouldRefreshAccessToken(err)) {
-                        try {
-                            const refreshed = await openIDClient.refreshAccessToken(authTokenData.refreshToken);
-                            const resCheckTokenAuth = await openIDClient.checkTokenAuth(refreshed.access_token);
-                            const newAuthToken = jwtTokenManager.createAuthToken({
-                                identifier: authTokenData.identifier,
-                                accessToken: refreshed.access_token,
-                                refreshToken: refreshed.refresh_token ?? authTokenData.refreshToken,
-                                username: authTokenData.username,
-                                locale: authTokenData.locale,
-                                tags: authTokenData.tags,
-                                matrixUserId: authTokenData.matrixUserId,
-                            });
-                            res.json({
-                                username: authTokenData?.username,
-                                authToken: newAuthToken,
-                                locale: authTokenData?.locale,
-                                matrixUserId: authTokenData?.matrixUserId,
-                                matrixServerUrl:
-                                    (resCheckTokenAuth.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
-                                ...resUserData,
-                                ...resCheckTokenAuth,
-                            } satisfies MeResponse);
-                            return;
-                        } catch (refreshErr) {
-                            console.warn("OIDC silent refresh failed, forcing re-login", refreshErr);
-                        }
-                    }
+                    if (shouldRefreshAccessToken(err) && (await respondWithRefreshedToken())) return;
                     console.warn("Error while checking token auth", err);
                     if (!shouldRefreshAccessToken(err)) {
                         throw err;

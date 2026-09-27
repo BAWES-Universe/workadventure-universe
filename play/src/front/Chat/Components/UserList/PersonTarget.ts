@@ -19,7 +19,15 @@ export interface PersonLocation {
  * Returns undefined for someone on another map, or when the space user id is missing or not in the expected form.
  */
 export function userIdOnThisMap(person: PersonLocation, currentRoomUrl: string | undefined): number | undefined {
-    if (!person.spaceUserId || !currentRoomUrl || person.playUri !== currentRoomUrl) {
+    if (!currentRoomUrl || person.playUri !== currentRoomUrl) {
+        return undefined;
+    }
+    return avatarIdOf(person);
+}
+
+/** The avatar id (userId) of a person in their own room, taken from their space user id, whichever map it is on. */
+export function avatarIdOf(person: PersonLocation): number | undefined {
+    if (!person.spaceUserId) {
         return undefined;
     }
     const match = /_(\d+)$/.exec(person.spaceUserId);
@@ -37,9 +45,9 @@ export type PersonTarget =
      * Only the account is known: ask the server by uuid.
      * `avatarOnThisMap` is true when the person is on this map but their avatar is not among the known remote players
      * (for instance out of view). In that case, looking up a visible avatar by uuid could pick another tab of the
-     * same account, so callers should go straight to the server.
+     * same account, so callers should go straight to the server, passing `userId` so it answers for that avatar.
      */
-    | { kind: "account"; uuid: string; playUri: string; avatarOnThisMap: boolean }
+    | { kind: "account"; uuid: string; playUri: string; avatarOnThisMap: boolean; userId?: number }
     | { kind: "none" };
 
 export function resolvePersonTarget(
@@ -57,6 +65,7 @@ export function resolvePersonTarget(
             uuid: person.uuid,
             playUri: person.playUri ?? "",
             avatarOnThisMap: userId !== undefined,
+            userId,
         };
     }
     return { kind: "none" };

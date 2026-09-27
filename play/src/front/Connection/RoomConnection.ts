@@ -1388,10 +1388,15 @@ export class RoomConnection implements RoomConnection {
         return this.tags;
     }
 
+    /**
+     * Asks the server where a person is. `userId` picks one avatar of that account in this room (one per tab or
+     * device); without it, the server answers with the first one it finds.
+     */
     public emitAskPosition(
         uuid: string,
         playUri: string,
-        type: AskPositionMessage_AskType = AskPositionMessageAskType.MOVE
+        type: AskPositionMessage_AskType = AskPositionMessageAskType.MOVE,
+        userId?: number
     ) {
         this.send({
             message: {
@@ -1400,6 +1405,7 @@ export class RoomConnection implements RoomConnection {
                     userIdentifier: uuid,
                     playUri,
                     askType: type,
+                    userId,
                 },
             },
         });

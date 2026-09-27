@@ -1,6 +1,8 @@
 import { get } from "svelte/store";
+import { MeResponse } from "@workadventure/messages";
 import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModule/ExtensionModule";
 import { localUserStore } from "../../Connection/LocalUserStore";
+import { axiosToPusher } from "../../Connection/AxiosUtils";
 import { userIsConnected, adminDashboardActivatedStore } from "../../Stores/MenuStore";
 import {
     modalFullScreenStore,
@@ -136,6 +138,91 @@ function getAccessTokenFromJwt(jwtToken: string | null): string | null {
     }
 }
 
+/** When the OIDC access token inside the game's token runs out, in ms since the epoch; null when it doesn't say. */
+function accessTokenExpiry(accessToken: string): number | null {
+    try {
+        const base64 = accessToken.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/");
+        if (!base64) return null;
+        const payload = JSON.parse(atob(base64)) as { exp?: unknown };
+        return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Don't hand out a token about to run out: Orbit's sign-in would fail a moment later. */
+const ACCESS_TOKEN_MARGIN_MS = 60_000;
+
+/**
+ * The /me renewal in flight, shared by every Orbit request made with the same game token. A forced request
+ * doesn't join an unforced one: that one may hand back the very token Orbit just refused.
+ */
+let renewal: { gameToken: string; force: boolean; promise: Promise<string | null> } | null = null;
+
+/**
+ * Renews the game token through the pusher's /me and keeps the result, returning the renewed OIDC access token.
+ * Null when it couldn't renew, or when the answer came back too late to keep: Orbit's integration was torn down,
+ * the player signed out, or the token it renewed from was replaced meanwhile. Keeping such a late answer would
+ * restore a signed-out token or overwrite a newer one.
+ */
+async function renewGameToken(
+    options: ExtensionModuleOptions,
+    gameToken: string,
+    force: boolean
+): Promise<string | null> {
+    try {
+        const response = await axiosToPusher.get("me", {
+            // `refresh` makes the pusher renew an access token the provider still accepts but Orbit refused.
+            params: { token: gameToken, playUri: options.roomId, ...(force ? { refresh: "true" } : {}) },
+        });
+        const parsed = MeResponse.parse(response.data);
+        if (parsed.status !== "ok" || !("authToken" in parsed) || typeof parsed.authToken !== "string") return null;
+        const renewed = getAccessTokenFromJwt(parsed.authToken);
+        if (!renewed) return null;
+        const stillCurrent =
+            extensionOptions === options &&
+            options.userAccessToken === gameToken &&
+            localUserStore.getAuthToken() !== null;
+        if (!stillCurrent) return null;
+        // The rest of the game uses the renewed token from here on too.
+        options.userAccessToken = parsed.authToken;
+        localUserStore.setAuthToken(parsed.authToken);
+        return renewed;
+    } catch (error) {
+        console.warn("Orbit sign-in: could not renew the access token", error);
+        return null;
+    }
+}
+
+/**
+ * The OIDC access token to sign Orbit in with. The one inside the game's token lasts an hour or so; the game's
+ * own token lasts weeks and carries a refresh token, so when the access token has run out (or Orbit says it was
+ * refused), the pusher's /me renews it, as the game does for its own calls.
+ */
+async function freshAccessToken(force: boolean): Promise<string | null> {
+    const options = extensionOptions;
+    if (!options) return null;
+    const gameToken = options.userAccessToken;
+    const current = getAccessTokenFromJwt(gameToken);
+    if (!gameToken || !current) return null;
+    const expiry = accessTokenExpiry(current);
+    const stale = expiry !== null && expiry < Date.now() + ACCESS_TOKEN_MARGIN_MS;
+    if (!force && !stale) return current;
+
+    let inFlight = renewal?.gameToken === gameToken && (renewal.force || !force) ? renewal : null;
+    if (!inFlight) {
+        const promise: Promise<string | null> = renewGameToken(options, gameToken, force).finally(() => {
+            if (renewal?.promise === promise) renewal = null;
+        });
+        inFlight = renewal = { gameToken, force, promise };
+    }
+    const renewed = await inFlight.promise;
+    // Torn down or signed out meanwhile: nothing to hand Orbit.
+    if (extensionOptions !== options || localUserStore.getAuthToken() === null) return null;
+    // Couldn't renew (or another renewal got there first): answer with the newest token there is.
+    return renewed ?? getAccessTokenFromJwt(options.userAccessToken);
+}
+
 function handleAdminAuthMessage(event: MessageEvent<unknown>) {
     if (
         !extensionOptions ||
@@ -162,15 +249,21 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
         return;
     }
     if (!isOrbitAuthReadyMessage(event.data)) return;
-    const accessToken = getAccessTokenFromJwt(extensionOptions.userAccessToken);
-    if (!accessToken || !event.source) return;
-    const response: OrbitAuthTokenMessage = {
-        type: "orbit-auth-token-v2",
-        version: ORBIT_AUTH_VERSION,
-        nonce: event.data.nonce,
-        accessToken,
-    };
-    event.source.postMessage(response, adminOrigin);
+    const { nonce, refresh } = event.data;
+    const source = event.source;
+    const origin = adminOrigin;
+    if (!source) return;
+    void freshAccessToken(refresh === true).then((accessToken) => {
+        // Orbit may have closed, or the room changed, while the token was being renewed.
+        if (!accessToken || source !== get(modalIframeWindowStore)) return;
+        const response: OrbitAuthTokenMessage = {
+            type: "orbit-auth-token-v2",
+            version: ORBIT_AUTH_VERSION,
+            nonce,
+            accessToken,
+        };
+        source.postMessage(response, origin);
+    });
 }
 
 /**
@@ -421,6 +514,7 @@ const adminExtensionModule: ExtensionModule = {
         launcher = null;
         extensionOptions = null;
         adminOrigin = null;
+        renewal = null;
     },
 };
 

@@ -2,7 +2,6 @@ import * as Sentry from "@sentry/svelte";
 import { get } from "svelte/store";
 import type CancelablePromise from "cancelable-promise";
 import type { PositionMessage, PositionMessage_Direction, SayMessage } from "@workadventure/messages";
-import { openModal } from "svelte-modals";
 import type { WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { wokaMenuStore } from "../../Stores/WokaMenuStore";
 import { Character } from "../Entity/Character";
@@ -14,11 +13,10 @@ import { showReportScreenStore } from "../../Stores/ShowReportScreenStore";
 import { iframeListener } from "../../Api/IframeListener";
 import banIcon from "../../Components/images/ban-icon.svg";
 import { openDirectChatRoom } from "../../Chat/Utils";
-import chat from "../../Components/images/chat.png";
 import { userIsConnected } from "../../Stores/MenuStore";
-import RequiresLoginForChatModal from "../../Chat/Components/RequiresLoginForChatModal.svelte";
+import { localUserStore } from "../../Connection/LocalUserStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
-import { IconWalk } from "@wa-icons";
+import { IconMessage, IconWalk } from "@wa-icons";
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -88,7 +86,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
             priority: action.priority ?? 0,
             callback: () => {
                 action.callback();
-                wokaMenuStore.removeRemotePlayer(this.userUuid);
+                wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
             },
         });
     }
@@ -101,12 +99,21 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         this.toggleActionsMenu();
     }
 
+    /**
+     * Shows this avatar's card, and leaves it as it is when it already shows (Locate, from the People tab or a
+     * search): unlike a click on the avatar, it never closes the card.
+     */
+    public showCard(): void {
+        if (this.isCardShown()) return;
+        this.openActionsMenu();
+    }
+
     public deactivate(): void {
-        wokaMenuStore.removeRemotePlayer(this.userUuid);
+        wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
     }
 
     public destroy(): void {
-        wokaMenuStore.removeRemotePlayer(this.userUuid);
+        wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
         super.destroy();
     }
 
@@ -114,20 +121,24 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         return this.isClickable();
     }
 
-    private toggleActionsMenu(): void {
-        // Track the open woka menu action
-        analyticsClient.openWokaMenu();
+    /** This avatar's card is the one showing (not a card of another tab or device of the same person). */
+    private isCardShown(): boolean {
+        const card = get(wokaMenuStore);
+        return card !== undefined && !card.isSelf && card.userId === this.userId && card.userUuid === this.userUuid;
+    }
 
-        // Close the woka menu if it is already open by the same remote player
-        const wokaMenuStoreValue = get(wokaMenuStore);
-        if (
-            wokaMenuStoreValue?.userUuid !== undefined &&
-            wokaMenuStoreValue.userUuid !== "" &&
-            wokaMenuStoreValue.userUuid === this.userUuid
-        ) {
-            wokaMenuStore.removeRemotePlayer(this.userUuid);
+    private toggleActionsMenu(): void {
+        // Close the woka menu if it is already open for this avatar
+        if (this.isCardShown()) {
+            wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
             return;
         }
+        this.openActionsMenu();
+    }
+
+    private openActionsMenu(): void {
+        // Track the open woka menu action
+        analyticsClient.openWokaMenu();
 
         // Initialize the woka menu
         wokaMenuStore.initialize(this.playerName, this.userId, this.userUuid, this.visitCardUrl ?? undefined);
@@ -171,7 +182,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 // Walks you to them: the same words as the People tab's button.
                 actionName: get(LL).chat.userList.walkTo(),
                 protected: false,
-                priority: 1,
+                priority: 2,
                 style: "bg-white/10 hover:bg-white/30",
                 callback: () => {
                     // Track the talk to user action
@@ -183,38 +194,54 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                 actionIcon: IconWalk,
             });
         }
-        if (this.chatID != undefined) {
+        // Only a signed-in player gets a chat id, so this shows when you are both signed in: the same button,
+        // words and flow as the People tab's Message, between Walk to and Block. Never on another of your own tabs
+        // or devices: there is no chat with yourself.
+        const chatID = this.getChatID();
+        const isMyOtherSession =
+            chatID === localUserStore.getChatId() || this.userUuid === localUserStore.getLocalUser()?.uuid;
+        if (chatID !== undefined && get(userIsConnected) && !isMyOtherSession) {
             actions.push({
-                actionName: get(LL).chat.userList.sendMessage(),
+                actionName: get(LL).chat.userList.message(),
                 protected: false,
-                priority: 2,
+                priority: 1,
                 style: "bg-white/10 hover:bg-white/30",
+                testId: "wokamenu-message-button",
                 callback: () => {
                     // Track the opened chat action
                     analyticsClient.openedChat();
 
-                    if (!get(userIsConnected)) {
-                        openModal(RequiresLoginForChatModal);
-                        return;
-                    }
-
-                    openDirectChatRoom(this.chatID!).catch((error) => {
+                    openDirectChatRoom(chatID).catch((error) => {
                         console.error("Error opening direct chat room:", error);
                         Sentry.captureException(error, {
                             extra: {
                                 userId: this.userUuid,
-                                chatId: this.chatID!,
+                                chatId: chatID,
                                 playUri: this.scene.roomUrl,
                                 username: this.playerName,
                             },
                         });
                     });
                 },
-                actionIcon: chat,
+                actionIcon: IconMessage,
             });
         }
 
         return actions;
+    }
+
+    /**
+     * Their chat id. A player's chat connects after they arrive on the map, so the id they joined with is often
+     * empty; the world space (the People tab's source) gets it once their chat is up.
+     */
+    private getChatID(): string | undefined {
+        if (this.chatID) return this.chatID;
+        const users = get(this.scene.allUsersInWorldStore);
+        if (!users) return undefined;
+        for (const user of users.values()) {
+            if (user.uuid === this.userUuid && user.chatID) return user.chatID;
+        }
+        return undefined;
     }
 
     private bindEventHandlers(): void {

@@ -22,6 +22,8 @@ export class LocateManager {
     /** The person the running search's card is for ("" while unknown). */
     private searchingFor = "";
     private wokaMenuStoreUnsubscriber?: () => void;
+    /** The avatar the camera was last pointed at for the open card. */
+    private followedCard: { userUuid: string; userId: number } | undefined;
 
     constructor(private scene: GameScene, private cameraManager: CameraManager, private connection: RoomConnection) {
         this.subscribeToLocatePositionMessages();
@@ -57,10 +59,19 @@ export class LocateManager {
                 cancelLocateRequest();
             }
             if (value === undefined) {
-                // TODO: Stop following the remote player
+                this.followedCard = undefined;
                 this.cameraManager.stopFollowRemotePlayer();
             } else if (!value.isSelf && value.userUuid !== undefined && value.userUuid !== "") {
-                this.cameraManager.followRemotePlayer(value.userUuid);
+                // The card fills in one update at a time (name, visit card, each button): the camera starts following
+                // only when the card turns to another avatar, instead of restarting its pan on every update.
+                const followed = this.followedCard;
+                if (followed?.userUuid === value.userUuid && followed.userId === value.userId) return;
+                this.followedCard = { userUuid: value.userUuid, userId: value.userId };
+                // A search card (no avatar yet) keeps the camera where the search centred it: following by account
+                // could pick another tab or device of the same person.
+                if (value.userId !== -1) this.cameraManager.followRemotePlayer(value.userUuid, value.userId);
+            } else {
+                this.followedCard = undefined;
             }
         });
     }
@@ -176,7 +187,8 @@ export class LocateManager {
         // This ensures smooth camera transition when the player is created/updated/recreated
         this.locateActivateTimeout = setTimeout(() => {
             this.locateActivateTimeout = undefined;
-            remoteUser.activate();
+            // Opens the card, never closes it: the search card showing now may already name this person.
+            remoteUser.showCard();
             wokaMenuProgressStore.set(undefined);
         }, 300);
     }
