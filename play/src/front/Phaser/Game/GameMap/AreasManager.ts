@@ -28,7 +28,7 @@ export class AreasManager {
             new Area(
                 this.scene,
                 areaData,
-                this.areaPermissions.isUserHasAreaAccess(areaData.id),
+                !this.areaPermissions.isUserHasAreaAccess(areaData.id),
                 this.areaPermissions.isOverlappingArea(areaData.id)
             )
         );
@@ -53,7 +53,7 @@ export class AreasManager {
             return;
         }
         this.areas[removedAreaIndex].destroy();
-        this.areas = this.areas.filter((area) => area.areaData.id === deletedAreaId);
+        this.areas = this.areas.filter((area) => area.areaData.id !== deletedAreaId);
         this.updateMapEditorOptionForSpecificAreas();
     }
 

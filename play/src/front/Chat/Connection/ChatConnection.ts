@@ -16,6 +16,8 @@ export type ChatUser = {
     playUri: string | undefined;
     isAdmin?: boolean;
     isMember?: boolean;
+    /** A bot (AI character) rather than a person. */
+    isBot?: boolean;
     visitCardUrl?: string;
     color: string | undefined;
     spaceUserId: string | undefined;
@@ -31,6 +33,8 @@ export type AdminUser = {
     playUri: string | undefined;
     isAdmin?: boolean;
     isMember?: boolean;
+    /** A bot (AI character) rather than a person. */
+    isBot?: boolean;
     visitCardUrl?: string;
     color: string | undefined;
     spaceUserId: string | undefined;
@@ -89,6 +93,14 @@ export interface ChatRoom {
     readonly inviteTimestamp?: number;
     /** For a pending invitation: the display name of whoever sent it, if known. */
     readonly inviterName?: string;
+}
+
+/** Accepting an invitation failed because it no longer exists (the room was left or the invite withdrawn). */
+export class InvitationNoLongerAvailableError extends Error {
+    constructor(options?: { cause?: unknown }) {
+        super("Invitation no longer available", options);
+        this.name = "InvitationNoLongerAvailableError";
+    }
 }
 
 export interface ChatRoomMembershipManagement {

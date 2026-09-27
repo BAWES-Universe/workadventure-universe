@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { ChatRoomMembershipManagement, ChatRoom } from "../../Connection/ChatConnection";
+    import { InvitationNoLongerAvailableError } from "../../Connection/ChatConnection";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
     import Avatar from "../Avatar.svelte";
@@ -40,8 +41,12 @@
             .then(() => {
                 if (!room.isRoomFolder) selectedRoomStore.set(room);
             })
-            .catch(() => {
-                warningMessageStore.addWarningMessage($LL.chat.failedToJoinRoom());
+            .catch((error) => {
+                warningMessageStore.addWarningMessage(
+                    error instanceof InvitationNoLongerAvailableError
+                        ? $LL.chat.invitationNoLongerAvailable()
+                        : $LL.chat.failedToJoinRoom()
+                );
             })
             .finally(() => {
                 loadingInvitation = false;

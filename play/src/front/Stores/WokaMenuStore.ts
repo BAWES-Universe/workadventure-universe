@@ -74,8 +74,10 @@ function createWokaMenuStore() {
          * Closes the card when it shows this person. Anyone else leaving the map (a whole map of them when it closes)
          * leaves the card and its subscribers alone.
          */
-        removeRemotePlayer: (userUuid: string) => {
-            if (get({ subscribe })?.userUuid === userUuid) {
+        removeRemotePlayer: (userUuid: string, userId?: number) => {
+            const card = get({ subscribe });
+            // With the avatar's id, only that avatar's card: another tab or device of the same person stays open.
+            if (card?.userUuid === userUuid && (userId === undefined || card.userId === userId)) {
                 set(undefined);
             }
         },

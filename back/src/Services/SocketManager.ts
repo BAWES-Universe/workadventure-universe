@@ -1245,7 +1245,14 @@ export class SocketManager {
 
     handleAskPositionMessage(room: GameRoom, user: User, askPositionMessage: AskPositionMessage) {
         if (room) {
-            const userToJoin = room.getUserByUuid(askPositionMessage.userIdentifier);
+            // A specific avatar of that account when one is asked for (another tab or device of the same person),
+            // else the first one found.
+            const avatar =
+                askPositionMessage.userId !== undefined ? room.getUserById(askPositionMessage.userId) : undefined;
+            const userToJoin =
+                avatar && avatar.uuid === askPositionMessage.userIdentifier
+                    ? avatar
+                    : room.getUserByUuid(askPositionMessage.userIdentifier);
             const position = userToJoin?.getPosition();
             if (position && askPositionMessage.askType === AskPositionMessage_AskType.MOVE) {
                 user.write({

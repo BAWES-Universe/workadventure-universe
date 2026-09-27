@@ -903,6 +903,10 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             return Promise.reject(new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG));
         }
 
+        if (userToInvite === this.client.getUserId()) {
+            return Promise.reject(new Error("There is no direct chat with yourself"));
+        }
+
         const existingDirectRoom = this.getDirectRoomFor(userToInvite);
 
         if (existingDirectRoom) return existingDirectRoom;
@@ -941,6 +945,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     }
 
     getDirectRoomFor(userID: string): (ChatRoom & ChatRoomMembershipManagement) | undefined {
+        // You are a member of every direct room you have, so your own id would match the first one found.
+        if (userID === this.client?.getUserId()) return undefined;
         const directRooms = Array.from(this.roomList.values())
             .filter((room) => {
                 const memberIDs = get(room.members)
