@@ -58,9 +58,16 @@ export const inviteCardRequestStore = writable(false);
 export const findGroupOpenStore = writable(false);
 
 /** Which sections of the People tab are unfolded. Per tab and in memory. */
-export const peopleSectionsOpenStore = writable<{ elsewhere: boolean; offline: boolean }>({
+export const peopleSectionsOpenStore = writable<{
+    elsewhere: boolean;
+    offline: boolean;
+    people: boolean;
+    bots: boolean;
+}>({
     elsewhere: true,
     offline: false,
+    people: true,
+    bots: true,
 });
 
 export function initializeChatVisibilitySubscription() {

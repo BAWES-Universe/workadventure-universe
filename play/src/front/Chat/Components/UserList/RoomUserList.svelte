@@ -17,6 +17,7 @@
     import InviteFooter from "../InviteFooter.svelte";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import UserList from "./UserList.svelte";
+    import PeopleAndBots from "./PeopleAndBots.svelte";
     import type { SelfIdentity } from "./PersonActions";
     import type { PersonGroup } from "./PersonSessions";
     import { groupSessions } from "./PersonSessions";
@@ -27,6 +28,7 @@
      * else online in this world under the name of their room, then the world's members who aren't online,
      * folded shut with a line saying who they are. Searching unfolds whatever matches.
      * Each person is one row however many sessions they have open; the counts still count sessions.
+     * In each room, bots are listed after the people, in a group of their own.
      */
     export let userProviderMerger: UserProviderMerger;
 
@@ -142,7 +144,7 @@
         .map((group) => ({ ...group, people: sortPeople(group.people) }))
         .sort((a, b) => a.name.localeCompare(b.name));
     $: elsewhereShown = elsewhereGroups
-        .map((group) => ({ ...group, people: shown(group.people) }))
+        .map((group) => ({ ...group, all: group.people, people: shown(group.people) }))
         .filter((group) => group.people.length > 0);
 
     $: offlineCount = $usersByRoom.get(undefined)?.users.length ?? 0;
@@ -177,7 +179,13 @@
                         >{$LL.chat.peopleTab.countHere({ count: hereCount })}</span
                     >
                 </h3>
-                <UserList people={hereShown} {isMatrixChatEnabled} />
+                <PeopleAndBots
+                    all={hereAll}
+                    shown={hereShown}
+                    {isMatrixChatEnabled}
+                    {isSearching}
+                    testId="peopleHere"
+                />
             </section>
         {/if}
 
@@ -209,7 +217,14 @@
                             <IconMapPin font-size="13" class="shrink-0 text-white/40" aria-hidden="true" />
                             <span class="truncate">{group.name}</span>
                         </div>
-                        <UserList people={group.people} {isMatrixChatEnabled} />
+                        <PeopleAndBots
+                            all={group.all}
+                            shown={group.people}
+                            {isMatrixChatEnabled}
+                            {isSearching}
+                            peopleHeader={false}
+                            testId="peopleElsewhere"
+                        />
                     {/each}
                 {/if}
             </section>

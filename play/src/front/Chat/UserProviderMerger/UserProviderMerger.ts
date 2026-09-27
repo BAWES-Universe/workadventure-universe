@@ -123,6 +123,7 @@ function mergeEntries(chatUserList: PartialAnyKindOfUser[]): AnyKindOfUser {
             playUri: user.playUri || acc.playUri,
             isAdmin: user.isAdmin || acc.isAdmin,
             isMember: user.isMember || acc.isMember,
+            isBot: user.isBot || acc.isBot,
             visitCardUrl: user.visitCardUrl || acc.visitCardUrl,
             color: user.color || acc.color,
             spaceUserId: user.spaceUserId || acc.spaceUserId,

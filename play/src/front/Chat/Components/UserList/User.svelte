@@ -14,6 +14,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
+    import { requestVisitCardsStore } from "../../../Stores/GameStore";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -28,7 +29,7 @@
         showMyself,
         walkToPerson,
     } from "./PersonNavigation";
-    import { IconChevronDown, IconDoorIn, IconLoader, IconMessage, IconWalk } from "@wa-icons";
+    import { IconChevronDown, IconDoorIn, IconLoader, IconMapPin, IconMessage, IconWalk } from "@wa-icons";
 
     export let user: ChatUser;
     /** All of this person's sessions (tabs, devices), `user` first. One row stands for all of them. */
@@ -81,6 +82,7 @@
     $: actions = getPersonActions({
         isSelf: isMe,
         isMyAccount: isMine,
+        isBot: user.isBot,
         status: $userStatus,
         uuid: user.uuid,
         chatId: user.chatId,
@@ -117,6 +119,16 @@
         if (!user.playUri) return;
         analyticsClient.goToUser();
         goToPersonRoom(user);
+    }
+
+    // A bot's Locate button: the same as tapping its row, from a button people can see.
+    function locate() {
+        if (choosesSession) {
+            sessionsOpen = !sessionsOpen;
+            return;
+        }
+        if ($requestVisitCardsStore != undefined) requestVisitCardsStore.set(null);
+        openWokaMenu();
     }
 
     function sendMessage() {
@@ -272,6 +284,18 @@
                         on:click={goToRoom}
                     >
                         <IconDoorIn font-size="20" />
+                    </PersonActionButton>
+                {/if}
+                {#if actions.locateButton}
+                    <PersonActionButton
+                        class="locate"
+                        label={$LL.chat.userList.follow()}
+                        ariaLabel={$LL.chat.userList.locateUser({ userName: displayName })}
+                        testId={`locate-${user.username}`}
+                        expanded={choosesSession ? sessionsOpen : undefined}
+                        on:click={locate}
+                    >
+                        <IconMapPin font-size="20" />
                     </PersonActionButton>
                 {/if}
                 {#if actions.message !== "hidden"}

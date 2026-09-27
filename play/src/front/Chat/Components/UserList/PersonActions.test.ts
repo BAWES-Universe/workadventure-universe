@@ -97,6 +97,7 @@ describe("getPersonActions", () => {
             goToRoom: false,
             message: "hidden",
             locate: false,
+            locateButton: false,
             businessCard: false,
             ban: false,
             hasMenu: false,
@@ -157,5 +158,31 @@ describe("getPersonActions", () => {
 
     it("has no menu for someone on another map without card when not admin", () => {
         expect(getPersonActions(input({ playUri: ELSEWHERE })).hasMenu).toBe(false);
+    });
+
+    it("gives a bot on this map Walk to and a Locate button, with no menu", () => {
+        const actions = getPersonActions(
+            input({ isBot: true, chatId: undefined, visitCardUrl: "https://card.test", iAmAdmin: true })
+        );
+        expect(actions.walkTo).toBe(true);
+        expect(actions.locateButton).toBe(true);
+        expect(actions.message).toBe("hidden");
+        expect(actions.locate).toBe(false);
+        expect(actions.businessCard).toBe(false);
+        expect(actions.ban).toBe(false);
+        expect(actions.hasMenu).toBe(false);
+    });
+
+    it("gives a bot on another map Go to room only", () => {
+        const actions = getPersonActions(input({ isBot: true, chatId: undefined, playUri: ELSEWHERE, iAmAdmin: true }));
+        expect(actions.goToRoom).toBe(true);
+        expect(actions.locateButton).toBe(false);
+        expect(actions.hasMenu).toBe(false);
+    });
+
+    it("never shows a Locate button for people, who keep Locate in the menu", () => {
+        const actions = getPersonActions(input());
+        expect(actions.locateButton).toBe(false);
+        expect(actions.locate).toBe(true);
     });
 });

@@ -16,6 +16,8 @@ export type ChatUser = {
     playUri: string | undefined;
     isAdmin?: boolean;
     isMember?: boolean;
+    /** A bot (AI character) rather than a person. */
+    isBot?: boolean;
     visitCardUrl?: string;
     color: string | undefined;
     spaceUserId: string | undefined;
@@ -31,6 +33,8 @@ export type AdminUser = {
     playUri: string | undefined;
     isAdmin?: boolean;
     isMember?: boolean;
+    /** A bot (AI character) rather than a person. */
+    isBot?: boolean;
     visitCardUrl?: string;
     color: string | undefined;
     spaceUserId: string | undefined;
