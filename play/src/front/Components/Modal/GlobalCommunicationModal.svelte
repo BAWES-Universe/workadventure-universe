@@ -48,7 +48,8 @@
     let turningOnMegaphone = false;
 
     function getMegaphoneSettings() {
-        return gameManager.getCurrentGameScene().getGameMap().getWam()?.settings?.megaphone;
+        // Called from a reactive statement: don't throw while the scene is switching or reconnecting.
+        return gameManager.tryGetCurrentGameScene()?.wamFile?.settings?.megaphone;
     }
 
     // megaphoneCanBeUsedStore only says whether *this user* can use the megaphone. Read the room setting to tell
