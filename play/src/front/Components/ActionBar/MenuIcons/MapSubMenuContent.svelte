@@ -55,6 +55,7 @@
         resetModalVisibility();
         mapEditorModeStore.switchMode(false);
         showModalGlobalComminucationVisibilityStore.set(true);
+        analyticsClient.globalMessage();
     }
 
     function toggleMapEditorMode() {
