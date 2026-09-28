@@ -4,6 +4,16 @@ const mapEditor: BaseTranslation = {
     map: {
         refreshPrompt: "New version of map detected. Refresh needed",
     },
+    placing: {
+        entity: "Tap the map to place {name}",
+        bot: "Tap the map to place {name}",
+        botUnnamed: "Tap the map to place the bot",
+        waypoint: "Tap the map to add patrol points",
+        area: "Drag on the map to draw an area",
+        trash: "Tap an item on the map to delete it",
+        done: "Done",
+        cancel: "Cancel",
+    },
     sideBar: {
         areaEditor: "Area editor tool",
         entityEditor: "Entity editor tool",
