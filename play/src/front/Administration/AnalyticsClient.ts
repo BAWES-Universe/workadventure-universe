@@ -10,6 +10,18 @@ export type ExpressionSource = "keyboard" | "emoji_menu" | "express_tray";
 /** What caused the chat panel to open. Anything that sets the visibility store directly is "unknown". */
 export type ChatOpenSource = "button" | "bubble" | "area" | "notification" | "script" | "person" | "unknown";
 
+/** A Welcome chapter quest, e.g. "welcome.meet". */
+export type QuestAnalyticsId = `welcome.${"meet" | "explore" | "build"}`;
+export type QuestAnalyticsFrom = "invitation" | "log" | "follow-up";
+export type QuestAnalyticsDevice = "touch" | "pointer";
+export interface QuestOfferProperties {
+    scope: "welcome";
+    questId: "welcome";
+    version: 1;
+    giverKind: "bot" | "area" | "none";
+    device: QuestAnalyticsDevice;
+}
+
 class AnalyticsClient {
     private posthogPromise: Promise<PostHog> | undefined;
 
@@ -1152,6 +1164,84 @@ class AnalyticsClient {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_connection_restored", properties);
+            })
+            .catch((e) => console.error(e));
+    }
+
+    // Welcome quests (proof slice). No names, uuids or room ids: quest and objective ids are fixed keys.
+
+    /** The arrival invitation was shown. */
+    questOffered(properties: QuestOfferProperties): void {
+        this.captureQuest("wa_quest_offered", properties);
+    }
+
+    /** "Not now" on the invitation: it will not be offered again. */
+    questDeclined(properties: QuestOfferProperties): void {
+        this.captureQuest("wa_quest_declined", properties);
+    }
+
+    /** A path was accepted, from the invitation's options, the log or the follow-up card. */
+    questAccepted(properties: { questId: QuestAnalyticsId; from: QuestAnalyticsFrom }): void {
+        this.captureQuest("wa_quest_accepted", properties);
+    }
+
+    /** A quest became the tracked one (the pill). */
+    questTracked(properties: { questId: QuestAnalyticsId; from: QuestAnalyticsFrom }): void {
+        this.captureQuest("wa_quest_tracked", properties);
+    }
+
+    /** An objective was met. `source` is "already-valid" when it was met at acceptance. */
+    questObjectiveDone(properties: {
+        questId: QuestAnalyticsId;
+        objectiveId: string;
+        secondsSinceAccepted: number | null;
+        viaShowMe: boolean;
+        source: "detected" | "already-valid";
+    }): void {
+        this.captureQuest("wa_quest_objective_done", properties);
+    }
+
+    /** A quest finished. */
+    questDone(properties: {
+        questId: QuestAnalyticsId;
+        secondsSinceAccepted: number | null;
+        viaShowMe: boolean;
+    }): void {
+        this.captureQuest("wa_quest_done", properties);
+    }
+
+    /** A quest was set aside (untracked, still accepted) or removed from the log. */
+    questStopped(properties: { questId: QuestAnalyticsId; reason: "set-aside" | "removed" }): void {
+        this.captureQuest("wa_quest_stopped", properties);
+    }
+
+    /** What happened to the tracker (pill). */
+    questTracker(properties: {
+        action: "shown" | "expanded" | "hidden" | "restored" | "suppressed";
+        device: QuestAnalyticsDevice;
+    }): void {
+        this.captureQuest("wa_quest_tracker", properties);
+    }
+
+    /** Nothing here can host or complete a quest. */
+    questGiverUnavailable(properties: { reason: "no-eligible-target" }): void {
+        this.captureQuest("wa_quest_giver_unavailable", properties);
+    }
+
+    /** An accepted quest can't be done right now (e.g. nobody left to meet); progress is kept. */
+    questPaused(properties: { questId: QuestAnalyticsId; reason: "no-eligible-target" }): void {
+        this.captureQuest("wa_quest_paused", properties);
+    }
+
+    /** An offer was passed over without a choice. */
+    questSkipped(properties: { reason: "signin-offer" | "invitation-faded" }): void {
+        this.captureQuest("wa_quest_skipped", properties);
+    }
+
+    private captureQuest(event: string, properties: object): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture(event, properties);
             })
             .catch((e) => console.error(e));
     }

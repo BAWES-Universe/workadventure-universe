@@ -90,6 +90,7 @@ Environment variables for the Play service (frontend and pusher).
 | `MAP_EDITOR_ALLOW_ALL_USERS` | No | If set to true, all users can edit the map. If set to false, only the users in MAP_EDITOR_ALLOWED_USERS or users with the "admin" or "editor" tag can edit the map. Note: this setting is ignored if an Admin API is configured. |
 | `WOKA_SPEED` | No | Avatar (WOKA) movement speed. Defaults to 9 |
 | `FEATURE_FLAG_BROADCAST_AREAS` | No | Enable broadcast areas feature. Defaults to false |
+| `FEATURE_FLAG_QUESTS_PROOF_SLICE` | No | Enable the Welcome quests proof slice (development deployments only). Defaults to false |
 | `KLAXOON_ENABLED` | No | Enable Klaxoon embedded application integration. Defaults to false |
 | `KLAXOON_CLIENT_ID` | No | Klaxoon OAuth2 client ID |
 | `YOUTUBE_ENABLED` | No | Enable YouTube map editor tool. Defaults to false |

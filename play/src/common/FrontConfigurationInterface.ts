@@ -38,6 +38,7 @@ export interface FrontConfigurationInterface {
     SENTRY_TRACES_SAMPLE_RATE: number | undefined;
     WOKA_SPEED: number;
     FEATURE_FLAG_BROADCAST_AREAS: boolean;
+    FEATURE_FLAG_QUESTS_PROOF_SLICE: boolean;
     KLAXOON_ENABLED: boolean;
     KLAXOON_CLIENT_ID: string | undefined;
     YOUTUBE_ENABLED: boolean;

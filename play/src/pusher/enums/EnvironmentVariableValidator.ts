@@ -365,6 +365,9 @@ export const EnvironmentVariables = z.object({
     FEATURE_FLAG_BROADCAST_AREAS: BoolAsString.optional()
         .transform((val) => toBool(val, false))
         .describe("Enable broadcast areas feature. Defaults to false"),
+    FEATURE_FLAG_QUESTS_PROOF_SLICE: BoolAsString.optional()
+        .transform((val) => toBool(val, false))
+        .describe("Enable the Welcome quests proof slice (development deployments only). Defaults to false"),
 
     KLAXOON_ENABLED: BoolAsString.optional()
         .transform((val) => toBool(val, false))

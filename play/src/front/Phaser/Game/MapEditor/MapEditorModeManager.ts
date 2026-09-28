@@ -7,6 +7,7 @@ import type { EditMapCommandMessage } from "@workadventure/messages";
 import pLimit from "p-limit";
 import debug from "debug";
 import merge from "lodash/merge";
+import { Subject } from "rxjs";
 import type { RoomConnection } from "../../../Connection/RoomConnection";
 import type { GameScene } from "../GameScene";
 import {
@@ -41,6 +42,12 @@ export enum EditorToolName {
 }
 
 const logger = debug("map-editor");
+
+/**
+ * Every command this player ran through the editor, once it has run. Read-only observation (the Welcome quests watch
+ * it for a first placed object); nothing here changes how commands run.
+ */
+export const mapEditorCommandExecuted$ = new Subject<Command & FrontCommandInterface>();
 
 export class MapEditorModeManager {
     private scene: GameScene;
@@ -145,6 +152,7 @@ export class MapEditorModeManager {
                 }
 
                 this.scene.getGameMap().updateLastCommandIdProperty(command.commandId);
+                mapEditorCommandExecuted$.next(command);
                 return;
             } catch (error) {
                 console.error(error);

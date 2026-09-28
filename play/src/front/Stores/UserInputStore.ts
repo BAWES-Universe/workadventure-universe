@@ -1,4 +1,5 @@
 import { derived, writable } from "svelte/store";
+import { questInputFocusStore } from "../Quests/QuestInputFocusStore";
 import { menuInputFocusStore } from "./MenuInputFocusStore";
 import { chatInputFocusStore } from "./ChatStore";
 import { showReportScreenStore, userReportEmpty } from "./ShowReportScreenStore";
@@ -22,6 +23,7 @@ export const enableUserInputsStore = derived(
         emoteMenuStore,
         refreshPromptStore,
         lightboxOpenStore,
+        questInputFocusStore,
     ],
     ([
         $menuInputFocusStore,
@@ -32,6 +34,7 @@ export const enableUserInputsStore = derived(
         $emoteMenuStore,
         $refreshPromptStore,
         $lightboxOpenStore,
+        $questInputFocusStore,
     ]) => {
         return (
             !$menuInputFocusStore &&
@@ -41,7 +44,8 @@ export const enableUserInputsStore = derived(
             !$mapExplorerSearchinputFocusStore &&
             !$emoteMenuStore &&
             !$refreshPromptStore &&
-            !$lightboxOpenStore
+            !$lightboxOpenStore &&
+            !$questInputFocusStore
         );
     }
 );
