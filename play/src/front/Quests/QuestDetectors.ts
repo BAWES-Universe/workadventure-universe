@@ -53,7 +53,7 @@ export function armQuestScene(scene: GameScene): () => void {
     const cleanups: Array<() => void> = [];
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const localUuid = localUserStore.getLocalUser()?.uuid;
-    const targets = questTargetsForArrival();
+    let targets = questTargetsForArrival();
     const exchange = new MeetExchange();
 
     // Timers only fire while this map is still the current one.
@@ -64,6 +64,19 @@ export function armQuestScene(scene: GameScene): () => void {
             run();
         }, ms);
         timers.add(timer);
+    };
+
+    // Quest work reached from the host's own callbacks (area changes, chat and say streams, map editor commands)
+    // runs after them, never inside: a throw here can't cut short the area handlers or a store's notification loop.
+    const deferred = (run: () => void) => {
+        queueMicrotask(() => {
+            if (!active) return;
+            try {
+                run();
+            } catch (error) {
+                console.warn("Quests: could not record progress", error);
+            }
+        });
     };
 
     const readPresent = (): QuestPresent[] => {
@@ -167,11 +180,14 @@ export function armQuestScene(scene: GameScene): () => void {
     }
     scene.getGameMapFrontWrapper().onEnterArea((entered) => {
         if (!active) return;
-        const state = get(questStateStore);
-        const explore = state.quests.explore;
-        if (!explore.accepted || explore.done || !state.exploreArea) return;
-        const target = state.exploreArea;
-        if (entered.some((area) => area.id === target.id || area.name === target.name)) completeQuest("explore");
+        const names = entered.map((area) => ({ id: area.id, name: area.name }));
+        deferred(() => {
+            const state = get(questStateStore);
+            const explore = state.quests.explore;
+            if (!explore.accepted || explore.done || !state.exploreArea) return;
+            const target = state.exploreArea;
+            if (names.some((area) => area.id === target.id || area.name === target.name)) completeQuest("explore");
+        });
     });
 
     // Meet: a message each way within one bubble session. -----------------------------------------------------------
@@ -223,9 +239,13 @@ export function armQuestScene(scene: GameScene): () => void {
                     const side = classifyMeetMessage(message as unknown as MeetMessage, localUuid);
                     if (side === "ignore") continue;
                     const sessionId = chat.currentSessionId;
-                    exchange.enterSession(sessionId);
-                    onExchangeSide(side, sessionId);
-                    if (side === "mine") scheduleSimReply(sessionId);
+                    deferred(() => {
+                        // A session that ended before this ran no longer counts (see MeetExchange).
+                        if (chat.currentSessionId !== sessionId) return;
+                        exchange.enterSession(sessionId);
+                        onExchangeSide(side, sessionId);
+                        if (side === "mine") scheduleSimReply(sessionId);
+                    });
                 }
             })
         );
@@ -234,9 +254,12 @@ export function armQuestScene(scene: GameScene): () => void {
             if (type !== "say") return;
             const sessionId = chat.currentSessionId;
             if (sessionId === undefined) return;
-            exchange.enterSession(sessionId);
-            onExchangeSide("mine", sessionId);
-            scheduleSimReply(sessionId);
+            deferred(() => {
+                if (chat.currentSessionId !== sessionId) return;
+                exchange.enterSession(sessionId);
+                onExchangeSide("mine", sessionId);
+                scheduleSimReply(sessionId);
+            });
         });
         cleanups.push(() => saySubscription.unsubscribe());
     }
@@ -244,9 +267,19 @@ export function armQuestScene(scene: GameScene): () => void {
 
     // Build: the first object this player places. -------------------------------------------------------------------
     const buildSubscription = mapEditorCommandExecuted$.subscribe((command) => {
-        if (command instanceof CreateEntityFrontCommand) completeQuest("build");
+        if (command instanceof CreateEntityFrontCommand) deferred(() => completeQuest("build"));
     });
     cleanups.push(() => buildSubscription.unsubscribe());
+
+    // Orbit's Visit link on the room already open only teleports (no new scene): pick up its area and host here.
+    const onHashChange = () => {
+        const live = questTargetsForArrival();
+        if (live.questArea === undefined && live.questHost === undefined) return;
+        targets = live;
+        refreshWorld();
+    };
+    window.addEventListener("hashchange", onHashChange);
+    cleanups.push(() => window.removeEventListener("hashchange", onHashChange));
 
     // Arrival: when the invitation may start its countdown. ------------------------------------------------------
     function armArrival() {

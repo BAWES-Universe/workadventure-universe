@@ -6,13 +6,16 @@ import { get, readable } from "svelte/store";
 vi.mock("../../Phaser/Game/GameManager", () => ({
     gameManager: { tryGetCurrentGameScene: () => undefined },
 }));
+vi.mock("../../Phaser/Game/Say/SayManager", () => ({ popupJustClosed: vi.fn() }));
 vi.mock("../../../i18n/i18n-svelte", () => {
     const fn: unknown = new Proxy(() => "x", { get: () => fn, apply: () => "x" });
     return { default: readable(fn), LL: readable(fn) };
 });
 
+import { popupJustClosed } from "../../Phaser/Game/Say/SayManager";
 import { questInputFocusStore } from "../QuestInputFocusStore";
 import type { QuestLogEntry } from "../QuestCopy";
+import { KEY_HOLD_MS } from "./questActions";
 import QuestInvitation from "./QuestInvitation.svelte";
 import QuestOptions from "./QuestOptions.svelte";
 import QuestPill from "./QuestPill.svelte";
@@ -47,14 +50,13 @@ afterEach(() => {
 });
 
 describe("QuestInvitation", () => {
-    it("offers the options first and a real decline, and Escape only hides it", async () => {
+    it("offers the options first and a real decline; Escape does nothing", async () => {
         const { target, instance } = mount(QuestInvitation, { host: { kind: "none" }, eyebrow: "Lobby" });
         const events: string[] = [];
         instance.$on("showOptions", (event: CustomEvent<{ keyboard: boolean }>) =>
             events.push(`options:${event.detail.keyboard}`)
         );
         instance.$on("notNow", () => events.push("notNow"));
-        instance.$on("dismiss", () => events.push("dismiss"));
 
         const buttons = target.querySelectorAll("button");
         expect(buttons[0].dataset.testid).toBe("quest-show-options");
@@ -67,7 +69,49 @@ describe("QuestInvitation", () => {
         byTestId(target, "quest-not-now")?.click();
         escape(byTestId(target, "quest-show-options"));
         await tick();
-        expect(events).toEqual(["options:false", "options:true", "notNow", "dismiss"]);
+        expect(events).toEqual(["options:false", "options:true", "notNow"]);
+    });
+});
+
+describe("quest controls and the game's keys", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        questInputFocusStore.set(false);
+    });
+
+    it("a click or a tap leaves no focus on the control; a key press keeps it", () => {
+        const { target } = mount(QuestInvitation, { host: { kind: "none" }, eyebrow: "Lobby" });
+        const button = byTestId(target, "quest-not-now");
+        button?.focus();
+        button?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+        expect(document.activeElement).not.toBe(button);
+
+        button?.focus();
+        button?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        expect(document.activeElement).toBe(button);
+    });
+
+    it("Enter or Space on a control is not the game's: no Express, nothing activated, until the key is back up", () => {
+        vi.useFakeTimers();
+        const { target } = mount(QuestPill, { label: "Find the Courtyard", cardId: "quest-card" });
+        const pill = byTestId(target, "quest-pill");
+
+        pill?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        expect(popupJustClosed).toHaveBeenCalled();
+        expect(get(questInputFocusStore)).toBe(true);
+        pill?.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+        // Still held while the game reads that keyup on its next frame.
+        expect(get(questInputFocusStore)).toBe(true);
+        vi.advanceTimersByTime(200);
+        expect(get(questInputFocusStore)).toBe(false);
+
+        // The press closed the surface, so its keyup lands elsewhere: the hold still ends.
+        pill?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+        expect(get(questInputFocusStore)).toBe(true);
+        component?.$destroy();
+        component = undefined;
+        vi.advanceTimersByTime(KEY_HOLD_MS);
+        expect(get(questInputFocusStore)).toBe(false);
     });
 });
 
@@ -163,17 +207,31 @@ describe("QuestCard", () => {
     });
 
     it("reads Stop walking while walking, hides the walk without a place, keeps the description", async () => {
-        const { target, instance } = mount(QuestCard, { ...base, walkLabel: "Walk", walking: true });
+        const { target, instance } = mount(QuestCard, { ...base, walkLabel: "Walk", walking: false });
+        const walk = byTestId(target, "quest-walk");
+        walk?.focus();
+        instance.$set({ walking: true });
+        await tick();
+        // The same button, so keyboard focus stays on it.
         expect(byTestId(target, "quest-walk")).toBeNull();
-        expect(byTestId(target, "quest-stop-walking")).not.toBeNull();
+        expect(byTestId(target, "quest-stop-walking")).toBe(walk);
+        expect(document.activeElement).toBe(walk);
 
         instance.$set({ walkLabel: undefined, walking: false, showMeDescription: "Courtyard is north of you" });
         await tick();
         expect(byTestId(target, "quest-walk")).toBeNull();
         expect(byTestId(target, "quest-stop-walking")).toBeNull();
+        // Focus was on it: it moves to Show me, never to the page.
+        expect(document.activeElement).toBe(byTestId(target, "quest-show-me"));
         expect(byTestId(target, "quest-card")?.getAttribute("aria-describedby")).toBe(
             "quest-card-body quest-card-where"
         );
+    });
+
+    it("offers nothing to find once done (its payoff waiting)", () => {
+        const { target } = mount(QuestCard, { ...base, walkLabel: "Walk", done: true });
+        expect(byTestId(target, "quest-show-me")).toBeNull();
+        expect(byTestId(target, "quest-walk")).toBeNull();
     });
 });
 
@@ -203,6 +261,27 @@ describe("QuestLog", () => {
         await tick();
         expect(byTestId(target, "quest-log-accept-meet")).not.toBeNull();
         expect(byTestId(target, "quest-log-set-aside")).toBeNull();
+    });
+
+    it("keeps keyboard focus on an entry that moves to another section", async () => {
+        const { target, instance } = mount(QuestLog, { entries: [entry("meet", "accepted")], hidden: false });
+        instance.$on("track", () => instance.$set({ entries: [entry("meet", "tracked")] }));
+        byTestId(target, "quest-log-meet")?.querySelector("button")?.click();
+        await tick();
+        const track = byTestId(target, "quest-log-track-meet");
+        track?.focus();
+        track?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        await tick();
+        await tick();
+        expect(document.activeElement).toBe(byTestId(target, "quest-log-meet")?.querySelector(".quest-row"));
+    });
+
+    it("has a tap-to-close backdrop on phones only, kept above the panel", () => {
+        const { target } = mount(QuestLog, { entries: [], hidden: false });
+        const backdrop = byTestId(target, "quest-log-backdrop");
+        expect(backdrop?.classList.contains("md:hidden")).toBe(true);
+        expect(backdrop?.classList.contains("inset-0")).toBe(false);
+        expect(backdrop?.style.bottom).toMatch(/px$/);
     });
 
     it("closes on its close, Escape, and one tap on the map above it; the tap goes no further", async () => {

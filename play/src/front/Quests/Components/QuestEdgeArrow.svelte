@@ -16,6 +16,8 @@
     export let avoid: HTMLElement | undefined;
 
     const MARGIN = 20;
+    /** Half the arrow chip (2.25rem). */
+    const ARROW_HALF = 18;
     let arrow: EdgeArrow = { visible: false, x: 0, y: 0, angle: 0 };
     let frame: number | undefined;
 
@@ -45,6 +47,40 @@
         return { left: MARGIN, top, width: layerRect.width - 2 * MARGIN, height: Math.max(0, bottom - top) };
     }
 
+    /** The bottom-right column (zoom tools, Express), relative to the layer: drawn above the quest layer. */
+    function rightColumn(layerRect: DOMRect): Box | undefined {
+        let box: { left: number; top: number; right: number; bottom: number } | undefined;
+        for (const id of ["actions-explorer", "express"]) {
+            const rect = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect();
+            if (!rect || rect.width === 0 || rect.height === 0) continue;
+            box = box
+                ? {
+                      left: Math.min(box.left, rect.left),
+                      top: Math.min(box.top, rect.top),
+                      right: Math.max(box.right, rect.right),
+                      bottom: Math.max(box.bottom, rect.bottom),
+                  }
+                : { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+        }
+        if (!box) return undefined;
+        return {
+            left: box.left - layerRect.left,
+            top: box.top - layerRect.top,
+            width: box.right - box.left,
+            height: box.bottom - box.top,
+        };
+    }
+
+    function under(placed: EdgeArrow, box: Box): boolean {
+        const pad = ARROW_HALF;
+        return (
+            placed.x >= box.left - pad &&
+            placed.x <= box.left + box.width + pad &&
+            placed.y >= box.top - pad &&
+            placed.y <= box.top + box.height + pad
+        );
+    }
+
     // Per frame from the camera's view of the world: the arrow follows panning and zoom, and never moves the camera.
     function update() {
         frame = requestAnimationFrame(update);
@@ -69,7 +105,15 @@
                 { width: scene.scale.width, height: scene.scale.height },
                 layerRect
             );
-            arrow = edgeArrowPlacement(point, mapView(layerRect));
+            const view = mapView(layerRect);
+            let placed = edgeArrowPlacement(point, view);
+            // Under the zoom tools or Express it could not be seen: keep it left of that column.
+            const column = rightColumn(layerRect);
+            if (placed.visible && column && under(placed, column)) {
+                const width = Math.max(0, column.left - MARGIN / 2 - ARROW_HALF - view.left);
+                placed = edgeArrowPlacement(point, { ...view, width });
+            }
+            arrow = placed;
         } catch {
             arrow = { ...arrow, visible: false };
         }
@@ -102,7 +146,7 @@
         align-items: center;
         justify-content: center;
         border-radius: 999px;
-        background: rgba(27, 42, 65, 0.7);
+        background: rgba(27, 42, 65, 0.9);
         box-shadow: 0 0 12px -2px rgba(167, 139, 250, 0.45);
         pointer-events: none;
         opacity: 0;

@@ -2,10 +2,11 @@ import type { Readable } from "svelte/store";
 import { derived } from "svelte/store";
 import { whenGameScene } from "../Phaser/Game/WhenGameScene";
 import { gameSceneStore } from "../Stores/GameSceneStore";
+import { analyticsClient } from "../Administration/AnalyticsClient";
 import { armQuestScene } from "./QuestDetectors";
 import type { QuestSurface } from "./QuestModel";
 import { visibleSurface } from "./QuestModel";
-import { dispatchQuest, questsEnabled, questStateStore, revealPendingQuest } from "./QuestStore";
+import { dispatchQuest, questDevice, questsEnabled, questStateStore, revealPendingQuest } from "./QuestStore";
 import { questPillSuppressed, questQuiet, questSuppressionStore, questSurfaceSuppressed } from "./QuestUiStores";
 
 /** A completion plays once the dock has been free this long. */
@@ -114,6 +115,7 @@ function start(): () => void {
             newsTimer ??= setTimeout(() => {
                 newsTimer = undefined;
                 dispatchQuest({ type: "news" });
+                analyticsClient.questTracker({ action: "suppressed", device: questDevice() });
             }, SUPPRESSED_NEWS_MS);
         })
     );

@@ -1,5 +1,12 @@
-import type { QuestAreaRef, QuestEntry, QuestPath, QuestState } from "./QuestModel";
-import { emptyEntry, initialQuestState, isQuestPath, MAX_INVITATION_SHOWS, QUEST_PATHS } from "./QuestModel";
+import type { QuestAreaRef, QuestEntry, QuestOrigin, QuestPath, QuestState } from "./QuestModel";
+import {
+    emptyEntry,
+    initialQuestState,
+    isQuestPath,
+    MAX_INVITATION_SHOWS,
+    QUEST_PATHS,
+    restingSurface,
+} from "./QuestModel";
 
 // Same naming as Orbit's preference keys, so the engine can move them server-side later.
 export const QUEST_STATE_KEY = "quests.state";
@@ -28,6 +35,16 @@ function parseAreaRef(raw: unknown): QuestAreaRef | null {
     return { id, name };
 }
 
+const MAX_ORIGIN_FIELD_LENGTH = 128;
+
+function parseOrigin(raw: unknown): QuestOrigin | null {
+    if (!isRecord(raw)) return null;
+    const { room, giver } = raw;
+    if (typeof room !== "string" || room.length > MAX_ORIGIN_FIELD_LENGTH) return null;
+    const validGiver = typeof giver === "string" && giver.trim() !== "" && giver.length <= MAX_ORIGIN_FIELD_LENGTH;
+    return { room, giver: validGiver ? giver : null };
+}
+
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -50,6 +67,7 @@ function parseEntry(raw: unknown): QuestEntry {
         acceptedAt: finiteOrNull(raw.acceptedAt),
         doneAt: done ? finiteOrNull(raw.doneAt) : null,
         viaShowMe: raw.viaShowMe === true,
+        origin: parseOrigin(raw.origin),
     };
 }
 
@@ -110,7 +128,10 @@ export function parseInvitationSeen(raw: string | null): number {
     return Math.min(value, MAX_INVITATION_SHOWS);
 }
 
-/** Builds the starting state from storage. The surface always starts empty: arrival decides what to show. */
+/**
+ * Builds the starting state from storage. A tracked quest comes back as its pill (a waiting payoff still plays from
+ * there); otherwise the dock starts empty and arrival decides what to show.
+ */
 export function restoreQuestState(storage: StorageLike | undefined): QuestState {
     const state = initialQuestState();
     if (!storage) return state;
@@ -126,6 +147,7 @@ export function restoreQuestState(storage: StorageLike | undefined): QuestState 
             const waiting = progress.pending[0];
             state.tracked = waiting ?? progress.tracked;
             state.pending = waiting ? [waiting] : [];
+            state.surface = restingSurface(state);
         }
         state.invitationSeen = parseInvitationSeen(storage.getItem(QUEST_INVITATION_SEEN_KEY));
         state.declined = storage.getItem(QUEST_INVITATION_DECLINED_KEY) === "true";

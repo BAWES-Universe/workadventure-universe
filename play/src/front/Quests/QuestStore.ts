@@ -10,7 +10,7 @@ import type { QuestEvent, QuestFollowUp, QuestPath, QuestState } from "./QuestMo
 import { acceptedUntrackedCount, initialQuestState, QUEST_PATHS, reduceQuest, revealPending } from "./QuestModel";
 import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
 import type { QuestWorld } from "./QuestWorld";
-import { availablePaths, EMPTY_QUEST_WORLD, simulatedWorld } from "./QuestWorld";
+import { availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
 
 /** The flag. With it off nothing here subscribes, listens or renders. */
 export const questsEnabled: boolean = FEATURE_FLAG_QUESTS_PROOF_SLICE === true;
@@ -167,19 +167,21 @@ export function fadeQuestInvitation(): void {
     if (!questsEnabled) return;
     const before = get(state);
     dispatchQuest({ type: "invitation-faded" });
-    if (get(state) !== before) analyticsClient.questSkipped({ reason: "invitation-faded" });
+    if (get(state) !== before) analyticsClient.questTracker({ action: "faded", device: questDevice() });
 }
 
 export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: number = Date.now()): void {
     if (!questsEnabled) return;
     if (path === "explore") refreshWorldBeforeAccept?.();
-    const target = get(questWorldStore).exploreTarget;
+    const world = get(questWorldStore);
+    const target = world.exploreTarget;
     const wasAccepted = get(state).quests[path].accepted;
     dispatchQuest({
         type: "accept",
         path,
         now,
         exploreArea: path === "explore" && target ? { id: target.area.id, name: target.area.name } : undefined,
+        origin: questOrigin(world),
     });
     const after = get(state);
     if (!after.quests[path].accepted || after.tracked !== path) return;

@@ -2,9 +2,10 @@ import type { TranslationFunctions } from "../../i18n/i18n-types";
 import type { MeetProgress } from "./MeetExchange";
 import type { Point } from "./QuestGeometry";
 import { compassDirection, stepsBetween } from "./QuestGeometry";
-import type { QuestPath, QuestState } from "./QuestModel";
+import type { QuestOrigin, QuestPath, QuestState } from "./QuestModel";
 import { QUEST_MINUTES, QUEST_PATHS, questStatus } from "./QuestModel";
 import type { QuestWorld } from "./QuestWorld";
+import { questOrigin } from "./QuestWorld";
 
 /**
  * The words for one quest, from the `quest` namespace. Every sentence is a whole translated string with its names
@@ -40,6 +41,8 @@ export function questBody(
     world: QuestWorld,
     meetProgress: MeetProgress
 ): string {
+    // Done, its payoff waiting for a quiet moment: the card already says how it ended.
+    if (state.quests[path].done) return questPayoffLine(t, path, state, world);
     switch (path) {
         case "meet":
             if (state.quests.meet.paused) return t.quest.card.nobodyHere();
@@ -115,6 +118,11 @@ export function optionRows(t: T, paths: readonly QuestPath[], state: QuestState,
     }));
 }
 
+/** Where an entry came from: where it was accepted, else (available here, or saved before origins) this room. */
+export function entryOrigin(state: QuestState, path: QuestPath, world: QuestWorld): QuestOrigin {
+    return state.quests[path].origin ?? questOrigin(world);
+}
+
 /** The log's entries: everything accepted or done, and what this room offers now. */
 export function logEntries(
     t: T,
@@ -122,13 +130,12 @@ export function logEntries(
     world: QuestWorld,
     available: readonly QuestPath[]
 ): QuestLogEntry[] {
-    const room = world.roomName ?? "";
-    const origin =
-        world.host.kind === "none" ? t.quest.log.here({ room }) : t.quest.log.fromHost({ host: world.host.name, room });
     const entries: QuestLogEntry[] = [];
     for (const path of QUEST_PATHS) {
         const status = questStatus(state, path);
         if (status === "available" && !available.includes(path)) continue;
+        const { room, giver } = entryOrigin(state, path, world);
+        const origin = giver ? t.quest.log.fromHost({ host: giver, room }) : t.quest.log.here({ room });
         entries.push({
             path,
             status,
@@ -150,9 +157,15 @@ export function showMeDescription(
     t: T,
     target: { name: string; position: Point } | undefined,
     player: Point | undefined,
-    path: QuestPath
+    path: QuestPath,
+    /** Explore's fixed area, named when it is not on this map. */
+    exploreArea = ""
 ): string {
-    if (!target || !player) return path === "build" ? t.quest.paths.build.noPosition() : t.quest.card.nobodyHere();
+    if (!target || !player) {
+        if (path === "build") return t.quest.paths.build.noPosition();
+        if (path === "explore") return t.quest.paths.explore.notOnThisMap({ area: exploreArea });
+        return t.quest.card.nobodyHere();
+    }
     const direction = compassDirection(player, target.position);
     return t.quest.card.direction({
         target: target.name,

@@ -1,7 +1,7 @@
 import type { QuestSim } from "./QuestDevSettings";
 import { PREFERRED_HOST_BOT_NAME } from "./QuestDevSettings";
 import type { QuestHostOverride } from "./QuestHash";
-import type { QuestPath, QuestState } from "./QuestModel";
+import type { QuestOrigin, QuestPath, QuestState } from "./QuestModel";
 import { QUEST_PATHS } from "./QuestModel";
 
 /** Someone on this map other than the player (own other tabs excluded). */
@@ -168,4 +168,9 @@ export function availablePaths(state: QuestState, world: QuestWorld, sim: QuestS
 export function simulatedWorld(world: QuestWorld, sim: QuestSim): QuestWorld {
     if (sim !== "empty") return world;
     return { ...world, host: { kind: "none" }, present: [], exploreTarget: undefined, canBuild: false };
+}
+
+/** Who offers quests here and where: what an accepted quest keeps as its origin. */
+export function questOrigin(world: QuestWorld): QuestOrigin {
+    return { room: world.roomName ?? "", giver: world.host.kind === "none" ? null : world.host.name };
 }

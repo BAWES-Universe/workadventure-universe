@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { QuestCoverInputs } from "../QuestSuppression";
 import { computeQuestQuiet, computeQuestSuppression } from "../QuestSuppression";
-import { isKeyboardOpen } from "../../Utils/ViewportGuard";
 
 const nothing: QuestCoverInputs = {
     chatCoversGame: false,
@@ -67,22 +66,5 @@ describe("computeQuestQuiet", () => {
 
     it("is not quiet just for being away", () => {
         expect(computeQuestQuiet({ ...base, availabilityStatus: AvailabilityStatus.AWAY })).toBe(false);
-    });
-});
-
-describe("isKeyboardOpen (shared with ViewportGuard)", () => {
-    const win = (height: number, scale = 1) => ({
-        innerHeight: 800,
-        visualViewport: { height, scale } as unknown as VisualViewport,
-    });
-
-    it("is open when the visual viewport is shorter than the window", () => {
-        expect(isKeyboardOpen(win(500))).toBe(true);
-        expect(isKeyboardOpen(win(799))).toBe(false);
-    });
-
-    it("is not a keyboard when the page is zoomed or there is no visual viewport", () => {
-        expect(isKeyboardOpen(win(400, 2))).toBe(false);
-        expect(isKeyboardOpen({ innerHeight: 800, visualViewport: null })).toBe(false);
     });
 });

@@ -38,6 +38,19 @@ describe("quest copy", () => {
         expect(questBody(t, "meet", state, world, "sent")).toBe("Hello sent. Waiting for a reply.");
         state = reduceQuest(state, { type: "pause", path: "meet", reason: "no-eligible-target" });
         expect(questBody(t, "meet", state, world, "sent")).toBe("Nobody's here right now");
+        // Done while its payoff waits (a call, typing): the card tells how it ended, not the first step again.
+        state = reduceQuest(state, { type: "complete", path: "meet", now: 2 });
+        expect(questBody(t, "meet", state, world, "exchanged")).toBe("Good to meet you.");
+    });
+
+    it("counts steps in Arabic with the right plural form", () => {
+        loadLocale("ar-SA");
+        const ar = i18nObject("ar-SA");
+        const say = (steps: number) => ar.quest.card.direction({ target: "الساحة", direction: "الشمال", steps });
+        expect(say(1)).toContain("1 خطوة ");
+        expect(say(2)).toContain("2 خطوتين");
+        expect(say(5)).toContain("5 خطوات");
+        expect(say(14)).toContain("14 خطوة ");
     });
 
     it("lists tracked, accepted, available and done entries with their reward and requirement", () => {
@@ -65,5 +78,9 @@ describe("quest copy", () => {
             showMeDescription(t, { name: "Courtyard", position: { x: 320, y: -320 } }, { x: 0, y: 0 }, "explore")
         ).toBe("Courtyard is north-east of you, about 14 steps");
         expect(showMeDescription(t, undefined, { x: 0, y: 0 }, "build")).toBe("Open Tools, then Map editor.");
+        expect(showMeDescription(t, undefined, { x: 0, y: 0 }, "explore", "Courtyard")).toBe(
+            "The Courtyard is in another room."
+        );
+        expect(showMeDescription(t, undefined, { x: 0, y: 0 }, "meet")).toBe("Nobody's here right now");
     });
 });

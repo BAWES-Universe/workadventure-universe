@@ -35,6 +35,7 @@ const quest: DeepPartial<Translation["quest"]> = {
             objective: "اعثر على {area}",
             body: "امشِ إلى {area} وادخل إليها.",
             walk: "امشِ إلى {area}",
+            notOnThisMap: "{area} في غرفة أخرى.",
             payoff: "لقد وجدت {area}.",
             lastTime: "وجدت {area} في المرة السابقة.",
         },
@@ -66,7 +67,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         switch: "تبديل",
         setAside: "ضعها جانبًا",
         nobodyHere: "لا أحد هنا الآن",
-        direction: "{target} باتجاه {direction} منك، على بعد {steps} خطوة تقريبًا",
+        direction: "{target} باتجاه {direction} منك، على بعد {steps} {{خطوات|خطوة|خطوتين|خطوات|خطوة|خطوة}} تقريبًا",
     },
     directions: {
         north: "الشمال",

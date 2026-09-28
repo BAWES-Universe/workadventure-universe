@@ -3,6 +3,7 @@
     import { LL } from "../../../i18n/i18n-svelte";
     import AchievementIcon from "../../Components/Icons/AchievementIcon.svelte";
     import QuestRing from "./QuestRing.svelte";
+    import { questControls } from "./questActions";
 
     /** The objective, e.g. "Find the Courtyard". */
     export let label: string;
@@ -25,6 +26,7 @@
     aria-controls={cardId}
     data-testid="quest-pill"
     bind:this={button}
+    use:questControls
     on:click={(event) => dispatch("open", { keyboard: event.detail === 0 })}
 >
     <AchievementIcon height="h-5" width="w-5" strokeColor="stroke-[#c4b5fd]" hover="" classList="shrink-0" />

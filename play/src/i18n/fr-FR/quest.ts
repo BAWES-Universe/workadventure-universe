@@ -35,6 +35,7 @@ const quest: DeepPartial<Translation["quest"]> = {
             objective: "Trouver « {area} »",
             body: "Marchez jusqu'à « {area} » et entrez.",
             walk: "Aller à « {area} »",
+            notOnThisMap: "« {area} » se trouve dans une autre salle.",
             payoff: "Vous avez trouvé « {area} ».",
             lastTime: "Vous avez trouvé « {area} » la dernière fois.",
         },

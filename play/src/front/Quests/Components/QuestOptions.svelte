@@ -7,7 +7,7 @@
     import type { QuestHost } from "../QuestWorld";
     import QuestHostPortrait from "./QuestHostPortrait.svelte";
     import QuestStamp from "./QuestStamp.svelte";
-    import { escapeKey, questKeyboardFocus } from "./questActions";
+    import { escapeKey, questControls, questKeyboardFocus } from "./questActions";
 
     export let host: QuestHost;
     export let title: string;
@@ -23,17 +23,18 @@
 </script>
 
 <div
-    class="quest-surface w-full p-3 pointer-events-auto overflow-y-auto quest-max-h"
+    class="quest-surface @container/quest w-full p-3 pointer-events-auto overflow-y-auto quest-max-h"
     role="dialog"
     aria-modal="false"
     aria-labelledby="quest-options-title"
     data-testid="quest-options"
     use:escapeKey={() => dispatch("close")}
     use:questKeyboardFocus
+    use:questControls
 >
-    <div class="flex items-start gap-3">
+    <div class="quest-header">
         <!-- First in focus order, drawn at the end. -->
-        <div class="order-last shrink-0" bind:this={closeButton}>
+        <div class="quest-header-close" bind:this={closeButton}>
             <ButtonClose
                 size="lg"
                 ariaLabel={$LL.quest.close()}
@@ -42,7 +43,7 @@
             />
         </div>
         <QuestHostPortrait {host} />
-        <h2 id="quest-options-title" class="m-0 min-w-0 flex-1 self-center text-base font-bold leading-snug">
+        <h2 id="quest-options-title" class="quest-header-text m-0 self-center text-base font-bold leading-snug">
             {title}
         </h2>
     </div>

@@ -76,17 +76,6 @@ function pagePosition(win: ViewportGuardWindow): { x: number; y: number } {
 }
 
 /**
- * Whether the on-screen keyboard is up: the visual viewport is shorter than the window. A zoomed page also has a
- * smaller visual viewport: that is not a keyboard.
- */
-export function isKeyboardOpen(win: Pick<ViewportGuardWindow, "innerHeight" | "visualViewport">): boolean {
-    const viewport = win.visualViewport;
-    if (!viewport) return false;
-    if (Math.abs((viewport.scale ?? 1) - 1) > ZOOM_TOLERANCE) return false;
-    return viewport.height < win.innerHeight - KEYBOARD_CLOSED_TOLERANCE;
-}
-
-/**
  * Whether the main input is a touch screen (phones, tablets): where the on-screen keyboard and page pinch-zoom
  * move the page. A laptop with a touch screen has a mouse or trackpad as its main pointer, and is left alone.
  */
@@ -191,7 +180,9 @@ export function installViewportGuard(
 
     const pageZoom = () => viewport?.scale ?? 1;
     const isZoomed = () => Math.abs(pageZoom() - 1) > ZOOM_TOLERANCE;
-    const keyboardOpen = () => isKeyboardOpen(win);
+    // A zoomed page also has a smaller visual viewport: that is not a keyboard.
+    const keyboardOpen = () =>
+        viewport !== null && !isZoomed() && viewport.height < win.innerHeight - KEYBOARD_CLOSED_TOLERANCE;
 
     // Where the page is held while the keyboard is up: where iOS put it to show the field.
     let anchor: { x: number; y: number } | undefined;

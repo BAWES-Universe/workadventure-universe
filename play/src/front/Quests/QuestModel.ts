@@ -17,6 +17,12 @@ export const QUEST_MINUTES: Readonly<Record<QuestPath, number>> = { meet: 2, exp
 
 export type QuestPauseReason = "no-eligible-target";
 
+/** Where a quest was accepted: the log and Orbit say "From {giver} · {room}" wherever the player is now. */
+export interface QuestOrigin {
+    room: string;
+    giver: string | null;
+}
+
 export interface QuestEntry {
     accepted: boolean;
     done: boolean;
@@ -24,6 +30,7 @@ export interface QuestEntry {
     acceptedAt: number | null;
     doneAt: number | null;
     viaShowMe: boolean;
+    origin: QuestOrigin | null;
 }
 
 /**
@@ -69,7 +76,7 @@ export type QuestEvent =
     | { type: "invitation-faded" }
     | { type: "decline" }
     | { type: "open-options" }
-    | { type: "accept"; path: QuestPath; now: number; exploreArea?: QuestAreaRef }
+    | { type: "accept"; path: QuestPath; now: number; exploreArea?: QuestAreaRef; origin?: QuestOrigin }
     | { type: "track"; path: QuestPath }
     | { type: "set-aside" }
     | { type: "remove"; path: QuestPath }
@@ -89,7 +96,15 @@ export type QuestEvent =
     | { type: "reset" };
 
 export function emptyEntry(): QuestEntry {
-    return { accepted: false, done: false, paused: null, acceptedAt: null, doneAt: null, viaShowMe: false };
+    return {
+        accepted: false,
+        done: false,
+        paused: null,
+        acceptedAt: null,
+        doneAt: null,
+        viaShowMe: false,
+        origin: null,
+    };
 }
 
 export function initialQuestState(): QuestState {
@@ -211,6 +226,7 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             if (!entry.accepted) {
                 entry.accepted = true;
                 entry.acceptedAt = event.now;
+                entry.origin = event.origin ? { ...event.origin } : null;
             }
             if (event.path === "explore" && event.exploreArea) state.exploreArea = { ...event.exploreArea };
             state.tracked = event.path;

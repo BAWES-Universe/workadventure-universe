@@ -55,6 +55,7 @@ describe("parseStoredProgress", () => {
             acceptedAt: null,
             doneAt: null,
             viaShowMe: false,
+            origin: null,
         });
         // Done implies accepted.
         expect(progress?.quests.explore).toMatchObject({ accepted: true, done: true, doneAt: 9, viaShowMe: false });
@@ -97,7 +98,7 @@ describe("parseInvitationSeen", () => {
 });
 
 describe("save and restore", () => {
-    it("round-trips progress and always starts with an empty dock", () => {
+    it("round-trips progress and brings the tracked quest back as its pill", () => {
         const storage = memoryStorage();
         let state = initialQuestState();
         state = reduceQuest(state, { type: "invitation-shown" });
@@ -106,16 +107,32 @@ describe("save and restore", () => {
             path: "explore",
             now: 10,
             exploreArea: { id: "a", name: "Hall" },
+            origin: { room: "Lobby", giver: "Receptionist" },
         });
         saveQuestState(storage, state);
         expect(storage.data.get(QUEST_INVITATION_SEEN_KEY)).toBe("1");
         expect(storage.data.has(QUEST_INVITATION_DECLINED_KEY)).toBe(false);
 
         const restored = restoreQuestState(storage);
-        expect(restored.surface).toBe("none");
+        expect(restored.surface).toBe("pill");
         expect(restored.tracked).toBe("explore");
         expect(restored.exploreArea).toEqual({ id: "a", name: "Hall" });
+        expect(restored.quests.explore.origin).toEqual({ room: "Lobby", giver: "Receptionist" });
         expect(restored.invitationSeen).toBe(1);
+    });
+
+    it("a hidden tracked quest, or nothing tracked, restores to an empty dock", () => {
+        let state = reduceQuest(initialQuestState(), { type: "accept", path: "build", now: 1 });
+        state = reduceQuest(state, { type: "hide" });
+        const hidden = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(state) }));
+        expect(hidden.tracked).toBe("build");
+        expect(hidden.surface).toBe("none");
+
+        const asideState = reduceQuest(reduceQuest(initialQuestState(), { type: "accept", path: "build", now: 1 }), {
+            type: "set-aside",
+        });
+        const aside = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(asideState) }));
+        expect(aside.surface).toBe("none");
     });
 
     it("remembers Not now under its own key", () => {

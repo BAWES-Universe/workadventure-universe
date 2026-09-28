@@ -15,6 +15,7 @@ import { FEET_OFFSET_Y, sceneQuestTarget } from "./QuestTargets";
 import type { QuestWorld } from "./QuestWorld";
 
 const LAVENDER = 0xc4b5fd;
+const INK = 0x1b2a41;
 const PERSON_RING_RADIUS = 18;
 const AREA_HOST_FLASH_MS = 3_000;
 const PULSES = 3;
@@ -60,6 +61,9 @@ class SceneMarkers {
         const graphics = this.scene.add.graphics();
         graphics.fillStyle(LAVENDER, 0.12);
         graphics.fillEllipse(0, 0, radius * 2, radius);
+        // A dark edge under the lavender keeps the ring visible on light floors.
+        graphics.lineStyle(4, INK, 0.5);
+        graphics.strokeEllipse(0, 0, radius * 2, radius);
         graphics.lineStyle(2, LAVENDER, 0.85);
         graphics.strokeEllipse(0, 0, radius * 2, radius);
         const ring: Ring = { graphics, target };
@@ -90,11 +94,17 @@ class SceneMarkers {
         );
         outline.setStrokeStyle(2, LAVENDER);
         outline.setDepth(DEPTH_OVERLAY_INDEX);
+        const edge = this.scene.add.rectangle(outline.x, outline.y, area.width, area.height);
+        edge.setStrokeStyle(4, INK, 0.5);
+        edge.setDepth(DEPTH_OVERLAY_INDEX - 1);
+        this.flashes.add(edge);
         this.flashes.add(outline);
         // Scene-bound: the timer and the outline end with the map.
         this.scene.time.delayedCall(AREA_HOST_FLASH_MS, () => {
-            this.flashes.delete(outline);
-            outline.destroy();
+            for (const shape of [edge, outline]) {
+                this.flashes.delete(shape);
+                shape.destroy();
+            }
         });
     }
 

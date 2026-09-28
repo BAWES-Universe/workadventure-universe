@@ -2,7 +2,7 @@ import { derived } from "svelte/store";
 import LL from "../../i18n/i18n-svelte";
 import type { TranslationFunctions } from "../../i18n/i18n-types";
 import type { OrbitQuestEntry } from "../external-modules/admin-api/orbitBridge";
-import { questTitle } from "./QuestCopy";
+import { entryOrigin, questTitle } from "./QuestCopy";
 import type { QuestState } from "./QuestModel";
 import { QUEST_PATHS, QUEST_STAMPS, questStatus } from "./QuestModel";
 import { questAnalyticsId, questsEnabled, questStateStore, questWorldStore } from "./QuestStore";
@@ -13,12 +13,11 @@ import type { QuestWorld } from "./QuestWorld";
  * Only fixed quest keys and display names; nothing that identifies a person or a room beyond its name.
  */
 export function orbitQuestEntries(t: TranslationFunctions, state: QuestState, world: QuestWorld): OrbitQuestEntry[] {
-    const giver = world.host.kind === "none" ? undefined : world.host.name;
-    const room = world.roomName ?? "";
     const entries: OrbitQuestEntry[] = [];
     for (const path of QUEST_PATHS) {
         const status = questStatus(state, path);
         if (status === "available") continue;
+        const { room, giver } = entryOrigin(state, path, world);
         entries.push({
             id: questAnalyticsId(path),
             title: questTitle(t, path),

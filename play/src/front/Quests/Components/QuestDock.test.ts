@@ -8,6 +8,7 @@ vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Pr
 // A map is loaded (timers act only then); it has no player to measure, so the stamp just appears.
 vi.mock("../../Phaser/Game/GameManager", () => ({ gameManager: { tryGetCurrentGameScene: () => ({}) } }));
 vi.mock("../QuestDetectors", () => ({ armQuestScene: () => () => {} }));
+vi.mock("../../Phaser/Game/Say/SayManager", () => ({ popupJustClosed: () => {} }));
 vi.mock("../QuestMarkers", () => ({ startQuestMarkers: () => () => {} }));
 vi.mock("../QuestArrival", () => ({ startQuestArrival: () => () => {} }));
 vi.mock("../../Stores/MenuStore", () => ({ userIsConnected: writable(true) }));

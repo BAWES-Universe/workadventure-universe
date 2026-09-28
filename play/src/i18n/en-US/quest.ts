@@ -36,6 +36,7 @@ const quest: BaseTranslation = {
             objective: "Find the {area}",
             body: "Walk to the {area} and step inside.",
             walk: "Walk to the {area}",
+            notOnThisMap: "The {area} is in another room.",
             payoff: "You found the {area}.",
             lastTime: "You found the {area} last time.",
         },

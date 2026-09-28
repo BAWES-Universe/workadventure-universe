@@ -293,6 +293,15 @@
             return () => ghostSubscriptionUnsubscribe();
         }
     );
+
+    function onTriggerClick(event: MouseEvent) {
+        // With quests on the trigger is a button: a click or a tap leaves no focus on it, so Space and Enter still go
+        // to the game afterwards, as they did before.
+        if (questsEnabled && event.detail > 0 && event.currentTarget instanceof HTMLElement) {
+            event.currentTarget.blur();
+        }
+        openedMenuStore.toggle("profileMenu");
+    }
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -307,9 +316,7 @@
             ? 'relative m-0 border-none text-start text-white hover:brightness-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8629fc]'
             : ''}"
         use:floatingUiRef
-        on:click|preventDefault={() => {
-            openedMenuStore.toggle("profileMenu");
-        }}
+        on:click|preventDefault={onTriggerClick}
     >
         {#if questsEnabled}
             <span class="sr-only">{$LL.menu.sub.profile()}</span>

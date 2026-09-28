@@ -7,7 +7,7 @@
     import { prefersReducedMotion } from "../QuestMotion";
     import QuestRing from "./QuestRing.svelte";
     import QuestStamp from "./QuestStamp.svelte";
-    import { escapeKey } from "./questActions";
+    import { escapeKey, questControls } from "./questActions";
 
     export let path: QuestPath;
     /** The objective, shown on the pill while its ring ticks. */
@@ -104,6 +104,7 @@
         class="quest-surface quest-payoff pointer-events-auto"
         data-testid="quest-payoff"
         use:escapeKey={() => dispatch("dismiss")}
+        use:questControls
         on:click={() => dispatch("dismiss")}
     >
         <span class="shrink-0" class:invisible={stampHidden} bind:this={slot} role="img" aria-label={stampLabel}>

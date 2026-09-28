@@ -1217,7 +1217,7 @@ class AnalyticsClient {
 
     /** What happened to the tracker (pill). */
     questTracker(properties: {
-        action: "shown" | "expanded" | "hidden" | "restored" | "suppressed";
+        action: "shown" | "expanded" | "hidden" | "restored" | "suppressed" | "faded";
         device: QuestAnalyticsDevice;
     }): void {
         this.captureQuest("wa_quest_tracker", properties);
@@ -1234,7 +1234,7 @@ class AnalyticsClient {
     }
 
     /** An offer was passed over without a choice. */
-    questSkipped(properties: { reason: "signin-offer" | "invitation-faded" }): void {
+    questSkipped(properties: { reason: "signin-offer" }): void {
         this.captureQuest("wa_quest_skipped", properties);
     }
 

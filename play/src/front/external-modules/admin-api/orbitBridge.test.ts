@@ -178,12 +178,13 @@ describe("Orbit bridge quest log", () => {
             type: "orbit-bridge-init",
             capabilities: expect.arrayContaining(["quests"]),
         });
-        expect(posted[1]).toEqual({ type: "orbit-quest-state", version: 1, entries: [entry] });
+        expect(posted[1]).toEqual({ type: "orbit-quest-state", version: 1, roomRevision: revision, entries: [entry] });
 
         bridge.setQuestState([{ ...entry, status: "done", stamp: "explorer" }]);
         expect(posted[2]).toEqual({
             type: "orbit-quest-state",
             version: 1,
+            roomRevision: revision,
             entries: [{ ...entry, status: "done", stamp: "explorer" }],
         });
 
@@ -208,8 +209,10 @@ describe("Orbit bridge quest log", () => {
     });
 
     it("rejects malformed quest logs", () => {
-        const good = { type: "orbit-quest-state", version: 1, entries: [entry] };
+        const good = { type: "orbit-quest-state", version: 1, roomRevision: revision, entries: [entry] };
         expect(isOrbitQuestStateMessage(good)).toBe(true);
+        expect(isOrbitQuestStateMessage({ ...good, roomRevision: undefined })).toBe(false);
+        expect(isOrbitQuestStateMessage({ ...good, roomRevision: "short" })).toBe(false);
         expect(isOrbitQuestStateMessage({ ...good, version: 2 })).toBe(false);
         expect(isOrbitQuestStateMessage({ ...good, entries: [{ ...entry, status: "won" }] })).toBe(false);
         expect(isOrbitQuestStateMessage({ ...good, entries: [{ ...entry, stamp: "gold" }] })).toBe(false);

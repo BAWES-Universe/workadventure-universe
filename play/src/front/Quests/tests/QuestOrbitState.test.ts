@@ -27,7 +27,14 @@ describe("the quest log sent to Orbit", () => {
             { id: "welcome.explore", title: "Explore this place", status: "accepted", room: "Lobby" },
             { id: "welcome.build", title: "Try building", status: "done", stamp: "builder", room: "Lobby" },
         ]);
-        expect(isOrbitQuestStateMessage({ type: "orbit-quest-state", version: 1, entries })).toBe(true);
+        expect(
+            isOrbitQuestStateMessage({
+                type: "orbit-quest-state",
+                version: 1,
+                roomRevision: "rev-aaaaaaaaaaaaaaaa",
+                entries,
+            })
+        ).toBe(true);
     });
 
     it("names the host as the giver, and sends an empty log when nothing was accepted", () => {
@@ -39,5 +46,21 @@ describe("the quest log sent to Orbit", () => {
         expect(orbitQuestEntries(t, initialQuestState(), world)).toEqual([]);
         const state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1 });
         expect(orbitQuestEntries(t, state, world)[0].giver).toBe("Receptionist");
+    });
+
+    it("keeps where each quest was accepted, wherever the player is now", () => {
+        const lobby = {
+            ...EMPTY_QUEST_WORLD,
+            roomName: "Lobby",
+            host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Receptionist" },
+        };
+        const state = reduceQuest(initialQuestState(), {
+            type: "accept",
+            path: "meet",
+            now: 1,
+            origin: { room: "Lobby", giver: "Receptionist" },
+        });
+        const garden = { ...lobby, roomName: "Garden", host: { kind: "none" as const } };
+        expect(orbitQuestEntries(t, state, garden)[0]).toMatchObject({ giver: "Receptionist", room: "Lobby" });
     });
 });

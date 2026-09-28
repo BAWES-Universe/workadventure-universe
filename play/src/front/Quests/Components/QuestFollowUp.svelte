@@ -3,7 +3,7 @@
     import { LL } from "../../../i18n/i18n-svelte";
     import ButtonClose from "../../Components/Input/ButtonClose.svelte";
     import type { QuestFollowUp } from "../QuestModel";
-    import { escapeKey, questKeyboardFocus } from "./questActions";
+    import { escapeKey, questControls, questKeyboardFocus } from "./questActions";
 
     export let kind: QuestFollowUp;
 
@@ -17,16 +17,17 @@
 
 <!-- One card after a payoff, never a chain. No timeout: it waits for a choice or the close. -->
 <div
-    class="quest-surface w-full p-3 pointer-events-auto overflow-y-auto quest-max-h"
+    class="quest-surface @container/quest w-full p-3 pointer-events-auto overflow-y-auto quest-max-h"
     role="dialog"
     aria-modal="false"
     aria-labelledby="quest-follow-up-title"
     data-testid="quest-follow-up"
     use:escapeKey={() => dispatch("close")}
     use:questKeyboardFocus
+    use:questControls
 >
-    <div class="flex items-start gap-3">
-        <div class="order-last shrink-0">
+    <div class="quest-header">
+        <div class="quest-header-close">
             <ButtonClose
                 size="lg"
                 ariaLabel={$LL.quest.close()}
@@ -34,7 +35,7 @@
                 on:click={() => dispatch("close")}
             />
         </div>
-        <h2 id="quest-follow-up-title" class="m-0 min-w-0 flex-1 self-center text-base font-bold leading-snug">
+        <h2 id="quest-follow-up-title" class="quest-header-text m-0 self-center text-base font-bold leading-snug">
             {kind === "sign-in" ? $LL.quest.followUp.signInTitle() : $LL.quest.options.tryAnother()}
         </h2>
     </div>

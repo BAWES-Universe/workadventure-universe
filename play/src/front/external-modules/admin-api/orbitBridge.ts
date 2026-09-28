@@ -84,6 +84,8 @@ export interface OrbitQuestEntry {
 export interface OrbitQuestStateMessage {
     type: "orbit-quest-state";
     version: typeof ORBIT_BRIDGE_VERSION;
+    /** Like every outgoing message: lets Orbit drop a log from a frame it no longer shows. */
+    roomRevision: string;
     entries: OrbitQuestEntry[];
 }
 
@@ -182,6 +184,7 @@ export function isOrbitQuestStateMessage(value: unknown): value is OrbitQuestSta
         isRecord(value) &&
         value.type === "orbit-quest-state" &&
         value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
         Array.isArray(value.entries) &&
         value.entries.length <= ORBIT_QUEST_LIMITS.entries &&
         value.entries.every(isOrbitQuestEntry)
@@ -306,6 +309,7 @@ export class OrbitBridge {
         const message: OrbitQuestStateMessage = {
             type: "orbit-quest-state",
             version: ORBIT_BRIDGE_VERSION,
+            roomRevision: this.roomRevision,
             entries: this.questEntries,
         };
         if (isOrbitQuestStateMessage(message)) this.env.post(message);

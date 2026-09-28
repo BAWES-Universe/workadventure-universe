@@ -10,6 +10,7 @@
     import { goToLogin } from "../../Components/ActionBar/MenuIcons/goToLogin";
     import { startQuestArrival } from "../QuestArrival";
     import {
+        exploreAreaName,
         logEntries,
         optionRows,
         questBody,
@@ -39,7 +40,6 @@
         acceptQuest,
         declineQuestInvitation,
         dispatchQuest,
-        fadeQuestInvitation,
         questAnnouncementStore,
         questAvailablePathsStore,
         questDevice,
@@ -169,11 +169,17 @@
         previousPaused = paused;
     }
 
+    /** The quest whose pill has been reported shown (once per tracked quest). */
+    let pillShownFor: QuestPath | null = null;
     $: void onVisibleChange(visible);
     async function onVisibleChange(next: QuestSurface) {
         const before = previousVisible;
         previousVisible = next;
         if (before === next) return;
+        if (next === "pill" && tracked && pillShownFor !== tracked) {
+            pillShownFor = tracked;
+            analyticsClient.questTracker({ action: "shown", device: questDevice() });
+        }
         const active = document.activeElement;
         const focusWasInside =
             !!active &&
@@ -184,6 +190,7 @@
             focusCloseOf(next);
             return;
         }
+        // Only keyboard focus is ever inside: a click or a tap leaves none behind (questControls).
         if (!focusWasInside) return;
         if (before === "options" && next === "invitation") invitation?.focusShowOptions();
         else if (before === "card" && next === "pill") pill?.focus();
@@ -192,6 +199,9 @@
             if (opener?.isConnected) opener.focus();
             else if (next === "pill") pill?.focus();
             else profileMenuTrigger()?.focus();
+        } else if (next === "none") {
+            // Faded or covered: the surface is still fading out and holds focus until it goes. Move it now.
+            profileMenuTrigger()?.focus();
         }
         // Whatever held focus is gone (replaced or hidden): never leave it on the page body.
         if (!document.activeElement || document.activeElement === document.body) profileMenuTrigger()?.focus();
@@ -237,7 +247,7 @@
             if (target && position) described = { name: target.name, position };
             player = playerFeet(scene);
         }
-        whereDescription = showMeDescription(t, described, player, tracked);
+        whereDescription = showMeDescription(t, described, player, tracked, exploreAreaName(state, world));
         questAnnouncementStore.push(whereDescription);
     }
 
@@ -399,6 +409,8 @@
     $: if ($questAnnouncementStore.length > 0) announceNext();
 
     $: fullWidth = $questDockWidthStore === "full";
+    $: coversExpress = fullWidth && visible !== "none" && visible !== "pill" && visible !== "log";
+    $: trackedDone = !!tracked && state.quests[tracked].done;
 
     // Read when a surface leaves: it fades only when nothing replaces it (faded, hidden or covered), else it is
     // swapped at once for the next one.
@@ -434,93 +446,102 @@
     />
 {/if}
 
-<!-- Anchored to the physical left, like the Express column is to the physical right: the two never share a corner,
-     in Arabic too. Everything inside uses logical start/end. Only the surfaces take taps: the rest of the dock lets
-     them through to the map, so the joystick and tap-to-walk work around it. -->
-<div
-    class="absolute bottom-2 left-1 md:left-2 xl:left-4 flex flex-col items-start gap-2 pointer-events-none md:w-[22rem] {fullWidth
-        ? 'w-[calc(100%-0.5rem)]'
-        : 'w-[calc(100%-5.5rem)]'}"
-    data-testid="quest-dock"
-    bind:this={dock}
->
-    {#key visible}
-        {#if visible !== "none" && visible !== "log"}
-            <div class="w-full flex" in:fly={{ y: 12, duration: motionMs(200) }} out:fade={{ duration: fadeOutMs() }}>
-                {#if visible === "invitation"}
-                    <QuestInvitation
-                        bind:this={invitation}
-                        host={world.host}
-                        {eyebrow}
-                        on:showOptions={(event) => onShowOptions(event.detail.keyboard)}
-                        on:notNow={() => declineQuestInvitation()}
-                        on:dismiss={() => fadeQuestInvitation()}
-                    />
-                {:else if visible === "options"}
-                    <QuestOptions
-                        bind:this={options}
-                        host={world.host}
-                        title={optionsTitle}
-                        {rows}
-                        on:close={() => dispatchQuest({ type: "close" })}
-                        on:accept={(event) => onAccept(event.detail)}
-                    />
-                {:else if visible === "pill" && tracked}
-                    <div class="max-w-full {fullWidth ? 'max-w-[calc(100%-5rem)] md:max-w-full' : ''}">
-                        <QuestPill
-                            bind:this={pill}
-                            label={objective}
-                            done={false}
-                            cardId={CARD_ID}
-                            on:open={(event) => onOpenCard(event.detail.keyboard)}
+<!-- The frame gives the surfaces the section's height to size against (40cqh). In "full" width a card covers the
+     Express column while it is open (z-index); the pill never does. -->
+<div class="quest-dock-frame {coversExpress ? 'z-[1]' : ''}" data-testid="quest-dock-frame">
+    <!-- Anchored to the physical left, like the Express column is to the physical right: the two never share a
+         corner, in Arabic too. Everything inside uses logical start/end. Only the surfaces take taps: the rest of the
+         dock lets them through to the map, so the joystick and tap-to-walk work around it. -->
+    <div
+        class="absolute bottom-2 left-1 md:left-2 xl:left-4 flex flex-col items-start gap-2 pointer-events-none md:w-[min(22rem,calc(100%-5.5rem))] {fullWidth
+            ? 'w-[calc(100%-0.5rem)]'
+            : 'w-[calc(100%-5.5rem)]'}"
+        data-testid="quest-dock"
+        bind:this={dock}
+    >
+        {#key visible}
+            {#if visible !== "none" && visible !== "log"}
+                <div
+                    class="w-full flex"
+                    in:fly={{ y: 12, duration: motionMs(200) }}
+                    out:fade={{ duration: fadeOutMs() }}
+                >
+                    {#if visible === "invitation"}
+                        <QuestInvitation
+                            bind:this={invitation}
+                            host={world.host}
+                            {eyebrow}
+                            on:showOptions={(event) => onShowOptions(event.detail.keyboard)}
+                            on:notNow={() => declineQuestInvitation()}
                         />
-                    </div>
-                {:else if visible === "card" && tracked}
-                    <QuestCard
-                        bind:this={card}
-                        id={CARD_ID}
-                        host={world.host}
-                        {eyebrow}
-                        title={objective}
-                        body={questBody(t, tracked, state, world, $questMeetProgressStore)}
-                        showMeDescription={whereDescription}
-                        {walkLabel}
-                        walking={$questWalkingStore}
-                        on:close={() => dispatchQuest({ type: "close" })}
-                        on:showMe={onShowMe}
-                        on:walk={onWalk}
-                        on:stopWalking={() => stopQuestWalk()}
-                        on:switch={(event) => onSwitch(event.detail.keyboard)}
-                        on:setAside={() => setAsideQuest()}
-                    />
-                {:else if visible === "payoff" && state.payoff}
-                    <QuestPayoff
-                        path={state.payoff}
-                        objective={questObjective(t, state.payoff, state, world)}
-                        {eyebrow}
-                        line={questPayoffLine(t, state.payoff, state, world)}
-                        stampLabel={t.quest.stamps.badge({ stamp: stampName(t, state.payoff) })}
-                        flyFrom={payoffFrom}
-                        {layer}
-                        on:ticked={onPayoffTicked}
-                        on:dismiss={onPayoffDismiss}
-                    />
-                {:else if visible === "follow-up" && state.followUp}
-                    <QuestFollowUpCard
-                        kind={state.followUp}
-                        on:close={onFollowUpClose}
-                        on:signIn={onSignIn}
-                        on:tryAnother={(event) => onTryAnother(event.detail.keyboard)}
-                        on:backToExploring={() => dispatchQuest({ type: "follow-up-closed" })}
-                    />
-                {/if}
-            </div>
-        {/if}
-    {/key}
+                    {:else if visible === "options"}
+                        <QuestOptions
+                            bind:this={options}
+                            host={world.host}
+                            title={optionsTitle}
+                            {rows}
+                            on:close={() => dispatchQuest({ type: "close" })}
+                            on:accept={(event) => onAccept(event.detail)}
+                        />
+                    {:else if visible === "pill" && tracked}
+                        <div class="max-w-full {fullWidth ? 'max-w-[calc(100%-5rem)] md:max-w-full' : ''}">
+                            <QuestPill
+                                bind:this={pill}
+                                label={objective}
+                                done={trackedDone}
+                                cardId={CARD_ID}
+                                on:open={(event) => onOpenCard(event.detail.keyboard)}
+                            />
+                        </div>
+                    {:else if visible === "card" && tracked}
+                        <QuestCard
+                            bind:this={card}
+                            id={CARD_ID}
+                            host={world.host}
+                            {eyebrow}
+                            title={objective}
+                            body={questBody(t, tracked, state, world, $questMeetProgressStore)}
+                            showMeDescription={whereDescription}
+                            {walkLabel}
+                            walking={$questWalkingStore}
+                            done={trackedDone}
+                            on:close={() => dispatchQuest({ type: "close" })}
+                            on:showMe={onShowMe}
+                            on:walk={onWalk}
+                            on:stopWalking={() => stopQuestWalk()}
+                            on:switch={(event) => onSwitch(event.detail.keyboard)}
+                            on:setAside={() => setAsideQuest()}
+                        />
+                    {:else if visible === "payoff" && state.payoff}
+                        <QuestPayoff
+                            path={state.payoff}
+                            objective={questObjective(t, state.payoff, state, world)}
+                            {eyebrow}
+                            line={questPayoffLine(t, state.payoff, state, world)}
+                            stampLabel={t.quest.stamps.badge({ stamp: stampName(t, state.payoff) })}
+                            flyFrom={payoffFrom}
+                            {layer}
+                            on:ticked={onPayoffTicked}
+                            on:dismiss={onPayoffDismiss}
+                        />
+                    {:else if visible === "follow-up" && state.followUp}
+                        <QuestFollowUpCard
+                            kind={state.followUp}
+                            on:close={onFollowUpClose}
+                            on:signIn={onSignIn}
+                            on:tryAnother={(event) => onTryAnother(event.detail.keyboard)}
+                            on:backToExploring={() => dispatchQuest({ type: "follow-up-closed" })}
+                        />
+                    {/if}
+                </div>
+            {/if}
+        {/key}
+    </div>
 </div>
 
 <style lang="scss">
-    /* Shared by every quest surface. Dark glass at 90% so 13px text keeps its contrast over a white floor. */
+    /* Shared by every quest surface. Dark glass at 90% so small text keeps its contrast over a white floor. Sizes in
+       rem, so they follow the text-size setting. */
     :global(.quest-surface) {
         box-sizing: border-box;
         color: #fff;
@@ -530,13 +551,43 @@
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
     }
+    :global(.quest-dock-frame) {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        container-type: size;
+    }
     :global(.quest-max-h) {
-        max-height: 45vh;
-        max-height: 45cqh;
+        max-height: 40vh;
+        max-height: 40cqh;
+    }
+    /* Close and portrait on one row; below 12rem of card (a phone at large text) the title takes its own row. */
+    :global(.quest-header) {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+    :global(.quest-header-close) {
+        order: 1;
+        flex-shrink: 0;
+        margin-inline-start: auto;
+    }
+    :global(.quest-header-text) {
+        order: 2;
+        flex: 1 0 100%;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+    @container quest (min-width: 12rem) {
+        :global(.quest-header-text) {
+            order: 0;
+            flex: 1 1 0%;
+        }
     }
     /* Not .u-eyebrow: no letter-spacing (Arabic stays joined), no capitals (names keep their case). */
     :global(.quest-eyebrow) {
-        font-size: 13px;
+        font-size: 0.8125rem;
         font-weight: 600;
         line-height: 1.3;
         letter-spacing: 0;
@@ -544,7 +595,7 @@
         color: #c4b5fd;
     }
     :global(.quest-secondary) {
-        font-size: 13px;
+        font-size: 0.8125rem;
         line-height: 1.4;
         color: rgba(255, 255, 255, 0.8);
     }
@@ -557,7 +608,7 @@
         border-radius: 0.5rem;
         white-space: normal;
         text-align: center;
-        font-size: 14px;
+        font-size: 0.875rem;
         font-weight: 700;
         line-height: 1.25;
         cursor: pointer;
@@ -579,7 +630,7 @@
         color: #fff;
         background: transparent;
         text-align: start;
-        font-size: 14px;
+        font-size: 0.875rem;
         line-height: 1.3;
         cursor: pointer;
     }
@@ -599,7 +650,7 @@
         padding: 0.25rem 0.5rem;
         color: #c4b5fd;
         background: transparent;
-        font-size: 14px;
+        font-size: 0.875rem;
         font-weight: 600;
         white-space: normal;
         text-align: start;
@@ -627,7 +678,7 @@
         border: 1px solid rgba(167, 139, 250, 0.22);
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
-        font-size: 14px;
+        font-size: 0.875rem;
         font-weight: 600;
         white-space: nowrap;
         pointer-events: auto;
@@ -644,16 +695,27 @@
         text-align: start;
         cursor: pointer;
     }
+    /* On phones the log spans the section: above the Express column, which would otherwise take taps on its
+       footer. On wider screens it is a side panel that leaves that column alone. */
     :global(.quest-log) {
         position: absolute;
         left: 0;
         right: 0;
         bottom: 0;
+        z-index: 1;
         max-height: 100%;
         border-radius: 0.5rem 0.5rem 0 0;
     }
+    :global(.quest-log-backdrop) {
+        position: absolute;
+        left: 0;
+        right: 0;
+        z-index: 1;
+        pointer-events: auto;
+    }
     @media (min-width: 768px) {
         :global(.quest-log) {
+            z-index: auto;
             left: 0.5rem;
             right: auto;
             bottom: 0.5rem;
@@ -669,14 +731,14 @@
     }
     :global(.quest-log-section) {
         margin: 0.75rem 0 0.25rem;
-        font-size: 12px;
+        font-size: 0.75rem;
         font-weight: 700;
         color: rgba(255, 255, 255, 0.6);
     }
     :global(.quest-log-details) {
         padding-inline: 3.5rem 0.5rem;
         padding-bottom: 0.5rem;
-        font-size: 14px;
+        font-size: 0.875rem;
     }
     :global(.quest-log-footer) {
         border-top: 1px solid rgba(255, 255, 255, 0.08);

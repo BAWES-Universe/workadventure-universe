@@ -253,7 +253,8 @@
             {/if}
             <ExternalComponents zone="centeredPopup" />
 
-            <!-- Quests (flag on only): bottom-left, before the bottom-right column so that column paints above it. -->
+            <!-- Quests (flag on only): bottom-left, before the bottom-right column so that column paints above it
+                 (only the log on phones and a "full" width card cover it, with a z-index, while open). -->
             {#if questsEnabled}
                 <QuestDock />
             {/if}

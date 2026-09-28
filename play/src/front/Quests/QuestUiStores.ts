@@ -1,5 +1,5 @@
 import type { Readable } from "svelte/store";
-import { derived, readable } from "svelte/store";
+import { derived } from "svelte/store";
 import { hideActionBarStoreBecauseOfChatBar } from "../Chat/ChatSidebarWidthStore";
 import { highlightFullScreen } from "../Stores/ActionsCamStore";
 import { actionsMenuStore } from "../Stores/ActionsMenuStore";
@@ -16,25 +16,12 @@ import { popupVisibilityStore } from "../Stores/PopupStore";
 import { isInRemoteConversation } from "../Stores/StreamableCollectionStore";
 import { inputFormFocusStore } from "../Stores/UserInputStore";
 import { wokaMenuStore } from "../Stores/WokaMenuStore";
-import { isKeyboardOpen, isTouchScreen } from "../Utils/ViewportGuard";
+import { isTouchScreen } from "../Utils/ViewportGuard";
 import type { QuestSuppression } from "./QuestSuppression";
 import { computeQuestQuiet, computeQuestSuppression } from "./QuestSuppression";
 
 /** Below this width the chat is drawn full width (chat.scss), whatever its sidebar width. */
 const CHAT_FULL_WIDTH_BELOW_PX = 768;
-
-/**
- * On touch screens, whether the on-screen keyboard is up (ViewportGuard's test). Always false elsewhere. Listens to
- * visualViewport resizes only while something subscribes, and only reads.
- */
-export const keyboardOpenStore: Readable<boolean> = readable(false, (set) => {
-    if (typeof window === "undefined" || !isTouchScreen(window) || !window.visualViewport) return;
-    const viewport = window.visualViewport;
-    const update = () => set(isKeyboardOpen(window));
-    update();
-    viewport.addEventListener("resize", update, { passive: true });
-    return () => viewport.removeEventListener("resize", update);
-});
 
 const typingStore = derived(
     [inputFormFocusStore, chatInputFocusStore, menuInputFocusStore],
@@ -58,7 +45,6 @@ export const questSuppressionStore: Readable<QuestSuppression> = derived(
         actionsMenuStore,
         requestVisitCardsStore,
         expressTrayStore,
-        keyboardOpenStore,
         typingStore,
     ],
     ([
@@ -74,7 +60,6 @@ export const questSuppressionStore: Readable<QuestSuppression> = derived(
         $actionsMenu,
         $requestVisitCards,
         $expressTray,
-        $keyboardOpen,
         $typing,
     ]) =>
         computeQuestSuppression({
@@ -87,7 +72,8 @@ export const questSuppressionStore: Readable<QuestSuppression> = derived(
             popupOpen: $popupOpen,
             personCardOpen: $wokaMenu !== undefined || $actionsMenu !== undefined || $requestVisitCards !== null,
             expressTrayOpen: $expressTray !== "closed",
-            keyboardOpen: touchScreen && ($keyboardOpen || $typing),
+            // On a touch screen the on-screen keyboard is up exactly while a field has focus.
+            keyboardOpen: touchScreen && $typing,
         })
 );
 

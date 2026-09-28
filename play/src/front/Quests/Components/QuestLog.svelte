@@ -1,12 +1,12 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, tick } from "svelte";
     import { LL } from "../../../i18n/i18n-svelte";
     import ButtonClose from "../../Components/Input/ButtonClose.svelte";
     import type { QuestLogEntry } from "../QuestCopy";
     import type { QuestDockWidth } from "../QuestDevSettings";
     import type { QuestPath } from "../QuestModel";
     import QuestStamp from "./QuestStamp.svelte";
-    import { escapeKey, questKeyboardFocus } from "./questActions";
+    import { escapeKey, questControls, questKeyboardFocus } from "./questActions";
 
     export let entries: QuestLogEntry[];
     export let hidden: boolean;
@@ -64,6 +64,35 @@
         return !!active && !!panel?.contains(active);
     }
 
+    /**
+     * Track, Set aside and Remove move the entry to another section, which redraws its row: pressed from the keyboard,
+     * focus follows the entry instead of falling to the page.
+     */
+    async function moveEntry(event: MouseEvent, path: QuestPath, run: () => void) {
+        run();
+        if (event.detail !== 0) return;
+        await tick();
+        if (containsFocus()) return;
+        const row = panel?.querySelector<HTMLElement>(`[data-testid="quest-log-${path}"] .quest-row`);
+        if (row) row.focus();
+        else focusClose();
+    }
+
+    // Phones only: the strip of map between the cameras and the panel. On wider screens the panel is a side panel and
+    // the map around it stays live (close, Escape and Back close it).
+    let panelHeight = 0;
+    let stripTop = 0;
+    $: measureStrip(panelHeight);
+    function measureStrip(_height: number) {
+        const section = panel?.offsetParent;
+        const cameras = document.querySelector("[data-camera-block]")?.getBoundingClientRect();
+        if (!section || !cameras || cameras.height <= 0) {
+            stripTop = 0;
+            return;
+        }
+        stripTop = Math.max(0, cameras.bottom - section.getBoundingClientRect().top);
+    }
+
     /** One tap on the uncovered map closes the log, and goes no further (it never walks the player). */
     function closeOnTap(node: HTMLElement) {
         const onClick = (event: MouseEvent) => {
@@ -75,7 +104,13 @@
     }
 </script>
 
-<div class="absolute inset-0 pointer-events-auto" data-testid="quest-log-backdrop" aria-hidden="true" use:closeOnTap />
+<div
+    class="quest-log-backdrop md:hidden"
+    style="top: {stripTop}px; bottom: {panelHeight}px;"
+    data-testid="quest-log-backdrop"
+    aria-hidden="true"
+    use:closeOnTap
+/>
 <div
     class="quest-surface quest-log pointer-events-auto flex flex-col"
     role="dialog"
@@ -83,8 +118,10 @@
     aria-labelledby="quest-log-title"
     data-testid="quest-log"
     bind:this={panel}
+    bind:clientHeight={panelHeight}
     use:escapeKey={() => dispatch("close")}
     use:questKeyboardFocus
+    use:questControls
 >
     <div class="quest-log-header flex items-center gap-3 p-3">
         <div class="order-last shrink-0" bind:this={closeWrapper}>
@@ -134,7 +171,8 @@
                                             type="button"
                                             class="quest-text-btn"
                                             data-testid="quest-log-accept-{entry.path}"
-                                            on:click={() => dispatch("accept", entry.path)}
+                                            on:click={(event) =>
+                                                moveEntry(event, entry.path, () => dispatch("accept", entry.path))}
                                         >
                                             {anyTracked ? $LL.quest.log.trackInstead() : $LL.quest.log.track()}
                                         </button>
@@ -143,7 +181,8 @@
                                             type="button"
                                             class="quest-text-btn"
                                             data-testid="quest-log-track-{entry.path}"
-                                            on:click={() => dispatch("track", entry.path)}
+                                            on:click={(event) =>
+                                                moveEntry(event, entry.path, () => dispatch("track", entry.path))}
                                         >
                                             {anyTracked ? $LL.quest.log.trackInstead() : $LL.quest.log.track()}
                                         </button>
@@ -152,7 +191,8 @@
                                             type="button"
                                             class="quest-text-btn"
                                             data-testid="quest-log-remove-{entry.path}"
-                                            on:click={() => dispatch("remove", entry.path)}
+                                            on:click={(event) =>
+                                                moveEntry(event, entry.path, () => dispatch("remove", entry.path))}
                                         >
                                             {$LL.quest.log.remove()}
                                         </button>
@@ -161,7 +201,8 @@
                                             type="button"
                                             class="quest-text-btn"
                                             data-testid="quest-log-set-aside"
-                                            on:click={() => dispatch("setAside")}
+                                            on:click={(event) =>
+                                                moveEntry(event, entry.path, () => dispatch("setAside"))}
                                         >
                                             {$LL.quest.card.setAside()}
                                         </button>
@@ -170,7 +211,8 @@
                                             type="button"
                                             class="quest-text-btn"
                                             data-testid="quest-log-remove-{entry.path}"
-                                            on:click={() => dispatch("remove", entry.path)}
+                                            on:click={(event) =>
+                                                moveEntry(event, entry.path, () => dispatch("remove", entry.path))}
                                         >
                                             {$LL.quest.log.remove()}
                                         </button>
