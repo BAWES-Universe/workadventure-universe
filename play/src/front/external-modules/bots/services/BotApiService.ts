@@ -1,5 +1,7 @@
 import type { BotData } from "../types";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
+import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
+import { localUserStore } from "../../../Connection/LocalUserStore";
 
 interface AuthError extends Error {
     isAuthError: boolean;
@@ -40,6 +42,8 @@ export interface UpdateBotDto extends Partial<CreateBotDto> {
 
 export class BotApiService {
     private accessToken: string | null = null;
+    /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
+    private gameToken: GameTokenHolder | null = null;
     private adminUrl: string | null = null;
     private roomId: string | null = null;
     private botServerUrl: string | null = null;
@@ -63,6 +67,9 @@ export class BotApiService {
             this.sessionTokenPromise = null;
         }
         this.accessToken = nextAccessToken;
+        if (!userAccessToken) this.gameToken = null;
+        else if (this.gameToken?.userAccessToken === userAccessToken) this.gameToken.roomId = roomId;
+        else this.gameToken = { userAccessToken, roomId };
 
         try {
             this.adminUrl = adminUrl ? resolveCredentialUrl(adminUrl, window.location.href).origin : null;
@@ -161,7 +168,8 @@ export class BotApiService {
 
     /**
      * Fetch session token from Admin API /api/auth/session endpoint
-     * Uses OIDC accessToken in Authorization header
+     * Uses OIDC accessToken in Authorization header, renewed first when it has run out. If Orbit refuses it anyway,
+     * renews it once more (forced) and tries again.
      */
     private async fetchSessionTokenFromAdminApi(): Promise<string | null> {
         if (!this.adminUrl || !this.accessToken) {
@@ -171,8 +179,40 @@ export class BotApiService {
             return null;
         }
 
+        const accessToken = await this.freshAccessToken(false);
+        if (!accessToken) return null;
+        const session = await this.exchangeForOrbitSession(accessToken);
+        if (session !== "refused") return session;
+
+        // Orbit refused the access token (run out, or revoked early): renew it through the refresh token and retry.
+        const renewed = await this.freshAccessToken(true);
+        if (!renewed || renewed === accessToken) return null;
+        const retried = await this.exchangeForOrbitSession(renewed);
+        return retried === "refused" ? null : retried;
+    }
+
+    /**
+     * The OIDC access token to exchange for an Orbit session. The one captured when the room loaded lasts an hour
+     * or so; this renews it through the pusher's /me (shared with Orbit's own sign-in) when it has run out.
+     */
+    private async freshAccessToken(force: boolean): Promise<string | null> {
+        const holder = this.gameToken;
+        if (!holder) return this.accessToken;
+        // Orbit's frame (or a reconnect) may have renewed the game's token since the room loaded: start from the
+        // newest one, since a rotated refresh token makes the old one useless.
+        const stored = localUserStore.getAuthToken();
+        if (stored && stored !== holder.userAccessToken) holder.userAccessToken = stored;
+        const accessToken = await freshOrbitAccessToken(holder, force, () => this.gameToken === holder);
+        if (!accessToken || this.gameToken !== holder) return null;
+        // Same player, renewed token: an Orbit session already cached is still theirs.
+        this.accessToken = accessToken;
+        return accessToken;
+    }
+
+    /** Exchanges an OIDC access token for an opaque Orbit session; "refused" when Orbit says the token is bad. */
+    private async exchangeForOrbitSession(accessToken: string): Promise<string | null | "refused"> {
         const adminUrl = this.adminUrl;
-        const accessToken = this.accessToken;
+        if (!adminUrl) return null;
 
         try {
             const response = await fetch(`${adminUrl}/api/auth/session`, {
@@ -191,12 +231,10 @@ export class BotApiService {
                         errorText
                     );
                 }
-                return null;
+                return response.status === 401 ? "refused" : null;
             }
 
             const data = await response.json();
-            const sessionToken = data.sessionId;
-            const expiresAt = data.expiresAt;
 
             if (!isOrbitSessionResponse(data)) {
                 if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -211,13 +249,13 @@ export class BotApiService {
                 return null;
             }
 
-            sessionStorage.setItem(SESSION_KEY, sessionToken);
-            sessionStorage.setItem(SESSION_EXPIRES_KEY, expiresAt.toString());
+            sessionStorage.setItem(SESSION_KEY, data.sessionId);
+            sessionStorage.setItem(SESSION_EXPIRES_KEY, data.expiresAt.toString());
 
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.log("[BotApiService] Session token fetched and cached successfully");
             }
-            return sessionToken;
+            return data.sessionId;
         } catch (error) {
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                 console.error("[BotApiService] Error fetching session token from Admin API:", error);
