@@ -5,7 +5,7 @@
     import QuestRing from "./QuestRing.svelte";
     import { questControls } from "./questActions";
 
-    /** The objective, e.g. "Find the Courtyard". */
+    /** The objective, e.g. "Find the Courtyard". Always shown: the pill is never just its icon. */
     export let label: string;
     export let done = false;
     export let cardId: string;
@@ -30,7 +30,7 @@
     on:click={(event) => dispatch("open", { keyboard: event.detail === 0 })}
 >
     <AchievementIcon height="h-5" width="w-5" strokeColor="stroke-[#c4b5fd]" hover="" classList="shrink-0" />
-    <span class="min-w-0 truncate">{label}</span>
+    <span class="quest-pill-label" data-testid="quest-pill-label">{label}</span>
     <span class="sr-only">{done ? $LL.quest.pill.done() : $LL.quest.pill.inProgress()}</span>
     <QuestRing {done} />
 </button>

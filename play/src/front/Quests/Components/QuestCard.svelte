@@ -12,44 +12,37 @@
     /** The objective, e.g. "Find the Courtyard". */
     export let title: string;
     export let body: string;
-    /** Where the target is, in words (after Show me). Kept as the card's description so it can be read again. */
-    export let showMeDescription: string | undefined = undefined;
+    /** Where the target is, in words (announced when the card opens). Kept as the card's description. */
+    export let whereDescription: string | undefined = undefined;
     /** The walk control's label ("Walk to the Courtyard", "Walk there"), or undefined when there is nowhere to walk. */
     export let walkLabel: string | undefined = undefined;
     export let walking = false;
-    export let canShowMe = true;
     /** Finished, its payoff waiting for a quiet moment: nothing left to find or walk to. */
     export let done = false;
 
     const dispatch = createEventDispatcher<{
         close: void;
-        showMe: void;
         walk: void;
         stopWalking: void;
-        switch: { keyboard: boolean };
-        setAside: void;
+        chooseAnother: { keyboard: boolean };
     }>();
 
     let closeWrapper: HTMLElement | undefined;
-    let showMeButton: HTMLButtonElement | undefined;
     let walkButton: HTMLButtonElement | undefined;
+    let chooseButton: HTMLButtonElement | undefined;
 
     export function focusClose(): void {
         closeWrapper?.querySelector("button")?.focus();
     }
 
     $: showWalk = !!walkLabel && !done;
-    $: keepFocusInCard(showWalk, done);
-    // A control is about to go (arrived, no path, done) while it has focus: focus stays in the card, never on body.
-    function keepFocusInCard(walkShown: boolean, finished: boolean) {
+    $: keepFocusInCard(showWalk);
+    // The walk control is about to go (arrived, no path, done) while it has focus: focus stays in the card.
+    function keepFocusInCard(walkShown: boolean) {
         const active = document.activeElement;
-        if (!active) return;
-        if (active === walkButton && !walkShown) {
-            if (showMeButton && canShowMe && !finished) showMeButton.focus();
-            else focusClose();
-        } else if (active === showMeButton && finished) {
-            focusClose();
-        }
+        if (!active || active !== walkButton || walkShown) return;
+        if (chooseButton) chooseButton.focus();
+        else focusClose();
     }
 </script>
 
@@ -59,7 +52,7 @@
     role="dialog"
     aria-modal="false"
     aria-labelledby="{id}-title"
-    aria-describedby="{id}-body{showMeDescription ? ` ${id}-where` : ''}"
+    aria-describedby="{id}-body{whereDescription ? ` ${id}-where` : ''}"
     data-testid="quest-card"
     use:escapeKey={() => dispatch("close")}
     use:questKeyboardFocus
@@ -81,50 +74,31 @@
         </div>
     </div>
     <p id="{id}-body" class="quest-secondary m-0 mt-2" data-testid="quest-card-body">{body}</p>
-    {#if showMeDescription}
-        <p id="{id}-where" class="sr-only">{showMeDescription}</p>
+    {#if whereDescription}
+        <p id="{id}-where" class="sr-only">{whereDescription}</p>
     {/if}
-    {#if canShowMe && !done}
-        <button
-            type="button"
-            class="quest-btn u-cta mt-3 w-full"
-            data-testid="quest-show-me"
-            bind:this={showMeButton}
-            on:click={() => dispatch("showMe")}
-        >
-            {$LL.quest.card.showMe()}
-        </button>
-    {/if}
-    <div class="quest-text-row mt-1">
+    <!-- Real buttons, never links: the walk (when there is somewhere to walk) is the one primary action. -->
+    <div class="mt-3 flex flex-col gap-2 @[300px]/quest:flex-row">
         {#if showWalk}
             <!-- One button whose label switches, so pressing it from the keyboard keeps focus on it. -->
             <button
                 type="button"
-                class="quest-text-btn"
+                class="quest-btn u-cta flex-1"
                 data-testid={walking ? "quest-stop-walking" : "quest-walk"}
                 bind:this={walkButton}
                 on:click={() => dispatch(walking ? "stopWalking" : "walk")}
             >
                 {walking ? $LL.quest.card.stopWalking() : walkLabel}
             </button>
-            <span class="quest-dot" aria-hidden="true">·</span>
         {/if}
         <button
             type="button"
-            class="quest-text-btn"
-            data-testid="quest-switch"
-            on:click={(event) => dispatch("switch", { keyboard: event.detail === 0 })}
+            class="quest-btn quest-ghost flex-1"
+            data-testid="quest-choose-another"
+            bind:this={chooseButton}
+            on:click={(event) => dispatch("chooseAnother", { keyboard: event.detail === 0 })}
         >
-            {$LL.quest.card.switch()}
-        </button>
-        <span class="quest-dot" aria-hidden="true">·</span>
-        <button
-            type="button"
-            class="quest-text-btn"
-            data-testid="quest-set-aside"
-            on:click={() => dispatch("setAside")}
-        >
-            {$LL.quest.card.setAside()}
+            {$LL.quest.card.chooseAnother()}
         </button>
     </div>
 </div>

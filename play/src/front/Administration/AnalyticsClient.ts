@@ -1128,7 +1128,7 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    /** Orbit opened, and what opened it (the button, a quest's Show me, the game asking for a page, or on its own). */
+    /** Orbit opened, and what opened it (the button, a quest, the game asking for a page, or on its own). */
     orbitOpened(properties: { source: "button" | "quest" | "link" | "auto" }): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -1175,7 +1175,7 @@ class AnalyticsClient {
         this.captureQuest("wa_quest_offered", properties);
     }
 
-    /** "Not now" on the invitation: it will not be offered again. */
+    /** "Not now" on the invitation: it stays away for this visit (the log still offers everything). */
     questDeclined(properties: QuestOfferProperties): void {
         this.captureQuest("wa_quest_declined", properties);
     }
@@ -1195,23 +1195,18 @@ class AnalyticsClient {
         questId: QuestAnalyticsId;
         objectiveId: string;
         secondsSinceAccepted: number | null;
-        viaShowMe: boolean;
         source: "detected" | "already-valid";
     }): void {
         this.captureQuest("wa_quest_objective_done", properties);
     }
 
     /** A quest finished. */
-    questDone(properties: {
-        questId: QuestAnalyticsId;
-        secondsSinceAccepted: number | null;
-        viaShowMe: boolean;
-    }): void {
+    questDone(properties: { questId: QuestAnalyticsId; secondsSinceAccepted: number | null }): void {
         this.captureQuest("wa_quest_done", properties);
     }
 
-    /** A quest was set aside (untracked, still accepted) or removed from the log. */
-    questStopped(properties: { questId: QuestAnalyticsId; reason: "set-aside" | "removed" }): void {
+    /** The quest bar was hidden while a quest was followed: the only way a followed quest stops. */
+    questStopped(properties: { questId: QuestAnalyticsId; reason: "hidden" }): void {
         this.captureQuest("wa_quest_stopped", properties);
     }
 

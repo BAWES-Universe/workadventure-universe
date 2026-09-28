@@ -71,6 +71,21 @@ export function edgeArrowPlacement(target: Point, view: Box): EdgeArrow {
     return { visible: true, x: centre.x + dx * scale, y: centre.y + dy * scale, angle };
 }
 
+/** How a tracked target is marked on screen: an arrow at the edge of the view, or one hovering above it. */
+export type TargetMark =
+    | { kind: "edge"; x: number; y: number; angle: number }
+    | { kind: "above"; x: number; y: number };
+
+/**
+ * Picks the mark for a target: while its feet are in `view`, a down-pointing arrow at `above` (a point over its
+ * name); once they leave the view, the edge arrow pointing at the feet.
+ */
+export function targetMark(feet: Point, above: Point, view: Box): TargetMark {
+    const edge = edgeArrowPlacement(feet, view);
+    if (edge.visible) return { kind: "edge", x: edge.x, y: edge.y, angle: edge.angle };
+    return { kind: "above", x: above.x, y: above.y };
+}
+
 export type CompassDirection =
     | "north"
     | "northEast"

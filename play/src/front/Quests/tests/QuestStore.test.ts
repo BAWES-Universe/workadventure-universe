@@ -19,14 +19,20 @@ const analytics = vi.hoisted(() => ({
 
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: analytics }));
 
+const guide = { userId: 3, uuid: "bot-3", name: "Guide", isBot: true };
+
 const readyWorld: QuestWorld = {
     ...EMPTY_QUEST_WORLD,
     ready: true,
+    roomName: "Lobby",
     host: { kind: "bot", userId: 3, uuid: "bot-3", name: "Guide" },
-    present: [{ userId: 3, uuid: "bot-3", name: "Guide", isBot: true }],
+    present: [guide],
     exploreTarget: { area: { id: "a", name: "Courtyard", x: 0, y: 0, width: 10, height: 10 }, alreadyInside: false },
     canBuild: false,
 };
+
+/** The player walked out of the bot's range: the game re-resolves the host to nobody (the room). */
+const awayFromGuide: QuestWorld = { ...readyWorld, host: { kind: "none" }, present: [] };
 
 async function loadStore() {
     return import("../QuestStore");
@@ -36,11 +42,13 @@ describe("QuestStore", () => {
     beforeEach(() => {
         vi.resetModules();
         localStorage.clear();
+        sessionStorage.clear();
         for (const fn of Object.values(analytics)) fn.mockClear();
     });
 
     afterEach(() => {
         localStorage.clear();
+        sessionStorage.clear();
     });
 
     it("restores progress and saves every change", async () => {
@@ -50,17 +58,29 @@ describe("QuestStore", () => {
         );
         const store = await loadStore();
         expect(get(store.questStateStore).tracked).toBe("meet");
-        store.setAsideQuest();
-        expect(JSON.parse(localStorage.getItem("quests.state") ?? "{}").tracked).toBeNull();
-        expect(analytics.questStopped).toHaveBeenCalledWith({ questId: "welcome.meet", reason: "set-aside" });
+        store.setQuestsHidden(true);
+        expect(JSON.parse(localStorage.getItem("quests.state") ?? "{}").hidden).toBe(true);
+        expect(analytics.questStopped).toHaveBeenCalledWith({ questId: "welcome.meet", reason: "hidden" });
+        expect(analytics.questTracker).toHaveBeenCalledWith(expect.objectContaining({ action: "hidden" }));
     });
 
-    it("questReset=1 forgets everything once", async () => {
-        localStorage.setItem("quests.invitationDeclined", "true");
+    it("questReset=1 forgets everything once, from localStorage on load", async () => {
+        localStorage.setItem(
+            "quests.state",
+            JSON.stringify({ version: 1, quests: { meet: { accepted: true } }, tracked: "meet", hidden: true })
+        );
+        localStorage.setItem("quests.invitationSeen", "2");
+        sessionStorage.setItem("quests.invitationDismissed", "2026-09-28");
         localStorage.setItem("questReset", "1");
         const store = await loadStore();
-        expect(get(store.questStateStore).declined).toBe(false);
+        const state = get(store.questStateStore);
+        expect(state.tracked).toBeNull();
+        expect(state.hidden).toBe(false);
+        expect(state.invitationSeen).toBe(0);
+        expect(state.declined).toBe(false);
         expect(localStorage.getItem("questReset")).toBeNull();
+        expect(localStorage.getItem("quests.state")).not.toContain('"tracked":"meet"');
+        expect(sessionStorage.getItem("quests.invitationDismissed")).toBeNull();
     });
 
     it("reads the dev host simulation, bot by default", async () => {
@@ -70,15 +90,60 @@ describe("QuestStore", () => {
         expect((await loadStore()).questSim).toBe("area");
     });
 
-    it("offers once, records the offer, and records Not now", async () => {
+    it("offers once and records the offer; Not now lasts this visit and never reaches localStorage", async () => {
         const store = await loadStore();
         store.setQuestWorld(readyWorld);
         expect(store.showQuestInvitation()).toBe(true);
         expect(analytics.questOffered).toHaveBeenCalledWith(expect.objectContaining({ giverKind: "bot" }));
         expect(store.showQuestInvitation()).toBe(false);
+        // Walked away before answering: the declined offer is still credited to the bot that made it.
+        store.setQuestWorld(awayFromGuide);
         store.declineQuestInvitation();
-        expect(localStorage.getItem("quests.invitationDeclined")).toBe("true");
-        expect(analytics.questDeclined).toHaveBeenCalledTimes(1);
+        expect(analytics.questDeclined).toHaveBeenCalledWith(expect.objectContaining({ giverKind: "bot" }));
+        expect(get(store.questStateStore).declined).toBe(true);
+        expect(sessionStorage.getItem("quests.invitationDismissed")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(localStorage.getItem("quests.invitationDeclined")).toBeNull();
+
+        // The log still offers everything, and Start works from it.
+        expect(get(store.questAvailablePathsStore)).toEqual(["explore"]);
+        store.acceptQuest("explore", "log", 1);
+        expect(get(store.questStateStore).tracked).toBe("explore");
+        expect(get(store.questStateStore).surface).toBe("card");
+    });
+
+    it("a reload within the visit stays quiet; a new session or another day offers again", async () => {
+        sessionStorage.setItem("quests.invitationDismissed", new Date().toISOString().slice(0, 10));
+        expect(get((await loadStore()).questStateStore).declined).toBe(true);
+        vi.resetModules();
+        sessionStorage.setItem("quests.invitationDismissed", "2000-01-01");
+        expect(get((await loadStore()).questStateStore).declined).toBe(false);
+    });
+
+    it("freezes the giver when the invitation is shown, whoever hosts when the quest is accepted or finished", async () => {
+        const store = await loadStore();
+        store.setQuestWorld(readyWorld);
+        store.showQuestInvitation();
+        // The player walked away from the bot before choosing: the room is hosting now.
+        store.setQuestWorld(awayFromGuide);
+        store.acceptQuest("explore", "invitation", 1);
+        expect(get(store.questStateStore).quests.explore.origin).toEqual({
+            room: "Lobby",
+            giver: { kind: "bot", name: "Guide", uuid: "bot-3" },
+        });
+        // Finished after a teleport to another room: the origin does not move.
+        store.setQuestWorld({ ...awayFromGuide, roomName: "Garden" });
+        store.completeQuest("explore", "detected", 2);
+        expect(get(store.questStateStore).quests.explore.origin).toMatchObject({ room: "Lobby" });
+    });
+
+    it("a quest started in another room than the offer takes that room's host", async () => {
+        const store = await loadStore();
+        store.setQuestWorld(readyWorld);
+        store.showQuestInvitation();
+        store.declineQuestInvitation();
+        store.setQuestWorld({ ...awayFromGuide, roomName: "Garden" });
+        store.acceptQuest("explore", "log", 1);
+        expect(get(store.questStateStore).quests.explore.origin).toEqual({ room: "Garden", giver: null });
     });
 
     it("fixes the Explore area on acceptance and credits it at once when already inside", async () => {
@@ -107,11 +172,7 @@ describe("QuestStore", () => {
         expect(state.quests.meet.done).toBe(true);
         expect(state.pending).toEqual([]);
         expect(get(store.questNewsStore)).toBe(true);
-        expect(analytics.questDone).toHaveBeenCalledWith({
-            questId: "welcome.meet",
-            secondsSinceAccepted: 30,
-            viaShowMe: false,
-        });
+        expect(analytics.questDone).toHaveBeenCalledWith({ questId: "welcome.meet", secondsSinceAccepted: 30 });
     });
 
     it("credits Meet at once when accepted mid-exchange", async () => {
@@ -138,9 +199,9 @@ describe("QuestStore", () => {
 
     it("coalesces duplicate announcements", async () => {
         const store = await loadStore();
-        store.questAnnouncementStore.push("Tracking: Say hi to someone");
-        store.questAnnouncementStore.push("Tracking: Say hi to someone");
-        expect(store.questAnnouncementStore.take()).toBe("Tracking: Say hi to someone");
+        store.questAnnouncementStore.push("Following: Say hi to someone");
+        store.questAnnouncementStore.push("Following: Say hi to someone");
+        expect(store.questAnnouncementStore.take()).toBe("Following: Say hi to someone");
         expect(store.questAnnouncementStore.take()).toBeUndefined();
     });
 });

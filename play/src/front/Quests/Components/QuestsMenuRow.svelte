@@ -30,9 +30,11 @@
     }
 
     $: count = $questStateStore.tracked ? 0 : $questAcceptedCountStore;
+    // The bar is hidden: the row says so, and the log's footer shows it again.
+    $: label = $questStateStore.hidden ? $LL.quest.questsHidden() : $LL.quest.quests();
 </script>
 
-<ActionBarButton label={$LL.quest.quests()} dataTestId="quests-menu-row" action={trackInput} on:click={open}>
+<ActionBarButton {label} dataTestId="quests-menu-row" action={trackInput} on:click={open}>
     <AchievementIcon hover="" />
     <span slot="end" class="ms-2 inline-flex items-center">
         {#if $questNewsStore}

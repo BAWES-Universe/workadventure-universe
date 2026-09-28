@@ -2,23 +2,24 @@ import type { Readable } from "svelte/store";
 import { derived, get, writable } from "svelte/store";
 import type { QuestAnalyticsDevice, QuestAnalyticsFrom, QuestAnalyticsId } from "../Administration/AnalyticsClient";
 import { analyticsClient } from "../Administration/AnalyticsClient";
-import { consumeQuestReset, questBrowserStorage, readQuestSim } from "./QuestDevSettings";
+import { consumeQuestReset, questBrowserStorage, questSessionStorage, readQuestSim } from "./QuestDevSettings";
 import type { QuestSim } from "./QuestDevSettings";
 import type { MeetProgress } from "./MeetExchange";
-import type { QuestEvent, QuestFollowUp, QuestPath, QuestState } from "./QuestModel";
+import type { QuestEvent, QuestFollowUp, QuestGiver, QuestPath, QuestState } from "./QuestModel";
 import { acceptedUntrackedCount, QUEST_PATHS, reduceQuest, revealPending } from "./QuestModel";
-import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
+import { clearQuestStorage, rememberInvitationDismissed, restoreQuestState, saveQuestState } from "./QuestPersistence";
 import type { QuestWorld } from "./QuestWorld";
-import { availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
+import { acceptanceOrigin, availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
 
 const storage = questBrowserStorage();
+const session = questSessionStorage();
 
-if (consumeQuestReset(storage)) clearQuestStorage(storage);
+if (consumeQuestReset(storage)) clearQuestStorage(storage, session);
 
 /** The dev host scenario for this page (localStorage `questSim`). */
 export const questSim: QuestSim = readQuestSim(storage);
 
-const state = writable<QuestState>(restoreQuestState(storage));
+const state = writable<QuestState>(restoreQuestState(storage, session));
 
 // Module-level, for the page's lifetime: progress is saved whatever is mounted.
 //eslint-disable-next-line svelte/no-ignored-unsubscribe
@@ -120,8 +121,9 @@ function secondsSince(time: number | null, now: number): number | null {
     return time === null ? null : Math.max(0, Math.round((now - time) / 1000));
 }
 
-function giverKind(): "bot" | "area" | "none" {
-    return get(questWorldStore).host.kind;
+/** The kind of the frozen giver of the offer on screen (never the live world, which changes as the player walks). */
+function offeredGiverKind(giver: QuestGiver | null | undefined): "bot" | "area" | "none" {
+    return giver?.kind ?? "none";
 }
 
 // Actions: one per thing a person or a detector does. Each updates the state first; analytics come after and never
@@ -129,25 +131,29 @@ function giverKind(): "bot" | "area" | "none" {
 
 export function showQuestInvitation(): boolean {
     const before = get(state);
-    dispatchQuest({ type: "invitation-shown" });
-    if (get(state) === before) return false;
+    dispatchQuest({ type: "invitation-shown", origin: questOrigin(get(questWorldStore)) });
+    const after = get(state);
+    if (after === before) return false;
     analyticsClient.questOffered({
         scope: "welcome",
         questId: "welcome",
         version: 1,
-        giverKind: giverKind(),
+        giverKind: offeredGiverKind(after.offeredBy?.giver),
         device: questDevice(),
     });
     return true;
 }
 
+/** "Not now": the invitation stays away for this visit (and a reload today); the log still offers everything. */
 export function declineQuestInvitation(): void {
+    const offeredBy = get(state).offeredBy;
     dispatchQuest({ type: "decline" });
+    rememberInvitationDismissed(session);
     analyticsClient.questDeclined({
         scope: "welcome",
         questId: "welcome",
         version: 1,
-        giverKind: giverKind(),
+        giverKind: offeredGiverKind(offeredBy?.giver),
         device: questDevice(),
     });
 }
@@ -163,13 +169,14 @@ export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: numb
     if (path === "explore") refreshWorldBeforeAccept?.();
     const world = get(questWorldStore);
     const target = world.exploreTarget;
-    const wasAccepted = get(state).quests[path].accepted;
+    const before = get(state);
+    const wasAccepted = before.quests[path].accepted;
     dispatchQuest({
         type: "accept",
         path,
         now,
         exploreArea: path === "explore" && target ? { id: target.area.id, name: target.area.name } : undefined,
-        origin: questOrigin(world),
+        origin: acceptanceOrigin(before.offeredBy, world),
     });
     const after = get(state);
     if (!after.quests[path].accepted || after.tracked !== path) return;
@@ -181,6 +188,7 @@ export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: numb
     if (path === "meet" && meetAlreadyExchanged()) completeQuest(path, "already-valid", now);
 }
 
+/** Follow an accepted quest: it becomes the tracked one and its card opens. */
 export function trackQuest(path: QuestPath, from: QuestAnalyticsFrom = "log"): void {
     const before = get(state);
     dispatchQuest({ type: "track", path });
@@ -189,25 +197,15 @@ export function trackQuest(path: QuestPath, from: QuestAnalyticsFrom = "log"): v
     }
 }
 
-export function setAsideQuest(): void {
-    const tracked = get(state).tracked;
-    if (!tracked) return;
-    dispatchQuest({ type: "set-aside" });
-    analyticsClient.questStopped({ questId: questAnalyticsId(tracked), reason: "set-aside" });
-}
-
-export function removeQuest(path: QuestPath): void {
-    const before = get(state);
-    dispatchQuest({ type: "remove", path });
-    if (get(state) !== before) analyticsClient.questStopped({ questId: questAnalyticsId(path), reason: "removed" });
-}
-
+/** "Hide the quest bar" and "Show the quest bar" in the log. Hiding while following is the only way a quest stops. */
 export function setQuestsHidden(hidden: boolean): void {
-    const before = get(state).hidden;
+    const before = get(state);
     dispatchQuest({ type: hidden ? "hide" : "show-quests" });
-    if (before !== hidden) {
-        analyticsClient.questTracker({ action: hidden ? "hidden" : "restored", device: questDevice() });
+    if (before.hidden === hidden) return;
+    if (hidden && before.tracked) {
+        analyticsClient.questStopped({ questId: questAnalyticsId(before.tracked), reason: "hidden" });
     }
+    analyticsClient.questTracker({ action: hidden ? "hidden" : "restored", device: questDevice() });
 }
 
 /** Records a met objective (every accepted quest, tracked or not). Presentation is separate: see revealPending. */
@@ -227,10 +225,9 @@ export function completeQuest(
         questId: questAnalyticsId(path),
         objectiveId: `welcome.${path}.1`,
         secondsSinceAccepted,
-        viaShowMe: entry.viaShowMe,
         source,
     });
-    analyticsClient.questDone({ questId: questAnalyticsId(path), secondsSinceAccepted, viaShowMe: entry.viaShowMe });
+    analyticsClient.questDone({ questId: questAnalyticsId(path), secondsSinceAccepted });
 }
 
 export function pauseQuest(path: QuestPath): void {
@@ -256,7 +253,7 @@ export function skipQuestSignInOffer(): void {
 }
 
 export function resetQuests(): void {
-    clearQuestStorage(storage);
+    clearQuestStorage(storage, session);
     dispatchQuest({ type: "reset" });
     questMeetProgressStore.set("idle");
 }

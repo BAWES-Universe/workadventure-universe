@@ -4,7 +4,7 @@ import { whenGameScene } from "../Phaser/Game/WhenGameScene";
 import { gameSceneStore } from "../Stores/GameSceneStore";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { armQuestScene } from "./QuestDetectors";
-import type { QuestSurface } from "./QuestModel";
+import type { QuestVisibleSurface } from "./QuestModel";
 import { visibleSurface } from "./QuestModel";
 import { dispatchQuest, questDevice, questStateStore, revealPendingQuest } from "./QuestStore";
 import { questPillSuppressed, questQuiet, questSuppressionStore, questSurfaceSuppressed } from "./QuestUiStores";
@@ -15,7 +15,7 @@ export const PAYOFF_SETTLE_MS = 500;
 export const SUPPRESSED_NEWS_MS = 60_000;
 
 /** What the dock renders now. */
-export const questVisibleSurfaceStore: Readable<QuestSurface> = derived(
+export const questVisibleSurfaceStore: Readable<QuestVisibleSurface> = derived(
     [questStateStore, questSuppressionStore],
     ([$state, $suppression]) => visibleSurface($state, $suppression)
 );

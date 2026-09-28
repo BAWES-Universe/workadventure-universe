@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import { initialQuestState, reduceQuest } from "../QuestModel";
 import type { QuestArea, QuestPresent, QuestWorld } from "../QuestWorld";
 import {
+    acceptanceOrigin,
     availablePaths,
     EMPTY_QUEST_WORLD,
+    giverAsHost,
     namedOpenAreas,
     pickExploreTarget,
+    questGiverUserId,
+    questOrigin,
     resolveQuestHost,
     simulatedWorld,
 } from "../QuestWorld";
@@ -128,5 +132,53 @@ describe("availablePaths", () => {
             exploreTarget: undefined,
             canBuild: false,
         });
+    });
+});
+
+describe("the quest giver", () => {
+    const guideHost = { kind: "bot" as const, userId: 2, uuid: "bot-2", name: "Guide" };
+    const lobbyWithGuide: QuestWorld = {
+        ...EMPTY_QUEST_WORLD,
+        ready: true,
+        roomName: "Lobby",
+        host: guideHost,
+        present: [person(2, "Guide", true)],
+    };
+    const lobbyAlone: QuestWorld = { ...lobbyWithGuide, host: { kind: "none" }, present: [] };
+
+    it("freezes who offered the quest while the player is still in that room", () => {
+        const offered = questOrigin(lobbyWithGuide);
+        expect(offered).toEqual({ room: "Lobby", giver: { kind: "bot", name: "Guide", uuid: "bot-2" } });
+        // Walked out of the bot's range: the offer still counts.
+        expect(acceptanceOrigin(offered, lobbyAlone)).toBe(offered);
+        // Another room: whoever hosts there (nobody: the room itself).
+        expect(acceptanceOrigin(offered, { ...lobbyAlone, roomName: "Garden" })).toEqual({
+            room: "Garden",
+            giver: null,
+        });
+        expect(acceptanceOrigin(null, lobbyWithGuide)).toEqual(offered);
+        expect(questOrigin({ ...lobbyAlone, host: { kind: "area", areaId: "1", name: "Hall" } })).toEqual({
+            room: "Lobby",
+            giver: { kind: "area", name: "Hall" },
+        });
+    });
+
+    it("shows the frozen giver's face only while that bot is near", () => {
+        const giver = { kind: "bot" as const, name: "Guide", uuid: "bot-2" };
+        expect(giverAsHost(giver, lobbyWithGuide)).toEqual(guideHost);
+        expect(giverAsHost(giver, lobbyAlone)).toEqual({ kind: "none" });
+        expect(giverAsHost({ kind: "area", name: "Hall" }, lobbyAlone)).toMatchObject({ kind: "area", name: "Hall" });
+        expect(giverAsHost(null, lobbyWithGuide)).toEqual({ kind: "none" });
+    });
+
+    it("marks the host bot only while its offer is on screen and nothing is accepted", () => {
+        const offering = reduceQuest(initialQuestState(), { type: "invitation-shown" });
+        expect(questGiverUserId(offering, lobbyWithGuide)).toBe(2);
+        expect(questGiverUserId(reduceQuest(offering, { type: "open-options" }), lobbyWithGuide)).toBe(2);
+        expect(questGiverUserId(offering, lobbyAlone)).toBeUndefined();
+        expect(questGiverUserId(reduceQuest(offering, { type: "decline" }), lobbyWithGuide)).toBeUndefined();
+        expect(
+            questGiverUserId(reduceQuest(offering, { type: "accept", path: "meet", now: 1 }), lobbyWithGuide)
+        ).toBeUndefined();
     });
 });

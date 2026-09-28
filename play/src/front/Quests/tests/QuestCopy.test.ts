@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadLocale } from "../../../i18n/i18n-util.sync";
 import { i18nObject } from "../../../i18n/i18n-util";
-import { logEntries, questBody, questEyebrow, questPayoffLine, showMeDescription } from "../QuestCopy";
+import { logEntries, questBody, questEyebrow, questEyebrowFor, questPayoffLine, whereDescription } from "../QuestCopy";
 import { initialQuestState, reduceQuest } from "../QuestModel";
 import type { QuestWorld } from "../QuestWorld";
 import { EMPTY_QUEST_WORLD } from "../QuestWorld";
@@ -18,6 +18,9 @@ const world: QuestWorld = {
     exploreTarget: { area: { id: "a", name: "Courtyard", x: 0, y: 0, width: 64, height: 64 }, alreadyInside: false },
     canBuild: true,
 };
+const fromGuide = { room: "Lobby", giver: { kind: "bot" as const, name: "Guide", uuid: "bot-3" } };
+/** Another room, another host: where the player may be when the quest ends. */
+const garden: QuestWorld = { ...world, roomName: "Garden", host: { kind: "area", areaId: "g", name: "Greenhouse" } };
 
 describe("quest copy", () => {
     it("lets the host speak through the eyebrow, never a 'Name:' prefix", () => {
@@ -32,8 +35,25 @@ describe("quest copy", () => {
         expect(questPayoffLine(t, "explore", state, world)).toBe("You found the Courtyard.");
     });
 
+    it("keeps the giver frozen at acceptance on the card, the payoff and the log, wherever the player is now", () => {
+        const state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1, origin: fromGuide });
+        expect(questEyebrowFor(t, "meet", state, garden)).toBe("Guide");
+        expect(questPayoffLine(t, "meet", state, garden)).toBe("Good to meet you.");
+        expect(logEntries(t, state, garden, [])[0].origin).toBe("From Guide · Lobby");
+        // Accepted from the room itself: neutral, wherever the player goes.
+        const byRoom = reduceQuest(initialQuestState(), {
+            type: "accept",
+            path: "meet",
+            now: 1,
+            origin: { room: "Lobby", giver: null },
+        });
+        expect(questEyebrowFor(t, "meet", byRoom, world)).toBe("Lobby");
+        expect(questPayoffLine(t, "meet", byRoom, world)).toBe("You said hi. Welcome in.");
+        expect(logEntries(t, byRoom, garden, [])[0].origin).toBe("Here · Lobby");
+    });
+
     it("tells Meet's progress in the card: waiting after the hello, nobody here while paused", () => {
-        let state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1 });
+        let state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1, origin: fromGuide });
         expect(questBody(t, "meet", state, world, "idle")).toBe("Walk up to someone. When the bubble opens, say hi.");
         expect(questBody(t, "meet", state, world, "sent")).toBe("Hello sent. Waiting for a reply.");
         state = reduceQuest(state, { type: "pause", path: "meet", reason: "no-eligible-target" });
@@ -41,6 +61,11 @@ describe("quest copy", () => {
         // Done while its payoff waits (a call, typing): the card tells how it ended, not the first step again.
         state = reduceQuest(state, { type: "complete", path: "meet", now: 2 });
         expect(questBody(t, "meet", state, world, "exchanged")).toBe("Good to meet you.");
+    });
+
+    it("names the real menus for Build", () => {
+        const state = reduceQuest(initialQuestState(), { type: "accept", path: "build", now: 1 });
+        expect(questBody(t, "build", state, world, "idle")).toBe("Open Tools, then Map editor, and place one thing.");
     });
 
     it("counts steps in Arabic with the right plural form", () => {
@@ -53,14 +78,14 @@ describe("quest copy", () => {
         expect(say(14)).toContain("14 خطوة ");
     });
 
-    it("lists tracked, accepted, available and done entries with their reward and requirement", () => {
+    it("lists followed, accepted, available and done entries with their reward and requirement", () => {
         let state = reduceQuest(initialQuestState(), {
             type: "accept",
             path: "explore",
             now: 1,
             exploreArea: { id: "a", name: "Courtyard" },
         });
-        state = reduceQuest(state, { type: "accept", path: "meet", now: 2 });
+        state = reduceQuest(state, { type: "accept", path: "meet", now: 2, origin: fromGuide });
         state = reduceQuest(state, { type: "complete", path: "explore", now: 3 });
         const entries = logEntries(t, state, world, ["build"]);
         expect(entries.map((entry) => [entry.path, entry.status])).toEqual([
@@ -75,12 +100,12 @@ describe("quest copy", () => {
 
     it("says where the target is in words, or what to open when there is no place", () => {
         expect(
-            showMeDescription(t, { name: "Courtyard", position: { x: 320, y: -320 } }, { x: 0, y: 0 }, "explore")
+            whereDescription(t, { name: "Courtyard", position: { x: 320, y: -320 } }, { x: 0, y: 0 }, "explore")
         ).toBe("Courtyard is north-east of you, about 14 steps");
-        expect(showMeDescription(t, undefined, { x: 0, y: 0 }, "build")).toBe("Open Tools, then Map editor.");
-        expect(showMeDescription(t, undefined, { x: 0, y: 0 }, "explore", "Courtyard")).toBe(
+        expect(whereDescription(t, undefined, { x: 0, y: 0 }, "build")).toBe("Open Tools, then Map editor.");
+        expect(whereDescription(t, undefined, { x: 0, y: 0 }, "explore", "Courtyard")).toBe(
             "The Courtyard is in another room."
         );
-        expect(showMeDescription(t, undefined, { x: 0, y: 0 }, "meet")).toBe("Nobody's here right now");
+        expect(whereDescription(t, undefined, { x: 0, y: 0 }, "meet")).toBe("Nobody's here right now");
     });
 });

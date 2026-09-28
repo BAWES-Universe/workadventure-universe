@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compassDirection, edgeArrowPlacement, stepsBetween, worldToSectionPoint } from "../QuestGeometry";
+import { compassDirection, edgeArrowPlacement, stepsBetween, targetMark, worldToSectionPoint } from "../QuestGeometry";
 
 describe("worldToSectionPoint", () => {
     const canvas = { left: 0, top: 0, width: 800, height: 600 };
@@ -49,6 +49,23 @@ describe("edgeArrowPlacement", () => {
         expect(corner.visible).toBe(true);
         expect(corner.y).toBeCloseTo(100);
         expect(corner.x).toBeGreaterThanOrEqual(0);
+    });
+});
+
+describe("targetMark", () => {
+    const view = { left: 0, top: 0, width: 200, height: 100 };
+
+    it("hovers a down arrow above a target in view, and switches to the edge arrow once it leaves", () => {
+        const above = { x: 50, y: 20 };
+        expect(targetMark({ x: 50, y: 60 }, above, view)).toEqual({ kind: "above", x: 50, y: 20 });
+        const off = targetMark({ x: 500, y: 60 }, { x: 500, y: 20 }, view);
+        expect(off).toMatchObject({ kind: "edge", x: 200 });
+        // The arrow at the edge points at the feet, not at the point above them.
+        if (off.kind === "edge") expect(off.angle).toBeCloseTo(Math.atan2(10, 400));
+    });
+
+    it("keeps the down arrow while the feet are in view even if the point above them is not", () => {
+        expect(targetMark({ x: 50, y: 5 }, { x: 50, y: -40 }, view)).toEqual({ kind: "above", x: 50, y: -40 });
     });
 });
 

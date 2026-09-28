@@ -54,11 +54,16 @@ export function questBody(
     }
 }
 
-/** The one line when a quest is done. The host speaks through the eyebrow, never through a "Name:" prefix. */
+/**
+ * The one line when a quest is done. The giver frozen at acceptance speaks through the eyebrow, never through a
+ * "Name:" prefix; a bot says it in person, the room says it neutrally.
+ */
 export function questPayoffLine(t: T, path: QuestPath, state: QuestState, world: QuestWorld): string {
     switch (path) {
         case "meet":
-            return world.host.kind === "bot" ? t.quest.paths.meet.payoff() : t.quest.paths.meet.payoffNeutral();
+            return entryOrigin(state, path, world).giver?.kind === "bot"
+                ? t.quest.paths.meet.payoff()
+                : t.quest.paths.meet.payoffNeutral();
         case "explore":
             return t.quest.paths.explore.payoff({ area: exploreAreaName(state, world) });
         case "build":
@@ -76,10 +81,16 @@ export function stampName(t: T, path: QuestPath): string {
     return t.quest.stamps[path]();
 }
 
-/** Who is speaking: the host's name, else the room's name, else "Welcome". */
+/** Who is speaking on the invitation: the live host's name, else the room's name, else "Welcome". */
 export function questEyebrow(t: T, world: QuestWorld): string {
     if (world.host.kind !== "none") return world.host.name;
     return world.roomName || t.quest.welcome();
+}
+
+/** Who is speaking for one quest: the giver frozen when it was accepted, else its room, else "Welcome". */
+export function questEyebrowFor(t: T, path: QuestPath, state: QuestState, world: QuestWorld): string {
+    const origin = entryOrigin(state, path, world);
+    return origin.giver?.name || origin.room || t.quest.welcome();
 }
 
 /** One path as a row of the options card. */
@@ -118,7 +129,10 @@ export function optionRows(t: T, paths: readonly QuestPath[], state: QuestState,
     }));
 }
 
-/** Where an entry came from: where it was accepted, else (available here, or saved before origins) this room. */
+/**
+ * Where an entry came from: frozen where it was accepted, else (available here, or saved before origins) who is
+ * offering it now.
+ */
 export function entryOrigin(state: QuestState, path: QuestPath, world: QuestWorld): QuestOrigin {
     return state.quests[path].origin ?? questOrigin(world);
 }
@@ -135,7 +149,7 @@ export function logEntries(
         const status = questStatus(state, path);
         if (status === "available" && !available.includes(path)) continue;
         const { room, giver } = entryOrigin(state, path, world);
-        const origin = giver ? t.quest.log.fromHost({ host: giver, room }) : t.quest.log.here({ room });
+        const origin = giver ? t.quest.log.fromHost({ host: giver.name, room }) : t.quest.log.here({ room });
         entries.push({
             path,
             status,
@@ -152,8 +166,11 @@ export function logEntries(
     return entries;
 }
 
-/** Show me in words, for people who can't see the marker: "The Courtyard is north-east of you, about 6 steps". */
-export function showMeDescription(
+/**
+ * Where the target is, in words, for people who can't see the marker: "The Courtyard is north-east of you, about 6
+ * steps". Announced when the card opens.
+ */
+export function whereDescription(
     t: T,
     target: { name: string; position: Point } | undefined,
     player: Point | undefined,

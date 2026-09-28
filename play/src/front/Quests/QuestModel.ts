@@ -17,10 +17,17 @@ export const QUEST_MINUTES: Readonly<Record<QuestPath, number>> = { meet: 2, exp
 
 export type QuestPauseReason = "no-eligible-target";
 
+/**
+ * Who gave a quest, frozen when it was offered: the game only knows the people near the player, so the live host
+ * comes and goes as they walk. A bot keeps its uuid so its portrait can be found again when it is near.
+ */
+export type QuestGiver = { kind: "bot"; name: string; uuid?: string } | { kind: "area"; name: string };
+
 /** Where a quest was accepted: the log and Orbit say "From {giver} · {room}" wherever the player is now. */
 export interface QuestOrigin {
     room: string;
-    giver: string | null;
+    /** Null: the room itself offered it. */
+    giver: QuestGiver | null;
 }
 
 export interface QuestEntry {
@@ -29,7 +36,6 @@ export interface QuestEntry {
     paused: QuestPauseReason | null;
     acceptedAt: number | null;
     doneAt: number | null;
-    viaShowMe: boolean;
     origin: QuestOrigin | null;
 }
 
@@ -37,6 +43,8 @@ export interface QuestEntry {
  * What the dock shows. "none" is an empty dock. The log opens over the dock and remembers what it covered.
  */
 export type QuestSurface = "none" | "invitation" | "options" | "pill" | "card" | "log" | "payoff" | "follow-up";
+/** What the dock renders: a stored surface, or the resting Quests pill drawn whenever nothing is followed. */
+export type QuestVisibleSurface = QuestSurface | "quests";
 export type QuestFollowUp = "sign-in" | "continuation";
 export type QuestStatus = "available" | "accepted" | "tracked" | "done";
 
@@ -44,11 +52,13 @@ export interface QuestState {
     version: 1;
     quests: Record<QuestPath, QuestEntry>;
     tracked: QuestPath | null;
-    /** "Not now" on the invitation: never offered again, in any room. */
+    /** "Not now" on the invitation: not offered again on this visit (the log still lists what is available). */
     declined: boolean;
     /** How many times the invitation has been shown. Once more is allowed after it faded unanswered. */
     invitationSeen: number;
-    /** "Hide quests" in the log. */
+    /** Who offered the quests when the invitation was shown, and where: what an acceptance freezes as its origin. */
+    offeredBy: QuestOrigin | null;
+    /** "Hide the quest bar" in the log. */
     hidden: boolean;
     /** The area Explore asks for, fixed when it was accepted so walking around never moves the goal. */
     exploreArea: QuestAreaRef | null;
@@ -72,20 +82,17 @@ export interface QuestAreaRef {
 }
 
 export type QuestEvent =
-    | { type: "invitation-shown" }
+    | { type: "invitation-shown"; origin?: QuestOrigin }
     | { type: "invitation-faded" }
     | { type: "decline" }
     | { type: "open-options" }
     | { type: "accept"; path: QuestPath; now: number; exploreArea?: QuestAreaRef; origin?: QuestOrigin }
     | { type: "track"; path: QuestPath }
-    | { type: "set-aside" }
-    | { type: "remove"; path: QuestPath }
     | { type: "open-card" }
     | { type: "open-log" }
     | { type: "close" }
     | { type: "hide" }
     | { type: "show-quests" }
-    | { type: "show-me"; path: QuestPath }
     | { type: "complete"; path: QuestPath; now: number }
     | { type: "pause"; path: QuestPath; reason: QuestPauseReason }
     | { type: "resume"; path: QuestPath }
@@ -102,7 +109,6 @@ export function emptyEntry(): QuestEntry {
         paused: null,
         acceptedAt: null,
         doneAt: null,
-        viaShowMe: false,
         origin: null,
     };
 }
@@ -114,6 +120,7 @@ export function initialQuestState(): QuestState {
         tracked: null,
         declined: false,
         invitationSeen: 0,
+        offeredBy: null,
         hidden: false,
         exploreArea: null,
         signInOfferSkipped: false,
@@ -134,11 +141,21 @@ export function anyAccepted(state: QuestState): boolean {
     return QUEST_PATHS.some((path) => state.quests[path].accepted);
 }
 
+export function anyDone(state: QuestState): boolean {
+    return QUEST_PATHS.some((path) => state.quests[path].done);
+}
+
 export function questStatus(state: QuestState, path: QuestPath): QuestStatus {
     const entry = state.quests[path];
     if (entry.done) return "done";
     if (state.tracked === path) return "tracked";
     return entry.accepted ? "accepted" : "available";
+}
+
+/** The followed quest whose target is marked on the map: not hidden, not done (its payoff waiting). */
+export function markedQuestPath(state: QuestState): QuestPath | null {
+    if (!state.tracked || state.hidden || state.quests[state.tracked].done) return null;
+    return state.tracked;
 }
 
 /** Accepted and not done nor tracked: the count on the Quests row when nothing is tracked. */
@@ -162,6 +179,10 @@ export function canOfferInvitation(state: QuestState): boolean {
         !anyAccepted(state) &&
         state.surface === "none"
     );
+}
+
+export function cloneOrigin(origin: QuestOrigin): QuestOrigin {
+    return { room: origin.room, giver: origin.giver ? { ...origin.giver } : null };
 }
 
 function clone(state: QuestState): QuestState {
@@ -204,6 +225,7 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
         case "invitation-shown":
             if (!canOfferInvitation(previous)) return previous;
             state.invitationSeen += 1;
+            state.offeredBy = event.origin ? cloneOrigin(event.origin) : null;
             state.surface = "invitation";
             return state;
         case "invitation-faded":
@@ -226,13 +248,16 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             if (!entry.accepted) {
                 entry.accepted = true;
                 entry.acceptedAt = event.now;
-                entry.origin = event.origin ? { ...event.origin } : null;
+                entry.origin = event.origin ? cloneOrigin(event.origin) : null;
             }
             if (event.path === "explore" && event.exploreArea) state.exploreArea = { ...event.exploreArea };
             state.tracked = event.path;
             state.hidden = false;
             state.followUp = null;
-            state.surface = "pill";
+            // The card opens expanded so the objective and its buttons are read before it folds to the pill.
+            state.surface = "card";
+            state.beforeLog = null;
+            state.news = false;
             return state;
         }
         case "track": {
@@ -240,23 +265,9 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             if (!entry.accepted || entry.done) return previous;
             state.tracked = event.path;
             state.hidden = false;
-            if (state.surface !== "log") state.surface = "pill";
-            return state;
-        }
-        case "set-aside":
-            if (!state.tracked) return previous;
-            state.tracked = null;
-            if (state.surface === "pill" || state.surface === "card") state.surface = "none";
-            return state;
-        case "remove": {
-            const entry = state.quests[event.path];
-            if (!entry.accepted || entry.done) return previous;
-            state.quests[event.path] = emptyEntry();
-            if (event.path === "explore") state.exploreArea = null;
-            if (state.tracked === event.path) {
-                state.tracked = null;
-                if (state.surface === "pill" || state.surface === "card") state.surface = "none";
-            }
+            state.surface = "card";
+            state.beforeLog = null;
+            state.news = false;
             return state;
         }
         case "open-card":
@@ -290,10 +301,7 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             return state;
         case "show-quests":
             state.hidden = false;
-            return state;
-        case "show-me":
-            if (!state.quests[event.path].accepted || state.quests[event.path].done) return previous;
-            state.quests[event.path].viaShowMe = true;
+            if (state.surface !== "log") state.surface = restingSurface(state);
             return state;
         case "complete": {
             const entry = state.quests[event.path];
@@ -377,10 +385,18 @@ export function revealPending(previous: QuestState, blocked: boolean): QuestStat
     };
 }
 
-/** What the dock actually renders, given what is covering the game right now. */
-export function visibleSurface(state: QuestState, suppression: { surfaces: boolean; pill: boolean }): QuestSurface {
+/**
+ * What the dock actually renders, given what is covering the game right now. The bar never goes empty: with nothing
+ * followed and the bar not hidden, the resting Quests pill ("quests") opens the log.
+ */
+export function visibleSurface(
+    state: QuestState,
+    suppression: { surfaces: boolean; pill: boolean }
+): QuestVisibleSurface {
     if (state.hidden && state.surface !== "log") return "none";
-    if (state.surface === "pill") return suppression.pill ? "none" : "pill";
-    if (state.surface === "none") return "none";
+    if (state.surface === "pill" || (state.surface === "none" && state.tracked)) {
+        return suppression.pill ? "none" : "pill";
+    }
+    if (state.surface === "none") return suppression.pill ? "none" : "quests";
     return suppression.surfaces ? "none" : state.surface;
 }

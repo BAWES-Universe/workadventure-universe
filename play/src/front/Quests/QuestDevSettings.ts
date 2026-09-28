@@ -6,7 +6,8 @@ import { writable } from "svelte/store";
  *   always come first; `area` then falls back to the first named area, `bot` (default) and `none` to no host, and
  *   `empty` simulates an empty room (no host, nothing here, no invitation).
  * - `questReset=1`: forget all quest progress on the next load (then cleared).
- * - `questDockWidth`: `narrow` (default; cards leave the Express column visible) or `full` on phones.
+ * - `questDockWidth`: `narrow` (default; cards leave the Express column visible) or `full` (cards span the section,
+ *   on phones and on desktop).
  */
 export type QuestSim = "bot" | "area" | "none" | "empty";
 export type QuestDockWidth = "narrow" | "full";
@@ -73,6 +74,15 @@ function browserStorage(): StorageLike | undefined {
     }
 }
 
+/** This browser session's storage: what "Not now" remembers, gone with the tab. */
+function sessionStorageOrNone(): StorageLike | undefined {
+    try {
+        return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
+    } catch {
+        return undefined;
+    }
+}
+
 export const questDockWidthStore = createQuestDockWidthStore(browserStorage());
 
-export { browserStorage as questBrowserStorage };
+export { browserStorage as questBrowserStorage, sessionStorageOrNone as questSessionStorage };

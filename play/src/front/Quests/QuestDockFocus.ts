@@ -1,4 +1,4 @@
-import type { QuestSurface } from "./QuestModel";
+import type { QuestSurface, QuestVisibleSurface } from "./QuestModel";
 import { dispatchQuest } from "./QuestStore";
 
 /**
@@ -14,8 +14,8 @@ export function requestQuestFocus(surface: QuestSurface): void {
     pendingFocus = surface;
 }
 
-/** True once if `surface` should take focus now. */
-export function takeQuestFocus(surface: QuestSurface): boolean {
+/** True once if `surface` should take focus now (the resting Quests pill never asks for it). */
+export function takeQuestFocus(surface: QuestVisibleSurface): boolean {
     if (pendingFocus !== surface) return false;
     pendingFocus = null;
     return true;

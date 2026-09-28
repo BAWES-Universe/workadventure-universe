@@ -269,7 +269,7 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
 }
 
 /**
- * What opened Orbit: the action-bar button, a quest's "Show me", the game asking Orbit for a page, or Orbit opening
+ * What opened Orbit: the action-bar button, a quest, the game asking Orbit for a page, or Orbit opening
  * on its own. Only the button opens it today; Orbit never opens on its own any more, and "auto" stays so the numbers
  * show it at zero.
  */

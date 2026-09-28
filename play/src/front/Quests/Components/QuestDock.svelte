@@ -10,15 +10,17 @@
     import { goToLogin } from "../../Components/ActionBar/MenuIcons/goToLogin";
     import { startQuestArrival } from "../QuestArrival";
     import {
+        entryOrigin,
         exploreAreaName,
         logEntries,
         optionRows,
         questBody,
         questEyebrow,
+        questEyebrowFor,
         questObjective,
         questPayoffLine,
-        showMeDescription,
         stampName,
+        whereDescription,
     } from "../QuestCopy";
     import { questDockWidthStore } from "../QuestDevSettings";
     import {
@@ -32,22 +34,20 @@
     import { worldToSectionPoint } from "../QuestGeometry";
     import { openQuestLogHistory } from "../QuestLogHistory";
     import { startQuestMarkers } from "../QuestMarkers";
-    import type { QuestFollowUp, QuestPath, QuestSurface } from "../QuestModel";
-    import { anyAccepted } from "../QuestModel";
+    import type { QuestFollowUp, QuestPath, QuestState, QuestSurface, QuestVisibleSurface } from "../QuestModel";
+    import { anyAccepted, markedQuestPath } from "../QuestModel";
     import { motionMs } from "../QuestMotion";
-    import { lingerShowMe, questShowMeStore, startShowMe, stopShowMe } from "../QuestShowMe";
     import {
         acceptQuest,
         declineQuestInvitation,
         dispatchQuest,
+        questAcceptedCountStore,
         questAnnouncementStore,
         questAvailablePathsStore,
         questDevice,
         questMeetProgressStore,
         questStateStore,
         questWorldStore,
-        removeQuest,
-        setAsideQuest,
         setQuestsHidden,
         settleQuestPayoff,
         skipQuestSignInOffer,
@@ -63,18 +63,20 @@
         stopQuestWalk,
         walkToQuestTarget,
     } from "../QuestWalk";
+    import { giverAsHost, questGiverUserId } from "../QuestWorld";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { chatInputFocusStore } from "../../Stores/ChatStore";
     import { menuInputFocusStore } from "../../Stores/MenuInputFocusStore";
     import { inputFormFocusStore } from "../../Stores/UserInputStore";
     import QuestCard from "./QuestCard.svelte";
-    import QuestEdgeArrow from "./QuestEdgeArrow.svelte";
     import QuestFollowUpCard from "./QuestFollowUp.svelte";
     import QuestInvitation from "./QuestInvitation.svelte";
     import QuestLog from "./QuestLog.svelte";
+    import QuestMapMarks from "./QuestMapMarks.svelte";
     import QuestOptions from "./QuestOptions.svelte";
     import QuestPayoff from "./QuestPayoff.svelte";
     import QuestPill from "./QuestPill.svelte";
+    import QuestsPill from "./QuestsPill.svelte";
 
     /** The payoff line stays this long, counted only while it can be seen. */
     const PAYOFF_VISIBLE_MS = 6_000;
@@ -83,6 +85,11 @@
     const SETTLED_AFTER_MS = 60_000;
     /** Each announcement stays in the status region this long, so it is read before the next one. */
     const ANNOUNCE_MS = 1_500;
+    /** A card opened by Start or Follow folds to the pill after this long... */
+    export const CARD_FOLD_MS = 10_000;
+    /** ...or on the player's first movement after this long, whichever comes first. */
+    export const CARD_FOLD_MOVE_AFTER_MS = 3_000;
+    const CARD_MOVE_SAMPLE_MS = 500;
     const CARD_ID = "quest-card";
 
     let dock: HTMLElement | undefined;
@@ -92,14 +99,18 @@
     let card: QuestCard | undefined;
     let log: QuestLog | undefined;
     let pill: QuestPill | undefined;
+    let questsPill: QuestsPill | undefined;
 
     $: state = $questStateStore;
     $: world = $questWorldStore;
     $: visible = $questVisibleSurfaceStore;
     $: t = $LL;
+    // The invitation speaks for whoever hosts here now; a quest's card and payoff for the giver frozen at acceptance.
     $: eyebrow = questEyebrow(t, world);
     $: tracked = state.tracked;
     $: objective = tracked ? questObjective(t, tracked, state, world) : "";
+    $: cardEyebrow = tracked ? questEyebrowFor(t, tracked, state, world) : eyebrow;
+    $: cardHost = tracked ? giverAsHost(entryOrigin(state, tracked, world).giver, world) : world.host;
 
     // Walk: an area, or a person on this map; hidden once no path leads there.
     $: walkTarget = tracked ? questTarget(tracked, state, world) : undefined;
@@ -110,7 +121,11 @@
                 : t.quest.card.walkThere()
             : undefined;
 
-    let whereDescription: string | undefined;
+    // The map marks: the followed quest's target, always; the giver bot while its offer is on screen.
+    $: markedPath = markedQuestPath(state);
+    $: giverMarkUserId = questGiverUserId(state, world);
+
+    let whereText: string | undefined;
 
     // ---- System, arrival, markers, and what a map change resets ------------------------------------------------
     // Started with the component (not on mount) and stopped on destroy.
@@ -120,15 +135,15 @@
         startQuestMarkers(),
         gameSceneStore.subscribe((scene) => {
             if (scene !== undefined) return;
-            // A reconnect or a door: no walk and no marker carry over; the quest itself does.
+            // A reconnect or a door: no walk carries over; the quest itself does.
             resetQuestWalk();
-            stopShowMe();
         }),
     ];
     onDestroy(() => {
         for (const stop of stops.splice(0).reverse()) stop();
         stopAnnouncing();
         stopPayoffClock();
+        stopAutoFold();
         // A reconnect or a room change closes the log, as it closes the person card: Back must not land on a
         // log that is no longer there.
         if (closeHistory) {
@@ -139,25 +154,28 @@
         }
     });
 
-    // ---- Transitions: announcements, Show me lifetime, focus -----------------------------------------------------
+    // ---- Transitions: announcements, the card's fold, focus ------------------------------------------------------
     const initial = get(questStateStore);
     let previousSurface: QuestSurface = initial.surface;
-    let previousVisible: QuestSurface = get(questVisibleSurfaceStore);
+    let previousVisible: QuestVisibleSurface = get(questVisibleSurfaceStore);
     let previousTracked: QuestPath | null = initial.tracked;
     let previousPaused = initial.quests.meet.paused;
 
     $: onStateChange(state);
-    function onStateChange(current: typeof state) {
+    function onStateChange(current: QuestState) {
         if (current.tracked && current.tracked !== previousTracked) {
             questAnnouncementStore.push(
                 t.quest.announce.tracking({ objective: questObjective(t, current.tracked, current, world) })
             );
         }
-        if (current.tracked !== previousTracked || current.hidden) {
-            stopShowMe();
-            whereDescription = undefined;
+        if (current.surface === "card" && previousSurface !== "card") {
+            // Opened by Start or Follow (not from its pill): it folds by itself once it has been read.
+            if (previousSurface !== "pill") startAutoFold();
+            announceWhere(current);
+        } else if (current.surface !== "card") {
+            stopAutoFold();
+            if (previousSurface === "card") whereText = undefined;
         }
-        if (previousSurface === "card" && current.surface !== "card") lingerShowMe();
         const paused = current.quests.meet.paused;
         if (paused && !previousPaused && current.tracked === "meet")
             questAnnouncementStore.push(t.quest.card.nobodyHere());
@@ -169,10 +187,68 @@
         previousPaused = paused;
     }
 
+    /** Where the target is, in words, for the status region and the card's description. */
+    function announceWhere(current: QuestState) {
+        const path = current.tracked;
+        if (!path || current.quests[path].done) {
+            whereText = undefined;
+            return;
+        }
+        const scene = gameManager.tryGetCurrentGameScene();
+        let described: { name: string; position: Point } | undefined;
+        let player: Point | undefined;
+        if (scene) {
+            try {
+                const target = sceneQuestTarget(scene, path, current, world);
+                const position = target ? targetPosition(scene, target) : undefined;
+                if (target && position) described = { name: target.name, position };
+                player = playerFeet(scene);
+            } catch {
+                described = undefined;
+            }
+        }
+        whereText = whereDescription(t, described, player, path, exploreAreaName(current, world));
+        questAnnouncementStore.push(whereText);
+    }
+
+    // ---- The card's fold: on the X, the first movement after 3 s, or 10 s, whichever comes first ------------------
+    let foldTimer: ReturnType<typeof setTimeout> | undefined;
+    let foldMoveTimer: ReturnType<typeof setTimeout> | undefined;
+    let foldPoll: ReturnType<typeof setInterval> | undefined;
+
+    function stopAutoFold() {
+        if (foldTimer) clearTimeout(foldTimer);
+        if (foldMoveTimer) clearTimeout(foldMoveTimer);
+        if (foldPoll) clearInterval(foldPoll);
+        foldTimer = foldMoveTimer = foldPoll = undefined;
+    }
+
+    function fold() {
+        stopAutoFold();
+        if (get(questStateStore).surface === "card") dispatchQuest({ type: "close" });
+    }
+
+    function startAutoFold() {
+        stopAutoFold();
+        foldTimer = setTimeout(fold, CARD_FOLD_MS);
+        foldMoveTimer = setTimeout(() => {
+            let last: Point | undefined;
+            foldPoll = setInterval(() => {
+                const player = gameManager.tryGetCurrentGameScene()?.CurrentPlayer;
+                if (!player) return;
+                const position = { x: player.x, y: player.y };
+                // The card's own "Walk there" is not the player leaving: its Stop walking stays in reach.
+                const moved = !!last && (last.x !== position.x || last.y !== position.y) && !get(questWalkingStore);
+                last = position;
+                if (moved) fold();
+            }, CARD_MOVE_SAMPLE_MS);
+        }, CARD_FOLD_MOVE_AFTER_MS);
+    }
+
     /** The quest whose pill has been reported shown (once per tracked quest). */
     let pillShownFor: QuestPath | null = null;
     $: void onVisibleChange(visible);
-    async function onVisibleChange(next: QuestSurface) {
+    async function onVisibleChange(next: QuestVisibleSurface) {
         const before = previousVisible;
         previousVisible = next;
         if (before === next) return;
@@ -198,6 +274,8 @@
             const opener = takeQuestLogOpener();
             if (opener?.isConnected) opener.focus();
             else if (next === "pill") pill?.focus();
+            else if (next === "quests") questsPill?.focus();
+            else if (next === "card") card?.focusClose();
             else profileMenuTrigger()?.focus();
         } else if (next === "none") {
             // Faded or covered: the surface is still fading out and holds focus until it goes. Move it now.
@@ -207,7 +285,7 @@
         if (!document.activeElement || document.activeElement === document.body) profileMenuTrigger()?.focus();
     }
 
-    function focusCloseOf(surface: QuestSurface) {
+    function focusCloseOf(surface: QuestVisibleSurface) {
         if (surface === "options") options?.focusClose();
         else if (surface === "card") card?.focusClose();
         else if (surface === "log") log?.focusClose();
@@ -227,28 +305,11 @@
     $: optionsTitle = anyAccepted(state) ? t.quest.options.tryAnother() : t.quest.options.title();
     $: rows = optionRows(t, $questAvailablePathsStore, state, world);
 
-    // ---- Pill and card ------------------------------------------------------------------------------------------
+    // ---- Pills and card ----------------------------------------------------------------------------------------
     function onOpenCard(keyboard: boolean) {
         if (keyboard) requestQuestFocus("card");
         dispatchQuest({ type: "open-card" });
         analyticsClient.questTracker({ action: "expanded", device: questDevice() });
-    }
-
-    function onShowMe() {
-        if (!tracked) return;
-        dispatchQuest({ type: "show-me", path: tracked });
-        startShowMe(tracked);
-        const scene = gameManager.tryGetCurrentGameScene();
-        let described: { name: string; position: Point } | undefined;
-        let player: Point | undefined;
-        if (scene) {
-            const target = sceneQuestTarget(scene, tracked, state, world);
-            const position = target ? targetPosition(scene, target) : undefined;
-            if (target && position) described = { name: target.name, position };
-            player = playerFeet(scene);
-        }
-        whereDescription = showMeDescription(t, described, player, tracked, exploreAreaName(state, world));
-        questAnnouncementStore.push(whereDescription);
     }
 
     function onWalk() {
@@ -258,9 +319,13 @@
         if (target) void walkToQuestTarget(target);
     }
 
-    function onSwitch(keyboard: boolean) {
+    /** "Choose another" on the card, and the resting Quests pill: the log. */
+    function onOpenLog(keyboard: boolean) {
         openQuestLog(null, keyboard);
     }
+
+    // What the log has to offer, on the resting pill: available here, or accepted and not followed.
+    $: toDo = $questAvailablePathsStore.length + $questAcceptedCountStore;
 
     // ---- Payoff: shown for 6 s of visible time, then at most one follow-up card --------------------------------------
     let payoffShownMs = 0;
@@ -410,8 +475,12 @@
 
     /** The card width switch is a development tool: production builds never render it. */
     const devBuild = import.meta.env.DEV;
+    // Narrow: cards leave the Express column visible and stop at 22rem on desktop. Full: they span the section
+    // (minus a gutter), on phones and on desktop alike, still anchored to the left.
     $: fullWidth = $questDockWidthStore === "full";
-    $: coversExpress = fullWidth && visible !== "none" && visible !== "pill" && visible !== "log";
+    $: widthClass = fullWidth ? "w-[calc(100%-1rem)]" : "w-[calc(100%-5.5rem)] md:max-w-[22rem]";
+    $: coversExpress =
+        fullWidth && visible !== "none" && visible !== "pill" && visible !== "quests" && visible !== "log";
     $: trackedDone = !!tracked && state.quests[tracked].done;
 
     // Read when a surface leaves: it fades only when nothing replaces it (faded, hidden or covered), else it is
@@ -424,9 +493,9 @@
 <!-- The status region is always here (even while quests are hidden or covered), so nothing announced is lost. -->
 <div role="status" aria-live="polite" aria-atomic="true" class="sr-only" data-testid="quest-status">{announcement}</div>
 
-<!-- The layer the stamp flies in and the edge arrow sits in: over the map, never catching a tap. -->
+<!-- The layer the stamp flies in and the map marks sit in: over the map, never catching a tap. -->
 <div class="absolute inset-0 overflow-hidden pointer-events-none" bind:this={layer}>
-    <QuestEdgeArrow path={$questShowMeStore} {layer} avoid={dock} />
+    <QuestMapMarks path={markedPath} giverUserId={giverMarkUserId} {layer} avoid={dock} />
 </div>
 
 {#if visible === "log"}
@@ -440,8 +509,6 @@
         on:close={() => dispatchQuest({ type: "close" })}
         on:accept={(event) => onLogAccept(event.detail)}
         on:track={(event) => trackQuest(event.detail, "log")}
-        on:setAside={() => setAsideQuest()}
-        on:remove={(event) => removeQuest(event.detail)}
         on:setHidden={(event) => setQuestsHidden(event.detail)}
         on:signIn={onSignIn}
         on:setWidth={(event) => questDockWidthStore.set(event.detail)}
@@ -449,15 +516,13 @@
 {/if}
 
 <!-- The frame gives the surfaces the section's height to size against (40cqh). In "full" width a card covers the
-     Express column while it is open (z-index); the pill never does. -->
+     Express column while it is open (z-index); the pills never do. -->
 <div class="quest-dock-frame {coversExpress ? 'z-[1]' : ''}" data-testid="quest-dock-frame">
     <!-- Anchored to the physical left, like the Express column is to the physical right: the two never share a
          corner, in Arabic too. Everything inside uses logical start/end. Only the surfaces take taps: the rest of the
          dock lets them through to the map, so the joystick and tap-to-walk work around it. -->
     <div
-        class="absolute bottom-2 left-1 md:left-2 xl:left-4 flex flex-col items-start gap-2 pointer-events-none md:w-[min(22rem,calc(100%-5.5rem))] {fullWidth
-            ? 'w-[calc(100%-0.5rem)]'
-            : 'w-[calc(100%-5.5rem)]'}"
+        class="absolute bottom-2 left-1 md:left-2 xl:left-4 flex flex-col items-start gap-2 pointer-events-none {widthClass}"
         data-testid="quest-dock"
         bind:this={dock}
     >
@@ -485,40 +550,42 @@
                             on:close={() => dispatchQuest({ type: "close" })}
                             on:accept={(event) => onAccept(event.detail)}
                         />
+                    {:else if visible === "quests"}
+                        <QuestsPill
+                            bind:this={questsPill}
+                            count={toDo}
+                            on:open={(event) => onOpenLog(event.detail.keyboard)}
+                        />
                     {:else if visible === "pill" && tracked}
-                        <div class="max-w-full {fullWidth ? 'max-w-[calc(100%-5rem)] md:max-w-full' : ''}">
-                            <QuestPill
-                                bind:this={pill}
-                                label={objective}
-                                done={trackedDone}
-                                cardId={CARD_ID}
-                                on:open={(event) => onOpenCard(event.detail.keyboard)}
-                            />
-                        </div>
+                        <QuestPill
+                            bind:this={pill}
+                            label={objective}
+                            done={trackedDone}
+                            cardId={CARD_ID}
+                            on:open={(event) => onOpenCard(event.detail.keyboard)}
+                        />
                     {:else if visible === "card" && tracked}
                         <QuestCard
                             bind:this={card}
                             id={CARD_ID}
-                            host={world.host}
-                            {eyebrow}
+                            host={cardHost}
+                            eyebrow={cardEyebrow}
                             title={objective}
                             body={questBody(t, tracked, state, world, $questMeetProgressStore)}
-                            showMeDescription={whereDescription}
+                            whereDescription={whereText}
                             {walkLabel}
                             walking={$questWalkingStore}
                             done={trackedDone}
                             on:close={() => dispatchQuest({ type: "close" })}
-                            on:showMe={onShowMe}
                             on:walk={onWalk}
                             on:stopWalking={() => stopQuestWalk()}
-                            on:switch={(event) => onSwitch(event.detail.keyboard)}
-                            on:setAside={() => setAsideQuest()}
+                            on:chooseAnother={(event) => onOpenLog(event.detail.keyboard)}
                         />
                     {:else if visible === "payoff" && state.payoff}
                         <QuestPayoff
                             path={state.payoff}
                             objective={questObjective(t, state.payoff, state, world)}
-                            {eyebrow}
+                            eyebrow={questEyebrowFor(t, state.payoff, state, world)}
                             line={questPayoffLine(t, state.payoff, state, world)}
                             stampLabel={t.quest.stamps.badge({ stamp: stampName(t, state.payoff) })}
                             flyFrom={payoffFrom}
@@ -601,13 +668,16 @@
         line-height: 1.4;
         color: rgba(255, 255, 255, 0.8);
     }
-    /* Minimum sizes only: text wraps and cards grow, nothing is clipped at 200% text. */
+    /* Every action is a real 44px pill button: the gradient one is the primary, the glass one secondary. Minimum
+       sizes only: text wraps and cards grow, nothing is clipped at 200% text. */
     :global(.quest-btn) {
+        display: inline-flex;
+        align-items: center;
         margin: 0;
         min-height: 2.75rem;
-        padding: 0.5rem 1rem;
+        padding: 0.5rem 1.125rem;
         justify-content: center;
-        border-radius: 0.5rem;
+        border-radius: 999px;
         white-space: normal;
         text-align: center;
         font-size: 0.875rem;
@@ -619,6 +689,24 @@
         color: #fff;
         background: rgba(255, 255, 255, 0.06);
         border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    :global(.quest-ghost:hover) {
+        background: rgba(255, 255, 255, 0.12);
+    }
+    :global(.quest-ghost[aria-pressed="true"]) {
+        color: #1b2a41;
+        background: #e9c74c;
+        border-color: #e9c74c;
+    }
+    /* A state, not a control ("Following"): the same shape, quieter, and never a pointer. */
+    :global(.quest-static) {
+        color: rgba(255, 255, 255, 0.7);
+        cursor: default;
+    }
+    :global(.quest-btn-small) {
+        min-height: 2.25rem;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.8125rem;
     }
     :global(.quest-row) {
         display: flex;
@@ -638,32 +726,6 @@
     }
     :global(.quest-row:hover) {
         background: rgba(255, 255, 255, 0.08);
-    }
-    :global(.quest-text-row) {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        column-gap: 0.25rem;
-        min-height: 2.75rem;
-    }
-    :global(.quest-text-btn) {
-        margin: 0;
-        min-height: 2.75rem;
-        padding: 0.25rem 0.5rem;
-        color: #c4b5fd;
-        background: transparent;
-        font-size: 0.875rem;
-        font-weight: 600;
-        white-space: normal;
-        text-align: start;
-        cursor: pointer;
-    }
-    :global(.quest-text-btn[aria-pressed="true"]) {
-        color: #fff;
-        text-decoration: underline;
-    }
-    :global(.quest-dot) {
-        color: rgba(255, 255, 255, 0.4);
     }
     :global(.quest-pill) {
         display: flex;
@@ -686,6 +748,14 @@
         pointer-events: auto;
         cursor: pointer;
     }
+    /* The label always has room: it shrinks with an ellipsis, never to nothing. */
+    :global(.quest-pill-label) {
+        flex: 0 1 auto;
+        min-width: 3rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
     :global(.quest-payoff) {
         display: flex;
         align-items: center;
@@ -698,7 +768,7 @@
         cursor: pointer;
     }
     /* On phones the log spans the section: above the Express column, which would otherwise take taps on its
-       footer. On wider screens it is a side panel that leaves that column alone. */
+       footer. On wider screens it is a side panel that leaves that column alone (a "full" card width widens it). */
     :global(.quest-log) {
         position: absolute;
         left: 0;
@@ -725,10 +795,16 @@
             max-height: 70vh;
             border-radius: 0.5rem;
         }
+        :global(.quest-log.quest-log-full) {
+            width: calc(100% - 1rem);
+        }
     }
     @media (min-width: 1280px) {
         :global(.quest-log) {
             left: 1rem;
+        }
+        :global(.quest-log.quest-log-full) {
+            width: calc(100% - 2rem);
         }
     }
     :global(.quest-log-section) {
@@ -755,7 +831,6 @@
     /* The game's button reset removes outlines: keyboard focus must stay visible on every quest control. */
     :global(.quest-btn:focus-visible),
     :global(.quest-row:focus-visible),
-    :global(.quest-text-btn:focus-visible),
     :global(.quest-pill:focus-visible),
     :global(.quest-payoff:focus-visible),
     :global(.quest-surface .close-btn:focus-visible) {

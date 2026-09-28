@@ -47,19 +47,19 @@ describe("the quest log sent to Orbit", () => {
         expect(orbitQuestEntries(t, state, world)[0].giver).toBe("Guide");
     });
 
-    it("keeps where each quest was accepted, wherever the player is now", () => {
-        const lobby = {
-            ...EMPTY_QUEST_WORLD,
-            roomName: "Lobby",
-            host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Guide" },
-        };
+    it("keeps the giver and the room frozen at acceptance, wherever the player is now", () => {
         const state = reduceQuest(initialQuestState(), {
             type: "accept",
             path: "meet",
             now: 1,
-            origin: { room: "Lobby", giver: "Guide" },
+            origin: { room: "Lobby", giver: { kind: "bot", name: "Guide", uuid: "bot-1" } },
         });
-        const garden = { ...lobby, roomName: "Garden", host: { kind: "none" as const } };
+        // After a teleport: another room, an area hosting there.
+        const garden = {
+            ...EMPTY_QUEST_WORLD,
+            roomName: "Garden",
+            host: { kind: "area" as const, areaId: "g", name: "Greenhouse" },
+        };
         expect(orbitQuestEntries(t, state, garden)[0]).toMatchObject({ giver: "Guide", room: "Lobby" });
     });
 });

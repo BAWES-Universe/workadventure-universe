@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { initialQuestState, reduceQuest, revealPending } from "../QuestModel";
 import {
+    dayKey,
     parseInvitationSeen,
     parseStoredProgress,
-    QUEST_INVITATION_DECLINED_KEY,
+    QUEST_INVITATION_DISMISSED_KEY,
     QUEST_INVITATION_SEEN_KEY,
     QUEST_STATE_KEY,
+    readInvitationDismissed,
+    rememberInvitationDismissed,
     restoreQuestState,
     saveQuestState,
     serializeProgress,
@@ -36,7 +39,7 @@ describe("parseStoredProgress", () => {
                 version: 1,
                 quests: {
                     meet: { accepted: true, done: "yes", paused: "whatever", acceptedAt: "5" },
-                    explore: { done: true, doneAt: 9, viaShowMe: 1 },
+                    explore: { done: true, doneAt: 9 },
                     build: null,
                     extra: { accepted: true },
                 },
@@ -54,17 +57,37 @@ describe("parseStoredProgress", () => {
             paused: null,
             acceptedAt: null,
             doneAt: null,
-            viaShowMe: false,
             origin: null,
         });
         // Done implies accepted.
-        expect(progress?.quests.explore).toMatchObject({ accepted: true, done: true, doneAt: 9, viaShowMe: false });
+        expect(progress?.quests.explore).toMatchObject({ accepted: true, done: true, doneAt: 9 });
         expect(progress?.quests.build.accepted).toBe(false);
         expect(progress?.tracked).toBe("meet");
         expect(progress?.hidden).toBe(false);
         expect(progress?.pending).toEqual(["explore"]);
         expect(progress?.exploreArea).toEqual({ id: "a", name: "Courtyard" });
         expect(progress?.news).toBe(true);
+    });
+
+    it("reads the giver frozen at acceptance, and a save from before givers had a kind", () => {
+        const stored = (origin: unknown) =>
+            parseStoredProgress(JSON.stringify({ version: 1, quests: { meet: { accepted: true, origin } } }))?.quests
+                .meet.origin;
+        expect(stored({ room: "Lobby", giver: { kind: "bot", name: "Guide", uuid: "bot-1" } })).toEqual({
+            room: "Lobby",
+            giver: { kind: "bot", name: "Guide", uuid: "bot-1" },
+        });
+        expect(stored({ room: "Lobby", giver: { kind: "area", name: "Hall" } })).toEqual({
+            room: "Lobby",
+            giver: { kind: "area", name: "Hall" },
+        });
+        expect(stored({ room: "Lobby", giver: "Guide" })).toEqual({
+            room: "Lobby",
+            giver: { kind: "bot", name: "Guide" },
+        });
+        expect(stored({ room: "Lobby", giver: null })).toEqual({ room: "Lobby", giver: null });
+        expect(stored({ room: "Lobby", giver: { kind: "ghost", name: "X" } })).toEqual({ room: "Lobby", giver: null });
+        expect(stored({ room: 5 })).toBeNull();
     });
 
     it("drops a tracked quest that is not accepted or already done", () => {
@@ -107,17 +130,20 @@ describe("save and restore", () => {
             path: "explore",
             now: 10,
             exploreArea: { id: "a", name: "Hall" },
-            origin: { room: "Lobby", giver: "Guide" },
+            origin: { room: "Lobby", giver: { kind: "bot", name: "Guide", uuid: "bot-1" } },
         });
         saveQuestState(storage, state);
         expect(storage.data.get(QUEST_INVITATION_SEEN_KEY)).toBe("1");
-        expect(storage.data.has(QUEST_INVITATION_DECLINED_KEY)).toBe(false);
+        expect(storage.data.has("quests.invitationDeclined")).toBe(false);
 
         const restored = restoreQuestState(storage);
         expect(restored.surface).toBe("pill");
         expect(restored.tracked).toBe("explore");
         expect(restored.exploreArea).toEqual({ id: "a", name: "Hall" });
-        expect(restored.quests.explore.origin).toEqual({ room: "Lobby", giver: "Guide" });
+        expect(restored.quests.explore.origin).toEqual({
+            room: "Lobby",
+            giver: { kind: "bot", name: "Guide", uuid: "bot-1" },
+        });
         expect(restored.invitationSeen).toBe(1);
     });
 
@@ -128,18 +154,26 @@ describe("save and restore", () => {
         expect(hidden.tracked).toBe("build");
         expect(hidden.surface).toBe("none");
 
-        const asideState = reduceQuest(reduceQuest(initialQuestState(), { type: "accept", path: "build", now: 1 }), {
-            type: "set-aside",
-        });
-        const aside = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(asideState) }));
-        expect(aside.surface).toBe("none");
+        const fresh = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(initialQuestState()) }));
+        expect(fresh.tracked).toBeNull();
+        expect(fresh.surface).toBe("none");
     });
 
-    it("remembers Not now under its own key", () => {
+    it("remembers Not now in the session, for the day, never in localStorage", () => {
         const storage = memoryStorage();
+        const session = memoryStorage();
+        const today = new Date(2026, 8, 28, 15, 0);
         saveQuestState(storage, reduceQuest(initialQuestState(), { type: "decline" }));
-        expect(storage.data.get(QUEST_INVITATION_DECLINED_KEY)).toBe("true");
-        expect(restoreQuestState(storage).declined).toBe(true);
+        expect([...storage.data.keys()]).toEqual([QUEST_STATE_KEY, QUEST_INVITATION_SEEN_KEY]);
+
+        rememberInvitationDismissed(session, today);
+        expect(session.data.get(QUEST_INVITATION_DISMISSED_KEY)).toBe(dayKey(today));
+        expect(readInvitationDismissed(session, today)).toBe(true);
+        expect(restoreQuestState(storage, session, today).declined).toBe(true);
+        // Tomorrow, or without the session: offered again.
+        expect(restoreQuestState(storage, session, new Date(2026, 8, 29, 9, 0)).declined).toBe(false);
+        expect(restoreQuestState(storage, memoryStorage(), today).declined).toBe(false);
+        expect(restoreQuestState(storage, undefined, today).declined).toBe(false);
     });
 
     it("a payoff on screen when the page closed plays again after a reload", () => {
@@ -185,7 +219,8 @@ describe("save and restore", () => {
                 throw new Error("blocked");
             },
         };
-        expect(restoreQuestState(throwing)).toEqual(initialQuestState());
+        expect(restoreQuestState(throwing, throwing)).toEqual(initialQuestState());
         expect(() => saveQuestState(throwing, initialQuestState())).not.toThrow();
+        expect(() => rememberInvitationDismissed(throwing)).not.toThrow();
     });
 });

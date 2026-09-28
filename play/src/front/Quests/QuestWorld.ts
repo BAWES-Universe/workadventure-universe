@@ -1,6 +1,6 @@
 import type { QuestSim } from "./QuestDevSettings";
 import type { QuestHostOverride } from "./QuestHash";
-import type { QuestOrigin, QuestPath, QuestState } from "./QuestModel";
+import type { QuestGiver, QuestOrigin, QuestPath, QuestState } from "./QuestModel";
 import { QUEST_PATHS } from "./QuestModel";
 
 /** Someone on this map other than the player (own other tabs excluded). */
@@ -164,7 +164,52 @@ export function simulatedWorld(world: QuestWorld, sim: QuestSim): QuestWorld {
     return { ...world, host: { kind: "none" }, present: [], exploreTarget: undefined, canBuild: false };
 }
 
-/** Who offers quests here and where: what an accepted quest keeps as its origin. */
+/** The live host as a giver to freeze: nobody when the room itself is offering. */
+export function hostAsGiver(host: QuestHost): QuestGiver | null {
+    switch (host.kind) {
+        case "bot":
+            return { kind: "bot", name: host.name, uuid: host.uuid };
+        case "area":
+            return { kind: "area", name: host.name };
+        default:
+            return null;
+    }
+}
+
+/** Who offers quests here and where, right now: what an offer freezes as its origin. */
 export function questOrigin(world: QuestWorld): QuestOrigin {
-    return { room: world.roomName ?? "", giver: world.host.kind === "none" ? null : world.host.name };
+    return { room: world.roomName ?? "", giver: hostAsGiver(world.host) };
+}
+
+/**
+ * The origin an acceptance keeps: who showed the invitation, as long as the player is still in that room; else who
+ * is hosting where they stand now (a quest started from the log on another map, or on a later visit).
+ */
+export function acceptanceOrigin(offeredBy: QuestOrigin | null, world: QuestWorld): QuestOrigin {
+    const room = world.roomName ?? "";
+    if (offeredBy && offeredBy.room === room) return offeredBy;
+    return questOrigin(world);
+}
+
+/**
+ * The frozen giver as a host for a portrait: the bot's live Woka when it is near (no face otherwise: the eyebrow
+ * still names it), the ring glyph for an area, nothing for the room itself.
+ */
+export function giverAsHost(giver: QuestGiver | null, world: QuestWorld): QuestHost {
+    if (!giver) return { kind: "none" };
+    if (giver.kind === "area") return { kind: "area", areaId: "", name: giver.name };
+    const near = world.present.find(
+        (person) => person.isBot && (giver.uuid ? person.uuid === giver.uuid : person.name === giver.name)
+    );
+    return near ? { kind: "bot", userId: near.userId, uuid: near.uuid, name: giver.name } : { kind: "none" };
+}
+
+/**
+ * The bot to mark as the quest giver (ring at its feet, "!" above its name): the host bot while its offer is on
+ * screen (the invitation or the options), until something is accepted.
+ */
+export function questGiverUserId(state: QuestState, world: QuestWorld): number | undefined {
+    if (state.hidden || world.host.kind !== "bot") return undefined;
+    const offering = state.surface === "invitation" || state.surface === "options";
+    return offering && !QUEST_PATHS.some((path) => state.quests[path].accepted) ? world.host.userId : undefined;
 }

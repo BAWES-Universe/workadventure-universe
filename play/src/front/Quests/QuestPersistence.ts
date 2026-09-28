@@ -1,4 +1,4 @@
-import type { QuestAreaRef, QuestEntry, QuestOrigin, QuestPath, QuestState } from "./QuestModel";
+import type { QuestAreaRef, QuestEntry, QuestGiver, QuestOrigin, QuestPath, QuestState } from "./QuestModel";
 import {
     emptyEntry,
     initialQuestState,
@@ -11,7 +11,8 @@ import {
 // Same naming as Orbit's preference keys, so the engine can move them server-side later.
 export const QUEST_STATE_KEY = "quests.state";
 export const QUEST_INVITATION_SEEN_KEY = "quests.invitationSeen";
-export const QUEST_INVITATION_DECLINED_KEY = "quests.invitationDeclined";
+/** Session storage: the day "Not now" was pressed. A new browser session or a new day forgets it. */
+export const QUEST_INVITATION_DISMISSED_KEY = "quests.invitationDismissed";
 
 /** The part of the state that outlives the page. Surfaces and payoffs in flight do not. */
 export interface StoredQuestProgress {
@@ -37,12 +38,25 @@ function parseAreaRef(raw: unknown): QuestAreaRef | null {
 
 const MAX_ORIGIN_FIELD_LENGTH = 128;
 
+function validName(value: unknown): value is string {
+    return typeof value === "string" && value.trim() !== "" && value.length <= MAX_ORIGIN_FIELD_LENGTH;
+}
+
+function parseGiver(raw: unknown): QuestGiver | null {
+    // Saves from before givers kept their kind held the name alone: the default host was the room's first bot.
+    if (validName(raw)) return { kind: "bot", name: raw };
+    if (!isRecord(raw) || !validName(raw.name)) return null;
+    if (raw.kind === "area") return { kind: "area", name: raw.name };
+    if (raw.kind !== "bot") return null;
+    const uuid = typeof raw.uuid === "string" && raw.uuid && raw.uuid.length <= MAX_ORIGIN_FIELD_LENGTH;
+    return uuid ? { kind: "bot", name: raw.name, uuid: raw.uuid as string } : { kind: "bot", name: raw.name };
+}
+
 function parseOrigin(raw: unknown): QuestOrigin | null {
     if (!isRecord(raw)) return null;
     const { room, giver } = raw;
     if (typeof room !== "string" || room.length > MAX_ORIGIN_FIELD_LENGTH) return null;
-    const validGiver = typeof giver === "string" && giver.trim() !== "" && giver.length <= MAX_ORIGIN_FIELD_LENGTH;
-    return { room, giver: validGiver ? giver : null };
+    return { room, giver: parseGiver(giver) };
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -66,7 +80,6 @@ function parseEntry(raw: unknown): QuestEntry {
         paused: !done && raw.paused === "no-eligible-target" ? "no-eligible-target" : null,
         acceptedAt: finiteOrNull(raw.acceptedAt),
         doneAt: done ? finiteOrNull(raw.doneAt) : null,
-        viaShowMe: raw.viaShowMe === true,
         origin: parseOrigin(raw.origin),
     };
 }
@@ -130,12 +143,42 @@ export function parseInvitationSeen(raw: string | null): number {
     return Math.min(value, MAX_INVITATION_SHOWS);
 }
 
+/** The local calendar day, the unit "Not now" is remembered for. */
+export function dayKey(now: Date): string {
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${now.getFullYear()}-${month}-${day}`;
+}
+
+/** Whether "Not now" was pressed today in this browser session. */
+export function readInvitationDismissed(session: StorageLike | undefined, now: Date = new Date()): boolean {
+    if (!session) return false;
+    try {
+        return session.getItem(QUEST_INVITATION_DISMISSED_KEY) === dayKey(now);
+    } catch {
+        return false;
+    }
+}
+
+export function rememberInvitationDismissed(session: StorageLike | undefined, now: Date = new Date()): void {
+    try {
+        session?.setItem(QUEST_INVITATION_DISMISSED_KEY, dayKey(now));
+    } catch {
+        // Private mode or a full quota: it stays dismissed for this page only.
+    }
+}
+
 /**
  * Builds the starting state from storage. A tracked quest comes back as its pill (a waiting payoff still plays from
- * there); otherwise the dock starts empty and arrival decides what to show.
+ * there); otherwise the dock starts on its resting pill and arrival decides what to show.
  */
-export function restoreQuestState(storage: StorageLike | undefined): QuestState {
+export function restoreQuestState(
+    storage: StorageLike | undefined,
+    session: StorageLike | undefined = undefined,
+    now: Date = new Date()
+): QuestState {
     const state = initialQuestState();
+    state.declined = readInvitationDismissed(session, now);
     if (!storage) return state;
     try {
         const progress = parseStoredProgress(storage.getItem(QUEST_STATE_KEY));
@@ -153,7 +196,6 @@ export function restoreQuestState(storage: StorageLike | undefined): QuestState 
             state.surface = restingSurface(state);
         }
         state.invitationSeen = parseInvitationSeen(storage.getItem(QUEST_INVITATION_SEEN_KEY));
-        state.declined = storage.getItem(QUEST_INVITATION_DECLINED_KEY) === "true";
     } catch (error) {
         console.warn("Quests: could not read saved progress", error);
     }
@@ -165,20 +207,18 @@ export function saveQuestState(storage: StorageLike | undefined, state: QuestSta
     try {
         storage.setItem(QUEST_STATE_KEY, serializeProgress(state));
         storage.setItem(QUEST_INVITATION_SEEN_KEY, String(state.invitationSeen));
-        if (state.declined) storage.setItem(QUEST_INVITATION_DECLINED_KEY, "true");
-        else storage.removeItem(QUEST_INVITATION_DECLINED_KEY);
     } catch (error) {
         // Private mode or a full quota: progress stays for this page only.
         console.warn("Quests: could not save progress", error);
     }
 }
 
-export function clearQuestStorage(storage: StorageLike | undefined): void {
-    if (!storage) return;
+/** Forgets everything, including this session's "Not now". */
+export function clearQuestStorage(storage: StorageLike | undefined, session?: StorageLike): void {
     try {
-        storage.removeItem(QUEST_STATE_KEY);
-        storage.removeItem(QUEST_INVITATION_SEEN_KEY);
-        storage.removeItem(QUEST_INVITATION_DECLINED_KEY);
+        storage?.removeItem(QUEST_STATE_KEY);
+        storage?.removeItem(QUEST_INVITATION_SEEN_KEY);
+        session?.removeItem(QUEST_INVITATION_DISMISSED_KEY);
     } catch (error) {
         console.warn("Quests: could not clear saved progress", error);
     }

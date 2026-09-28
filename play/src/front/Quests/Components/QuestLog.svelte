@@ -9,6 +9,7 @@
     import { escapeKey, questControls, questKeyboardFocus } from "./questActions";
 
     export let entries: QuestLogEntry[];
+    /** The quest bar is hidden: the footer offers to show it again. */
     export let hidden: boolean;
     /** Guests with sign-in available: a row under Available to keep progress across devices. */
     export let showSignInRow = false;
@@ -18,10 +19,10 @@
 
     const dispatch = createEventDispatcher<{
         close: void;
+        /** Start: an available quest becomes the followed one. */
         accept: QuestPath;
+        /** Follow: an accepted quest becomes the followed one. */
         track: QuestPath;
-        setAside: void;
-        remove: QuestPath;
         setHidden: boolean;
         signIn: void;
         setWidth: QuestDockWidth;
@@ -29,14 +30,13 @@
 
     const SECTIONS: QuestLogEntry["status"][] = ["tracked", "accepted", "available", "done"];
 
-    $: anyTracked = entries.some((entry) => entry.status === "tracked");
     $: sections = SECTIONS.map((status) => ({
         status,
         entries: entries.filter((entry) => entry.status === status),
     })).filter((section) => section.entries.length > 0 || (section.status === "available" && showSignInRow));
 
     let expanded: QuestPath | null = null;
-    // The tracked entry is open; the others open on tap.
+    // The followed entry is open; the others open on tap.
     $: openPath = expanded ?? entries.find((entry) => entry.status === "tracked")?.path ?? null;
 
     function sectionLabel(status: QuestLogEntry["status"]): string {
@@ -65,8 +65,8 @@
     }
 
     /**
-     * Track, Set aside and Remove move the entry to another section, which redraws its row: pressed from the keyboard,
-     * focus follows the entry instead of falling to the page.
+     * Start and Follow move the entry to another section, which redraws its row: pressed from the keyboard, focus
+     * follows the entry instead of falling to the page.
      */
     async function moveEntry(event: MouseEvent, path: QuestPath, run: () => void) {
         run();
@@ -113,6 +113,7 @@
 />
 <div
     class="quest-surface quest-log pointer-events-auto flex flex-col"
+    class:quest-log-full={dockWidth === "full"}
     role="dialog"
     aria-modal="false"
     aria-labelledby="quest-log-title"
@@ -165,59 +166,39 @@
                                 {#if entry.requirement}
                                     <p class="quest-secondary m-0">{entry.requirement}</p>
                                 {/if}
-                                <div class="quest-text-row">
-                                    {#if entry.status === "available"}
-                                        <button
-                                            type="button"
-                                            class="quest-text-btn"
-                                            data-testid="quest-log-accept-{entry.path}"
-                                            on:click={(event) =>
-                                                moveEntry(event, entry.path, () => dispatch("accept", entry.path))}
-                                        >
-                                            {anyTracked ? $LL.quest.log.trackInstead() : $LL.quest.log.track()}
-                                        </button>
-                                    {:else if entry.status === "accepted"}
-                                        <button
-                                            type="button"
-                                            class="quest-text-btn"
-                                            data-testid="quest-log-track-{entry.path}"
-                                            on:click={(event) =>
-                                                moveEntry(event, entry.path, () => dispatch("track", entry.path))}
-                                        >
-                                            {anyTracked ? $LL.quest.log.trackInstead() : $LL.quest.log.track()}
-                                        </button>
-                                        <span class="quest-dot" aria-hidden="true">·</span>
-                                        <button
-                                            type="button"
-                                            class="quest-text-btn"
-                                            data-testid="quest-log-remove-{entry.path}"
-                                            on:click={(event) =>
-                                                moveEntry(event, entry.path, () => dispatch("remove", entry.path))}
-                                        >
-                                            {$LL.quest.log.remove()}
-                                        </button>
-                                    {:else if entry.status === "tracked"}
-                                        <button
-                                            type="button"
-                                            class="quest-text-btn"
-                                            data-testid="quest-log-set-aside"
-                                            on:click={(event) =>
-                                                moveEntry(event, entry.path, () => dispatch("setAside"))}
-                                        >
-                                            {$LL.quest.card.setAside()}
-                                        </button>
-                                        <span class="quest-dot" aria-hidden="true">·</span>
-                                        <button
-                                            type="button"
-                                            class="quest-text-btn"
-                                            data-testid="quest-log-remove-{entry.path}"
-                                            on:click={(event) =>
-                                                moveEntry(event, entry.path, () => dispatch("remove", entry.path))}
-                                        >
-                                            {$LL.quest.log.remove()}
-                                        </button>
-                                    {/if}
-                                </div>
+                                {#if entry.status !== "done"}
+                                    <div class="mt-2 flex">
+                                        {#if entry.status === "available"}
+                                            <button
+                                                type="button"
+                                                class="quest-btn u-cta"
+                                                data-testid="quest-log-start-{entry.path}"
+                                                on:click={(event) =>
+                                                    moveEntry(event, entry.path, () => dispatch("accept", entry.path))}
+                                            >
+                                                {$LL.quest.log.start()}
+                                            </button>
+                                        {:else if entry.status === "accepted"}
+                                            <button
+                                                type="button"
+                                                class="quest-btn u-cta"
+                                                data-testid="quest-log-follow-{entry.path}"
+                                                on:click={(event) =>
+                                                    moveEntry(event, entry.path, () => dispatch("track", entry.path))}
+                                            >
+                                                {$LL.quest.log.follow()}
+                                            </button>
+                                        {:else}
+                                            <!-- Already followed: nothing to press. -->
+                                            <span
+                                                class="quest-btn quest-ghost quest-static"
+                                                data-testid="quest-log-following"
+                                            >
+                                                {$LL.quest.log.following()}
+                                            </span>
+                                        {/if}
+                                    </div>
+                                {/if}
                             </div>
                         {/if}
                     </li>
@@ -243,30 +224,29 @@
         {/each}
     </div>
 
-    <div class="quest-log-footer quest-text-row px-3 py-1">
+    <div class="quest-log-footer flex flex-wrap items-center gap-2 px-3 py-2">
         <button
             type="button"
-            class="quest-text-btn"
+            class="quest-btn quest-ghost"
             data-testid="quest-log-hide"
             on:click={() => dispatch("setHidden", !hidden)}
         >
-            {hidden ? $LL.quest.log.show() : $LL.quest.log.hide()}
+            {hidden ? $LL.quest.log.showBar() : $LL.quest.log.hideBar()}
         </button>
         {#if showWidthSwitch}
             <span class="quest-secondary ms-auto whitespace-nowrap">{$LL.quest.log.cardWidth()}</span>
             <button
                 type="button"
-                class="quest-text-btn"
+                class="quest-btn quest-ghost quest-btn-small"
                 aria-pressed={dockWidth === "narrow"}
                 data-testid="quest-width-narrow"
                 on:click={() => dispatch("setWidth", "narrow")}
             >
                 {$LL.quest.log.narrow()}
             </button>
-            <span class="quest-dot" aria-hidden="true">·</span>
             <button
                 type="button"
-                class="quest-text-btn"
+                class="quest-btn quest-ghost quest-btn-small"
                 aria-pressed={dockWidth === "full"}
                 data-testid="quest-width-full"
                 on:click={() => dispatch("setWidth", "full")}

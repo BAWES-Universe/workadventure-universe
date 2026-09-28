@@ -10,7 +10,8 @@ import type { QuestWorld } from "./QuestWorld";
 
 /**
  * The player's quest log as Orbit's You page shows it: what is tracked, accepted and done, in the game's words.
- * Only fixed quest keys and display names; nothing that identifies a person or a room beyond its name.
+ * Only fixed quest keys and display names; nothing that identifies a person or a room beyond its name. The giver and
+ * the room are the ones frozen at acceptance, wherever the player is now.
  */
 export function orbitQuestEntries(t: TranslationFunctions, state: QuestState, world: QuestWorld): OrbitQuestEntry[] {
     const entries: OrbitQuestEntry[] = [];
@@ -23,7 +24,7 @@ export function orbitQuestEntries(t: TranslationFunctions, state: QuestState, wo
             title: questTitle(t, path),
             status,
             ...(status === "done" ? { stamp: QUEST_STAMPS[path] } : {}),
-            ...(giver ? { giver } : {}),
+            ...(giver ? { giver: giver.name } : {}),
             room,
         });
     }
