@@ -1,56 +1,44 @@
 <script lang="ts">
-    import { onDestroy, onMount } from "svelte";
     import type { ComponentType } from "svelte";
-    // import { createPopperActions } from "svelte-popperjs";
     import type { LocalizedString } from "typesafe-i18n";
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorSelectedToolStore, mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { mapEditorActivated, mapEditorActivatedForThematics } from "../../Stores/MenuStore";
-    import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
+    import { mapEditorIsMobileLayoutStore, mapEditorToolsStore } from "./MapEditorTools";
     import { IconX, IconTexture, IconLamp, IconMapSearch, IconSettings, IconTrash } from "@wa-icons";
 
-    const availableTools: { toolName: EditorToolName; iconComponent: ComponentType; tooltiptext: LocalizedString }[] =
-        [];
-
-    availableTools.push({
-        toolName: EditorToolName.ExploreTheRoom,
-        iconComponent: IconMapSearch,
-        tooltiptext: $LL.mapEditor.sideBar.exploreTheRoom(),
-    });
-
-    const entityEditorTool = {
-        toolName: EditorToolName.EntityEditor,
-        iconComponent: IconLamp,
-        tooltiptext: $LL.mapEditor.sideBar.entityEditor(),
-    };
-    const trashEditorTool = {
-        toolName: EditorToolName.TrashEditor,
-        iconComponent: IconTrash,
-        tooltiptext: $LL.mapEditor.sideBar.trashEditor(),
+    const toolIcons: Partial<Record<EditorToolName, ComponentType>> = {
+        [EditorToolName.ExploreTheRoom]: IconMapSearch,
+        [EditorToolName.AreaEditor]: IconTexture,
+        [EditorToolName.EntityEditor]: IconLamp,
+        [EditorToolName.WAMSettingsEditor]: IconSettings,
+        [EditorToolName.TrashEditor]: IconTrash,
     };
 
-    $: if ($mapEditorActivatedForThematics && !$mapEditorActivated) {
-        availableTools.push(entityEditorTool);
-        availableTools.push(trashEditorTool);
+    function toolTooltip(toolName: EditorToolName): LocalizedString {
+        switch (toolName) {
+            case EditorToolName.AreaEditor:
+                return $LL.mapEditor.sideBar.areaEditor();
+            case EditorToolName.EntityEditor:
+                return $LL.mapEditor.sideBar.entityEditor();
+            case EditorToolName.WAMSettingsEditor:
+                return $LL.mapEditor.sideBar.configureMyRoom();
+            case EditorToolName.TrashEditor:
+                return $LL.mapEditor.sideBar.trashEditor();
+            default:
+                return $LL.mapEditor.sideBar.exploreTheRoom();
+        }
     }
 
-    $: if ($mapEditorActivated && !isMobile) {
-        availableTools.push({
-            toolName: EditorToolName.AreaEditor,
-            iconComponent: IconTexture,
-            tooltiptext: $LL.mapEditor.sideBar.areaEditor(),
-        });
-        availableTools.push(entityEditorTool);
-        availableTools.push({
-            toolName: EditorToolName.WAMSettingsEditor,
-            iconComponent: IconSettings,
-            tooltiptext: $LL.mapEditor.sideBar.configureMyRoom(),
-        });
-        availableTools.push(trashEditorTool);
-    }
+    // Built from permissions only; screen size decides layout, not which tools exist.
+    $: availableTools = $mapEditorToolsStore.map((tool) => ({
+        ...tool,
+        iconComponent: toolIcons[tool.toolName],
+        tooltiptext: toolTooltip(tool.toolName),
+        showDesktopHint: tool.worksBestOnDesktop && $mapEditorIsMobileLayoutStore,
+    }));
 
     function switchTool(newTool: EditorToolName) {
         // The map sidebar is opened when the user clicks on the explorer for the first time.
@@ -63,27 +51,9 @@
         analyticsClient.openMapEditorTool(newTool);
         gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(newTool);
     }
-
-    let sectionSideBarContainer: HTMLElement;
-    let isMobile = isMediaBreakpointUp("md");
-    const resizeObserver = new ResizeObserver(() => {
-        isMobile = isMediaBreakpointUp("md");
-    });
-
-    onMount(() => {
-        resizeObserver.observe(sectionSideBarContainer);
-    });
-
-    onDestroy(() => {
-        resizeObserver.unobserve(sectionSideBarContainer);
-    });
 </script>
 
-<section
-    bind:this={sectionSideBarContainer}
-    class="side-bar-container z-[1999] pointer-events-auto"
-    class:!right-20={!$mapEditorVisibilityStore}
->
+<section class="side-bar-container z-[1999] pointer-events-auto" class:!right-20={!$mapEditorVisibilityStore}>
     <!--put a section to avoid lower div to be affected by some css-->
     <div class="flex flex-col items-center gap-4 pt-24 side-bar">
         <div class="close-window p-2 bg-contrast/80 rounded-2xl backdrop-blur-md">
@@ -99,7 +69,8 @@
             {#each availableTools as tool (tool.toolName)}
                 <div class="tool-button relative">
                     <button
-                        class="peer p-3 aspect-square w-12 rounded {$mapEditorSelectedToolStore === tool.toolName
+                        class="peer relative p-3 aspect-square w-12 rounded {$mapEditorSelectedToolStore ===
+                        tool.toolName
                             ? 'bg-secondary'
                             : 'hover:bg-white/10'}"
                         id={tool.toolName}
@@ -108,11 +79,21 @@
                         type="button"
                     >
                         <svelte:component this={tool.iconComponent} font-size="22" />
+                        {#if tool.showDesktopHint}
+                            <span
+                                class="absolute top-1.5 end-1.5 h-2 w-2 rounded-full bg-pop-yellow"
+                                data-testid="worksBestOnDesktopBadge"
+                                aria-hidden="true"
+                            />
+                        {/if}
                     </button>
                     <div
                         class=" bg-contrast/90 backdrop-blur-xl text-white tooltip absolute text-nowrap p-2 invisible opacity-0 transition-all peer-hover:visible peer-hover:opacity-100 rounded top-1/2 -translate-y-1/2 right-[130%]"
                     >
                         {tool.tooltiptext}
+                        {#if tool.showDesktopHint}
+                            <span class="block text-xs opacity-70">{$LL.mapEditor.sideBar.worksBestOnDesktop()}</span>
+                        {/if}
                     </div>
                 </div>
             {/each}

@@ -11,6 +11,7 @@ const mapEditor: BaseTranslation = {
         configureMyRoom: "Configure my room",
         trashEditor: "Trash",
         exploreTheRoom: "Explore the room",
+        worksBestOnDesktop: "Works best on desktop",
         closeMapEditor: "Close map editor",
         mapManagerActivated: "Map manager activated",
         mapExplorerActivated: "Map overview",
