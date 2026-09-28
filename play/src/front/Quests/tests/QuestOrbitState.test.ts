@@ -7,7 +7,7 @@ import { i18nObject } from "../../../i18n/i18n-util";
 import { isOrbitQuestStateMessage } from "../../external-modules/admin-api/orbitBridge";
 import { initialQuestState, reduceQuest } from "../QuestModel";
 import { orbitQuestEntries } from "../QuestOrbitState";
-import { EMPTY_QUEST_WORLD } from "../QuestWorld";
+import { acceptanceOrigin, EMPTY_QUEST_WORLD } from "../QuestWorld";
 
 loadLocale("en-US");
 const t = i18nObject("en-US");
@@ -43,8 +43,25 @@ describe("the quest log sent to Orbit", () => {
             host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Guide" },
         };
         expect(orbitQuestEntries(t, initialQuestState(), world)).toEqual([]);
-        const state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1 });
+        const state = reduceQuest(initialQuestState(), {
+            type: "accept",
+            path: "meet",
+            now: 1,
+            origin: acceptanceOrigin(null, world),
+        });
         expect(orbitQuestEntries(t, state, world)[0].giver).toBe("Guide");
+    });
+
+    it("names no giver for an accepted quest saved without an origin, even where someone hosts now", () => {
+        const world = {
+            ...EMPTY_QUEST_WORLD,
+            roomName: "Lobby",
+            host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Guide" },
+        };
+        const state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1 });
+        const [entry] = orbitQuestEntries(t, state, world);
+        expect(entry.giver).toBeUndefined();
+        expect(entry.room).toBe("Lobby");
     });
 
     it("keeps the giver and the room frozen at acceptance, wherever the player is now", () => {

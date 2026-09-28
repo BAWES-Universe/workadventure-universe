@@ -151,11 +151,14 @@ export function optionRows(t: T, paths: readonly QuestPath[], state: QuestState,
 }
 
 /**
- * Where an entry came from: frozen where it was accepted, else (available here, or saved before origins) who is
- * offering it now.
+ * Where an entry came from: frozen where it was accepted. An entry still on offer shows who is offering it now. An
+ * accepted entry with no origin (saved before origins, or unreadable) names no giver rather than whoever hosts here.
  */
 export function entryOrigin(state: QuestState, path: QuestPath, world: QuestWorld): QuestOrigin {
-    return state.quests[path].origin ?? questOrigin(world);
+    const entry = state.quests[path];
+    if (entry.origin) return entry.origin;
+    if (entry.accepted || entry.done) return { room: world.roomName ?? "", giver: null };
+    return questOrigin(world);
 }
 
 /** The log's entries: everything accepted or done, and what this room offers now. */
