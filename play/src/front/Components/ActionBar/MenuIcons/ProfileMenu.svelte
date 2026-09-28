@@ -46,6 +46,8 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { questNewsStore, questsEnabled } from "../../../Quests/QuestStore";
+    import QuestsMenuRow from "../../../Quests/Components/QuestsMenuRow.svelte";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
@@ -296,13 +298,30 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div data-testid="action-user" class="flex items-center transition-all pointer-events-auto">
-    <div
-        class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
+    <!-- With quests on, the trigger is a real button (a keyboard route to the Quests row), drawn exactly as before. -->
+    <svelte:element
+        this={questsEnabled ? "button" : "div"}
+        type={questsEnabled ? "button" : undefined}
+        aria-expanded={questsEnabled ? $openedMenuStore === "profileMenu" : undefined}
+        class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer {questsEnabled
+            ? 'relative m-0 border-none text-start text-white hover:brightness-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8629fc]'
+            : ''}"
         use:floatingUiRef
         on:click|preventDefault={() => {
             openedMenuStore.toggle("profileMenu");
         }}
     >
+        {#if questsEnabled}
+            <span class="sr-only">{$LL.menu.sub.profile()}</span>
+            {#if $questNewsStore}
+                <span class="sr-only">{$LL.quest.newActivity()}</span>
+                <span
+                    class="absolute -top-1 -start-1 block h-3 w-3 rounded-full bg-[#c4b5fd] border-[1.5px] border-solid border-contrast pointer-events-none"
+                    aria-hidden="true"
+                    data-testid="quests-trigger-dot"
+                />
+            {/if}
+        {/if}
         <div
             class="h-12 w-12 @sm/actions:h-10 @sm/actions:w-10 @xl/actions:h-12 @xl/actions:w-12 p-1 m-0 items-center justify-center flex @md/actions:hidden"
         >
@@ -349,7 +368,7 @@
                 />
             </div>
         </div>
-    </div>
+    </svelte:element>
     {#if $openedMenuStore === "profileMenu"}
         <!-- before:content-[''] before:absolute before:w-0 before:h-0 before:-top-[14px] before:right-6 before:border-solid before:border-8 before:border-transparent before:border-b-contrast/80 -->
         <div
@@ -416,16 +435,9 @@
                         <DeskIcon height="22" width="22" />
                     </ActionBarButton>
                 {/if}
-                <!--                                <button-->
-                <!--                                    class="group flex p-2 gap-2 items-center hover:bg-white/10 transition-all cursor-pointer font-bold text-sm w-full pointer-events-auto text-left rounded"-->
-                <!--                                >-->
-                <!--                                    <div-->
-                <!--                                        class="transition-all w-6 h-6 aspect-square text-center flex items-center justify-center"-->
-                <!--                                    >-->
-                <!--                                        <AchievementIcon />-->
-                <!--                                    </div>-->
-                <!--                                    <div class="text-left flex items-center">{$LL.actionbar.quest()}</div>-->
-                <!--                                </button>-->
+                {#if questsEnabled}
+                    <QuestsMenuRow />
+                {/if}
                 <HeaderMenuItem label={$LL.menu.sub.settings()} />
                 <ActionBarButton label={$LL.actionbar.editCamMic()} on:click={openEnableCameraScene}>
                     <CamSettingsIcon />

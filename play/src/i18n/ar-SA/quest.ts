@@ -104,6 +104,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         signInBody: "حاليًا يُحفظ في هذا المتصفح فقط ويضيع إذا مُسحت بياناته.",
         signIn: "تسجيل الدخول",
         backToExploring: "العودة إلى الاستكشاف",
+        tryAnother: "جرّب مهمة أخرى",
     },
     announce: {
         tracking: "قيد المتابعة: {objective}",

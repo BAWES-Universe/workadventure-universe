@@ -76,6 +76,9 @@ vi.mock("../../Administration/AnalyticsClient", () => ({
     analyticsClient: { orbitOpened: mocks.orbitOpened },
 }));
 
+// Quests are off here: the quest log never reaches the bridge (orbitBridge.test.ts covers the message).
+vi.mock("../../Quests/QuestOrbitState", () => ({ watchOrbitQuestEntries: () => () => {} }));
+
 vi.mock("../../Connection/LocalUserStore", () => ({
     localUserStore: {
         isLogged: mocks.isLogged,

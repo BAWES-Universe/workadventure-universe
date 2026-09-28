@@ -104,6 +104,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         signInBody: "Pour l'instant, elle n'existe que dans ce navigateur et disparaît si ses données sont effacées.",
         signIn: "Se connecter",
         backToExploring: "Continuer à explorer",
+        tryAnother: "En essayer une autre",
     },
     announce: {
         tracking: "Quête suivie : {objective}",

@@ -3,6 +3,8 @@
     import { IconX } from "@wa-icons";
     export let dataTestId: string | undefined = undefined;
     export let id: string | undefined = undefined;
+    /** Accessible name; without it the button is only an X. */
+    export let ariaLabel: string | undefined = undefined;
     export let bgColor = "bg-white/20";
     export let hoverColor = "bg-white/30";
     export let textColor = "text-white";
@@ -33,6 +35,7 @@
 <button
     type="button"
     {id}
+    aria-label={ariaLabel}
     class="{sizeClasses} p-0 flex items-center justify-center rounded backdrop-blur close-window transition-all aspect-square text-2xl {textColor} {bgColor} hover:{hoverColor} close-btn {extraButtonClasses}"
     data-testid={dataTestId}
     on:click={handleClick}

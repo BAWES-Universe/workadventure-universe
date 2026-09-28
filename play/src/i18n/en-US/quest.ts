@@ -105,6 +105,7 @@ const quest: BaseTranslation = {
         signInBody: "Right now it lives only in this browser and goes if its data is cleared.",
         signIn: "Sign in",
         backToExploring: "Back to exploring",
+        tryAnother: "Try another",
     },
     announce: {
         tracking: "Tracking: {objective}",

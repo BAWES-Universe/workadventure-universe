@@ -5,6 +5,7 @@ import {
     isOrbitBridgeAckMessage,
     isOrbitBridgeReadyMessage,
     isOrbitProfileChangedMessage,
+    isOrbitQuestStateMessage,
     newRoomRevision,
     type OrbitBridgeOutgoing,
 } from "./orbitBridge";
@@ -154,5 +155,65 @@ describe("OrbitBridge", () => {
         expect(isOrbitProfileChangedMessage({ ...good, name: 5 })).toBe(false);
         expect(isOrbitProfileChangedMessage({ ...good, version: 2 })).toBe(false);
         expect(isOrbitProfileChangedMessage({ ...good, roomRevision: "short" })).toBe(false);
+    });
+});
+
+describe("Orbit bridge quest log", () => {
+    const entry = { id: "welcome.explore", title: "Explore this place", status: "tracked" as const, room: "Lobby" };
+
+    it("sends nothing about quests and lists no capability until the game has a quest log", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.onReady();
+        expect(posted).toHaveLength(1);
+        expect(posted[0]).toMatchObject({ capabilities: ["navigate", "event", "view", "profile"] });
+    });
+
+    it("sends the log right after init, then on each change while Orbit listens", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.setQuestState([entry]);
+        expect(posted).toHaveLength(0);
+
+        bridge.onReady();
+        expect(posted[0]).toMatchObject({
+            type: "orbit-bridge-init",
+            capabilities: expect.arrayContaining(["quests"]),
+        });
+        expect(posted[1]).toEqual({ type: "orbit-quest-state", version: 1, entries: [entry] });
+
+        bridge.setQuestState([{ ...entry, status: "done", stamp: "explorer" }]);
+        expect(posted[2]).toEqual({
+            type: "orbit-quest-state",
+            version: 1,
+            entries: [{ ...entry, status: "done", stamp: "explorer" }],
+        });
+
+        // Closed: kept for the next init, not posted.
+        bridge.onClosed();
+        bridge.setQuestState([]);
+        expect(posted).toHaveLength(3);
+    });
+
+    it("bounds the log: eight entries at most, long names cut", () => {
+        const { bridge, posted } = makeBridge();
+        bridge.onReady();
+        const long = "x".repeat(200);
+        bridge.setQuestState(Array.from({ length: 12 }, () => ({ ...entry, title: long, giver: long, room: long })));
+        const message = posted[1];
+        expect(isOrbitQuestStateMessage(message)).toBe(true);
+        if (message.type !== "orbit-quest-state") throw new Error("expected the quest log");
+        expect(message.entries).toHaveLength(8);
+        expect(message.entries[0].title).toHaveLength(80);
+        expect(message.entries[0].giver).toHaveLength(64);
+        expect(message.entries[0].room).toHaveLength(80);
+    });
+
+    it("rejects malformed quest logs", () => {
+        const good = { type: "orbit-quest-state", version: 1, entries: [entry] };
+        expect(isOrbitQuestStateMessage(good)).toBe(true);
+        expect(isOrbitQuestStateMessage({ ...good, version: 2 })).toBe(false);
+        expect(isOrbitQuestStateMessage({ ...good, entries: [{ ...entry, status: "won" }] })).toBe(false);
+        expect(isOrbitQuestStateMessage({ ...good, entries: [{ ...entry, stamp: "gold" }] })).toBe(false);
+        expect(isOrbitQuestStateMessage({ ...good, entries: [{ ...entry, title: "" }] })).toBe(false);
+        expect(isOrbitQuestStateMessage({ ...good, entries: Array.from({ length: 9 }, () => entry) })).toBe(false);
     });
 });
