@@ -7,10 +7,10 @@ import { EMPTY_QUEST_WORLD } from "../QuestWorld";
 const world: QuestWorld = {
     ...EMPTY_QUEST_WORLD,
     ready: true,
-    host: { kind: "bot", userId: 3, uuid: "bot-3", name: "Receptionist" },
+    host: { kind: "bot", userId: 3, uuid: "bot-3", name: "Guide" },
     present: [
         { userId: 7, uuid: "u-7", name: "Ada", isBot: false },
-        { userId: 3, uuid: "bot-3", name: "Receptionist", isBot: true },
+        { userId: 3, uuid: "bot-3", name: "Guide", isBot: true },
     ],
     exploreTarget: {
         area: { id: "a", name: "Courtyard", x: 100, y: 200, width: 64, height: 32 },

@@ -46,7 +46,7 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
-    import { questNewsStore, questsEnabled } from "../../../Quests/QuestStore";
+    import { questNewsStore } from "../../../Quests/QuestStore";
     import QuestsMenuRow from "../../../Quests/Components/QuestsMenuRow.svelte";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
@@ -294,40 +294,38 @@
         }
     );
 
+    // An explicit name: without it the button would be named after its whole content, status label included, and
+    // clash with the status buttons of the menu ("Busy", "Online"...) for anyone looking a button up by its name.
+    $: triggerLabel = [$LL.menu.sub.profile(), userName, $questNewsStore ? $LL.quest.newActivity() : ""]
+        .filter((part) => part)
+        .join(", ");
+
     function onTriggerClick(event: MouseEvent) {
-        // With quests on the trigger is a button: a click or a tap leaves no focus on it, so Space and Enter still go
-        // to the game afterwards, as they did before.
-        if (questsEnabled && event.detail > 0 && event.currentTarget instanceof HTMLElement) {
+        // The trigger is a button: a click or a tap leaves no focus on it, so Space and Enter still go to the game
+        // afterwards.
+        if (event.detail > 0 && event.currentTarget instanceof HTMLElement) {
             event.currentTarget.blur();
         }
         openedMenuStore.toggle("profileMenu");
     }
 </script>
 
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div data-testid="action-user" class="flex items-center transition-all pointer-events-auto">
-    <!-- With quests on, the trigger is a real button (a keyboard route to the Quests row), drawn exactly as before. -->
-    <svelte:element
-        this={questsEnabled ? "button" : "div"}
-        type={questsEnabled ? "button" : undefined}
-        aria-expanded={questsEnabled ? $openedMenuStore === "profileMenu" : undefined}
-        class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer {questsEnabled
-            ? 'relative m-0 border-none text-start text-white hover:brightness-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8629fc]'
-            : ''}"
+    <!-- A real button (a keyboard route to the Quests row), drawn exactly as the former div. -->
+    <button
+        type="button"
+        aria-label={triggerLabel}
+        aria-expanded={$openedMenuStore === "profileMenu"}
+        class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer relative m-0 border-none text-start text-white hover:brightness-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8629fc]"
         use:floatingUiRef
         on:click|preventDefault={onTriggerClick}
     >
-        {#if questsEnabled}
-            <span class="sr-only">{$LL.menu.sub.profile()}</span>
-            {#if $questNewsStore}
-                <span class="sr-only">{$LL.quest.newActivity()}</span>
-                <span
-                    class="absolute -top-1 -start-1 block h-3 w-3 rounded-full bg-[#c4b5fd] border-[1.5px] border-solid border-contrast pointer-events-none"
-                    aria-hidden="true"
-                    data-testid="quests-trigger-dot"
-                />
-            {/if}
+        {#if $questNewsStore}
+            <span
+                class="absolute -top-1 -start-1 block h-3 w-3 rounded-full bg-[#c4b5fd] border-[1.5px] border-solid border-contrast pointer-events-none"
+                aria-hidden="true"
+                data-testid="quests-trigger-dot"
+            />
         {/if}
         <div
             class="h-12 w-12 @sm/actions:h-10 @sm/actions:w-10 @xl/actions:h-12 @xl/actions:w-12 p-1 m-0 items-center justify-center flex @md/actions:hidden"
@@ -375,7 +373,7 @@
                 />
             </div>
         </div>
-    </svelte:element>
+    </button>
     {#if $openedMenuStore === "profileMenu"}
         <!-- before:content-[''] before:absolute before:w-0 before:h-0 before:-top-[14px] before:right-6 before:border-solid before:border-8 before:border-transparent before:border-b-contrast/80 -->
         <div
@@ -442,9 +440,7 @@
                         <DeskIcon height="22" width="22" />
                     </ActionBarButton>
                 {/if}
-                {#if questsEnabled}
-                    <QuestsMenuRow />
-                {/if}
+                <QuestsMenuRow />
                 <HeaderMenuItem label={$LL.menu.sub.settings()} />
                 <ActionBarButton label={$LL.actionbar.editCamMic()} on:click={openEnableCameraScene}>
                     <CamSettingsIcon />

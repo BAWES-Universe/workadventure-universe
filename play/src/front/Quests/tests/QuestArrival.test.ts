@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { get, readable } from "svelte/store";
 
-const env = vi.hoisted(() => ({ FEATURE_FLAG_QUESTS_PROOF_SLICE: true }));
 const scene = vi.hoisted(() => ({ current: { CurrentPlayer: { x: 0, y: 0 } } as unknown }));
-vi.mock("../../Enum/EnvironmentVariable", () => env);
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 vi.mock("../../Phaser/Game/GameManager", () => ({ gameManager: { tryGetCurrentGameScene: () => scene.current } }));
 vi.mock("../../../i18n/i18n-svelte", () => {

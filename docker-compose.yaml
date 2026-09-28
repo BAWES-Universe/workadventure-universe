@@ -127,8 +127,6 @@ services:
       #GRPC_VERBOSITY: DEBUG
       #GRPC_TRACE: all
       FEATURE_FLAG_BROADCAST_AREAS: "true"
-      # Quests proof slice (#511): on for local development; set to "false" in .env to turn it off.
-      FEATURE_FLAG_QUESTS_PROOF_SLICE: "${FEATURE_FLAG_QUESTS_PROOF_SLICE:-true}"
       # Integration tools
       KLAXOON_ENABLED: "$KLAXOON_ENABLED"
       KLAXOON_CLIENT_ID: "${KLAXOON_CLIENT_ID:-}"

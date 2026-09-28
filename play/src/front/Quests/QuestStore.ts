@@ -2,33 +2,27 @@ import type { Readable } from "svelte/store";
 import { derived, get, writable } from "svelte/store";
 import type { QuestAnalyticsDevice, QuestAnalyticsFrom, QuestAnalyticsId } from "../Administration/AnalyticsClient";
 import { analyticsClient } from "../Administration/AnalyticsClient";
-import { FEATURE_FLAG_QUESTS_PROOF_SLICE } from "../Enum/EnvironmentVariable";
 import { consumeQuestReset, questBrowserStorage, readQuestSim } from "./QuestDevSettings";
 import type { QuestSim } from "./QuestDevSettings";
 import type { MeetProgress } from "./MeetExchange";
 import type { QuestEvent, QuestFollowUp, QuestPath, QuestState } from "./QuestModel";
-import { acceptedUntrackedCount, initialQuestState, QUEST_PATHS, reduceQuest, revealPending } from "./QuestModel";
+import { acceptedUntrackedCount, QUEST_PATHS, reduceQuest, revealPending } from "./QuestModel";
 import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
 import type { QuestWorld } from "./QuestWorld";
 import { availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
 
-/** The flag. With it off nothing here subscribes, listens or renders. */
-export const questsEnabled: boolean = FEATURE_FLAG_QUESTS_PROOF_SLICE === true;
+const storage = questBrowserStorage();
 
-const storage = questsEnabled ? questBrowserStorage() : undefined;
-
-if (questsEnabled && consumeQuestReset(storage)) clearQuestStorage(storage);
+if (consumeQuestReset(storage)) clearQuestStorage(storage);
 
 /** The dev host scenario for this page (localStorage `questSim`). */
-export const questSim: QuestSim = questsEnabled ? readQuestSim(storage) : "empty";
+export const questSim: QuestSim = readQuestSim(storage);
 
-const state = writable<QuestState>(questsEnabled ? restoreQuestState(storage) : initialQuestState());
+const state = writable<QuestState>(restoreQuestState(storage));
 
-if (questsEnabled) {
-    // Module-level, for the page's lifetime: progress is saved whatever is mounted.
-    //eslint-disable-next-line svelte/no-ignored-unsubscribe
-    state.subscribe((value) => saveQuestState(storage, value));
-}
+// Module-level, for the page's lifetime: progress is saved whatever is mounted.
+//eslint-disable-next-line svelte/no-ignored-unsubscribe
+state.subscribe((value) => saveQuestState(storage, value));
 
 export const questStateStore: Readable<QuestState> = { subscribe: state.subscribe };
 
@@ -40,13 +34,11 @@ function apply(next: (current: QuestState) => QuestState): void {
 }
 
 export function dispatchQuest(event: QuestEvent): void {
-    if (!questsEnabled) return;
     apply((current) => reduceQuest(current, event));
 }
 
 /** Plays the next waiting completion unless `blocked` (see revealPending). */
 export function revealPendingQuest(blocked: boolean): void {
-    if (!questsEnabled) return;
     apply((current) => revealPending(current, blocked));
 }
 
@@ -83,7 +75,7 @@ function createAnnouncementQueue() {
     return {
         subscribe,
         push(message: string) {
-            if (!questsEnabled || !message) return;
+            if (!message) return;
             update((queue) => (queue.includes(message) ? queue : [...queue, message]));
         },
         take(): string | undefined {
@@ -136,7 +128,6 @@ function giverKind(): "bot" | "area" | "none" {
 // decide progress.
 
 export function showQuestInvitation(): boolean {
-    if (!questsEnabled) return false;
     const before = get(state);
     dispatchQuest({ type: "invitation-shown" });
     if (get(state) === before) return false;
@@ -151,7 +142,6 @@ export function showQuestInvitation(): boolean {
 }
 
 export function declineQuestInvitation(): void {
-    if (!questsEnabled) return;
     dispatchQuest({ type: "decline" });
     analyticsClient.questDeclined({
         scope: "welcome",
@@ -164,14 +154,12 @@ export function declineQuestInvitation(): void {
 
 /** Ignored for a while, walked away from, or Escape: not a decline. It may come back once on a later arrival. */
 export function fadeQuestInvitation(): void {
-    if (!questsEnabled) return;
     const before = get(state);
     dispatchQuest({ type: "invitation-faded" });
     if (get(state) !== before) analyticsClient.questTracker({ action: "faded", device: questDevice() });
 }
 
 export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: number = Date.now()): void {
-    if (!questsEnabled) return;
     if (path === "explore") refreshWorldBeforeAccept?.();
     const world = get(questWorldStore);
     const target = world.exploreTarget;
@@ -194,7 +182,6 @@ export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: numb
 }
 
 export function trackQuest(path: QuestPath, from: QuestAnalyticsFrom = "log"): void {
-    if (!questsEnabled) return;
     const before = get(state);
     dispatchQuest({ type: "track", path });
     if (get(state) !== before && get(state).tracked === path) {
@@ -203,7 +190,6 @@ export function trackQuest(path: QuestPath, from: QuestAnalyticsFrom = "log"): v
 }
 
 export function setAsideQuest(): void {
-    if (!questsEnabled) return;
     const tracked = get(state).tracked;
     if (!tracked) return;
     dispatchQuest({ type: "set-aside" });
@@ -211,14 +197,12 @@ export function setAsideQuest(): void {
 }
 
 export function removeQuest(path: QuestPath): void {
-    if (!questsEnabled) return;
     const before = get(state);
     dispatchQuest({ type: "remove", path });
     if (get(state) !== before) analyticsClient.questStopped({ questId: questAnalyticsId(path), reason: "removed" });
 }
 
 export function setQuestsHidden(hidden: boolean): void {
-    if (!questsEnabled) return;
     const before = get(state).hidden;
     dispatchQuest({ type: hidden ? "hide" : "show-quests" });
     if (before !== hidden) {
@@ -232,7 +216,6 @@ export function completeQuest(
     source: "detected" | "already-valid" = "detected",
     now: number = Date.now()
 ): void {
-    if (!questsEnabled) return;
     const before = get(state);
     dispatchQuest({ type: "complete", path, now });
     const after = get(state);
@@ -251,7 +234,6 @@ export function completeQuest(
 }
 
 export function pauseQuest(path: QuestPath): void {
-    if (!questsEnabled) return;
     const before = get(state);
     dispatchQuest({ type: "pause", path, reason: "no-eligible-target" });
     if (get(state) !== before) {
@@ -269,13 +251,11 @@ export function settleQuestPayoff(followUp: QuestFollowUp | null): void {
 
 /** Closing the sign-in offer: remembered, and the continuation shows if something is left to do here. */
 export function skipQuestSignInOffer(): void {
-    if (!questsEnabled) return;
     dispatchQuest({ type: "sign-in-later", continuation: get(questAvailablePathsStore).length > 0 });
     analyticsClient.questSkipped({ reason: "signin-offer" });
 }
 
 export function resetQuests(): void {
-    if (!questsEnabled) return;
     clearQuestStorage(storage);
     dispatchQuest({ type: "reset" });
     questMeetProgressStore.set("idle");

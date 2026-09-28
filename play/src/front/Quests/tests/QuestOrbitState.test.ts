@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../Enum/EnvironmentVariable", () => ({ FEATURE_FLAG_QUESTS_PROOF_SLICE: true }));
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 
 import { loadLocale } from "../../../i18n/i18n-util.sync";
@@ -41,26 +40,26 @@ describe("the quest log sent to Orbit", () => {
         const world = {
             ...EMPTY_QUEST_WORLD,
             roomName: "Lobby",
-            host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Receptionist" },
+            host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Guide" },
         };
         expect(orbitQuestEntries(t, initialQuestState(), world)).toEqual([]);
         const state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1 });
-        expect(orbitQuestEntries(t, state, world)[0].giver).toBe("Receptionist");
+        expect(orbitQuestEntries(t, state, world)[0].giver).toBe("Guide");
     });
 
     it("keeps where each quest was accepted, wherever the player is now", () => {
         const lobby = {
             ...EMPTY_QUEST_WORLD,
             roomName: "Lobby",
-            host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Receptionist" },
+            host: { kind: "bot" as const, userId: 1, uuid: "bot-1", name: "Guide" },
         };
         const state = reduceQuest(initialQuestState(), {
             type: "accept",
             path: "meet",
             now: 1,
-            origin: { room: "Lobby", giver: "Receptionist" },
+            origin: { room: "Lobby", giver: "Guide" },
         });
         const garden = { ...lobby, roomName: "Garden", host: { kind: "none" as const } };
-        expect(orbitQuestEntries(t, state, garden)[0]).toMatchObject({ giver: "Receptionist", room: "Lobby" });
+        expect(orbitQuestEntries(t, state, garden)[0]).toMatchObject({ giver: "Guide", room: "Lobby" });
     });
 });

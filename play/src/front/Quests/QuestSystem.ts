@@ -6,7 +6,7 @@ import { analyticsClient } from "../Administration/AnalyticsClient";
 import { armQuestScene } from "./QuestDetectors";
 import type { QuestSurface } from "./QuestModel";
 import { visibleSurface } from "./QuestModel";
-import { dispatchQuest, questDevice, questsEnabled, questStateStore, revealPendingQuest } from "./QuestStore";
+import { dispatchQuest, questDevice, questStateStore, revealPendingQuest } from "./QuestStore";
 import { questPillSuppressed, questQuiet, questSuppressionStore, questSurfaceSuppressed } from "./QuestUiStores";
 
 /** A completion plays once the dock has been free this long. */
@@ -25,10 +25,9 @@ let stop: (() => void) | undefined;
 
 /**
  * Starts the detectors (re-armed on every map, torn down while there is none), the payoff timing and the news dot.
- * Reference-counted: the dock calls it on mount and the returned function on destroy. Does nothing with the flag off.
+ * Reference-counted: the dock calls it on mount and the returned function on destroy.
  */
 export function startQuestSystem(): () => void {
-    if (!questsEnabled) return () => {};
     users += 1;
     if (users === 1) stop = start();
     let released = false;

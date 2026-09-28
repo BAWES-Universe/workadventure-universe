@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import { get, readable, writable } from "svelte/store";
 
-const env = vi.hoisted(() => ({ FEATURE_FLAG_QUESTS_PROOF_SLICE: true, ENABLE_OPENID: false, WOKA_SPEED: 9 }));
+const env = vi.hoisted(() => ({ ENABLE_OPENID: false, WOKA_SPEED: 9 }));
 vi.mock("../../Enum/EnvironmentVariable", () => env);
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 // A map is loaded (timers act only then); it has no player to measure, so the stamp just appears.

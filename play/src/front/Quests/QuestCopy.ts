@@ -97,7 +97,7 @@ export interface QuestLogEntry {
     title: string;
     description: string;
     minutes: number;
-    /** "From Receptionist · Lobby", or "Here · Lobby". */
+    /** "From Guide · Lobby", or "Here · Lobby". */
     origin: string;
     /** "First Hello badge". */
     reward: string;

@@ -5,7 +5,7 @@ import type { OrbitQuestEntry } from "../external-modules/admin-api/orbitBridge"
 import { entryOrigin, questTitle } from "./QuestCopy";
 import type { QuestState } from "./QuestModel";
 import { QUEST_PATHS, QUEST_STAMPS, questStatus } from "./QuestModel";
-import { questAnalyticsId, questsEnabled, questStateStore, questWorldStore } from "./QuestStore";
+import { questAnalyticsId, questStateStore, questWorldStore } from "./QuestStore";
 import type { QuestWorld } from "./QuestWorld";
 
 /**
@@ -33,11 +33,10 @@ export function orbitQuestEntries(t: TranslationFunctions, state: QuestState, wo
 }
 
 /**
- * Calls `send` with the log now and whenever it changes (same content is not sent twice). Does nothing with quests
- * off. Returns the function that stops.
+ * Calls `send` with the log now and whenever it changes (same content is not sent twice). Returns the function that
+ * stops.
  */
 export function watchOrbitQuestEntries(send: (entries: OrbitQuestEntry[]) => void): () => void {
-    if (!questsEnabled) return () => {};
     let last: string | undefined;
     return derived([LL, questStateStore, questWorldStore], ([$LL, $state, $world]) =>
         orbitQuestEntries($LL, $state, $world)

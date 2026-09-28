@@ -13,7 +13,7 @@
     /** Guests with sign-in available: a row under Available to keep progress across devices. */
     export let showSignInRow = false;
     export let dockWidth: QuestDockWidth = "narrow";
-    /** The dev-only card width switch (the flag is on). */
+    /** The card width switch: development builds only (the dock passes import.meta.env.DEV). */
     export let showWidthSwitch = false;
 
     const dispatch = createEventDispatcher<{

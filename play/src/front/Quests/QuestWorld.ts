@@ -1,5 +1,4 @@
 import type { QuestSim } from "./QuestDevSettings";
-import { PREFERRED_HOST_BOT_NAME } from "./QuestDevSettings";
 import type { QuestHostOverride } from "./QuestHash";
 import type { QuestOrigin, QuestPath, QuestState } from "./QuestModel";
 import { QUEST_PATHS } from "./QuestModel";
@@ -100,8 +99,8 @@ export function pickExploreTarget(
 }
 
 /**
- * Who greets newcomers. An owner's choice from Orbit's Visit link wins when it is here; otherwise the dev
- * simulation decides (`bot`: the Receptionist, else the first bot).
+ * Who greets newcomers: the owner's choice from Orbit's Visit link (the hash) when it is here, else the first bot on
+ * the map, else the first named area with the `area` simulation, else nobody. Bots are never picked by name.
  */
 export function resolveQuestHost(
     sim: QuestSim,
@@ -130,20 +129,15 @@ export function resolveQuestHost(
         if (area) return asArea(area);
     }
 
-    if (sim === "bot") {
-        const preferred = bots.find(
-            (bot) => bot.name.trim().toLocaleLowerCase() === PREFERRED_HOST_BOT_NAME.toLocaleLowerCase()
-        );
-        const bot = preferred ?? bots[0];
-        return bot ? asBot(bot) : { kind: "none" };
-    }
+    if (bots[0]) return asBot(bots[0]);
     if (sim === "area") {
-        return areas[0] ? asArea(areas[0]) : { kind: "none" };
+        const area = areas.find((candidate) => candidate.name.trim() !== "");
+        if (area) return asArea(area);
     }
     return { kind: "none" };
 }
 
-/** Whether a path can be completed in this room right now. The proof slice counts every bot as conversational. */
+/** Whether a path can be completed in this room right now. For now every bot counts as conversational. */
 export function isPathCompletable(world: QuestWorld, path: QuestPath): boolean {
     switch (path) {
         case "meet":

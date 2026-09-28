@@ -34,7 +34,7 @@ export const HOST_WAIT_MS = 5_000;
 /** After a `#moveTo` arrival, how long to wait for that first walk to end. */
 export const MOVE_TO_WAIT_MS = 8_000;
 /**
- * Proof-slice stand-in for a bot's reply: a real bot may not answer, so with `questSim=bot` the host bot being in the
+ * Stand-in for a bot's reply: a real bot may not answer, so with `questSim=bot` the host bot being in the
  * same bubble counts as its side of the exchange this long after the player's hello. A real reply counts as well,
  * and earlier. Nothing is written to the chat.
  */

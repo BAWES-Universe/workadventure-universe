@@ -13,8 +13,8 @@ const world: QuestWorld = {
     ...EMPTY_QUEST_WORLD,
     ready: true,
     roomName: "Lobby",
-    host: { kind: "bot", userId: 3, uuid: "bot-3", name: "Receptionist" },
-    present: [{ userId: 3, uuid: "bot-3", name: "Receptionist", isBot: true }],
+    host: { kind: "bot", userId: 3, uuid: "bot-3", name: "Guide" },
+    present: [{ userId: 3, uuid: "bot-3", name: "Guide", isBot: true }],
     exploreTarget: { area: { id: "a", name: "Courtyard", x: 0, y: 0, width: 64, height: 64 }, alreadyInside: false },
     canBuild: true,
 };
@@ -22,7 +22,7 @@ const world: QuestWorld = {
 describe("quest copy", () => {
     it("lets the host speak through the eyebrow, never a 'Name:' prefix", () => {
         const state = initialQuestState();
-        expect(questEyebrow(t, world)).toBe("Receptionist");
+        expect(questEyebrow(t, world)).toBe("Guide");
         expect(questEyebrow(t, { ...world, host: { kind: "none" } })).toBe("Lobby");
         expect(questEyebrow(t, { ...world, host: { kind: "none" }, roomName: undefined })).toBe("Welcome");
         expect(questPayoffLine(t, "meet", state, world)).toBe("Good to meet you.");
@@ -68,7 +68,7 @@ describe("quest copy", () => {
             ["explore", "done"],
             ["build", "available"],
         ]);
-        expect(entries[0]).toMatchObject({ origin: "From Receptionist · Lobby", reward: "First Hello badge" });
+        expect(entries[0]).toMatchObject({ origin: "From Guide · Lobby", reward: "First Hello badge" });
         expect(entries[1].lastTime).toBe("You found the Courtyard last time.");
         expect(entries[2].requirement).toBe("Needs: edit rights in this room");
     });

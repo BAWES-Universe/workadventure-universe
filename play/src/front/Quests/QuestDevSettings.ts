@@ -1,10 +1,10 @@
 import { writable } from "svelte/store";
 
 /**
- * Dev-only switches for the proof slice, read from this browser's localStorage (the flag gates everything that
- * reads them):
- * - `questSim`: which host variant to simulate: `bot` (default; the bot named Receptionist, else the first bot),
- *   `area`, `none` or `empty` (nothing here, no invitation).
+ * Dev-only switches for quests, read from this browser's localStorage:
+ * - `questSim`: which host variant to simulate. The owner's choice (from the hash) and then the first bot on the map
+ *   always come first; `area` then falls back to the first named area, `bot` (default) and `none` to no host, and
+ *   `empty` simulates an empty room (no host, nothing here, no invitation).
  * - `questReset=1`: forget all quest progress on the next load (then cleared).
  * - `questDockWidth`: `narrow` (default; cards leave the Express column visible) or `full` on phones.
  */
@@ -14,9 +14,6 @@ export type QuestDockWidth = "narrow" | "full";
 export const QUEST_SIM_KEY = "questSim";
 export const QUEST_RESET_KEY = "questReset";
 export const QUEST_DOCK_WIDTH_KEY = "questDockWidth";
-
-/** The bot a `bot` simulation prefers as host when it is on the map. */
-export const PREFERRED_HOST_BOT_NAME = "Receptionist";
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 

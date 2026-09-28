@@ -32,7 +32,6 @@
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
-    import { questsEnabled } from "../Quests/QuestStore";
     import QuestDock from "../Quests/Components/QuestDock.svelte";
     import { mapEditorSideBarWidthStore } from "./MapEditor/MapEditorSideBarWidthStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
@@ -253,11 +252,9 @@
             {/if}
             <ExternalComponents zone="centeredPopup" />
 
-            <!-- Quests (flag on only): bottom-left, before the bottom-right column so that column paints above it
+            <!-- Quests: bottom-left, before the bottom-right column so that column paints above it
                  (only the log on phones and a "full" width card cover it, with a z-index, while open). -->
-            {#if questsEnabled}
-                <QuestDock />
-            {/if}
+            <QuestDock />
 
             <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
                  directly above the menu button. -->

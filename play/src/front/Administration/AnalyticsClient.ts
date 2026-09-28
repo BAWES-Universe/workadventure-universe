@@ -1168,7 +1168,7 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    // Welcome quests (proof slice). No names, uuids or room ids: quest and objective ids are fixed keys.
+    // Welcome quests. No names, uuids or room ids: quest and objective ids are fixed keys.
 
     /** The arrival invitation was shown. */
     questOffered(properties: QuestOfferProperties): void {

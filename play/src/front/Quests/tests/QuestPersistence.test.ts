@@ -107,7 +107,7 @@ describe("save and restore", () => {
             path: "explore",
             now: 10,
             exploreArea: { id: "a", name: "Hall" },
-            origin: { room: "Lobby", giver: "Receptionist" },
+            origin: { room: "Lobby", giver: "Guide" },
         });
         saveQuestState(storage, state);
         expect(storage.data.get(QUEST_INVITATION_SEEN_KEY)).toBe("1");
@@ -117,7 +117,7 @@ describe("save and restore", () => {
         expect(restored.surface).toBe("pill");
         expect(restored.tracked).toBe("explore");
         expect(restored.exploreArea).toEqual({ id: "a", name: "Hall" });
-        expect(restored.quests.explore.origin).toEqual({ room: "Lobby", giver: "Receptionist" });
+        expect(restored.quests.explore.origin).toEqual({ room: "Lobby", giver: "Guide" });
         expect(restored.invitationSeen).toBe(1);
     });
 

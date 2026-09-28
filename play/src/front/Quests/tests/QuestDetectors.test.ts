@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 
 const current = vi.hoisted(() => ({ scene: undefined as unknown }));
-vi.mock("../../Enum/EnvironmentVariable", () => ({ FEATURE_FLAG_QUESTS_PROOF_SLICE: true }));
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 vi.mock("../../Chat/UserProvider/ChatUserMapper", () => ({ isBotUser: () => false }));
 vi.mock("../../Connection/LocalUserStore", () => ({ localUserStore: { getLocalUser: () => ({ uuid: "me" }) } }));

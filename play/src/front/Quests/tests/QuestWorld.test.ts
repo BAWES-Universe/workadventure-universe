@@ -59,27 +59,34 @@ describe("pickExploreTarget", () => {
 });
 
 describe("resolveQuestHost", () => {
-    const present = [person(1, "Alice"), person(2, "Guide", true), person(3, "Receptionist", true)];
+    const present = [person(1, "Alice"), person(2, "Guide", true), person(3, "Helper", true)];
+    const nobot = [person(1, "Alice")];
 
-    it("prefers the Receptionist bot, else the first bot", () => {
-        expect(resolveQuestHost("bot", present, [lobby])).toMatchObject({ kind: "bot", name: "Receptionist" });
-        expect(resolveQuestHost("bot", present.slice(0, 2), [lobby])).toMatchObject({ kind: "bot", name: "Guide" });
-        expect(resolveQuestHost("bot", [person(1, "Alice")], [lobby])).toEqual({ kind: "none" });
+    it("takes the first bot on the map, whatever its name", () => {
+        expect(resolveQuestHost("bot", present, [lobby])).toMatchObject({ kind: "bot", name: "Guide" });
+        expect(resolveQuestHost("bot", [present[2], present[1]], [lobby])).toMatchObject({
+            kind: "bot",
+            name: "Helper",
+        });
+        expect(resolveQuestHost("area", present, [lobby])).toMatchObject({ kind: "bot", name: "Guide" });
+        expect(resolveQuestHost("none", present, [lobby])).toMatchObject({ kind: "bot", name: "Guide" });
+        expect(resolveQuestHost("bot", nobot, [lobby])).toEqual({ kind: "none" });
     });
 
-    it("uses the first named area or nobody for the other simulations", () => {
-        expect(resolveQuestHost("area", present, [lobby, garden])).toEqual({
+    it("falls back to the first named area with the area simulation only, else nobody", () => {
+        expect(resolveQuestHost("area", nobot, [lobby, garden])).toEqual({
             kind: "area",
             areaId: "1",
             name: "Lobby",
         });
-        expect(resolveQuestHost("none", present, [lobby])).toEqual({ kind: "none" });
+        expect(resolveQuestHost("area", nobot, [])).toEqual({ kind: "none" });
+        expect(resolveQuestHost("none", nobot, [lobby])).toEqual({ kind: "none" });
         expect(resolveQuestHost("empty", present, [lobby])).toEqual({ kind: "none" });
     });
 
     it("honours the owner's host when it is here, else falls back", () => {
-        expect(resolveQuestHost("bot", present, [lobby], { kind: "bot", uuid: "bot-2" })).toMatchObject({
-            name: "Guide",
+        expect(resolveQuestHost("bot", present, [lobby], { kind: "bot", uuid: "bot-3" })).toMatchObject({
+            name: "Helper",
         });
         expect(resolveQuestHost("bot", present, [lobby, garden], { kind: "area", name: "garden" })).toMatchObject({
             kind: "area",
@@ -87,7 +94,7 @@ describe("resolveQuestHost", () => {
         });
         expect(resolveQuestHost("bot", present, [lobby], { kind: "none" })).toEqual({ kind: "none" });
         expect(resolveQuestHost("bot", present, [lobby], { kind: "bot", uuid: "bot-99" })).toMatchObject({
-            name: "Receptionist",
+            name: "Guide",
         });
     });
 });

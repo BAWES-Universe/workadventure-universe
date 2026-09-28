@@ -408,6 +408,8 @@
     }
     $: if ($questAnnouncementStore.length > 0) announceNext();
 
+    /** The card width switch is a development tool: production builds never render it. */
+    const devBuild = import.meta.env.DEV;
     $: fullWidth = $questDockWidthStore === "full";
     $: coversExpress = fullWidth && visible !== "none" && visible !== "pill" && visible !== "log";
     $: trackedDone = !!tracked && state.quests[tracked].done;
@@ -434,7 +436,7 @@
         hidden={state.hidden}
         {showSignInRow}
         dockWidth={$questDockWidthStore}
-        showWidthSwitch={true}
+        showWidthSwitch={devBuild}
         on:close={() => dispatchQuest({ type: "close" })}
         on:accept={(event) => onLogAccept(event.detail)}
         on:track={(event) => trackQuest(event.detail, "log")}

@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QuestWorld } from "../QuestWorld";
 import { EMPTY_QUEST_WORLD } from "../QuestWorld";
 
-const env = vi.hoisted(() => ({ FEATURE_FLAG_QUESTS_PROOF_SLICE: true }));
 const analytics = vi.hoisted(() => ({
     questOffered: vi.fn(),
     questDeclined: vi.fn(),
@@ -18,14 +17,13 @@ const analytics = vi.hoisted(() => ({
     questSkipped: vi.fn(),
 }));
 
-vi.mock("../../Enum/EnvironmentVariable", () => env);
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: analytics }));
 
 const readyWorld: QuestWorld = {
     ...EMPTY_QUEST_WORLD,
     ready: true,
-    host: { kind: "bot", userId: 3, uuid: "bot-3", name: "Receptionist" },
-    present: [{ userId: 3, uuid: "bot-3", name: "Receptionist", isBot: true }],
+    host: { kind: "bot", userId: 3, uuid: "bot-3", name: "Guide" },
+    present: [{ userId: 3, uuid: "bot-3", name: "Guide", isBot: true }],
     exploreTarget: { area: { id: "a", name: "Courtyard", x: 0, y: 0, width: 10, height: 10 }, alreadyInside: false },
     canBuild: false,
 };
@@ -38,24 +36,11 @@ describe("QuestStore", () => {
     beforeEach(() => {
         vi.resetModules();
         localStorage.clear();
-        env.FEATURE_FLAG_QUESTS_PROOF_SLICE = true;
         for (const fn of Object.values(analytics)) fn.mockClear();
     });
 
     afterEach(() => {
         localStorage.clear();
-    });
-
-    it("does nothing with the flag off", async () => {
-        env.FEATURE_FLAG_QUESTS_PROOF_SLICE = false;
-        localStorage.setItem("quests.state", JSON.stringify({ version: 1, quests: { meet: { accepted: true } } }));
-        const store = await loadStore();
-        expect(store.questsEnabled).toBe(false);
-        expect(get(store.questStateStore).quests.meet.accepted).toBe(false);
-        store.acceptQuest("build", "invitation");
-        expect(get(store.questStateStore).tracked).toBeNull();
-        expect(analytics.questAccepted).not.toHaveBeenCalled();
-        expect(store.showQuestInvitation()).toBe(false);
     });
 
     it("restores progress and saves every change", async () => {
@@ -78,7 +63,7 @@ describe("QuestStore", () => {
         expect(localStorage.getItem("questReset")).toBeNull();
     });
 
-    it("reads the dev host simulation, Receptionist bot by default", async () => {
+    it("reads the dev host simulation, bot by default", async () => {
         expect((await loadStore()).questSim).toBe("bot");
         vi.resetModules();
         localStorage.setItem("questSim", "area");

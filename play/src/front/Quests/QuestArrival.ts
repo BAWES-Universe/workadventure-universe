@@ -8,7 +8,6 @@ import {
     questAnnouncementStore,
     questArrivalStore,
     questAvailablePathsStore,
-    questsEnabled,
     questStateStore,
     questWorldStore,
     showQuestInvitation,
@@ -27,7 +26,6 @@ const MOVEMENT_SAMPLE_MS = 1_000;
  * Timers only act while a map is current. Returns the function that stops everything.
  */
 export function startQuestArrival(): () => void {
-    if (!questsEnabled) return () => {};
     let offeredThisArrival = false;
     let unavailableReported = false;
     let showTimer: ReturnType<typeof setTimeout> | undefined;
