@@ -25,8 +25,10 @@ import form from "./form";
 import say from "./say";
 import externalModule from "./externalModule";
 import locate from "./locate";
+import quest from "./quest";
 
 const de_DE = merge(en_US, {
+    quest,
     area,
     audio,
     camera,

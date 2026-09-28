@@ -24,8 +24,10 @@ import area from "./area";
 import form from "./form";
 import externalModule from "./externalModule";
 import locate from "./locate";
+import quest from "./quest";
 
 const it_IT = merge(en_US, {
+    quest,
     area,
     audio,
     camera,

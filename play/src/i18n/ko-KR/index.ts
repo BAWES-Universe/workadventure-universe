@@ -26,8 +26,10 @@ import refreshPrompt from "./refreshPrompt";
 import say from "./say";
 import messageScreen from "./messageScreen";
 import locate from "./locate";
+import quest from "./quest";
 
 const ko_KR = merge(en_US, {
+    quest,
     area,
     audio,
     camera,
