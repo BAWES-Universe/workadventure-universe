@@ -177,6 +177,22 @@ describe("reduceQuest", () => {
         expect(reduceQuest(state, { type: "celebration-settled" })).toBe(state);
     });
 
+    it("opening the panel over the chapter's celebration counts it as played too", () => {
+        let state = run(
+            { type: "accept", path: "meet", now: 1 },
+            { type: "complete", path: "meet", now: 2 },
+            { type: "accept", path: "explore", now: 3 },
+            { type: "complete", path: "explore", now: 4 },
+            { type: "accept", path: "build", now: 5 },
+            { type: "complete", path: "build", now: 6 }
+        );
+        state = reduceQuest(revealPending(state, false), { type: "celebration-settled" });
+        expect(state.celebrating).toBeNull();
+        state = reduceQuest(state, { type: "open-log" });
+        expect(state.surface).toBe("log");
+        expect(state.chapterCelebrated).toBe(true);
+    });
+
     it("reset starts over", () => {
         const state = run({ type: "accept", path: "meet", now: 1 }, { type: "decline" }, { type: "reset" });
         expect(state).toEqual(initialQuestState());

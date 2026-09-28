@@ -283,7 +283,8 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             return state;
         case "open-log":
             if (state.surface === "log") return previous;
-            // Opening the panel over a celebration ends it, as tapping it away would.
+            // Opening the panel over a celebration ends it, as tapping it away would: the chapter's counts as played.
+            if (state.surface === "celebration" && state.celebrating === null) state.chapterCelebrated = true;
             state.beforeLog = state.surface === "celebration" ? null : state.surface;
             state.celebrating = null;
             state.surface = "log";
