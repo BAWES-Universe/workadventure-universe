@@ -26,8 +26,8 @@ const PERSON_RING_RADIUS = 18;
 const AREA_HOST_FLASH_MS = 3_000;
 /** The soft glow drawn around a ring, in px of texture on each side. */
 const RING_GLOW_PX = 10;
-/** One ripple leaves the ring's edge this often, and takes as long to fade out at 1.5× its size. */
-const RIPPLE_MS = 2_000;
+/** One breath of the ring: a little larger and softer, then back. */
+const PULSE_MS = 1_600;
 const BURST_MS = 900;
 const CONFETTI_COUNT = 36;
 
@@ -43,13 +43,8 @@ interface MarkerPlan {
     flashHostArea: string | undefined;
 }
 
-/** A ring on the floor: the steady ellipse and the ripple that leaves it, both following the target. */
-type Ring = {
-    image: Phaser.GameObjects.Image;
-    ripple?: Phaser.GameObjects.Image;
-    tween?: Phaser.Tweens.Tween;
-    target: QuestTarget;
-};
+/** A ring on the floor, following its target. */
+type Ring = { image: Phaser.GameObjects.Image; tween?: Phaser.Tweens.Tween; target: QuestTarget };
 
 /**
  * The markers of one map: gradient rings on the floor (under a person, or at an area's centre), the brief outline
@@ -78,18 +73,16 @@ class SceneMarkers {
         const image = this.scene.add.image(0, 0, key);
         const ring: Ring = { image, target };
         if (!prefersReducedMotion()) {
-            // One ripple, the ring's own outline, swells from the edge and fades, over and over: one even motion
-            // (the ring itself never changes size), like a beacon.
-            const ripple = this.scene.add.image(0, 0, key);
-            ripple.setAlpha(0);
-            ring.ripple = ripple;
+            // A gentle, slow breath for as long as the ring is shown: the one ring, a little larger and softer,
+            // then back. Still under reduced motion.
             ring.tween = this.scene.tweens.add({
-                targets: ripple,
-                scale: { from: 1, to: 1.5 },
-                alpha: { from: 0.55, to: 0 },
-                duration: RIPPLE_MS,
+                targets: image,
+                scale: { from: 1, to: 1.1 },
+                alpha: { from: 1, to: 0.7 },
+                duration: PULSE_MS,
+                yoyo: true,
                 repeat: -1,
-                ease: "Sine.easeOut",
+                ease: "Sine.easeInOut",
             });
         }
         this.rings.set(slot, ring);
@@ -98,7 +91,6 @@ class SceneMarkers {
 
     private dropRing(ring: Ring): void {
         ring.tween?.remove();
-        ring.ripple?.destroy();
         ring.image.destroy();
     }
 
@@ -253,26 +245,21 @@ class SceneMarkers {
 
     private place(): void {
         for (const ring of this.rings.values()) {
-            const images = ring.ripple ? [ring.image, ring.ripple] : [ring.image];
             if (ring.target.kind === "place") {
-                for (const image of images) {
-                    image.setPosition(ring.target.x, ring.target.y);
-                    image.setDepth(ring.target.y);
-                    image.setVisible(true);
-                }
+                ring.image.setPosition(ring.target.x, ring.target.y);
+                ring.image.setDepth(ring.target.y);
+                ring.image.setVisible(true);
                 continue;
             }
             const person = this.scene.MapPlayersByKey.get(ring.target.userId);
             if (!person) {
-                for (const image of images) image.setVisible(false);
+                ring.image.setVisible(false);
                 continue;
             }
-            for (const image of images) {
-                image.setPosition(person.x, person.y + FEET_OFFSET_Y);
-                // Just under the person: above the floor, behind their woka.
-                image.setDepth(person.depth - 1);
-                image.setVisible(true);
-            }
+            ring.image.setPosition(person.x, person.y + FEET_OFFSET_Y);
+            // Just under the person: above the floor, behind their woka.
+            ring.image.setDepth(person.depth - 1);
+            ring.image.setVisible(true);
         }
     }
 }
