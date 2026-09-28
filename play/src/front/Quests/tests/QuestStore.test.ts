@@ -58,29 +58,32 @@ describe("QuestStore", () => {
         );
         const store = await loadStore();
         expect(get(store.questStateStore).tracked).toBe("meet");
-        store.setQuestsHidden(true);
-        expect(JSON.parse(localStorage.getItem("quests.state") ?? "{}").hidden).toBe(true);
-        expect(analytics.questStopped).toHaveBeenCalledWith({ questId: "welcome.meet", reason: "hidden" });
-        expect(analytics.questTracker).toHaveBeenCalledWith(expect.objectContaining({ action: "hidden" }));
-        // Still followed underneath: showing the bar again reports it followed, pairing with the stop.
-        expect(analytics.questTracked).not.toHaveBeenCalled();
-        store.setQuestsHidden(false);
-        expect(get(store.questStateStore).tracked).toBe("meet");
-        expect(analytics.questTracked).toHaveBeenCalledWith({ questId: "welcome.meet", from: "log" });
-        expect(analytics.questTracker).toHaveBeenCalledWith(expect.objectContaining({ action: "restored" }));
+        store.toggleQuestLog();
+        expect(get(store.questStateStore).surface).toBe("log");
+        store.acceptQuest("explore", "log", 5);
+        expect(JSON.parse(localStorage.getItem("quests.state") ?? "{}").tracked).toBe("explore");
+        store.toggleQuestLog();
+        expect(get(store.questStateStore).surface).toBe("log");
+        store.toggleQuestLog();
+        expect(get(store.questStateStore).surface).toBe("pill");
     });
 
     it("questReset=1 forgets everything once, from localStorage on load", async () => {
         localStorage.setItem(
             "quests.state",
-            JSON.stringify({ version: 1, quests: { meet: { accepted: true } }, tracked: "meet", hidden: true })
+            JSON.stringify({
+                version: 1,
+                quests: { meet: { accepted: true } },
+                tracked: "meet",
+                chapterCelebrated: true,
+            })
         );
         localStorage.setItem("quests.invitationSeen", "2");
         localStorage.setItem("questReset", "1");
         const store = await loadStore();
         const state = get(store.questStateStore);
         expect(state.tracked).toBeNull();
-        expect(state.hidden).toBe(false);
+        expect(state.chapterCelebrated).toBe(false);
         expect(state.invitationSeen).toBe(0);
         expect(state.declined).toBe(false);
         expect(localStorage.getItem("questReset")).toBeNull();
@@ -166,16 +169,20 @@ describe("QuestStore", () => {
         expect(analytics.questPaused).toHaveBeenCalledWith({ questId: "welcome.meet", reason: "no-eligible-target" });
     });
 
-    it("freezes the giver when the invitation is shown, whoever hosts when the quest is accepted or finished", async () => {
+    it("freezes the giver when the invitation is shown, with its face, whoever hosts when the quest is accepted or finished", async () => {
         const store = await loadStore();
-        store.setQuestWorld(readyWorld);
+        store.setQuestWorld({
+            ...readyWorld,
+            host: { ...readyWorld.host, portrait: "data:image/png;base64,AAAA" } as QuestWorld["host"],
+            present: [{ ...guide, portrait: "data:image/png;base64,AAAA" }],
+        });
         store.showQuestInvitation();
         // The player walked away from the bot before choosing: the room is hosting now.
         store.setQuestWorld(awayFromGuide);
         store.acceptQuest("explore", "invitation", 1);
         expect(get(store.questStateStore).quests.explore.origin).toEqual({
             room: "Lobby",
-            giver: { kind: "bot", name: "Guide", uuid: "bot-3" },
+            giver: { kind: "bot", name: "Guide", uuid: "bot-3", portrait: "data:image/png;base64,AAAA" },
         });
         // Finished after a teleport to another room: the origin does not move.
         store.setQuestWorld({ ...awayFromGuide, roomName: "Garden" });
@@ -209,7 +216,7 @@ describe("QuestStore", () => {
         );
     });
 
-    it("an untracked completion is quiet: no payoff, a dot on the Quests row", async () => {
+    it("an untracked completion is quiet: no celebration, a dot on the Quests row", async () => {
         const store = await loadStore();
         store.setQuestWorld(readyWorld);
         store.acceptQuest("meet", "invitation", 0);
@@ -246,9 +253,9 @@ describe("QuestStore", () => {
 
     it("coalesces duplicate announcements", async () => {
         const store = await loadStore();
-        store.questAnnouncementStore.push("Following: Say hi to someone");
-        store.questAnnouncementStore.push("Following: Say hi to someone");
-        expect(store.questAnnouncementStore.take()).toBe("Following: Say hi to someone");
+        store.questAnnouncementStore.push("On the map: Say hi to someone");
+        store.questAnnouncementStore.push("On the map: Say hi to someone");
+        expect(store.questAnnouncementStore.take()).toBe("On the map: Say hi to someone");
         expect(store.questAnnouncementStore.take()).toBeUndefined();
     });
 });

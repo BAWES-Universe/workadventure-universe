@@ -59,7 +59,6 @@ describe("parseStoredProgress", () => {
         expect(progress?.quests.explore).toMatchObject({ accepted: true, done: true, doneAt: 9 });
         expect(progress?.quests.build.accepted).toBe(false);
         expect(progress?.tracked).toBe("meet");
-        expect(progress?.hidden).toBe(false);
         expect(progress?.pending).toEqual(["explore"]);
         expect(progress?.exploreArea).toEqual({ id: "a", name: "Courtyard" });
         expect(progress?.news).toBe(true);
@@ -143,16 +142,32 @@ describe("save and restore", () => {
         expect(restored.invitationSeen).toBe(1);
     });
 
-    it("a hidden tracked quest, or nothing tracked, restores to an empty dock", () => {
-        let state = reduceQuest(initialQuestState(), { type: "accept", path: "build", now: 1 });
-        state = reduceQuest(state, { type: "hide" });
-        const hidden = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(state) }));
-        expect(hidden.tracked).toBe("build");
-        expect(hidden.surface).toBe("none");
-
+    it("nothing tracked restores to an empty dock", () => {
         const fresh = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(initialQuestState()) }));
         expect(fresh.tracked).toBeNull();
         expect(fresh.surface).toBe("none");
+    });
+
+    it("keeps the giver's face with the quest, and drops one that is not a small image", () => {
+        const stored = (portrait: unknown) =>
+            parseStoredProgress(
+                JSON.stringify({
+                    version: 1,
+                    quests: {
+                        meet: {
+                            accepted: true,
+                            origin: { room: "Lobby", giver: { kind: "bot", name: "Guide", portrait } },
+                        },
+                    },
+                })
+            )?.quests.meet.origin?.giver;
+        expect(stored("data:image/png;base64,AAAA")).toEqual({
+            kind: "bot",
+            name: "Guide",
+            portrait: "data:image/png;base64,AAAA",
+        });
+        expect(stored("https://elsewhere/x.png")).toEqual({ kind: "bot", name: "Guide" });
+        expect(stored("data:image/png;base64," + "A".repeat(70_000))).toEqual({ kind: "bot", name: "Guide" });
     });
 
     it("never stores Not now: a fresh load offers again, and the declined show does not count as a fade", () => {
@@ -177,30 +192,30 @@ describe("save and restore", () => {
         expect(canOfferInvitation(restoreQuestState(storage))).toBe(false);
     });
 
-    it("a payoff on screen when the page closed plays again after a reload", () => {
+    it("a celebration on screen when the page closed plays again after a reload", () => {
         let state = initialQuestState();
         state = reduceQuest(state, { type: "accept", path: "meet", now: 1 });
         state = reduceQuest(state, { type: "complete", path: "meet", now: 2 });
         state = revealPending(state, false);
-        expect(state.payoff).toBe("meet");
+        expect(state.celebrating).toBe("meet");
         const storage = memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(state) });
         const restored = restoreQuestState(storage);
         expect(restored.pending).toEqual(["meet"]);
         expect(restored.tracked).toBe("meet");
-        expect(revealPending(restored, false).payoff).toBe("meet");
+        expect(revealPending(restored, false).celebrating).toBe("meet");
     });
 
-    it("a payoff still waiting when another quest was tracked never takes that quest's place", () => {
+    it("a celebration still waiting when another quest was tracked never takes that quest's place", () => {
         let state = initialQuestState();
         state = reduceQuest(state, { type: "accept", path: "explore", now: 1 });
         state = reduceQuest(state, { type: "complete", path: "explore", now: 2 });
-        // Before the payoff could play, the player chose Meet.
+        // Before the celebration could play, the player chose Meet.
         state = reduceQuest(state, { type: "accept", path: "meet", now: 3 });
         expect(state.tracked).toBe("meet");
         const saved = serializeProgress(state);
         expect(JSON.parse(saved).pending).toEqual([]);
 
-        // An older save that still carries the stale payoff restores the player's choice too.
+        // An older save that still carries the stale celebration restores the player's choice too.
         const stale = JSON.stringify({ ...JSON.parse(saved), pending: ["explore"] });
         const restored = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: stale }));
         expect(restored.tracked).toBe("meet");

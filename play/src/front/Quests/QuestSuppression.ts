@@ -18,7 +18,7 @@ export interface QuestCoverInputs {
 }
 
 export interface QuestSuppression {
-    /** Invitation, options, card, log, payoff and follow-up hide. */
+    /** Invitation, options, card, panel and celebration hide. */
     surfaces: boolean;
     /** The pill hides. It may stay under an open Express tray, which starts above the bar. */
     pill: boolean;
@@ -56,7 +56,7 @@ export interface QuestQuietInputs {
 }
 
 /**
- * Quiet defers the payoff (tick, line, stamp, follow-up) while the person is busy; the pill and card stay openable.
+ * Quiet defers the celebration while the person is busy; the pill and card stay openable.
  */
 export function computeQuestQuiet(inputs: QuestQuietInputs): boolean {
     return inputs.inCall || inputs.typing || QUIET_STATUSES.has(inputs.availabilityStatus);

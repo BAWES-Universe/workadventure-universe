@@ -32,7 +32,7 @@ let users = 0;
 let stop: (() => void) | undefined;
 
 /**
- * Starts the detectors (re-armed on every map, torn down while there is none), the payoff timing and the news dot.
+ * Starts the detectors (re-armed on every map, torn down while there is none), the celebration timing and the news dot.
  * Reference-counted: the dock calls it on mount and the returned function on destroy.
  */
 export function startQuestSystem(): () => void {
@@ -79,7 +79,7 @@ function start(): () => void {
         disarm = undefined;
     });
 
-    // Payoff: plays once the dock has been free (not suppressed, not quiet) for a moment.
+    // Celebration: plays once the dock has been free (not suppressed, not quiet) for a moment.
     let freeSince: number | undefined;
     let revealTimer: ReturnType<typeof setTimeout> | undefined;
     const blockedStore = derived(
@@ -113,7 +113,7 @@ function start(): () => void {
     let newsTimer: ReturnType<typeof setTimeout> | undefined;
     cleanups.push(
         derived([questStateStore, questPillSuppressed], (values) => values).subscribe(([$state, $pillSuppressed]) => {
-            const waiting = $state.tracked !== null && !$state.hidden && $pillSuppressed && !$state.news;
+            const waiting = $state.tracked !== null && $pillSuppressed && !$state.news;
             if (!waiting) {
                 if (newsTimer) clearTimeout(newsTimer);
                 newsTimer = undefined;

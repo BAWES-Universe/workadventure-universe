@@ -122,15 +122,40 @@ export function armQuestScene(scene: GameScene): () => void {
         });
     };
 
+    // A bot's face, once the game has drawn it: kept with the quest so its card shows it out of range too. The
+    // snapshot arrives later; the world is rebuilt when it does.
+    const portraits = new Map<string, string>();
+    const watchingPortraits = new Set<string>();
+    const watchPortrait = (
+        uuid: string,
+        store: { subscribe: (run: (src: string | undefined) => void) => () => void }
+    ) => {
+        if (watchingPortraits.has(uuid)) return;
+        watchingPortraits.add(uuid);
+        let first = true;
+        const unsubscribe = store.subscribe((src) => {
+            if (!src || portraits.get(uuid) === src) return;
+            portraits.set(uuid, src);
+            if (first) return;
+            deferred(refreshWorld);
+        });
+        first = false;
+        cleanups.push(unsubscribe);
+    };
+
     const readPresent = (): QuestPresent[] => {
         const present: QuestPresent[] = [];
         for (const player of scene.MapPlayersByKey.values()) {
             if (localUuid && player.userUuid === localUuid) continue;
+            const isBot = isBotUser({ uuid: player.userUuid });
+            if (isBot) watchPortrait(player.userUuid, player.pictureStore);
+            const portrait = portraits.get(player.userUuid);
             present.push({
                 userId: player.userId,
                 uuid: player.userUuid,
                 name: player.playerName,
-                isBot: isBotUser({ uuid: player.userUuid }),
+                isBot,
+                ...(portrait ? { portrait } : {}),
             });
         }
         return present;

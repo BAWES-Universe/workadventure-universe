@@ -3,7 +3,7 @@ import type { Translation } from "../i18n-types";
 
 const quest: DeepPartial<Translation["quest"]> = {
     quests: "Quests",
-    questsHidden: "Quests · ausgeblendet",
+
     welcome: "Willkommen",
     close: "Schließen",
     minutes: "{minutes} Min.",
@@ -12,7 +12,7 @@ const quest: DeepPartial<Translation["quest"]> = {
     invitation: {
         line: "Willkommen! Lust auf eine kleine Runde?",
         secondary: "Ein paar Minuten, ganz in deinem Tempo.",
-        showOptions: "Zeig mir die Möglichkeiten",
+        showOptions: "Los geht's!",
         notNow: "Nicht jetzt",
     },
     options: {
@@ -44,7 +44,7 @@ const quest: DeepPartial<Translation["quest"]> = {
             title: "Bauen ausprobieren",
             description: "Füge der Karte eine Sache hinzu.",
             objective: "Eine Sache hinzufügen",
-            body: "Öffne Tools, dann den Karteneditor, und platziere eine Sache.",
+            body: "Öffne den Karteneditor und platziere eine Sache.",
             noPosition: "Öffne Tools, dann den Karteneditor.",
             payoff: "Das gehört jetzt dir. Es bleibt.",
             lastTime: "Letztes Mal hast du etwas hinzugefügt.",
@@ -58,11 +58,14 @@ const quest: DeepPartial<Translation["quest"]> = {
         badge: "Abzeichen {stamp}",
     },
     pill: {
+        open: "Quests öffnen",
+        close: "Quests schließen",
         inProgress: "läuft",
         done: "erledigt",
         toDo: "{count} offen",
     },
     card: {
+        openEditor: "Karteneditor öffnen",
         walkThere: "Hingehen",
         stopWalking: "Anhalten",
         chooseAnother: "Andere wählen",
@@ -80,36 +83,29 @@ const quest: DeepPartial<Translation["quest"]> = {
         northWest: "nordwestlich",
     },
     log: {
-        tracked: "Folge ich",
-        accepted: "Angenommen",
+        inProgress: "Läuft",
+        onMap: "Auf der Karte",
+        tapToStart: "Tippen zum Starten",
+        progress: "{done} von {total} erledigt",
+        allDone: "Hier hast du alles geschafft. Komm wieder, wenn es mehr gibt.",
         available: "Verfügbar",
         done: "Erledigt",
-        archive: "Archiv",
-        start: "Starten",
-        follow: "Folgen",
-        following: "Folge ich",
-        iKnowThis: "Kenne ich schon",
-        fromHost: "Von {host} · {room}",
-        here: "Hier · {room}",
+
+        fromHost: "{host} · {room}",
+        here: "{room}",
         signInRow: "Melde dich an, um deinen Fortschritt auf allen Geräten zu behalten",
         needsAccount: "Benötigt: ein Konto",
         nothingHere: "Hier gibt es noch nichts zu tun",
-        hideBar: "Quest-Leiste ausblenden",
-        showBar: "Quest-Leiste einblenden",
-        cardWidth: "Kartenbreite",
-        narrow: "Schmal",
-        full: "Voll",
     },
-    followUp: {
-        signInTitle: "Fortschritt auf allen Geräten behalten?",
-        signInBody:
-            "Im Moment ist er nur in diesem Browser gespeichert und verschwindet, wenn dessen Daten gelöscht werden.",
-        signIn: "Anmelden",
-        backToExploring: "Weiter erkunden",
-        tryAnother: "Noch eine ausprobieren",
+    celebration: {
+        questComplete: "Quest erledigt",
+        badgeEarned: "Abzeichen {stamp} erhalten",
+        chapterTitle: "Willkommenskapitel abgeschlossen",
+        chapterLine: "Du hast Hallo gesagt, dich zurechtgefunden und etwas hinterlassen.",
+        continue: "Weiter",
     },
     announce: {
-        tracking: "Folge ich: {objective}",
+        tracking: "Auf der Karte: {objective}",
         done: "Erledigt: {objective}",
         finishedMany: "Du hast {count} Dinge geschafft.",
     },

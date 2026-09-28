@@ -35,7 +35,11 @@ export function questTarget(
     }
     if (path === "meet") {
         const host = world.host;
-        if (host.kind === "bot" && world.present.some((person) => person.userId === host.userId)) {
+        if (
+            host.kind === "bot" &&
+            host.userId !== null &&
+            world.present.some((person) => person.userId === host.userId)
+        ) {
             return { kind: "player", userId: host.userId, name: host.name };
         }
         let nearest = world.present[0];

@@ -76,7 +76,7 @@ describe("quest copy", () => {
         const state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1, origin: fromGuide });
         expect(questEyebrowFor(t, "meet", state, garden)).toBe("Guide");
         expect(questPayoffLine(t, "meet", state, garden)).toBe("Good to meet you.");
-        expect(logEntries(t, state, garden, [])[0].origin).toBe("From Guide · Lobby");
+        expect(logEntries(t, state, garden, [])[0].origin).toBe("Guide · Lobby");
         // Accepted from the room itself: neutral, wherever the player goes.
         const byRoom = reduceQuest(initialQuestState(), {
             type: "accept",
@@ -86,7 +86,7 @@ describe("quest copy", () => {
         });
         expect(questEyebrowFor(t, "meet", byRoom, world)).toBe("Lobby");
         expect(questPayoffLine(t, "meet", byRoom, world)).toBe("You said hi. Welcome in.");
-        expect(logEntries(t, byRoom, garden, [])[0].origin).toBe("Here · Lobby");
+        expect(logEntries(t, byRoom, garden, [])[0].origin).toBe("Lobby");
     });
 
     it("tells Meet's progress in the card: waiting after the hello, nobody here while paused", () => {
@@ -100,9 +100,9 @@ describe("quest copy", () => {
         expect(questBody(t, "meet", state, world, "exchanged")).toBe("Good to meet you.");
     });
 
-    it("names the real menus for Build", () => {
+    it("tells Build to open the editor", () => {
         const state = reduceQuest(initialQuestState(), { type: "accept", path: "build", now: 1 });
-        expect(questBody(t, "build", state, world, "idle")).toBe("Open Tools, then Map editor, and place one thing.");
+        expect(questBody(t, "build", state, world, "idle")).toBe("Open the map editor and place one thing.");
     });
 
     it("counts steps in Arabic with the right plural form", () => {
@@ -115,7 +115,7 @@ describe("quest copy", () => {
         expect(say(14)).toContain("14 خطوة ");
     });
 
-    it("lists followed, accepted, available and done entries with their reward and requirement", () => {
+    it("lists on-map, accepted, available and done entries with their giver, reward and requirement", () => {
         let state = reduceQuest(initialQuestState(), {
             type: "accept",
             path: "explore",
@@ -130,8 +130,13 @@ describe("quest copy", () => {
             ["explore", "done"],
             ["build", "available"],
         ]);
-        expect(entries[0]).toMatchObject({ origin: "From Guide · Lobby", reward: "First Hello badge" });
-        expect(entries[1].lastTime).toBe("You found the Courtyard last time.");
+        expect(entries[0]).toMatchObject({
+            origin: "Guide · Lobby",
+            reward: "First Hello badge",
+            line: "Say hi to someone",
+        });
+        expect(entries[0].giver).toMatchObject({ kind: "bot", name: "Guide" });
+        expect(entries[1].line).toBe("You found the Courtyard.");
         expect(entries[2].requirement).toBe("Needs: edit rights in this room");
     });
 

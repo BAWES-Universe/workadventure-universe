@@ -7,6 +7,7 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { userIsConnected } from "../../Stores/MenuStore";
     import { gameSceneStore } from "../../Stores/GameSceneStore";
+    import { mapEditorModeStore } from "../../Stores/MapEditorStore";
     import { goToLogin } from "../../Components/ActionBar/MenuIcons/goToLogin";
     import { startQuestArrival } from "../QuestArrival";
     import {
@@ -21,7 +22,6 @@
         stampName,
         whereDescription,
     } from "../QuestCopy";
-    import { questDockWidthStore } from "../QuestDevSettings";
     import {
         openQuestLog,
         profileMenuTrigger,
@@ -30,12 +30,12 @@
         takeQuestLogOpener,
     } from "../QuestDockFocus";
     import type { Point } from "../QuestGeometry";
-    import { worldToSectionPoint } from "../QuestGeometry";
     import { openQuestLogHistory } from "../QuestLogHistory";
-    import { startQuestMarkers } from "../QuestMarkers";
-    import type { QuestFollowUp, QuestPath, QuestState, QuestSurface, QuestVisibleSurface } from "../QuestModel";
-    import { anyAccepted, markedQuestPath } from "../QuestModel";
+    import { burstQuestMarker, startQuestMarkers } from "../QuestMarkers";
+    import type { QuestPath, QuestState, QuestSurface, QuestVisibleSurface } from "../QuestModel";
+    import { anyAccepted, doneCount, markedQuestPath, QUEST_PATHS } from "../QuestModel";
     import { motionMs } from "../QuestMotion";
+    import { playChapterDone, playQuestDone } from "../QuestSound";
     import {
         acceptQuest,
         declineQuestInvitation,
@@ -47,9 +47,7 @@
         questMeetProgressStore,
         questStateStore,
         questWorldStore,
-        setQuestsHidden,
-        settleQuestPayoff,
-        skipQuestSignInOffer,
+        settleQuestCelebration,
         trackQuest,
     } from "../QuestStore";
     import { questVisibleSurfaceStore, startQuestSystem } from "../QuestSystem";
@@ -68,50 +66,49 @@
     import { menuInputFocusStore } from "../../Stores/MenuInputFocusStore";
     import { inputFormFocusStore } from "../../Stores/UserInputStore";
     import QuestCard from "./QuestCard.svelte";
-    import QuestFollowUpCard from "./QuestFollowUp.svelte";
+    import QuestCelebration from "./QuestCelebration.svelte";
     import QuestInvitation from "./QuestInvitation.svelte";
-    import QuestLog from "./QuestLog.svelte";
     import QuestMapMarks from "./QuestMapMarks.svelte";
     import QuestOptions from "./QuestOptions.svelte";
-    import QuestPayoff from "./QuestPayoff.svelte";
+    import QuestPanel from "./QuestPanel.svelte";
     import QuestPill from "./QuestPill.svelte";
-    import QuestsPill from "./QuestsPill.svelte";
 
-    /** The payoff line stays this long, counted only while it can be seen. */
-    const PAYOFF_VISIBLE_MS = 6_000;
-    const PAYOFF_TICK_MS = 250;
-    /** A completion that waited longer than this shows its stamp already settled, without the flight. */
-    const SETTLED_AFTER_MS = 60_000;
+    /** A quest's celebration stays this long, counted only while it can be seen; the chapter's a little longer. */
+    const CELEBRATION_MS = 3_200;
+    const CHAPTER_CELEBRATION_MS = 4_500;
+    const CELEBRATION_TICK_MS = 250;
     /** Each announcement stays in the status region this long, so it is read before the next one. */
     const ANNOUNCE_MS = 1_500;
-    /** A card opened by Start or Follow folds to the pill after this long of being seen... */
+    /** A card opened by taking a quest folds to the pill after this long of being seen... */
     export const CARD_FOLD_MS = 10_000;
     /** ...or on the player's first movement after this long, whichever comes first. */
     export const CARD_FOLD_MOVE_AFTER_MS = 3_000;
     const CARD_FOLD_TICK_MS = 250;
     const CARD_ID = "quest-card";
+    const PANEL_ID = "quest-panel";
 
     let dock: HTMLElement | undefined;
     let layer: HTMLElement | undefined;
     let invitation: QuestInvitation | undefined;
     let options: QuestOptions | undefined;
     let card: QuestCard | undefined;
-    let log: QuestLog | undefined;
+    let panel: QuestPanel | undefined;
     let pill: QuestPill | undefined;
-    let questsPill: QuestsPill | undefined;
 
     $: state = $questStateStore;
     $: world = $questWorldStore;
     $: visible = $questVisibleSurfaceStore;
     $: t = $LL;
     // The invitation and the options speak for the giver frozen when the offer was shown (its name stays as the
-    // player walks out of the bot's range); a quest's card and payoff for the giver frozen at acceptance.
+    // player walks out of the bot's range); a quest's card and celebration for the giver frozen at acceptance.
     $: eyebrow = offerEyebrow(t, state, world);
     $: offerPortrait = offerHost(state, world);
     $: tracked = state.tracked;
     $: objective = tracked ? questObjective(t, tracked, state, world) : "";
     $: cardEyebrow = tracked ? questEyebrowFor(t, tracked, state, world) : eyebrow;
     $: cardHost = tracked ? giverAsHost(entryOrigin(state, tracked, world).giver, world) : offerPortrait;
+    $: trackedDone = !!tracked && state.quests[tracked].done;
+    $: trackedBody = tracked ? questBody(t, tracked, state, world, $questMeetProgressStore) : "";
 
     // Walk: an area, or a person on this map; hidden once no path leads there.
     $: walkTarget = tracked ? questTarget(tracked, state, world) : undefined;
@@ -121,10 +118,12 @@
                 ? t.quest.paths.explore.walk({ area: walkTarget.name })
                 : t.quest.card.walkThere()
             : undefined;
+    // Build: the editor opens from the card or the panel, where the person can edit.
+    $: editorLabel = tracked === "build" && world.canBuild && !trackedDone ? t.quest.card.openEditor() : undefined;
 
-    // The map marks: the followed quest's target, always; the giver bot while its offer is on screen.
+    // The map marks: the tracked quest's target, always; the giver bot while it still has a quest to give.
     $: markedPath = markedQuestPath(state);
-    $: giverMarkUserId = questGiverUserId(state, world);
+    $: giverMarkUserId = questGiverUserId(state, world, $questAvailablePathsStore);
 
     let whereText: string | undefined;
 
@@ -143,10 +142,10 @@
     onDestroy(() => {
         for (const stop of stops.splice(0).reverse()) stop();
         stopAnnouncing();
-        stopPayoffClock();
+        stopCelebrationClock();
         stopAutoFold();
-        // A reconnect or a room change closes the log, as it closes the person card: Back must not land on a
-        // log that is no longer there.
+        // A reconnect or a room change closes the panel, as it closes the person card: Back must not land on a
+        // panel that is no longer there.
         if (closeHistory) {
             const close = closeHistory;
             closeHistory = undefined;
@@ -170,7 +169,7 @@
             );
         }
         if (current.surface === "card" && previousSurface !== "card") {
-            // Opened by Start or Follow (not from its pill): it folds by itself once it has been seen.
+            // Opened by taking a quest (not from its pill): it folds by itself once it has been seen.
             if (previousSurface !== "pill") startAutoFold();
             announceWhere(current);
         } else if (current.surface !== "card") {
@@ -180,9 +179,6 @@
         const paused = current.quests.meet.paused;
         if (paused && !previousPaused && current.tracked === "meet")
             questAnnouncementStore.push(t.quest.card.nobodyHere());
-        if (current.surface === "follow-up" && current.followUp === "sign-in" && previousSurface !== "follow-up") {
-            questAnnouncementStore.push(t.quest.followUp.signInTitle());
-        }
         previousTracked = current.tracked;
         previousSurface = current.surface;
         previousPaused = paused;
@@ -218,9 +214,9 @@
     }
 
     // ---- The card's fold: on the X, the first movement after 3 s, or 10 s, whichever comes first ------------------
-    // Both count only while the card can be seen (not covered, a map there), like the payoff. Focus inside it or the
-    // pointer over it (the person is reading or using it) ends the countdown for good: then only the X, Escape or
-    // walking away close it.
+    // Both count only while the card can be seen (not covered, a map there). Focus inside it or the pointer over it
+    // (the person is reading or using it) ends the countdown for good: then only the X, Escape or walking away
+    // close it.
     let foldClock: ReturnType<typeof setInterval> | undefined;
     let foldShownMs = 0;
     let foldLast: Point | undefined;
@@ -291,7 +287,7 @@
         const focusWasInside =
             !!active &&
             active !== document.body &&
-            ((dock?.contains(active) ?? false) || (log?.containsFocus() ?? false));
+            ((dock?.contains(active) ?? false) || (panel?.containsFocus() ?? false));
         await tick();
         if (takeQuestFocus(next)) {
             focusCloseOf(next);
@@ -303,14 +299,13 @@
         else if (before === "options" && next === "card") card?.focusClose();
         else if (before === "card" && next === "pill") pill?.focus();
         else if (before === "log") {
-            // The log closed because Start or Follow opened a card: focus goes there, and the log's opener (the
-            // profile menu's trigger, the pill) is forgotten. Closed to a resting surface: back to the opener.
+            // The panel closed because a quest was taken (its card opens): focus goes there, and the panel's
+            // opener is forgotten. Closed to the pill: back to the opener, or the pill itself.
             const opener = takeQuestLogOpener();
             if (next === "card") card?.focusClose();
             else if (next === "options") options?.focusClose();
             else if (opener?.isConnected) opener.focus();
             else if (next === "pill") pill?.focus();
-            else if (next === "quests") questsPill?.focus();
             else profileMenuTrigger()?.focus();
         } else if (next === "none") {
             // Faded or covered: the surface is still fading out and holds focus until it goes. Move it now.
@@ -323,7 +318,7 @@
     function focusCloseOf(surface: QuestVisibleSurface) {
         if (surface === "options") options?.focusClose();
         else if (surface === "card") card?.focusClose();
-        else if (surface === "log") log?.focusClose();
+        else if (surface === "log") panel?.focusClose();
     }
 
     // ---- Invitation and options ------------------------------------------------------------------------------------
@@ -340,10 +335,14 @@
     $: optionsTitle = anyAccepted(state) ? t.quest.options.tryAnother() : t.quest.options.title();
     $: rows = optionRows(t, $questAvailablePathsStore, state, world);
 
-    // ---- Pills and card ----------------------------------------------------------------------------------------
-    function onOpenCard(keyboard: boolean) {
-        if (keyboard) requestQuestFocus("card");
-        dispatchQuest({ type: "open-card" });
+    // ---- Pill, card and panel ------------------------------------------------------------------------------------
+    /** The pill: the panel's handle. Opens it, or closes it when it is up. */
+    function onTogglePanel(keyboard: boolean) {
+        if (state.surface === "log") {
+            dispatchQuest({ type: "close" });
+            return;
+        }
+        openQuestLog(null, keyboard);
         analyticsClient.questTracker({ action: "expanded", device: questDevice() });
     }
 
@@ -354,109 +353,92 @@
         if (target) void walkToQuestTarget(target);
     }
 
-    /** "Choose another" on the card, and the resting Quests pill: the log. */
-    function onOpenLog(keyboard: boolean) {
+    /** Build's shortcut: the editor opens where the person stands, and the quest surface steps aside for it. */
+    function onOpenEditor() {
+        if (!world.canBuild) return;
+        if (state.surface === "card" || state.surface === "log") dispatchQuest({ type: "close" });
+        mapEditorModeStore.switchMode(true);
+    }
+
+    /** "Choose another" on the card: the panel. */
+    function onOpenPanel(keyboard: boolean) {
         openQuestLog(null, keyboard);
     }
 
-    // What the log has to offer, on the resting pill: available here, or accepted and not followed.
+    // With nothing on the map, the pill says how much the panel has to offer: available here, or accepted.
     $: toDo = $questAvailablePathsStore.length + $questAcceptedCountStore;
+    $: pillLabel = tracked ? objective : t.quest.quests();
 
-    // ---- Payoff: shown for 6 s of visible time, then at most one follow-up card --------------------------------------
-    let payoffShownMs = 0;
-    let payoffClock: ReturnType<typeof setInterval> | undefined;
-    let payoffFrom: Point | undefined;
-    let payoffKey: string | undefined;
+    // ---- Celebration: sound and burst at once, the card for ~3 s of visible time, then the panel ------------------
+    let celebrationShownMs = 0;
+    let celebrationClock: ReturnType<typeof setInterval> | undefined;
+    let celebrationKey: string | undefined;
 
-    function stopPayoffClock() {
-        if (payoffClock) clearInterval(payoffClock);
-        payoffClock = undefined;
+    function stopCelebrationClock() {
+        if (celebrationClock) clearInterval(celebrationClock);
+        celebrationClock = undefined;
     }
 
-    function followUpAfterPayoff(): QuestFollowUp | null {
-        if (!get(userIsConnected) && ENABLE_OPENID && !state.signInOfferSkipped) return "sign-in";
-        return get(questAvailablePathsStore).length > 0 ? "continuation" : null;
-    }
-
-    $: payoffPath = state.payoff;
-    $: onPayoff(payoffPath, visible === "payoff" && !$questQuiet);
-    function onPayoff(path: QuestPath | null, running: boolean) {
-        const key = path ? `${path}:${state.quests[path].doneAt ?? ""}` : undefined;
-        if (key !== payoffKey) {
-            payoffKey = key;
-            payoffShownMs = 0;
-            payoffFrom = undefined;
-            if (path) {
+    let celebrationKind: "quest" | "chapter" | undefined;
+    $: celebrationKind = state.surface === "celebration" ? (state.celebrating ? "quest" : "chapter") : undefined;
+    $: onCelebration(celebrationKind, state.celebrating, visible === "celebration" && !$questQuiet);
+    function onCelebration(kind: "quest" | "chapter" | undefined, path: QuestPath | null, running: boolean) {
+        const key = kind ? `${kind}:${path ?? ""}:${path ? state.quests[path].doneAt ?? "" : ""}` : undefined;
+        if (key !== celebrationKey) {
+            celebrationKey = key;
+            celebrationShownMs = 0;
+            if (kind === "quest" && path) {
                 questAnnouncementStore.push(
                     t.quest.announce.done({ objective: questObjective(t, path, state, world) })
                 );
-                const waited = Date.now() - (state.quests[path].doneAt ?? Date.now());
-                if (waited < SETTLED_AFTER_MS) payoffFrom = wokaScreenPoint();
+                questAnnouncementStore.push(questPayoffLine(t, path, state, world));
+                playQuestDone();
+                burstQuestMarker();
+            } else if (kind === "chapter") {
+                questAnnouncementStore.push(t.quest.celebration.chapterTitle());
+                playChapterDone();
+                burstQuestMarker();
             }
         }
-        if (!path || !running) {
-            stopPayoffClock();
+        if (!kind || !running) {
+            stopCelebrationClock();
             return;
         }
-        payoffClock ??= setInterval(() => {
+        const total = kind === "chapter" ? CHAPTER_CELEBRATION_MS : CELEBRATION_MS;
+        celebrationClock ??= setInterval(() => {
             if (!gameManager.tryGetCurrentGameScene()) return;
-            payoffShownMs += PAYOFF_TICK_MS;
-            if (payoffShownMs >= PAYOFF_VISIBLE_MS) {
-                stopPayoffClock();
-                settleQuestPayoff(followUpAfterPayoff());
+            celebrationShownMs += CELEBRATION_TICK_MS;
+            if (celebrationShownMs >= total) {
+                stopCelebrationClock();
+                settleQuestCelebration();
             }
-        }, PAYOFF_TICK_MS);
+        }, CELEBRATION_TICK_MS);
     }
 
-    /** Where the player's Woka is drawn, relative to the dock's layer: where the stamp rises from. */
-    function wokaScreenPoint(): Point | undefined {
-        const scene = gameManager.tryGetCurrentGameScene();
-        const feet = scene ? playerFeet(scene) : undefined;
-        if (!scene || !feet || !layer) return undefined;
-        try {
-            const camera = scene.cameras.main;
-            return worldToSectionPoint(
-                { x: feet.x, y: feet.y - 32 },
-                { worldViewX: camera.worldView.x, worldViewY: camera.worldView.y, zoom: camera.zoom },
-                scene.game.canvas.getBoundingClientRect(),
-                { width: scene.scale.width, height: scene.scale.height },
-                layer.getBoundingClientRect()
-            );
-        } catch {
-            return undefined;
-        }
+    // Tapping it skips ahead to the panel.
+    function onCelebrationSkip() {
+        stopCelebrationClock();
+        settleQuestCelebration();
     }
 
-    function onPayoffTicked() {
-        if (state.payoff) questAnnouncementStore.push(questPayoffLine(t, state.payoff, state, world));
-    }
+    $: celebratedPath = state.celebrating;
+    $: celebrationLine = celebratedPath
+        ? questPayoffLine(t, celebratedPath, state, world)
+        : t.quest.celebration.chapterLine();
+    $: celebrationBadge = celebratedPath
+        ? t.quest.celebration.badgeEarned({ stamp: stampName(t, celebratedPath) })
+        : QUEST_PATHS.map((path) => stampName(t, path)).join(" · ");
 
-    // Tapping the line away ends it and skips this completion's follow-up.
-    function onPayoffDismiss() {
-        stopPayoffClock();
-        settleQuestPayoff(null);
-    }
-
-    // ---- Follow-up ----------------------------------------------------------------------------------------------
+    // ---- Sign in ---------------------------------------------------------------------------------------------------
     function onSignIn() {
         // Progress is already saved (every change is): nothing is lost by leaving for the sign-in page.
         goToLogin();
     }
 
-    function onFollowUpClose() {
-        if (state.followUp === "sign-in") skipQuestSignInOffer();
-        else dispatchQuest({ type: "follow-up-closed" });
-    }
-
-    function onTryAnother(keyboard: boolean) {
-        if (keyboard) requestQuestFocus("options");
-        dispatchQuest({ type: "open-options" });
-    }
-
-    // ---- Log: its own history entry, so Back closes it ---------------------------------------------------------------
+    // ---- Panel: its own history entry, so Back closes it -----------------------------------------------------------
     let closeHistory: (() => void) | undefined;
-    $: onLogOpen(state.surface === "log");
-    function onLogOpen(open: boolean) {
+    $: onPanelOpen(state.surface === "log");
+    function onPanelOpen(open: boolean) {
         if (open && !closeHistory) {
             closeHistory = openQuestLogHistory(() => {
                 closeHistory = undefined;
@@ -471,10 +453,6 @@
 
     $: entries = logEntries(t, state, world, $questAvailablePathsStore);
     $: showSignInRow = ENABLE_OPENID && !$userIsConnected;
-
-    function onLogAccept(path: QuestPath) {
-        acceptQuest(path, "log");
-    }
 
     // ---- Status region: one message at a time, never while someone is typing ------------------------------------
     let announcement = "";
@@ -508,27 +486,21 @@
     }
     $: if ($questAnnouncementStore.length > 0) announceNext();
 
-    /** The card width switch is a development tool: production builds never render it. */
-    const devBuild = import.meta.env.DEV;
-    // Narrow: cards leave the Express column visible and stop at 22rem on desktop. Full: they span the section
-    // (minus a gutter), on phones and on desktop alike, still anchored to the left.
-    $: fullWidth = $questDockWidthStore === "full";
-    $: widthClass = fullWidth ? "w-[calc(100%-1rem)]" : "w-[calc(100%-5.5rem)] md:max-w-[22rem]";
-    $: coversExpress =
-        fullWidth && visible !== "none" && visible !== "pill" && visible !== "quests" && visible !== "log";
-    $: trackedDone = !!tracked && state.quests[tracked].done;
+    // The pill stays under the panel as its handle; every other surface takes its place.
+    $: showPill = visible === "pill" || visible === "log";
+    $: showSurface = visible !== "none" && visible !== "pill" && visible !== "log";
 
-    // Read when a surface leaves: it fades only when nothing replaces it (faded, hidden or covered), else it is
-    // swapped at once for the next one.
+    // Read when a surface leaves: it fades only when nothing replaces it (faded or covered), else it is swapped at
+    // once for the next one.
     function fadeOutMs(): number {
         return visible === "none" ? motionMs(300) : 0;
     }
 </script>
 
-<!-- The status region is always here (even while quests are hidden or covered), so nothing announced is lost. -->
+<!-- The status region is always here (even while quests are covered), so nothing announced is lost. -->
 <div role="status" aria-live="polite" aria-atomic="true" class="sr-only" data-testid="quest-status">{announcement}</div>
 
-<!-- The layer the stamp flies in and the map marks sit in: over the map, never catching a tap. -->
+<!-- The layer the map marks sit in: over the map, never catching a tap. -->
 <div class="absolute inset-0 overflow-hidden pointer-events-none" bind:this={layer}>
     <QuestMapMarks
         path={markedPath}
@@ -539,36 +511,43 @@
     />
 </div>
 
-{#if visible === "log"}
-    <QuestLog
-        bind:this={log}
-        {entries}
-        hidden={state.hidden}
-        {showSignInRow}
-        dockWidth={$questDockWidthStore}
-        showWidthSwitch={devBuild}
-        on:close={() => dispatchQuest({ type: "close" })}
-        on:accept={(event) => onLogAccept(event.detail)}
-        on:track={(event) => trackQuest(event.detail, "log")}
-        on:setHidden={(event) => setQuestsHidden(event.detail)}
-        on:signIn={onSignIn}
-        on:setWidth={(event) => questDockWidthStore.set(event.detail)}
-    />
-{/if}
-
-<!-- The frame gives the surfaces the section's height to size against (40cqh). In "full" width a card covers the
-     Express column while it is open (z-index); the pills never do. -->
-<div class="quest-dock-frame {coversExpress ? 'z-[1]' : ''}" data-testid="quest-dock-frame">
+<!-- The frame gives the surfaces the section's height to size against (cqh). -->
+<div class="quest-dock-frame" data-testid="quest-dock-frame">
     <!-- Anchored to the physical left, like the Express column is to the physical right: the two never share a
          corner, in Arabic too. Everything inside uses logical start/end. Only the surfaces take taps: the rest of the
          dock lets them through to the map, so the joystick and tap-to-walk work around it. -->
     <div
-        class="absolute bottom-2 left-1 md:left-2 xl:left-4 flex flex-col items-start gap-2 pointer-events-none {widthClass}"
+        class="absolute bottom-2 left-1 md:left-2 xl:left-4 flex flex-col items-start gap-2 pointer-events-none w-[calc(100%-5.5rem)] md:max-w-[22rem]"
         data-testid="quest-dock"
         bind:this={dock}
     >
-        {#key visible}
-            {#if visible !== "none" && visible !== "log"}
+        {#if visible === "log"}
+            <div class="w-full flex" in:fly={{ y: 16, duration: motionMs(220) }} out:fade={{ duration: motionMs(120) }}>
+                <QuestPanel
+                    bind:this={panel}
+                    id={PANEL_ID}
+                    {entries}
+                    {world}
+                    doneCount={doneCount(state)}
+                    total={QUEST_PATHS.length}
+                    {tracked}
+                    {trackedBody}
+                    {walkLabel}
+                    walking={$questWalkingStore}
+                    {editorLabel}
+                    {showSignInRow}
+                    on:close={() => dispatchQuest({ type: "close" })}
+                    on:accept={(event) => acceptQuest(event.detail, "log")}
+                    on:track={(event) => trackQuest(event.detail, "log")}
+                    on:walk={onWalk}
+                    on:stopWalking={() => stopQuestWalk()}
+                    on:openEditor={onOpenEditor}
+                    on:signIn={onSignIn}
+                />
+            </div>
+        {/if}
+        {#key showSurface ? visible : "pill"}
+            {#if showSurface}
                 <div
                     class="w-full flex"
                     in:fly={{ y: 12, duration: motionMs(200) }}
@@ -591,22 +570,6 @@
                             on:close={() => dispatchQuest({ type: "close" })}
                             on:accept={(event) => onAccept(event.detail)}
                         />
-                    {:else if visible === "quests"}
-                        <QuestsPill
-                            bind:this={questsPill}
-                            count={toDo}
-                            on:open={(event) => onOpenLog(event.detail.keyboard)}
-                        />
-                    {:else if visible === "pill" && tracked}
-                        <QuestPill
-                            bind:this={pill}
-                            path={tracked}
-                            label={objective}
-                            done={trackedDone}
-                            walking={$questWalkingStore}
-                            cardId={CARD_ID}
-                            on:open={(event) => onOpenCard(event.detail.keyboard)}
-                        />
                     {:else if visible === "card" && tracked}
                         <QuestCard
                             bind:this={card}
@@ -614,38 +577,50 @@
                             host={cardHost}
                             eyebrow={cardEyebrow}
                             title={objective}
-                            body={questBody(t, tracked, state, world, $questMeetProgressStore)}
+                            body={trackedBody}
                             whereDescription={whereText}
                             {walkLabel}
                             walking={$questWalkingStore}
+                            {editorLabel}
                             done={trackedDone}
                             on:close={() => dispatchQuest({ type: "close" })}
                             on:engage={stopAutoFold}
                             on:walk={onWalk}
                             on:stopWalking={() => stopQuestWalk()}
-                            on:chooseAnother={(event) => onOpenLog(event.detail.keyboard)}
+                            on:openEditor={onOpenEditor}
+                            on:chooseAnother={(event) => onOpenPanel(event.detail.keyboard)}
                         />
-                    {:else if visible === "payoff" && state.payoff}
-                        <QuestPayoff
-                            path={state.payoff}
-                            objective={questObjective(t, state.payoff, state, world)}
-                            eyebrow={questEyebrowFor(t, state.payoff, state, world)}
-                            line={questPayoffLine(t, state.payoff, state, world)}
-                            stampLabel={t.quest.stamps.badge({ stamp: stampName(t, state.payoff) })}
-                            flyFrom={payoffFrom}
-                            {layer}
-                            on:ticked={onPayoffTicked}
-                            on:dismiss={onPayoffDismiss}
-                        />
-                    {:else if visible === "follow-up" && state.followUp}
-                        <QuestFollowUpCard
-                            kind={state.followUp}
-                            on:close={onFollowUpClose}
-                            on:signIn={onSignIn}
-                            on:tryAnother={(event) => onTryAnother(event.detail.keyboard)}
-                            on:backToExploring={() => dispatchQuest({ type: "follow-up-closed" })}
+                    {:else if visible === "celebration" && celebrationKind}
+                        <QuestCelebration
+                            kind={celebrationKind}
+                            path={celebratedPath}
+                            eyebrow={celebratedPath ? questEyebrowFor(t, celebratedPath, state, world) : ""}
+                            line={celebrationLine}
+                            badgeLine={celebrationBadge}
+                            stampLabel={celebratedPath
+                                ? t.quest.stamps.badge({ stamp: stampName(t, celebratedPath) })
+                                : ""}
+                            on:skip={onCelebrationSkip}
                         />
                     {/if}
+                </div>
+            {:else if showPill}
+                <div
+                    class="w-full flex"
+                    in:fly={{ y: 12, duration: motionMs(200) }}
+                    out:fade={{ duration: fadeOutMs() }}
+                >
+                    <QuestPill
+                        bind:this={pill}
+                        path={tracked}
+                        label={pillLabel}
+                        count={tracked ? 0 : toDo}
+                        done={trackedDone}
+                        walking={$questWalkingStore}
+                        open={visible === "log"}
+                        panelId={PANEL_ID}
+                        on:toggle={(event) => onTogglePanel(event.detail.keyboard)}
+                    />
                 </div>
             {/if}
         {/key}
@@ -712,6 +687,12 @@
         line-height: 1.4;
         color: rgba(255, 255, 255, 0.8);
     }
+    :global(.quest-meta) {
+        margin-top: 0.125rem;
+        font-size: 0.75rem;
+        line-height: 1.3;
+        color: rgba(255, 255, 255, 0.55);
+    }
     /* Every action is a real 44px pill button: the gradient one is the primary, the glass one secondary. Minimum
        sizes only: text wraps and cards grow, nothing is clipped at 200% text. */
     :global(.quest-btn) {
@@ -737,19 +718,9 @@
     :global(.quest-ghost:hover) {
         background: rgba(255, 255, 255, 0.12);
     }
-    :global(.quest-ghost[aria-pressed="true"]) {
-        color: #1b2a41;
-        background: #e9c74c;
-        border-color: #e9c74c;
-    }
-    /* A state, not a control ("Following"): the same shape, quieter, and never a pointer. */
-    :global(.quest-static) {
-        color: rgba(255, 255, 255, 0.7);
-        cursor: default;
-    }
     :global(.quest-btn-small) {
         min-height: 2.25rem;
-        padding: 0.25rem 0.75rem;
+        padding: 0.25rem 0.875rem;
         font-size: 0.8125rem;
     }
     :global(.quest-row) {
@@ -768,10 +739,83 @@
         line-height: 1.3;
         cursor: pointer;
     }
-    :global(.quest-row:hover) {
+    :global(button.quest-row:hover) {
         background: rgba(255, 255, 255, 0.08);
     }
-    /* The pills: a 44px glass capsule with a 1px hairline in the landing page's lavender-to-amber, drawn by a masked
+    :global(.quest-row-done) {
+        cursor: default;
+        opacity: 0.75;
+    }
+    /* The panel: the pill's own width, above it, its list scrolling inside. */
+    :global(.quest-panel) {
+        max-height: 60vh;
+        max-height: 60cqh;
+    }
+    :global(.quest-entry-open) {
+        border-radius: 0.5rem;
+        background: rgba(255, 255, 255, 0.06);
+    }
+    :global(.quest-entry-open .quest-row) {
+        cursor: default;
+    }
+    :global(.quest-entry-details) {
+        padding: 0 0.5rem 0.625rem 3.5rem;
+        padding-inline: 3.5rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    :global(.quest-log-section) {
+        margin: 0.75rem 0 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.6);
+    }
+    /* The chapter's progress: one segment per quest, amber once done. */
+    :global(.quest-progress) {
+        display: flex;
+        gap: 0.25rem;
+        height: 0.25rem;
+    }
+    :global(.quest-progress-seg) {
+        flex: 1;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.15);
+        transition: background 300ms ease;
+    }
+    :global(.quest-progress-seg.lit) {
+        background: linear-gradient(90deg, #c4b5fd, #f5a623);
+    }
+    /* Row tags: "On the map" in amber, "Tap to start" quiet. */
+    :global(.quest-tag) {
+        flex: none;
+        padding: 0.125rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.6875rem;
+        font-weight: 700;
+        white-space: nowrap;
+        color: #1b2a41;
+        background: #f5a623;
+    }
+    :global(.quest-tag-quiet) {
+        color: rgba(255, 255, 255, 0.7);
+        background: rgba(255, 255, 255, 0.1);
+    }
+    :global(.quest-stamp-mini) {
+        flex: none;
+        display: flex;
+        opacity: 0.8;
+    }
+    :global(.quest-check) {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.5rem;
+        height: 1.5rem;
+        border-radius: 999px;
+        color: #1b2a41;
+        background: #e9c74c;
+    }
+    /* The pill: a 44px glass capsule with a 1px hairline in the landing page's lavender-to-amber, drawn by a masked
        pseudo-element behind a transparent border (a gradient cannot round a border by itself). */
     :global(.quest-pill) {
         position: relative;
@@ -817,7 +861,8 @@
         transform: translateY(-1px);
     }
     :global(button.quest-pill:hover::before),
-    :global(button.quest-pill:focus-visible::before) {
+    :global(button.quest-pill:focus-visible::before),
+    :global(.quest-pill-open::before) {
         opacity: 1;
     }
     :global(button.quest-pill:active) {
@@ -852,16 +897,18 @@
         text-overflow: ellipsis;
         white-space: nowrap;
     }
-    /* The chevron keeps its place and shows on hover or keyboard focus. */
+    /* The chevron says "panel": up when it is closed, down (turned) while it is open. Always visible. */
     :global(.quest-pill-chevron) {
         flex: none;
-        opacity: 0;
-        color: rgba(255, 255, 255, 0.85);
-        transition: opacity 150ms ease;
+        color: rgba(255, 255, 255, 0.7);
+        transition: transform 200ms ease, color 150ms ease;
     }
     :global(.quest-pill:hover .quest-pill-chevron),
     :global(.quest-pill:focus-visible .quest-pill-chevron) {
-        opacity: 1;
+        color: #fff;
+    }
+    :global(.quest-pill-open .quest-pill-chevron) {
+        transform: rotate(180deg);
     }
     /* While "Walk there" walks the player: a 2px amber line runs along the bottom edge, inside the capsule. */
     :global(.quest-pill-progress) {
@@ -894,83 +941,88 @@
             transform: translateX(250%);
         }
     }
-    :global(.quest-payoff) {
+    /* The celebration: the stamp thumps in and settles, a shine sweeps across once. */
+    :global(.quest-celebration) {
+        position: relative;
         display: flex;
         align-items: center;
-        gap: 0.75rem;
+        gap: 0.875rem;
         width: 100%;
-        min-height: 3.5rem;
+        min-height: 4.5rem;
         margin: 0;
-        padding: 0.5rem 0.75rem;
+        padding: 0.75rem 0.875rem;
+        overflow: hidden;
         text-align: start;
         cursor: pointer;
+        border-color: rgba(245, 166, 35, 0.55);
+        box-shadow: 0 0 0 1px rgba(245, 166, 35, 0.2), 0 12px 32px -12px rgba(245, 166, 35, 0.6);
+        animation: quest-celebration-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
     }
-    /* On phones the log spans the section: above the Express column, which would otherwise take taps on its
-       footer. On wider screens it is a side panel that leaves that column alone (a "full" card width widens it). */
-    :global(.quest-log) {
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 1;
-        max-height: 100%;
-        border-radius: 0.5rem 0.5rem 0 0;
+    :global(.quest-celebration-chapter) {
+        justify-content: center;
+        padding: 1rem 0.875rem;
     }
-    :global(.quest-log-backdrop) {
-        position: absolute;
-        left: 0;
-        right: 0;
-        z-index: 1;
-        pointer-events: auto;
-    }
-    @media (min-width: 768px) {
-        :global(.quest-log) {
-            z-index: auto;
-            left: 0.5rem;
-            right: auto;
-            bottom: 0.5rem;
-            width: 24rem;
-            max-height: 70vh;
-            border-radius: 0.5rem;
-        }
-        :global(.quest-log.quest-log-full) {
-            width: calc(100% - 1rem);
-        }
-    }
-    @media (min-width: 1280px) {
-        :global(.quest-log) {
-            left: 1rem;
-        }
-        :global(.quest-log.quest-log-full) {
-            width: calc(100% - 2rem);
-        }
-    }
-    :global(.quest-log-section) {
-        margin: 0.75rem 0 0.25rem;
+    :global(.quest-celebration-title) {
         font-size: 0.75rem;
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.6);
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #f5a623;
     }
-    :global(.quest-log-details) {
-        padding-inline: 3.5rem 0.5rem;
-        padding-bottom: 0.5rem;
-        font-size: 0.875rem;
+    :global(.quest-badge-line) {
+        margin-top: 0.25rem;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: #e9c74c;
     }
-    :global(.quest-log-footer) {
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+    :global(.quest-celebration-stamp) {
+        flex: none;
+        display: flex;
+        animation: quest-stamp-in 600ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        filter: drop-shadow(0 0 10px rgba(233, 199, 76, 0.55));
     }
-    :global(.quest-stamp-flight) {
+    :global(.quest-celebration-shine) {
         position: absolute;
-        top: 0;
-        left: 0;
+        inset: -50% auto -50% -30%;
+        width: 30%;
+        background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+        transform: skewX(-18deg) translateX(-100%);
+        animation: quest-shine 1.1s ease-out 350ms both;
         pointer-events: none;
-        will-change: transform;
+    }
+    @keyframes quest-celebration-in {
+        from {
+            transform: translateY(10px) scale(0.96);
+            opacity: 0;
+        }
+        to {
+            transform: none;
+            opacity: 1;
+        }
+    }
+    @keyframes quest-stamp-in {
+        0% {
+            transform: scale(2.2) rotate(-18deg);
+            opacity: 0;
+        }
+        55% {
+            opacity: 1;
+        }
+        100% {
+            transform: scale(1) rotate(6deg);
+            opacity: 1;
+        }
+    }
+    @keyframes quest-shine {
+        to {
+            transform: skewX(-18deg) translateX(500%);
+        }
     }
     /* The game's button reset removes outlines: keyboard focus must stay visible on every quest control. */
     :global(.quest-btn:focus-visible),
     :global(.quest-row:focus-visible),
     :global(.quest-pill:focus-visible),
-    :global(.quest-payoff:focus-visible),
+    :global(.quest-celebration:focus-visible),
     :global(.quest-surface .close-btn:focus-visible) {
         outline: 2px solid #c4b5fd !important;
         outline-offset: 2px;
@@ -980,7 +1032,8 @@
         :global(.quest-surface .u-cta::before),
         :global(.quest-pill),
         :global(.quest-pill::before),
-        :global(.quest-pill-chevron) {
+        :global(.quest-pill-chevron),
+        :global(.quest-progress-seg) {
             transition: none;
         }
         :global(.quest-surface .u-cta:hover),
@@ -989,7 +1042,10 @@
         :global(button.quest-pill:focus-visible) {
             transform: none;
         }
-        :global(.quest-pill-pop) {
+        :global(.quest-pill-pop),
+        :global(.quest-celebration),
+        :global(.quest-celebration-stamp),
+        :global(.quest-celebration-shine) {
             animation: none;
         }
         /* A still, full line: still says "walking". */

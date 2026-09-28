@@ -15,13 +15,14 @@ vi.mock("../../../i18n/i18n-svelte", () => {
 import { popupJustClosed } from "../../Phaser/Game/Say/SayManager";
 import { questInputFocusStore } from "../QuestInputFocusStore";
 import type { QuestLogEntry } from "../QuestCopy";
+import { EMPTY_QUEST_WORLD } from "../QuestWorld";
 import { KEY_HOLD_MS } from "./questActions";
 import QuestInvitation from "./QuestInvitation.svelte";
 import QuestOptions from "./QuestOptions.svelte";
 import QuestPill from "./QuestPill.svelte";
-import QuestsPill from "./QuestsPill.svelte";
 import QuestCard from "./QuestCard.svelte";
-import QuestLog from "./QuestLog.svelte";
+import QuestCelebration from "./QuestCelebration.svelte";
+import QuestPanel from "./QuestPanel.svelte";
 
 let component: SvelteComponent | undefined;
 
@@ -94,7 +95,7 @@ describe("quest controls and the game's keys", () => {
 
     it("Enter or Space on a control is not the game's: no Express, nothing activated, until the key is back up", () => {
         vi.useFakeTimers();
-        const { target } = mount(QuestPill, { label: "Find the Courtyard", cardId: "quest-card" });
+        const { target } = mount(QuestPill, { label: "Find the Courtyard", panelId: "quest-panel" });
         const pill = byTestId(target, "quest-pill");
 
         pill?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -163,38 +164,41 @@ describe("QuestOptions", () => {
 });
 
 describe("QuestPill", () => {
-    it("is a 44px button named by its objective and state, opening the card", async () => {
+    it("is a 44px button named by its objective and state, the handle of the panel", async () => {
         const { target, instance } = mount(QuestPill, {
             path: "explore",
             label: "Find the Courtyard",
-            cardId: "quest-card",
+            panelId: "quest-panel",
         });
-        let opened: { keyboard: boolean } | undefined;
-        instance.$on("open", (event: CustomEvent<{ keyboard: boolean }>) => (opened = event.detail));
+        let toggled: { keyboard: boolean } | undefined;
+        instance.$on("toggle", (event: CustomEvent<{ keyboard: boolean }>) => (toggled = event.detail));
         const pill = byTestId(target, "quest-pill");
         expect(pill?.tagName).toBe("BUTTON");
         expect(pill?.getAttribute("aria-expanded")).toBe("false");
-        expect(pill?.getAttribute("aria-controls")).toBe("quest-card");
+        expect(pill?.getAttribute("aria-controls")).toBe("quest-panel");
         expect(pill?.textContent).toContain("Find the Courtyard");
         // The objective is real, visible text next to the icon: never an icon-only badge.
         const label = byTestId(target, "quest-pill-label");
         expect(label?.textContent).toBe("Find the Courtyard");
         expect(label?.classList.contains("sr-only")).toBe(false);
-        expect(label?.classList.contains("quest-pill-label")).toBe(true);
         expect(pill?.querySelector(".sr-only")).not.toBeNull();
         // No rosette, no empty ring: the chevron is the only end mark, and it is decoration.
         expect(pill?.querySelector("svg.quest-ring")).toBeNull();
         expect(byTestId(target, "quest-pill-chevron")?.getAttribute("aria-hidden")).toBe("true");
         pill?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
         await tick();
-        expect(opened).toEqual({ keyboard: true });
+        expect(toggled).toEqual({ keyboard: true });
+        instance.$set({ open: true });
+        await tick();
+        expect(pill?.getAttribute("aria-expanded")).toBe("true");
+        expect(pill?.classList.contains("quest-pill-open")).toBe(true);
     });
 
-    it("wears the followed path's own badge glyph next to the label", async () => {
+    it("wears the quest's own badge glyph next to the label, the lavender compass when nothing is on the map", async () => {
         const { target, instance } = mount(QuestPill, {
             path: "meet",
             label: "Say hello to someone",
-            cardId: "quest-card",
+            panelId: "quest-panel",
         });
         const glyph = byTestId(target, "quest-pill-glyph")?.querySelector("svg.quest-stamp");
         expect(glyph?.getAttribute("data-path")).toBe("meet");
@@ -203,18 +207,22 @@ describe("QuestPill", () => {
         expect(glyph?.querySelector(".ring")).toBeNull();
         expect(byTestId(target, "quest-pill-label")?.textContent).toBe("Say hello to someone");
 
-        instance.$set({ path: "build" });
+        instance.$set({ path: null, label: "Quests", count: 2 });
         await tick();
-        expect(byTestId(target, "quest-pill-glyph")?.querySelector("svg.quest-stamp")?.getAttribute("data-path")).toBe(
-            "build"
-        );
+        const compass = byTestId(target, "quest-pill-glyph")?.querySelector("svg.quest-stamp");
+        expect(compass?.getAttribute("data-path")).toBe("explore");
+        expect(compass?.getAttribute("style")).toContain("#c4b5fd");
+        expect(byTestId(target, "quest-pill")?.querySelector(".u-count")?.textContent).toBe("2");
+        instance.$set({ count: 0 });
+        await tick();
+        expect(byTestId(target, "quest-pill")?.querySelector(".u-count")).toBeNull();
     });
 
     it("runs a progress line along the bottom while walking, and pops the glyph once done", async () => {
         const { target, instance } = mount(QuestPill, {
             path: "explore",
             label: "Find the Courtyard",
-            cardId: "quest-card",
+            panelId: "quest-panel",
         });
         expect(byTestId(target, "quest-pill-progress")).toBeNull();
         instance.$set({ walking: true });
@@ -224,30 +232,6 @@ describe("QuestPill", () => {
         await tick();
         expect(byTestId(target, "quest-pill-progress")).toBeNull();
         expect(byTestId(target, "quest-pill-glyph")?.classList.contains("quest-pill-pop")).toBe(true);
-    });
-});
-
-describe("QuestsPill", () => {
-    it("is a 44px button that opens the log, counting what there is to do", async () => {
-        const { target, instance } = mount(QuestsPill, { count: 2 });
-        let opened: { keyboard: boolean } | undefined;
-        instance.$on("open", (event: CustomEvent<{ keyboard: boolean }>) => (opened = event.detail));
-        const pill = byTestId(target, "quests-pill");
-        expect(pill?.tagName).toBe("BUTTON");
-        expect(pill?.classList.contains("quest-pill")).toBe(true);
-        // The Explorer compass, in lavender, for an icon.
-        const glyph = byTestId(target, "quests-pill-glyph")?.querySelector("svg.quest-stamp");
-        expect(glyph?.getAttribute("data-path")).toBe("explore");
-        expect(glyph?.getAttribute("data-glyph-only")).toBe("true");
-        expect(glyph?.getAttribute("style")).toContain("#c4b5fd");
-        expect(pill?.querySelector(".u-count")?.textContent).toBe("2");
-        pill?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-        await tick();
-        expect(opened).toEqual({ keyboard: false });
-
-        instance.$set({ count: 0 });
-        await tick();
-        expect(pill?.querySelector(".u-count")).toBeNull();
     });
 });
 
@@ -319,118 +303,138 @@ describe("QuestCard", () => {
         expect(engaged).toBe(2);
     });
 
-    it("offers nothing to walk to once done (its payoff waiting), only Choose another", () => {
+    it("offers nothing to walk to once done (its celebration waiting), only Choose another", () => {
         const { target } = mount(QuestCard, { ...base, walkLabel: "Walk", done: true });
         expect(byTestId(target, "quest-walk")).toBeNull();
         expect(byTestId(target, "quest-choose-another")).not.toBeNull();
     });
+
+    it("offers the editor as the primary for Build, where there is nowhere to walk", async () => {
+        const { target, instance } = mount(QuestCard, { ...base, editorLabel: "Open the map editor" });
+        let opened = 0;
+        instance.$on("openEditor", () => opened++);
+        const editor = byTestId(target, "quest-open-editor");
+        expect(editor?.classList.contains("u-cta")).toBe(true);
+        editor?.click();
+        expect(opened).toBe(1);
+        instance.$set({ done: true });
+        await tick();
+        expect(byTestId(target, "quest-open-editor")).toBeNull();
+    });
 });
 
-describe("QuestLog", () => {
+describe("QuestPanel", () => {
     const entry = (path: QuestLogEntry["path"], status: QuestLogEntry["status"]): QuestLogEntry => ({
         path,
         status,
         title: path,
-        description: `${path} description`,
+        line: `${path} objective`,
         minutes: 1,
-        origin: "Here · Lobby",
+        giver: { kind: "bot", name: "Guide", portrait: "data:image/png;base64,AAAA" },
+        origin: "Guide · Lobby",
         reward: "badge",
     });
+    const base = { id: "quest-panel", world: EMPTY_QUEST_WORLD, doneCount: 1, total: 3, tracked: "explore" };
 
-    it("groups entries Following, Accepted, Available, Done; Start, Follow and a still Following pill", async () => {
-        const { target, instance } = mount(QuestLog, {
+    it("groups rows In progress, Available, Done; one tap starts or puts on the map; done rows are ticked", async () => {
+        const { target, instance } = mount(QuestPanel, {
+            ...base,
             entries: [entry("build", "done"), entry("meet", "available"), entry("explore", "tracked")],
-            hidden: false,
+            trackedBody: "Walk to the Courtyard and step inside.",
+            walkLabel: "Walk to the Courtyard",
         });
         const events: string[] = [];
         instance.$on("accept", (event: CustomEvent<string>) => events.push(`accept:${event.detail}`));
         instance.$on("track", (event: CustomEvent<string>) => events.push(`track:${event.detail}`));
-        const order = [...target.querySelectorAll("[data-testid^='quest-log-']")]
-            .map((element) => element.getAttribute("data-testid"))
-            .filter((id) => id === "quest-log-meet" || id === "quest-log-explore" || id === "quest-log-build");
-        expect(order).toEqual(["quest-log-explore", "quest-log-meet", "quest-log-build"]);
-        // The followed entry is open: nothing to press, no untrack anywhere.
-        const following = byTestId(target, "quest-log-following");
-        expect(following?.tagName).toBe("SPAN");
-        expect(following?.classList.contains("quest-btn")).toBe(true);
-        expect(byTestId(target, "quest-log-set-aside")).toBeNull();
-        expect(byTestId(target, "quest-log-remove-explore")).toBeNull();
-        expect(byTestId(target, "quest-log-start-meet")).toBeNull();
-
-        byTestId(target, "quest-log-meet")?.querySelector("button")?.click();
-        await tick();
-        const start = byTestId(target, "quest-log-start-meet");
-        expect(start?.tagName).toBe("BUTTON");
-        expect(start?.classList.contains("u-cta")).toBe(true);
-        expect(byTestId(target, "quest-log-following")).toBeNull();
-        start?.click();
+        instance.$on("walk", () => events.push("walk"));
+        const order = [...target.querySelectorAll("[data-testid^='quest-entry-']")].map((element) =>
+            element.getAttribute("data-testid")
+        );
+        expect(order).toEqual(["quest-entry-explore", "quest-entry-meet", "quest-entry-build"]);
+        // The giver's face on every open row; the one on the map says so and shows its sentence and walk.
+        expect(
+            byTestId(target, "quest-entry-explore")?.querySelector("[data-testid='quest-portrait'] img")
+        ).not.toBeNull();
+        expect(byTestId(target, "quest-on-map")).not.toBeNull();
+        expect(byTestId(target, "quest-tracked-body")?.textContent).toBe("Walk to the Courtyard and step inside.");
+        byTestId(target, "quest-panel-walk")?.click();
+        // No Start, Follow or Following anywhere: the row itself is the control.
+        expect(target.querySelector("[data-testid^='quest-log-start']")).toBeNull();
+        expect(target.querySelector("[data-testid^='quest-log-follow']")).toBeNull();
+        byTestId(target, "quest-row-meet")?.click();
+        // Done: ticked, nothing to press.
+        const done = byTestId(target, "quest-row-build");
+        expect(done?.tagName).toBe("DIV");
+        expect(done?.querySelector(".quest-check")).not.toBeNull();
+        expect(byTestId(target, "quest-panel-progress")).not.toBeNull();
+        expect(target.querySelectorAll(".quest-progress-seg.lit")).toHaveLength(1);
+        expect(target.querySelector("a")).toBeNull();
 
         instance.$set({ entries: [entry("build", "accepted"), entry("explore", "tracked")] });
         await tick();
-        byTestId(target, "quest-log-build")?.querySelector("button")?.click();
+        byTestId(target, "quest-row-build")?.click();
         await tick();
-        byTestId(target, "quest-log-follow-build")?.click();
-        // Done: the badge, nothing to press.
-        instance.$set({ entries: [entry("build", "done")] });
-        await tick();
-        byTestId(target, "quest-log-build")?.querySelector("button")?.click();
-        await tick();
-        expect(byTestId(target, "quest-log-build")?.querySelectorAll(".quest-btn")).toHaveLength(0);
-        expect(target.querySelector("a")).toBeNull();
-        expect(events).toEqual(["accept:meet", "track:build"]);
+        expect(events).toEqual(["walk", "accept:meet", "track:build"]);
     });
 
-    it("keeps keyboard focus on an entry that moves to another section", async () => {
-        const { target, instance } = mount(QuestLog, { entries: [entry("meet", "accepted")], hidden: false });
-        instance.$on("track", () => instance.$set({ entries: [entry("meet", "tracked")] }));
-        byTestId(target, "quest-log-meet")?.querySelector("button")?.click();
+    it("keeps keyboard focus on a row that moves to another section", async () => {
+        const { target, instance } = mount(QuestPanel, {
+            ...base,
+            tracked: null,
+            entries: [entry("meet", "accepted")],
+        });
+        instance.$on("track", () => instance.$set({ tracked: "meet", entries: [entry("meet", "tracked")] }));
+        const row = byTestId(target, "quest-row-meet");
+        row?.focus();
+        row?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
         await tick();
-        const follow = byTestId(target, "quest-log-follow-meet");
-        follow?.focus();
-        follow?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
         await tick();
-        await tick();
-        expect(document.activeElement).toBe(byTestId(target, "quest-log-meet")?.querySelector(".quest-row"));
+        expect(document.activeElement).toBe(byTestId(target, "quest-row-meet"));
     });
 
-    it("has a tap-to-close backdrop on phones only, kept above the panel", () => {
-        const { target } = mount(QuestLog, { entries: [], hidden: false });
-        const backdrop = byTestId(target, "quest-log-backdrop");
-        expect(backdrop?.classList.contains("md:hidden")).toBe(true);
-        expect(backdrop?.classList.contains("inset-0")).toBe(false);
-        expect(backdrop?.style.bottom).toMatch(/px$/);
-    });
-
-    it("closes on its close, Escape, and one tap on the map above it; the tap goes no further", async () => {
-        const { target, instance } = mount(QuestLog, { entries: [], hidden: false });
+    it("closes on its close and Escape; says when everything is done", async () => {
+        const { target, instance } = mount(QuestPanel, { ...base, doneCount: 3, entries: [] });
         let closes = 0;
         instance.$on("close", () => closes++);
-        expect(target.textContent).toContain("x");
-        byTestId(target, "quest-log-close")?.click();
-        escape(byTestId(target, "quest-log-hide"));
-        const tap = new MouseEvent("click", { bubbles: true, cancelable: true });
-        byTestId(target, "quest-log-backdrop")?.dispatchEvent(tap);
+        byTestId(target, "quest-panel-close")?.click();
+        escape(byTestId(target, "quest-panel-close"));
         await tick();
-        expect(closes).toBe(3);
-        expect(tap.defaultPrevented).toBe(true);
+        expect(closes).toBe(2);
+        expect(byTestId(target, "quest-panel-all-done")).not.toBeNull();
+        expect(byTestId(target, "quest-panel")?.getAttribute("role")).toBe("dialog");
     });
+});
 
-    it("has one toggle for the quest bar, and the card width switch (dev) as buttons", async () => {
-        const { target, instance } = mount(QuestLog, { entries: [], hidden: true, showWidthSwitch: true });
-        const events: string[] = [];
-        instance.$on("setHidden", (event: CustomEvent<boolean>) => events.push(`hidden:${event.detail}`));
-        instance.$on("setWidth", (event: CustomEvent<string>) => events.push(`width:${event.detail}`));
-        const toggle = byTestId(target, "quest-log-hide");
-        expect(toggle?.tagName).toBe("BUTTON");
-        expect(toggle?.classList.contains("quest-btn")).toBe(true);
-        toggle?.click();
-        byTestId(target, "quest-width-full")?.click();
+describe("QuestCelebration", () => {
+    it("shows the badge and the giver's line for a quest, three badges for the chapter, and skips on a tap", async () => {
+        const { target, instance } = mount(QuestCelebration, {
+            kind: "quest",
+            path: "meet",
+            eyebrow: "Guide",
+            line: "Good to meet you.",
+            badgeLine: "First Hello badge earned",
+            stampLabel: "First Hello badge",
+        });
+        let skips = 0;
+        instance.$on("skip", () => skips++);
+        const card = byTestId(target, "quest-celebration");
+        expect(card?.tagName).toBe("BUTTON");
+        expect(card?.querySelector("svg.quest-stamp")?.getAttribute("data-path")).toBe("meet");
+        expect(card?.textContent).toContain("Good to meet you.");
+        expect(byTestId(target, "quest-celebration-badge")?.textContent).toBe("First Hello badge earned");
+        card?.click();
+        escape(card);
         await tick();
-        expect(events).toEqual(["hidden:false", "width:full"]);
-        expect(byTestId(target, "quest-width-narrow")?.getAttribute("aria-pressed")).toBe("true");
-        instance.$set({ dockWidth: "full" });
+        expect(skips).toBe(2);
+
+        instance.$set({
+            kind: "chapter",
+            path: null,
+            line: "All done.",
+            badgeLine: "First Hello · Explorer · Builder",
+        });
         await tick();
-        expect(byTestId(target, "quest-width-full")?.getAttribute("aria-pressed")).toBe("true");
-        expect(byTestId(target, "quest-log")?.classList.contains("quest-log-full")).toBe(true);
+        expect(card?.querySelectorAll("svg.quest-stamp")).toHaveLength(3);
+        expect(card?.getAttribute("data-kind")).toBe("chapter");
     });
 });

@@ -11,7 +11,10 @@ const scene = vi.hoisted(() => ({ current: { CurrentPlayer: { x: 0, y: 0 } } as 
 vi.mock("../../Phaser/Game/GameManager", () => ({ gameManager: { tryGetCurrentGameScene: () => scene.current } }));
 vi.mock("../QuestDetectors", () => ({ armQuestScene: () => () => {} }));
 vi.mock("../../Phaser/Game/Say/SayManager", () => ({ popupJustClosed: () => {} }));
-vi.mock("../QuestMarkers", () => ({ startQuestMarkers: () => () => {} }));
+const markers = vi.hoisted(() => ({ bursts: 0 }));
+vi.mock("../QuestMarkers", () => ({ startQuestMarkers: () => () => {}, burstQuestMarker: () => markers.bursts++ }));
+const sounds = vi.hoisted(() => ({ quest: 0, chapter: 0 }));
+vi.mock("../QuestSound", () => ({ playQuestDone: () => sounds.quest++, playChapterDone: () => sounds.chapter++ }));
 vi.mock("../QuestArrival", () => ({ startQuestArrival: () => () => {} }));
 vi.mock("../../Stores/MenuStore", () => ({ userIsConnected: writable(true) }));
 vi.mock("../../Stores/ChatStore", () => ({ chatInputFocusStore: writable(false) }));
@@ -34,7 +37,7 @@ vi.mock("../QuestUiStores", async () => {
     };
 });
 
-import { questDockWidthStore } from "../QuestDevSettings";
+import { mapEditorModeStore } from "../../Stores/MapEditorStore";
 import { openQuestLog } from "../QuestDockFocus";
 import {
     acceptQuest,
@@ -43,7 +46,6 @@ import {
     dispatchQuest,
     questStateStore,
     resetQuests,
-    setQuestsHidden,
     setQuestWorld,
     trackQuest,
 } from "../QuestStore";
@@ -60,9 +62,13 @@ let dock: QuestDock | undefined;
 let target: HTMLElement;
 
 async function flush(ms = 0) {
+    // Let Svelte apply the change (and start any transition) before the clock moves.
+    await tick();
     await vi.advanceTimersByTimeAsync(ms);
     await tick();
 }
+/** A surface that leaves fades for 300 ms: wait for it to be gone. */
+const GONE_MS = 600;
 
 const byTestId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const player = () => (scene.current as TestScene).CurrentPlayer;
@@ -85,7 +91,10 @@ beforeEach(async () => {
         ],
     });
     resetQuests();
-    questDockWidthStore.set("narrow");
+    markers.bursts = 0;
+    sounds.quest = 0;
+    sounds.chapter = 0;
+    mapEditorModeStore.switchMode(false);
     scene.current = { CurrentPlayer: { x: 0, y: 0 } };
     suppression.set({ surfaces: false, pill: false });
     quiet.set(false);
@@ -104,72 +113,71 @@ beforeEach(async () => {
     await flush();
 });
 
-afterEach(() => {
+afterEach(async () => {
     dock?.$destroy();
     dock = undefined;
+    // Let any transition still in flight finish under the fake clock: Svelte's animation loop is module-wide, and a
+    // frame dropped with the fake timers would leave it stuck for every later test.
+    await vi.advanceTimersByTimeAsync(5_000);
     document.body.innerHTML = "";
     vi.useRealTimers();
 });
 
 describe("QuestDock", () => {
-    it("never goes empty: the Quests pill rests bottom-left while nothing is followed, and opens the log", async () => {
+    it("never goes empty: the Quests pill rests bottom-left, and toggles the panel above it", async () => {
         expect(byTestId("quest-status")?.getAttribute("role")).toBe("status");
-        const pill = byTestId("quests-pill");
+        const pill = byTestId("quest-pill");
         expect(pill).not.toBeNull();
         // Two quests to pick up: Meet (alone for now, it waits) and Explore.
         expect(pill?.querySelector(".u-count")?.textContent).toBe("2");
+        expect(pill?.getAttribute("aria-expanded")).toBe("false");
         pill?.click();
         await flush();
-        expect(byTestId("quest-log")).not.toBeNull();
-        expect(byTestId("quests-pill")).toBeNull();
-        byTestId("quest-log-close")?.click();
+        expect(byTestId("quest-panel")).not.toBeNull();
+        // The pill stays under the panel as its handle.
+        expect(byTestId("quest-pill")?.getAttribute("aria-expanded")).toBe("true");
+        byTestId("quest-pill")?.click();
+        await flush(GONE_MS);
+        expect(byTestId("quest-panel")).toBeNull();
+        expect(byTestId("quest-pill")?.getAttribute("aria-expanded")).toBe("false");
+        // The panel's own close works too.
+        byTestId("quest-pill")?.click();
         await flush();
-        expect(byTestId("quests-pill")).not.toBeNull();
+        byTestId("quest-panel-close")?.click();
+        await flush(GONE_MS);
+        expect(byTestId("quest-panel")).toBeNull();
+        expect(byTestId("quest-pill")).not.toBeNull();
     });
 
-    it("keeps the pill after Not now, after a payoff, and only Hide the quest bar removes it", async () => {
+    it("keeps the pill after Not now; a tap on an available row starts that quest", async () => {
         dispatchQuest({ type: "invitation-shown" });
         await flush();
         expect(byTestId("quest-invitation")).not.toBeNull();
-        expect(byTestId("quests-pill")).toBeNull();
+        expect(byTestId("quest-pill")).toBeNull();
         declineQuestInvitation();
-        await flush(400);
+        await flush(GONE_MS);
         expect(byTestId("quest-invitation")).toBeNull();
-        expect(byTestId("quests-pill")).not.toBeNull();
-        // Available is still there: Start from the log works after Not now.
-        byTestId("quests-pill")?.click();
+        expect(byTestId("quest-pill")).not.toBeNull();
+        byTestId("quest-pill")?.click();
         await flush();
-        byTestId("quest-log-explore")?.querySelector("button")?.click();
-        await flush();
-        byTestId("quest-log-start-explore")?.click();
-        await flush();
+        byTestId("quest-row-explore")?.click();
+        await flush(GONE_MS);
         expect(get(questStateStore).tracked).toBe("explore");
+        expect(byTestId("quest-panel")).toBeNull();
         expect(byTestId("quest-card")).not.toBeNull();
-
-        completeQuest("explore");
-        await flush(1_500);
-        expect(byTestId("quest-payoff")).not.toBeNull();
-        byTestId("quest-payoff")?.click();
-        await flush(400);
-        expect(byTestId("quests-pill")).not.toBeNull();
-
-        setQuestsHidden(true);
-        await flush(400);
-        expect(byTestId("quests-pill")).toBeNull();
-        expect(byTestId("quest-dock")?.children).toHaveLength(0);
     });
 
     it("shows no resting pill before the map is ready or where nothing is on offer", async () => {
         setQuestWorld(EMPTY_QUEST_WORLD);
-        await flush();
-        expect(byTestId("quests-pill")).toBeNull();
+        await flush(GONE_MS);
+        expect(byTestId("quest-pill")).toBeNull();
         expect(byTestId("quest-dock")?.children).toHaveLength(0);
         setQuestWorld({ ...EMPTY_QUEST_WORLD, ready: true, roomName: "Lobby" });
         await flush();
-        expect(byTestId("quests-pill")).not.toBeNull();
+        expect(byTestId("quest-pill")).not.toBeNull();
     });
 
-    it("opens the card expanded on Start, with the objective and its buttons, then folds it after 10 s", async () => {
+    it("opens the card expanded on a start, with the objective and its buttons, then folds it after 10 s", async () => {
         acceptQuest("explore", "invitation");
         await flush();
         const card = byTestId("quest-card");
@@ -204,7 +212,7 @@ describe("QuestDock", () => {
     it("counts the 10 s only while the card can be seen", async () => {
         acceptQuest("explore", "invitation");
         await flush();
-        // The phone chat covers the game right after Start: the card was never seen.
+        // The phone chat covers the game right after the start: the card was never seen.
         suppression.set({ surfaces: true, pill: true });
         await flush(15_000);
         suppression.set({ surfaces: false, pill: false });
@@ -264,7 +272,7 @@ describe("QuestDock", () => {
         expect(byTestId("quest-card")).toBeNull();
     });
 
-    it("folds on the X and stays followed; the pill reopens the card, which then stays open", async () => {
+    it("folds on the X and stays on the map; the pill then opens the panel with that quest open", async () => {
         acceptQuest("build", "invitation");
         await flush();
         byTestId("quest-card-close")?.click();
@@ -273,35 +281,45 @@ describe("QuestDock", () => {
         expect(get(questStateStore).tracked).toBe("build");
         byTestId("quest-pill")?.click();
         await flush();
-        expect(byTestId("quest-card")).not.toBeNull();
-        await flush(20_000);
-        expect(byTestId("quest-card")).not.toBeNull();
+        expect(byTestId("quest-panel")).not.toBeNull();
+        expect(byTestId("quest-on-map")).not.toBeNull();
+        expect(byTestId("quest-entry-build")?.classList.contains("quest-entry-open")).toBe(true);
+        expect(byTestId("quest-tracked-body")?.textContent).not.toBe("");
     });
 
-    it("Follow from the log closes the log and opens that quest's card", async () => {
+    it("Build opens the map editor from the card where the person can edit, and steps aside for it", async () => {
+        setQuestWorld({ ...EMPTY_QUEST_WORLD, ready: true, roomName: "Lobby", canBuild: true });
+        acceptQuest("build", "invitation");
+        await flush();
+        expect(byTestId("quest-walk")).toBeNull();
+        byTestId("quest-open-editor")?.click();
+        await flush();
+        expect(get(mapEditorModeStore)).toBe(true);
+        expect(get(questStateStore).surface).toBe("pill");
+    });
+
+    it("a tap on an accepted row puts that quest on the map and opens its card", async () => {
         acceptQuest("explore", "invitation");
         acceptQuest("build", "log");
         await flush();
         dispatchQuest({ type: "open-log" });
         await flush();
-        trackQuest("explore", "log");
-        await flush();
-        expect(byTestId("quest-log")).toBeNull();
+        byTestId("quest-row-explore")?.click();
+        await flush(GONE_MS);
+        expect(byTestId("quest-panel")).toBeNull();
         expect(byTestId("quest-card")).not.toBeNull();
         expect(get(questStateStore).tracked).toBe("explore");
     });
 
-    it("Start from a log opened by the menu row focuses the new card, not the menu", async () => {
+    it("a start from a panel opened by the menu row focuses the new card, not the menu", async () => {
         const opener = document.createElement("button");
         document.body.appendChild(opener);
         openQuestLog(opener, true);
         await flush();
-        expect(byTestId("quest-log")?.contains(document.activeElement)).toBe(true);
-        byTestId("quest-log-explore")?.querySelector("button")?.click();
-        await flush();
-        keyboardClick(byTestId("quest-log-start-explore"));
-        await flush();
-        expect(byTestId("quest-log")).toBeNull();
+        expect(byTestId("quest-panel")?.contains(document.activeElement)).toBe(true);
+        keyboardClick(byTestId("quest-row-explore"));
+        await flush(GONE_MS);
+        expect(byTestId("quest-panel")).toBeNull();
         expect(byTestId("quest-card")).not.toBeNull();
         expect(byTestId("quest-card")?.contains(document.activeElement)).toBe(true);
         expect(document.activeElement).not.toBe(opener);
@@ -322,26 +340,13 @@ describe("QuestDock", () => {
         expect(byTestId("quest-card")?.contains(document.activeElement)).toBe(true);
     });
 
-    it("widens the surfaces with the card width switch, on phones and on desktop", async () => {
+    it("keeps the dock narrow: the Express column stays visible beside every surface", () => {
         const dockElement = byTestId("quest-dock");
         expect(dockElement?.classList.contains("md:max-w-[22rem]")).toBe(true);
         expect(dockElement?.classList.contains("w-[calc(100%-5.5rem)]")).toBe(true);
-        questDockWidthStore.set("full");
-        await flush();
-        expect(dockElement?.classList.contains("w-[calc(100%-1rem)]")).toBe(true);
-        expect(dockElement?.classList.contains("md:max-w-[22rem]")).toBe(false);
-        expect(dockElement?.classList.contains("w-[calc(100%-5.5rem)]")).toBe(false);
-        dispatchQuest({ type: "open-log" });
-        await flush();
-        expect(byTestId("quest-log")?.classList.contains("quest-log-full")).toBe(true);
-        byTestId("quest-width-narrow")?.click();
-        await flush();
-        expect(get(questDockWidthStore)).toBe("narrow");
-        expect(byTestId("quest-log")?.classList.contains("quest-log-full")).toBe(false);
-        expect(dockElement?.classList.contains("md:max-w-[22rem]")).toBe(true);
     });
 
-    it("queues a completion while the game is covered and plays it once it has been free for a moment", async () => {
+    it("celebrates a completion once the game is free: sound and burst at once, the card for 3 s, then the panel", async () => {
         acceptQuest("explore", "invitation");
         await flush();
         dispatchQuest({ type: "close" });
@@ -350,41 +355,62 @@ describe("QuestDock", () => {
 
         // The phone chat covers the game: everything hides, the completion is recorded but waits.
         suppression.set({ surfaces: true, pill: true });
-        // It fades out, it never moves.
-        await flush(400);
+        await flush(GONE_MS);
         expect(byTestId("quest-pill")).toBeNull();
         completeQuest("explore");
         await flush(10_000);
         expect(get(questStateStore).quests.explore.done).toBe(true);
-        expect(byTestId("quest-payoff-tick")).toBeNull();
-        expect(byTestId("quest-payoff")).toBeNull();
+        expect(byTestId("quest-celebration")).toBeNull();
+        expect(sounds.quest).toBe(0);
 
-        // Free again: after half a second the glyph pops on the pill, then the line with its stamp.
+        // Free again: after half a second the celebration, with its sound and the burst at the player's feet.
         suppression.set({ surfaces: false, pill: false });
         await flush(400);
-        expect(byTestId("quest-payoff-tick")).toBeNull();
+        expect(byTestId("quest-celebration")).toBeNull();
         await flush(200);
-        expect(byTestId("quest-payoff-tick")).not.toBeNull();
-        expect(byTestId("quest-payoff-glyph")?.classList.contains("quest-pill-pop")).toBe(true);
-        expect(byTestId("quest-payoff-glyph")?.querySelector("svg.quest-stamp")?.getAttribute("data-path")).toBe(
-            "explore"
-        );
-        await flush(800);
-        expect(byTestId("quest-payoff")).not.toBeNull();
+        const celebration = byTestId("quest-celebration");
+        expect(celebration).not.toBeNull();
+        expect(celebration?.getAttribute("data-kind")).toBe("quest");
+        expect(celebration?.querySelector("svg.quest-stamp")?.getAttribute("data-path")).toBe("explore");
+        expect(byTestId("quest-celebration-badge")).not.toBeNull();
+        expect(sounds.quest).toBe(1);
+        expect(markers.bursts).toBe(1);
 
-        // The 6 s count only while the line can be seen and nobody is busy.
+        // The 3 s count only while it can be seen and nobody is busy.
         quiet.set(true);
         await flush(20_000);
-        expect(byTestId("quest-payoff")).not.toBeNull();
+        expect(byTestId("quest-celebration")).not.toBeNull();
         quiet.set(false);
-        await flush(6_500);
-        expect(byTestId("quest-payoff")).toBeNull();
-        // Meet is still there to try: one follow-up, then the resting pill.
-        expect(get(questStateStore).surface).toBe("follow-up");
-        byTestId("quest-back-to-exploring")?.click();
-        await flush(400);
-        expect(get(questStateStore).surface).toBe("none");
-        expect(byTestId("quests-pill")).not.toBeNull();
+        await flush(3_500);
+        expect(byTestId("quest-celebration")).toBeNull();
+        // Then the panel, with the finished quest ticked and the rest to do; nothing on the map.
+        expect(get(questStateStore).surface).toBe("log");
+        expect(byTestId("quest-panel")).not.toBeNull();
+        expect(byTestId("quest-row-explore")?.querySelector(".quest-check")).not.toBeNull();
+        expect(byTestId("quest-panel-progress")).not.toBeNull();
+        expect(get(questStateStore).tracked).toBeNull();
+        expect(sounds.chapter).toBe(0);
+    });
+
+    it("the last quest's celebration is followed by the chapter's, with its own sound", async () => {
+        acceptQuest("meet", "invitation");
+        completeQuest("meet");
+        await flush(4_500);
+        acceptQuest("explore", "log");
+        completeQuest("explore");
+        await flush(4_500);
+        acceptQuest("build", "log");
+        completeQuest("build");
+        await flush(1_000);
+        expect(byTestId("quest-celebration")?.getAttribute("data-kind")).toBe("quest");
+        await flush(3_500);
+        expect(byTestId("quest-celebration")?.getAttribute("data-kind")).toBe("chapter");
+        expect(sounds.chapter).toBe(1);
+        expect(byTestId("quest-celebration")?.querySelectorAll("svg.quest-stamp")).toHaveLength(3);
+        await flush(5_000);
+        expect(byTestId("quest-celebration")).toBeNull();
+        expect(byTestId("quest-panel-all-done")).not.toBeNull();
+        expect(get(questStateStore).chapterCelebrated).toBe(true);
     });
 
     it("never lets a waiting completion take over a quest tracked since", async () => {
@@ -394,67 +420,67 @@ describe("QuestDock", () => {
         suppression.set({ surfaces: true, pill: true });
         await flush();
         completeQuest("explore");
-        // Tracking another quest before the payoff could play.
+        // Tracking another quest before the celebration could play.
         dispatchQuest({ type: "track", path: "build" });
         suppression.set({ surfaces: false, pill: false });
         await flush(2_000);
-        expect(byTestId("quest-payoff")).toBeNull();
+        expect(byTestId("quest-celebration")).toBeNull();
         expect(byTestId("quest-card")).not.toBeNull();
         expect(get(questStateStore).tracked).toBe("build");
     });
 
-    it("tapping the line away ends it with no follow-up", async () => {
+    it("tapping the celebration skips ahead to the panel", async () => {
         acceptQuest("explore", "invitation");
         completeQuest("explore");
         await flush(1_500);
-        expect(byTestId("quest-payoff")).not.toBeNull();
-        byTestId("quest-payoff")?.click();
+        expect(byTestId("quest-celebration")).not.toBeNull();
+        byTestId("quest-celebration")?.click();
         await flush();
-        expect(byTestId("quest-payoff")).toBeNull();
-        expect(byTestId("quest-follow-up")).toBeNull();
+        expect(byTestId("quest-celebration")).toBeNull();
+        expect(byTestId("quest-panel")).not.toBeNull();
     });
 
-    it("opens the log over the dock with its own history entry; Back closes it and the room stays", async () => {
+    it("opens the panel with its own history entry; Back closes it and the room stays", async () => {
         const push = vi.spyOn(history, "pushState");
         acceptQuest("explore", "invitation");
         await flush();
         dispatchQuest({ type: "close" });
         dispatchQuest({ type: "open-log" });
         await flush();
-        expect(byTestId("quest-log")).not.toBeNull();
+        expect(byTestId("quest-panel")).not.toBeNull();
         expect(push).toHaveBeenCalledTimes(1);
 
-        // Back from something opened over the log lands on the log's own entry: it stays.
+        // Back from something opened over the panel lands on the panel's own entry: it stays.
         window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
         await flush();
-        expect(byTestId("quest-log")).not.toBeNull();
+        expect(byTestId("quest-panel")).not.toBeNull();
 
         window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
-        await flush();
-        expect(byTestId("quest-log")).toBeNull();
+        await flush(GONE_MS);
+        expect(byTestId("quest-panel")).toBeNull();
         expect(byTestId("quest-pill")).not.toBeNull();
         push.mockRestore();
     });
 
-    it("steps back over its history entry when the log is closed another way", async () => {
+    it("steps back over its history entry when the panel is closed another way", async () => {
         const back = vi.spyOn(history, "back").mockImplementation(() => {});
         dispatchQuest({ type: "open-log" });
         await flush();
-        byTestId("quest-log-close")?.click();
-        await flush();
-        expect(byTestId("quest-log")).toBeNull();
+        byTestId("quest-panel-close")?.click();
+        await flush(GONE_MS);
+        expect(byTestId("quest-panel")).toBeNull();
         expect(back).toHaveBeenCalledTimes(1);
         back.mockRestore();
     });
 
-    it("hides the log (and everything else) while something covers the game, and brings it back", async () => {
+    it("hides the panel (and everything else) while something covers the game, and brings it back", async () => {
         dispatchQuest({ type: "open-log" });
         await flush();
         suppression.set({ surfaces: true, pill: true });
-        await flush();
-        expect(byTestId("quest-log")).toBeNull();
+        await flush(GONE_MS);
+        expect(byTestId("quest-panel")).toBeNull();
         suppression.set({ surfaces: false, pill: false });
         await flush();
-        expect(byTestId("quest-log")).not.toBeNull();
+        expect(byTestId("quest-panel")).not.toBeNull();
     });
 });

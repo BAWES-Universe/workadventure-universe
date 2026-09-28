@@ -2,7 +2,7 @@ import type { TranslationFunctions } from "../../i18n/i18n-types";
 import type { MeetProgress } from "./MeetExchange";
 import type { Point } from "./QuestGeometry";
 import { compassDirection, stepsBetween } from "./QuestGeometry";
-import type { QuestOrigin, QuestPath, QuestState } from "./QuestModel";
+import type { QuestGiver, QuestOrigin, QuestPath, QuestState } from "./QuestModel";
 import { QUEST_MINUTES, QUEST_PATHS, questStatus } from "./QuestModel";
 import type { QuestWorld } from "./QuestWorld";
 import { questOrigin } from "./QuestWorld";
@@ -52,7 +52,7 @@ export function questBody(
     world: QuestWorld,
     meetProgress: MeetProgress
 ): string {
-    // Done, its payoff waiting for a quiet moment: the card already says how it ended.
+    // Done, its celebration waiting for a quiet moment: the card already says how it ended.
     if (state.quests[path].done) return questPayoffLine(t, path, state, world);
     switch (path) {
         case "meet":
@@ -82,7 +82,7 @@ export function questPayoffLine(t: T, path: QuestPath, state: QuestState, world:
     }
 }
 
-/** The acknowledgement on a Done entry in the log. */
+/** The acknowledgement on a Done entry in the panel. */
 export function questLastTime(t: T, path: QuestPath, state: QuestState, world: QuestWorld): string {
     if (path === "explore") return t.quest.paths.explore.lastTime({ area: exploreAreaName(state, world) });
     return t.quest.paths[path].lastTime();
@@ -122,14 +122,17 @@ export interface QuestOptionRow {
     minutes: number;
 }
 
-/** One entry of the log, in words. */
+/** One entry of the panel, in words. */
 export interface QuestLogEntry {
     path: QuestPath;
     status: "tracked" | "accepted" | "available" | "done";
     title: string;
-    description: string;
+    /** The objective ("Find the Courtyard"), or how it ended once done. */
+    line: string;
     minutes: number;
-    /** "From Guide · Lobby", or "Here · Lobby". */
+    /** Who gave it: for its portrait on the row. */
+    giver: QuestGiver | null;
+    /** "Guide · Lobby", or "Lobby". */
     origin: string;
     /** "First Hello badge". */
     reward: string;
@@ -137,8 +140,6 @@ export interface QuestLogEntry {
     requirement?: string;
     /** "Nobody's here right now" while paused, or on Meet's Available row while nobody is here. */
     note?: string;
-    /** The host's acknowledgement on a Done entry. */
-    lastTime?: string;
 }
 
 export function optionRows(t: T, paths: readonly QuestPath[], state: QuestState, world: QuestWorld): QuestOptionRow[] {
@@ -161,7 +162,7 @@ export function entryOrigin(state: QuestState, path: QuestPath, world: QuestWorl
     return questOrigin(world);
 }
 
-/** The log's entries: everything accepted or done, and what this room offers now. */
+/** The panel's entries: everything accepted or done, and what this room offers now. */
 export function logEntries(
     t: T,
     state: QuestState,
@@ -178,13 +179,13 @@ export function logEntries(
             path,
             status,
             title: questTitle(t, path),
-            description: questDescription(t, path, state, world),
+            line: status === "done" ? questPayoffLine(t, path, state, world) : questObjective(t, path, state, world),
             minutes: QUEST_MINUTES[path],
+            giver,
             origin,
             reward: t.quest.stamps.badge({ stamp: stampName(t, path) }),
             requirement: path === "build" && status !== "done" ? t.quest.paths.build.needs() : undefined,
             note: showsNobodyHere(state, world, path, status) ? t.quest.card.nobodyHere() : undefined,
-            lastTime: status === "done" ? questLastTime(t, path, state, world) : undefined,
         });
     }
     return entries;

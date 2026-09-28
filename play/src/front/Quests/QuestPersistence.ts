@@ -12,16 +12,15 @@ import {
 export const QUEST_STATE_KEY = "quests.state";
 export const QUEST_INVITATION_SEEN_KEY = "quests.invitationSeen";
 
-/** The part of the state that outlives the page. Surfaces and payoffs in flight do not. */
+/** The part of the state that outlives the page. Surfaces and celebrations in flight do not. */
 export interface StoredQuestProgress {
     version: 1;
     quests: Record<QuestPath, QuestEntry>;
     tracked: QuestPath | null;
-    hidden: boolean;
     exploreArea: QuestAreaRef | null;
     pending: QuestPath[];
     news: boolean;
-    signInOfferSkipped: boolean;
+    chapterCelebrated: boolean;
 }
 
 const MAX_AREA_FIELD_LENGTH = 128;
@@ -35,9 +34,15 @@ function parseAreaRef(raw: unknown): QuestAreaRef | null {
 }
 
 const MAX_ORIGIN_FIELD_LENGTH = 128;
+/** A Woka snapshot is a small PNG data URL; anything bigger is dropped rather than kept. */
+const MAX_PORTRAIT_LENGTH = 64 * 1024;
 
 function validName(value: unknown): value is string {
     return typeof value === "string" && value.trim() !== "" && value.length <= MAX_ORIGIN_FIELD_LENGTH;
+}
+
+function validPortrait(value: unknown): value is string {
+    return typeof value === "string" && value.startsWith("data:image/") && value.length <= MAX_PORTRAIT_LENGTH;
 }
 
 function parseGiver(raw: unknown): QuestGiver | null {
@@ -46,8 +51,10 @@ function parseGiver(raw: unknown): QuestGiver | null {
     if (!isRecord(raw) || !validName(raw.name)) return null;
     if (raw.kind === "area") return { kind: "area", name: raw.name };
     if (raw.kind !== "bot") return null;
-    const uuid = typeof raw.uuid === "string" && raw.uuid && raw.uuid.length <= MAX_ORIGIN_FIELD_LENGTH;
-    return uuid ? { kind: "bot", name: raw.name, uuid: raw.uuid as string } : { kind: "bot", name: raw.name };
+    const giver: QuestGiver = { kind: "bot", name: raw.name };
+    if (typeof raw.uuid === "string" && raw.uuid && raw.uuid.length <= MAX_ORIGIN_FIELD_LENGTH) giver.uuid = raw.uuid;
+    if (validPortrait(raw.portrait)) giver.portrait = raw.portrait;
+    return giver;
 }
 
 function parseOrigin(raw: unknown): QuestOrigin | null {
@@ -100,7 +107,7 @@ export function parseStoredProgress(raw: string | null): StoredQuestProgress | n
     for (const path of QUEST_PATHS) quests[path] = parseEntry(questsRaw[path]);
     const tracked =
         isQuestPath(data.tracked) && quests[data.tracked].accepted && !quests[data.tracked].done ? data.tracked : null;
-    // A waiting payoff only survives for the quest still tracked when it finished (see revealPending).
+    // A waiting celebration only survives for the quest still tracked when it finished (see revealPending).
     const pending = Array.isArray(data.pending)
         ? [...new Set(data.pending.filter((path): path is QuestPath => isQuestPath(path) && quests[path].done))]
         : [];
@@ -108,29 +115,29 @@ export function parseStoredProgress(raw: string | null): StoredQuestProgress | n
         version: 1,
         quests,
         tracked,
-        hidden: data.hidden === true,
         exploreArea: quests.explore.accepted ? parseAreaRef(data.exploreArea) : null,
         pending,
         news: data.news === true,
-        signInOfferSkipped: data.signInOfferSkipped === true,
+        chapterCelebrated: data.chapterCelebrated === true,
     };
 }
 
 export function serializeProgress(state: QuestState): string {
-    // A waiting payoff belongs to the quest still tracked; once another quest is tracked it was superseded.
+    // A waiting celebration belongs to the quest still tracked; once another quest is tracked it was superseded.
     const kept = state.pending.filter((path) => path === state.tracked);
-    const pending = state.payoff ? [state.payoff, ...kept] : kept;
-    // A payoff on screen had already released the tracked slot; keep it tracked so it can play again after a reload.
-    const tracked = state.payoff ?? state.tracked;
+    const celebrating = state.surface === "celebration" ? state.celebrating : null;
+    const pending = celebrating ? [celebrating, ...kept] : kept;
+    // A celebration on screen had already released the tracked slot; keep it tracked so it can play again after a
+    // reload.
+    const tracked = celebrating ?? state.tracked;
     const stored: StoredQuestProgress = {
         version: 1,
         quests: state.quests,
         tracked,
-        hidden: state.hidden,
         exploreArea: state.exploreArea,
         pending,
         news: state.news,
-        signInOfferSkipped: state.signInOfferSkipped,
+        chapterCelebrated: state.chapterCelebrated,
     };
     return JSON.stringify(stored);
 }
@@ -142,8 +149,8 @@ export function parseInvitationSeen(raw: string | null): number {
 }
 
 /**
- * Builds the starting state from storage. A tracked quest comes back as its pill (a waiting payoff still plays from
- * there); otherwise the dock starts on its resting pill and arrival decides what to show. "Not now" is never
+ * Builds the starting state from storage. A tracked quest comes back as its pill (a waiting celebration still plays
+ * from there); otherwise the dock starts on its resting pill and arrival decides what to show. "Not now" is never
  * stored: a refresh offers again (an unanswered, faded invitation is what `invitationSeen` limits).
  */
 export function restoreQuestState(storage: StorageLike | undefined): QuestState {
@@ -153,12 +160,11 @@ export function restoreQuestState(storage: StorageLike | undefined): QuestState 
         const progress = parseStoredProgress(storage.getItem(QUEST_STATE_KEY));
         if (progress) {
             state.quests = progress.quests;
-            state.hidden = progress.hidden;
             state.exploreArea = progress.exploreArea;
             state.news = progress.news;
-            state.signInOfferSkipped = progress.signInOfferSkipped;
-            // A done quest that was still waiting for its payoff comes back tracked, so it can still play.
-            // If another quest is tracked, a saved payoff was superseded and must not take its place.
+            state.chapterCelebrated = progress.chapterCelebrated;
+            // A done quest that was still waiting for its celebration comes back tracked, so it can still play.
+            // If another quest is tracked, a saved celebration was superseded and must not take its place.
             const waiting = progress.tracked === null ? progress.pending[0] : undefined;
             state.tracked = waiting ?? progress.tracked;
             state.pending = waiting ? [waiting] : [];

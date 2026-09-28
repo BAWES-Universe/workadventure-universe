@@ -47,8 +47,8 @@ describe("reduceQuest", () => {
         // An answered offer is not a faded one: the next page load (declined is never stored) may offer again.
         expect(state.invitationSeen).toBe(0);
         expect(canOfferInvitation({ ...state, declined: false })).toBe(true);
-        // The bar never goes empty: the resting Quests pill opens the log.
-        expect(visibleSurface(state, free)).toBe("quests");
+        // The bar never goes empty: the Quests pill opens the panel.
+        expect(visibleSurface(state, free)).toBe("pill");
         const started = reduceQuest(state, { type: "accept", path: "explore", now: 1 });
         expect(started.tracked).toBe("explore");
         expect(started.surface).toBe("card");
@@ -71,7 +71,7 @@ describe("reduceQuest", () => {
         expect(canOfferInvitation(state)).toBe(false);
     });
 
-    it("Follow on another quest makes it the followed one and keeps the previous accepted", () => {
+    it("putting another quest on the map keeps the previous one accepted", () => {
         const state = run(
             { type: "accept", path: "meet", now: 1 },
             { type: "accept", path: "explore", now: 2 },
@@ -81,7 +81,7 @@ describe("reduceQuest", () => {
         expect(state.tracked).toBe("meet");
         expect(questStatus(state, "explore")).toBe("accepted");
         expect(acceptedUntrackedCount(state)).toBe(1);
-        // The card opens expanded over the closed log.
+        // The card opens expanded over the closed panel.
         expect(state.surface).toBe("card");
         expect(state.beforeLog).toBeNull();
     });
@@ -95,7 +95,16 @@ describe("reduceQuest", () => {
         expect(reduceQuest(reopened, { type: "close" }).surface).toBe("pill");
     });
 
-    it("the tracked completion waits for its payoff; an untracked one finishes quietly with a dot", () => {
+    it("the pill toggles the panel", () => {
+        const opened = run({ type: "accept", path: "build", now: 1 }, { type: "close" }, { type: "toggle-log" });
+        expect(opened.surface).toBe("log");
+        expect(reduceQuest(opened, { type: "toggle-log" }).surface).toBe("pill");
+        const fresh = reduceQuest(initialQuestState(), { type: "toggle-log" });
+        expect(fresh.surface).toBe("log");
+        expect(reduceQuest(fresh, { type: "toggle-log" }).surface).toBe("none");
+    });
+
+    it("the tracked completion waits for its celebration; an untracked one finishes quietly with a dot", () => {
         let state = run(
             { type: "accept", path: "meet", now: 1 },
             { type: "accept", path: "explore", now: 2 },
@@ -124,42 +133,48 @@ describe("reduceQuest", () => {
         expect(state.quests.meet.paused).toBeNull();
     });
 
-    it("closing the log puts back what it covered", () => {
+    it("closing the panel puts back what it covered", () => {
         const state = run({ type: "invitation-shown" }, { type: "open-log" }, { type: "close" });
         expect(state.surface).toBe("invitation");
         const tracked = run({ type: "accept", path: "meet", now: 1 }, { type: "open-log" }, { type: "close" });
         expect(tracked.surface).toBe("pill");
     });
 
-    it("hiding the bar hides everything except the open log; showing brings the pill back", () => {
-        let state = run({ type: "accept", path: "meet", now: 1 }, { type: "open-log" }, { type: "hide" });
-        expect(state.surface).toBe("log");
-        expect(visibleSurface(state, free)).toBe("log");
-        state = reduceQuest(state, { type: "close" });
-        expect(state.surface).toBe("none");
-        expect(visibleSurface(state, free)).toBe("none");
-        state = reduceQuest(state, { type: "show-quests" });
-        expect(state.surface).toBe("pill");
-        expect(state.tracked).toBe("meet");
-    });
-
-    it("starting from the log while hidden un-hides", () => {
-        const state = run({ type: "hide" }, { type: "accept", path: "build", now: 1 });
-        expect(state.hidden).toBe(false);
-    });
-
-    it("the follow-up follows the payoff and closes to the resting dock", () => {
+    it("a celebration settles into the panel, with the quest done and nothing on the map", () => {
         let state = run({ type: "accept", path: "meet", now: 1 }, { type: "complete", path: "meet", now: 2 });
         state = revealPending(state, false);
-        state = reduceQuest(state, { type: "payoff-settled", followUp: "sign-in" });
-        expect(state.surface).toBe("follow-up");
-        state = reduceQuest(state, { type: "sign-in-later", continuation: true });
-        expect(state.signInOfferSkipped).toBe(true);
-        expect(state.followUp).toBe("continuation");
-        state = reduceQuest(state, { type: "follow-up-closed" });
-        expect(state.surface).toBe("none");
-        // Nothing followed any more: the resting Quests pill.
-        expect(visibleSurface(state, free)).toBe("quests");
+        expect(state.surface).toBe("celebration");
+        expect(state.celebrating).toBe("meet");
+        // Tapping it, or the panel opening over it, ends it either way.
+        expect(reduceQuest(state, { type: "close" })).toBe(state);
+        state = reduceQuest(state, { type: "celebration-settled" });
+        expect(state.surface).toBe("log");
+        expect(state.celebrating).toBeNull();
+        expect(state.tracked).toBeNull();
+        expect(state.chapterCelebrated).toBe(false);
+        expect(reduceQuest(state, { type: "close" }).surface).toBe("none");
+        expect(visibleSurface(reduceQuest(state, { type: "close" }), free)).toBe("pill");
+    });
+
+    it("the last quest's celebration is followed by the chapter's own, once", () => {
+        let state = run(
+            { type: "accept", path: "meet", now: 1 },
+            { type: "complete", path: "meet", now: 2 },
+            { type: "accept", path: "explore", now: 3 },
+            { type: "complete", path: "explore", now: 4 },
+            { type: "accept", path: "build", now: 5 },
+            { type: "complete", path: "build", now: 6 }
+        );
+        state = revealPending(state, false);
+        expect(state.celebrating).toBe("build");
+        state = reduceQuest(state, { type: "celebration-settled" });
+        expect(state.surface).toBe("celebration");
+        expect(state.celebrating).toBeNull();
+        state = reduceQuest(state, { type: "celebration-settled" });
+        expect(state.surface).toBe("log");
+        expect(state.chapterCelebrated).toBe(true);
+        // Never again: a later reset-and-redo would, but not this browser.
+        expect(reduceQuest(state, { type: "celebration-settled" })).toBe(state);
     });
 
     it("reset starts over", () => {
@@ -176,8 +191,8 @@ describe("revealPending", () => {
         const state = completed();
         expect(revealPending(state, true)).toBe(state);
         const shown = revealPending(state, false);
-        expect(shown.surface).toBe("payoff");
-        expect(shown.payoff).toBe("explore");
+        expect(shown.surface).toBe("celebration");
+        expect(shown.celebrating).toBe("explore");
         expect(shown.pending).toEqual([]);
         expect(shown.tracked).toBeNull();
     });
@@ -187,20 +202,20 @@ describe("revealPending", () => {
         state = reduceQuest(state, { type: "accept", path: "meet", now: 3 });
         const next = revealPending(state, false);
         expect(next.pending).toEqual([]);
-        expect(next.payoff).toBeNull();
+        expect(next.celebrating).toBeNull();
         expect(next.surface).toBe("card");
         expect(next.tracked).toBe("meet");
         expect(next.quests.explore.done).toBe(true);
     });
 
-    it("opening the log over a payoff ends it", () => {
+    it("opening the panel over a celebration ends it", () => {
         const shown = revealPending(completed(), false);
         const log = reduceQuest(shown, { type: "open-log" });
-        expect(log.payoff).toBeNull();
+        expect(log.celebrating).toBeNull();
         expect(reduceQuest(log, { type: "close" }).surface).toBe("none");
     });
 
-    it("does not interrupt the log", () => {
+    it("does not interrupt the panel", () => {
         const state = reduceQuest(completed(), { type: "open-log" });
         expect(revealPending(state, false).surface).toBe("log");
     });
@@ -221,11 +236,10 @@ describe("visibleSurface", () => {
         expect(card.surface).toBe("card");
     });
 
-    it("rests on the Quests pill whenever nothing is followed, unless the bar is hidden or covered", () => {
+    it("rests on the Quests pill whenever nothing is on the map, unless covered or nothing is on offer", () => {
         const fresh = initialQuestState();
-        expect(visibleSurface(fresh, free)).toBe("quests");
+        expect(visibleSurface(fresh, free)).toBe("pill");
         expect(visibleSurface(fresh, { surfaces: false, pill: true })).toBe("none");
-        expect(visibleSurface(reduceQuest(fresh, { type: "hide" }), free)).toBe("none");
         // Nothing on offer here (or the map not there yet): no pill; the menu row stays the way in.
         expect(visibleSurface(fresh, free, false)).toBe("none");
         const followed = run({ type: "accept", path: "meet", now: 1 }, { type: "close" });
@@ -234,7 +248,8 @@ describe("visibleSurface", () => {
             run({ type: "accept", path: "build", now: 1 }, { type: "complete", path: "build", now: 2 }),
             false
         );
-        expect(visibleSurface(reduceQuest(done, { type: "payoff-settled", followUp: null }), free)).toBe("quests");
+        expect(visibleSurface(done, free)).toBe("celebration");
+        expect(visibleSurface(reduceQuest(done, { type: "celebration-settled" }), free)).toBe("log");
     });
 });
 
@@ -252,11 +267,10 @@ describe("questsOnOffer", () => {
 });
 
 describe("markedQuestPath", () => {
-    it("marks the followed quest's target always, except hidden or already done", () => {
+    it("marks the quest on the map always, except already done", () => {
         const state = run({ type: "accept", path: "explore", now: 1 }, { type: "close" });
         expect(markedQuestPath(state)).toBe("explore");
         expect(markedQuestPath(reduceQuest(state, { type: "open-log" }))).toBe("explore");
-        expect(markedQuestPath(reduceQuest(state, { type: "hide" }))).toBeNull();
         expect(markedQuestPath(reduceQuest(state, { type: "complete", path: "explore", now: 2 }))).toBeNull();
         expect(markedQuestPath(initialQuestState())).toBeNull();
     });

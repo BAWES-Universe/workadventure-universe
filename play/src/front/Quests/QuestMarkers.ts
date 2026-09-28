@@ -8,10 +8,10 @@ import { gameSceneStore } from "../Stores/GameSceneStore";
 import type { QuestPath, QuestState } from "./QuestModel";
 import { markedQuestPath } from "./QuestModel";
 import { prefersReducedMotion } from "./QuestMotion";
-import { questStateStore, questWorldStore } from "./QuestStore";
+import { questAvailablePathsStore, questStateStore, questWorldStore } from "./QuestStore";
 import { questSuppressionStore } from "./QuestUiStores";
 import type { QuestTarget } from "./QuestTargets";
-import { FEET_OFFSET_Y, sceneQuestTarget } from "./QuestTargets";
+import { FEET_OFFSET_Y, playerFeet, sceneQuestTarget } from "./QuestTargets";
 import type { QuestWorld } from "./QuestWorld";
 import { questGiverUserId } from "./QuestWorld";
 
@@ -21,17 +21,21 @@ const INK = 0x1b2a41;
 const RING_INNER = "#c4b5fd";
 const RING_EDGE = "#f5a623";
 const RING_GLOW = "rgba(245, 166, 35, 0.85)";
+const CONFETTI = [0xc4b5fd, 0xf5a623, 0xe9c74c, 0xffffff];
 const PERSON_RING_RADIUS = 18;
 const AREA_HOST_FLASH_MS = 3_000;
 /** The soft glow drawn around a ring, in px of texture on each side. */
 const RING_GLOW_PX = 10;
-const PULSE_MS = 1_600;
+/** One ripple leaves the ring's edge this often, and takes as long to fade out at 1.5× its size. */
+const RIPPLE_MS = 2_000;
+const BURST_MS = 900;
+const CONFETTI_COUNT = 36;
 
 /** What should be marked on the map, personal to this viewer. */
 interface MarkerPlan {
     state: QuestState;
     world: QuestWorld;
-    /** The host bot while its offer is on screen (the invitation or the options). */
+    /** The host bot while it still has a quest the player has not taken. */
     giverUserId: number | undefined;
     /** The tracked quest, whose target is always marked. */
     tracked: QuestPath | null;
@@ -39,16 +43,22 @@ interface MarkerPlan {
     flashHostArea: string | undefined;
 }
 
-type Ring = { image: Phaser.GameObjects.Image; target: QuestTarget; tween?: Phaser.Tweens.Tween };
+/** A ring on the floor: the steady ellipse and the ripple that leaves it, both following the target. */
+type Ring = {
+    image: Phaser.GameObjects.Image;
+    ripple?: Phaser.GameObjects.Image;
+    tween?: Phaser.Tweens.Tween;
+    target: QuestTarget;
+};
 
 /**
- * The markers of one map: gradient rings on the floor (under a person, or at an area's centre) and the brief
- * outline of an area host. Separate objects of their own: nothing of the map, the players or the areas is changed,
- * and the camera never moves. Everything goes when the map goes.
+ * The markers of one map: gradient rings on the floor (under a person, or at an area's centre), the brief outline
+ * of an area host, and the burst when a quest is done. Separate objects of their own: nothing of the map, the
+ * players or the areas is changed, and the camera never moves. Everything goes when the map goes.
  */
 class SceneMarkers {
     private readonly rings = new Map<"host" | "target", Ring>();
-    private readonly flashes = new Set<Phaser.GameObjects.Rectangle>();
+    private readonly flashes = new Set<Phaser.GameObjects.GameObject>();
     private readonly textures = new Set<string>();
     private readonly follow = () => this.place();
 
@@ -59,11 +69,8 @@ class SceneMarkers {
     setRing(slot: "host" | "target", target: QuestTarget | undefined): void {
         const current = this.rings.get(slot);
         if (current && target && sameTarget(current.target, target)) return;
-        if (current) {
-            current.tween?.remove();
-            current.image.destroy();
-            this.rings.delete(slot);
-        }
+        if (current) this.dropRing(current);
+        this.rings.delete(slot);
         if (!target) return;
         const radius = target.kind === "place" ? target.radius : PERSON_RING_RADIUS;
         const key = this.ringTexture(radius);
@@ -71,19 +78,28 @@ class SceneMarkers {
         const image = this.scene.add.image(0, 0, key);
         const ring: Ring = { image, target };
         if (!prefersReducedMotion()) {
-            // A gentle, slow breath for as long as the ring is shown (repeat: -1); still under reduced motion.
+            // One ripple, the ring's own outline, swells from the edge and fades, over and over: one even motion
+            // (the ring itself never changes size), like a beacon.
+            const ripple = this.scene.add.image(0, 0, key);
+            ripple.setAlpha(0);
+            ring.ripple = ripple;
             ring.tween = this.scene.tweens.add({
-                targets: image,
-                scale: { from: 1, to: 1.1 },
-                alpha: { from: 1, to: 0.7 },
-                duration: PULSE_MS,
-                yoyo: true,
+                targets: ripple,
+                scale: { from: 1, to: 1.5 },
+                alpha: { from: 0.55, to: 0 },
+                duration: RIPPLE_MS,
                 repeat: -1,
-                ease: "Sine.easeInOut",
+                ease: "Sine.easeOut",
             });
         }
         this.rings.set(slot, ring);
         this.place();
+    }
+
+    private dropRing(ring: Ring): void {
+        ring.tween?.remove();
+        ring.ripple?.destroy();
+        ring.image.destroy();
     }
 
     /**
@@ -133,6 +149,67 @@ class SceneMarkers {
         return key;
     }
 
+    /** A 4×4 white square the confetti is cut from, tinted per piece. */
+    private confettiTexture(): string | undefined {
+        const key = "quest-confetti";
+        if (this.scene.textures.exists(key)) return key;
+        const texture = this.scene.textures.createCanvas(key, 4, 4);
+        const context = texture?.getContext();
+        if (!texture || !context) return undefined;
+        this.textures.add(key);
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, 4, 4);
+        texture.refresh();
+        return key;
+    }
+
+    /**
+     * A quest is done: a ring swells from the player's feet and fades, and confetti flies up from them. About a
+     * second, in the world, nothing to dismiss. Under reduced motion only the ring, without the confetti.
+     */
+    burst(): void {
+        const feet = playerFeet(this.scene);
+        if (!feet) return;
+        const key = this.ringTexture(PERSON_RING_RADIUS);
+        if (!key) return;
+        const depth = this.scene.CurrentPlayer.depth + 1;
+        const wave = this.scene.add.image(feet.x, feet.y + FEET_OFFSET_Y, key);
+        wave.setDepth(depth);
+        this.flashes.add(wave);
+        this.scene.tweens.add({
+            targets: wave,
+            scale: { from: 0.8, to: 2.6 },
+            alpha: { from: 1, to: 0 },
+            duration: BURST_MS,
+            ease: "Cubic.easeOut",
+            onComplete: () => {
+                this.flashes.delete(wave);
+                wave.destroy();
+            },
+        });
+        if (prefersReducedMotion()) return;
+        const confetti = this.confettiTexture();
+        if (!confetti) return;
+        const emitter = this.scene.add.particles(feet.x, feet.y - 8, confetti, {
+            speed: { min: 90, max: 220 },
+            angle: { min: 200, max: 340 },
+            gravityY: 380,
+            lifespan: { min: 700, max: 1_100 },
+            scale: { start: 1.2, end: 0.2 },
+            alpha: { start: 1, end: 0 },
+            rotate: { start: 0, end: 360 },
+            tint: CONFETTI,
+            emitting: false,
+        });
+        emitter.setDepth(depth);
+        this.flashes.add(emitter);
+        emitter.explode(CONFETTI_COUNT);
+        this.scene.time.delayedCall(1_300, () => {
+            this.flashes.delete(emitter);
+            emitter.destroy();
+        });
+    }
+
     flashArea(areaId: string): void {
         const area = this.scene.getGameMapFrontWrapper().getAreas()?.get(areaId);
         if (!area) return;
@@ -160,12 +237,9 @@ class SceneMarkers {
 
     destroy(): void {
         this.scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this.follow);
-        for (const ring of this.rings.values()) {
-            ring.tween?.remove();
-            ring.image.destroy();
-        }
+        for (const ring of this.rings.values()) this.dropRing(ring);
         this.rings.clear();
-        for (const outline of this.flashes) outline.destroy();
+        for (const object of this.flashes) object.destroy();
         this.flashes.clear();
         for (const key of this.textures) {
             try {
@@ -179,21 +253,26 @@ class SceneMarkers {
 
     private place(): void {
         for (const ring of this.rings.values()) {
+            const images = ring.ripple ? [ring.image, ring.ripple] : [ring.image];
             if (ring.target.kind === "place") {
-                ring.image.setPosition(ring.target.x, ring.target.y);
-                ring.image.setDepth(ring.target.y);
-                ring.image.setVisible(true);
+                for (const image of images) {
+                    image.setPosition(ring.target.x, ring.target.y);
+                    image.setDepth(ring.target.y);
+                    image.setVisible(true);
+                }
                 continue;
             }
             const person = this.scene.MapPlayersByKey.get(ring.target.userId);
             if (!person) {
-                ring.image.setVisible(false);
+                for (const image of images) image.setVisible(false);
                 continue;
             }
-            ring.image.setPosition(person.x, person.y + FEET_OFFSET_Y);
-            // Just under the person: above the floor, behind their woka.
-            ring.image.setDepth(person.depth - 1);
-            ring.image.setVisible(true);
+            for (const image of images) {
+                image.setPosition(person.x, person.y + FEET_OFFSET_Y);
+                // Just under the person: above the floor, behind their woka.
+                image.setDepth(person.depth - 1);
+                image.setVisible(true);
+            }
         }
     }
 }
@@ -210,21 +289,33 @@ function sameTarget(a: QuestTarget, b: QuestTarget): boolean {
  */
 function planStore(): Readable<MarkerPlan> {
     let previousSurface: QuestState["surface"] | undefined;
-    return derived([questStateStore, questWorldStore, questSuppressionStore], ([$state, $world, $suppression]) => {
-        const invitationJustShown = $state.surface === "invitation" && previousSurface !== "invitation";
-        previousSurface = $state.surface;
-        const covered = $suppression.surfaces;
-        return {
-            state: $state,
-            world: $world,
-            giverUserId: covered ? undefined : questGiverUserId($state, $world),
-            tracked: covered ? null : markedQuestPath($state),
-            flashHostArea:
-                invitationJustShown && !covered && !$state.hidden && $world.host.kind === "area"
-                    ? $world.host.areaId
-                    : undefined,
-        };
-    });
+    return derived(
+        [questStateStore, questWorldStore, questSuppressionStore, questAvailablePathsStore],
+        ([$state, $world, $suppression, $available]) => {
+            const invitationJustShown = $state.surface === "invitation" && previousSurface !== "invitation";
+            previousSurface = $state.surface;
+            const covered = $suppression.surfaces;
+            return {
+                state: $state,
+                world: $world,
+                giverUserId: covered ? undefined : questGiverUserId($state, $world, $available),
+                tracked: covered ? null : markedQuestPath($state),
+                flashHostArea:
+                    invitationJustShown && !covered && $world.host.kind === "area" ? $world.host.areaId : undefined,
+            };
+        }
+    );
+}
+
+let current: SceneMarkers | undefined;
+
+/** The burst at the player's feet when a quest is done. Nothing without a map. */
+export function burstQuestMarker(): void {
+    try {
+        current?.burst();
+    } catch (error) {
+        console.warn("Quests: could not play the burst", error);
+    }
 }
 
 /**
@@ -271,6 +362,7 @@ export function startQuestMarkers(): () => void {
                 console.warn("Quests: no markers on this map", error);
                 return undefined;
             }
+            current = markers;
             apply(get(plan));
             return () => {
                 try {
@@ -278,6 +370,7 @@ export function startQuestMarkers(): () => void {
                 } catch (error) {
                     console.warn("Quests: could not clear the markers", error);
                 }
+                if (current === markers) current = undefined;
                 markers = undefined;
             };
         });

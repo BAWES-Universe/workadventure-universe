@@ -17,13 +17,16 @@
     /** The walk control's label ("Walk to the Courtyard", "Walk there"), or undefined when there is nowhere to walk. */
     export let walkLabel: string | undefined = undefined;
     export let walking = false;
-    /** Finished, its payoff waiting for a quiet moment: nothing left to find or walk to. */
+    /** Build: the editor can be opened from here. */
+    export let editorLabel: string | undefined = undefined;
+    /** Finished, its celebration waiting for a quiet moment: nothing left to find or walk to. */
     export let done = false;
 
     const dispatch = createEventDispatcher<{
         close: void;
         walk: void;
         stopWalking: void;
+        openEditor: void;
         chooseAnother: { keyboard: boolean };
         /** The person is reading or using the card (focus inside, the pointer over it): it must not fold by itself. */
         engage: void;
@@ -38,6 +41,7 @@
     }
 
     $: showWalk = !!walkLabel && !done;
+    $: showEditor = !!editorLabel && !done;
     $: keepFocusInCard(showWalk);
     // The walk control is about to go (arrived, no path, done) while it has focus: focus stays in the card.
     function keepFocusInCard(walkShown: boolean) {
@@ -82,7 +86,7 @@
     {#if whereDescription}
         <p id="{id}-where" class="sr-only">{whereDescription}</p>
     {/if}
-    <!-- Real buttons, never links: the walk (when there is somewhere to walk) is the one primary action. -->
+    <!-- Real buttons, never links: the walk (or the editor, for Build) is the one primary action. -->
     <div class="mt-3 flex flex-col gap-2 @[300px]/quest:flex-row">
         {#if showWalk}
             <!-- One button whose label switches, so pressing it from the keyboard keeps focus on it. -->
@@ -94,6 +98,15 @@
                 on:click={() => dispatch(walking ? "stopWalking" : "walk")}
             >
                 {walking ? $LL.quest.card.stopWalking() : walkLabel}
+            </button>
+        {:else if showEditor}
+            <button
+                type="button"
+                class="quest-btn u-cta flex-1"
+                data-testid="quest-open-editor"
+                on:click={() => dispatch("openEditor")}
+            >
+                {editorLabel}
             </button>
         {/if}
         <button

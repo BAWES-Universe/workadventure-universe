@@ -5,7 +5,7 @@ import { analyticsClient } from "../Administration/AnalyticsClient";
 import { consumeQuestReset, questBrowserStorage, readQuestSim } from "./QuestDevSettings";
 import type { QuestSim } from "./QuestDevSettings";
 import type { MeetProgress } from "./MeetExchange";
-import type { QuestEvent, QuestFollowUp, QuestGiver, QuestPath, QuestState } from "./QuestModel";
+import type { QuestEvent, QuestGiver, QuestPath, QuestState } from "./QuestModel";
 import { acceptedUntrackedCount, QUEST_PATHS, reduceQuest, revealPending } from "./QuestModel";
 import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
 import type { QuestWorld } from "./QuestWorld";
@@ -188,30 +188,13 @@ export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: numb
     if (path === "meet" && world.present.length === 0) pauseQuest(path);
 }
 
-/** Follow an accepted quest: it becomes the tracked one and its card opens. */
+/** Puts an accepted quest on the map: it becomes the tracked one and its card opens. */
 export function trackQuest(path: QuestPath, from: QuestAnalyticsFrom = "log"): void {
     const before = get(state);
     dispatchQuest({ type: "track", path });
     if (get(state) !== before && get(state).tracked === path) {
         analyticsClient.questTracked({ questId: questAnalyticsId(path), from });
     }
-}
-
-/**
- * "Hide the quest bar" and "Show the quest bar" in the log. The followed quest stays followed underneath: hiding
- * reports it stopped, showing reports it followed again, so the two pair up.
- */
-export function setQuestsHidden(hidden: boolean): void {
-    const before = get(state);
-    dispatchQuest({ type: hidden ? "hide" : "show-quests" });
-    if (before.hidden === hidden) return;
-    if (hidden && before.tracked) {
-        analyticsClient.questStopped({ questId: questAnalyticsId(before.tracked), reason: "hidden" });
-    }
-    if (!hidden && before.tracked) {
-        analyticsClient.questTracked({ questId: questAnalyticsId(before.tracked), from: "log" });
-    }
-    analyticsClient.questTracker({ action: hidden ? "hidden" : "restored", device: questDevice() });
 }
 
 /** Records a met objective (every accepted quest, tracked or not). Presentation is separate: see revealPending. */
@@ -248,14 +231,14 @@ export function resumeQuest(path: QuestPath): void {
     dispatchQuest({ type: "resume", path });
 }
 
-export function settleQuestPayoff(followUp: QuestFollowUp | null): void {
-    dispatchQuest({ type: "payoff-settled", followUp });
+/** The celebration has played (or was tapped away): the panel takes over. */
+export function settleQuestCelebration(): void {
+    dispatchQuest({ type: "celebration-settled" });
 }
 
-/** Closing the sign-in offer: remembered, and the continuation shows if something is left to do here. */
-export function skipQuestSignInOffer(): void {
-    dispatchQuest({ type: "sign-in-later", continuation: get(questAvailablePathsStore).length > 0 });
-    analyticsClient.questSkipped({ reason: "signin-offer" });
+/** The Quests pill: opens the panel, or closes it when it is open. */
+export function toggleQuestLog(): void {
+    dispatchQuest({ type: "toggle-log" });
 }
 
 export function resetQuests(): void {

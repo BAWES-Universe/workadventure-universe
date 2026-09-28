@@ -9,6 +9,8 @@ export interface QuestPresent {
     uuid: string;
     name: string;
     isBot: boolean;
+    /** A snapshot of the Woka (a data URL), once the game has drawn it. */
+    portrait?: string;
 }
 
 export interface QuestArea {
@@ -22,7 +24,7 @@ export interface QuestArea {
 
 /** The host is a role, not a fixed character: whoever fits in this room right now. */
 export type QuestHost =
-    | { kind: "bot"; userId: number; uuid: string; name: string }
+    | { kind: "bot"; userId: number | null; uuid: string; name: string; portrait?: string }
     | { kind: "area"; areaId: string; name: string }
     | { kind: "none" };
 
@@ -115,6 +117,7 @@ export function resolveQuestHost(
         userId: bot.userId,
         uuid: bot.uuid,
         name: bot.name,
+        ...(bot.portrait ? { portrait: bot.portrait } : {}),
     });
     const asArea = (area: QuestArea): QuestHost => ({ kind: "area", areaId: area.id, name: area.name });
 
@@ -176,7 +179,12 @@ export function simulatedWorld(world: QuestWorld, sim: QuestSim): QuestWorld {
 export function hostAsGiver(host: QuestHost): QuestGiver | null {
     switch (host.kind) {
         case "bot":
-            return { kind: "bot", name: host.name, uuid: host.uuid };
+            return {
+                kind: "bot",
+                name: host.name,
+                uuid: host.uuid,
+                ...(host.portrait ? { portrait: host.portrait } : {}),
+            };
         case "area":
             return { kind: "area", name: host.name };
         default:
@@ -200,8 +208,8 @@ export function acceptanceOrigin(offeredBy: QuestOrigin | null, world: QuestWorl
 }
 
 /**
- * The frozen giver as a host for a portrait: the bot's live Woka when it is near (no face otherwise: the eyebrow
- * still names it), the ring glyph for an area, nothing for the room itself.
+ * The frozen giver as a host for a portrait: the bot's live Woka when it is near, else the face frozen with it
+ * (`portrait`), the ring glyph for an area, nothing for the room itself.
  */
 export function giverAsHost(giver: QuestGiver | null, world: QuestWorld): QuestHost {
     if (!giver) return { kind: "none" };
@@ -209,26 +217,37 @@ export function giverAsHost(giver: QuestGiver | null, world: QuestWorld): QuestH
     const near = world.present.find(
         (person) => person.isBot && (giver.uuid ? person.uuid === giver.uuid : person.name === giver.name)
     );
-    return near ? { kind: "bot", userId: near.userId, uuid: near.uuid, name: giver.name } : { kind: "none" };
+    const portrait = near?.portrait ?? giver.portrait;
+    return {
+        kind: "bot",
+        userId: near?.userId ?? null,
+        uuid: near?.uuid ?? giver.uuid ?? "",
+        name: giver.name,
+        ...(portrait ? { portrait } : {}),
+    };
 }
 
 /**
  * Who the offer on screen (the invitation, the options) speaks for: the giver frozen when the invitation was shown,
- * as a host for its portrait (no face once the bot is out of range, but the eyebrow keeps its name). Before any
- * offer was made, whoever hosts here now.
+ * as a host for its portrait (its frozen face once the bot is out of range). Before any offer was made, whoever
+ * hosts here now.
  */
 export function offerHost(state: QuestState, world: QuestWorld): QuestHost {
     return state.offeredBy ? giverAsHost(state.offeredBy.giver, world) : world.host;
 }
 
 /**
- * The bot to mark as the quest giver (ring at its feet, "!" above its name): the bot that made the offer on screen
- * (the invitation or the options), while it is near, until something is accepted. Never whichever bot is first now.
+ * The bot to mark as the quest giver (ring at its feet, "!" above its name): the host bot, as long as it still has a
+ * quest the player has not taken (`available`), like a quest giver in any RPG. The bot that made the offer on screen
+ * keeps the mark while it is near; otherwise whoever hosts here now.
  */
-export function questGiverUserId(state: QuestState, world: QuestWorld): number | undefined {
-    if (state.hidden) return undefined;
-    const offering = state.surface === "invitation" || state.surface === "options";
-    if (!offering || QUEST_PATHS.some((path) => state.quests[path].accepted)) return undefined;
+export function questGiverUserId(
+    state: QuestState,
+    world: QuestWorld,
+    available: readonly QuestPath[]
+): number | undefined {
+    if (available.length === 0) return undefined;
     const host = offerHost(state, world);
-    return host.kind === "bot" ? host.userId : undefined;
+    if (host.kind === "bot" && host.userId !== null) return host.userId;
+    return world.host.kind === "bot" && world.host.userId !== null ? world.host.userId : undefined;
 }

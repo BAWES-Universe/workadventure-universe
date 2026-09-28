@@ -19,11 +19,14 @@ export type QuestPauseReason = "no-eligible-target";
 
 /**
  * Who gave a quest, frozen when it was offered: the game only knows the people near the player, so the live host
- * comes and goes as they walk. A bot keeps its uuid so its portrait can be found again when it is near.
+ * comes and goes as they walk. A bot keeps its uuid so its live Woka can be found again when it is near, and a
+ * snapshot of its face (`portrait`, a data URL) for when it is not.
  */
-export type QuestGiver = { kind: "bot"; name: string; uuid?: string } | { kind: "area"; name: string };
+export type QuestGiver =
+    | { kind: "bot"; name: string; uuid?: string; portrait?: string }
+    | { kind: "area"; name: string };
 
-/** Where a quest was accepted: the log and Orbit say "From {giver} · {room}" wherever the player is now. */
+/** Where a quest was accepted: the panel and Orbit say "{giver} · {room}" wherever the player is now. */
 export interface QuestOrigin {
     room: string;
     /** Null: the room itself offered it. */
@@ -40,20 +43,20 @@ export interface QuestEntry {
 }
 
 /**
- * What the dock shows. "none" is an empty dock. The log opens over the dock and remembers what it covered.
+ * What the dock shows. "none" is an empty dock (the Quests pill still rests there when the room offers something).
+ * The panel ("log") opens above the pill and remembers what it covered. A "celebration" plays a completion.
  */
-export type QuestSurface = "none" | "invitation" | "options" | "pill" | "card" | "log" | "payoff" | "follow-up";
-/** What the dock renders: a stored surface, or the resting Quests pill drawn whenever nothing is followed. */
-export type QuestVisibleSurface = QuestSurface | "quests";
-export type QuestFollowUp = "sign-in" | "continuation";
+export type QuestSurface = "none" | "invitation" | "options" | "pill" | "card" | "log" | "celebration";
+export type QuestVisibleSurface = QuestSurface;
 export type QuestStatus = "available" | "accepted" | "tracked" | "done";
 
 export interface QuestState {
     version: 1;
     quests: Record<QuestPath, QuestEntry>;
+    /** The quest on the map: its target is marked and its objective is on the pill. */
     tracked: QuestPath | null;
     /**
-     * "Not now" on the invitation: not offered again on this page (the log still lists what is available). Never
+     * "Not now" on the invitation: not offered again on this page (the panel still lists what is available). Never
      * stored: a refresh offers again.
      */
     declined: boolean;
@@ -64,17 +67,16 @@ export interface QuestState {
     invitationSeen: number;
     /** Who offered the quests when the invitation was shown, and where: what an acceptance freezes as its origin. */
     offeredBy: QuestOrigin | null;
-    /** "Hide the quest bar" in the log. */
-    hidden: boolean;
     /** The area Explore asks for, fixed when it was accepted so walking around never moves the goal. */
     exploreArea: QuestAreaRef | null;
-    signInOfferSkipped: boolean;
-    /** Completions of the tracked quest waiting for a moment when they can be shown. */
+    /** Completions of the tracked quest waiting for a moment when they can be celebrated. */
     pending: QuestPath[];
-    payoff: QuestPath | null;
-    followUp: QuestFollowUp | null;
+    /** The completion being celebrated; null with the "celebration" surface means the whole chapter. */
+    celebrating: QuestPath | null;
+    /** The chapter's own celebration has played (once per browser). */
+    chapterCelebrated: boolean;
     surface: QuestSurface;
-    /** What the log covered, to put back when it closes. */
+    /** What the panel covered, to put back when it closes. */
     beforeLog: QuestSurface | null;
     /** Something happened the person has not seen yet: a dot on the Quests row. */
     news: boolean;
@@ -96,16 +98,13 @@ export type QuestEvent =
     | { type: "track"; path: QuestPath }
     | { type: "open-card" }
     | { type: "open-log" }
+    | { type: "toggle-log" }
     | { type: "close" }
-    | { type: "hide" }
-    | { type: "show-quests" }
     | { type: "complete"; path: QuestPath; now: number }
     | { type: "pause"; path: QuestPath; reason: QuestPauseReason }
     | { type: "resume"; path: QuestPath }
     | { type: "news" }
-    | { type: "payoff-settled"; followUp: QuestFollowUp | null }
-    | { type: "sign-in-later"; continuation: boolean }
-    | { type: "follow-up-closed" }
+    | { type: "celebration-settled" }
     | { type: "reset" };
 
 export function emptyEntry(): QuestEntry {
@@ -127,12 +126,10 @@ export function initialQuestState(): QuestState {
         declined: false,
         invitationSeen: 0,
         offeredBy: null,
-        hidden: false,
         exploreArea: null,
-        signInOfferSkipped: false,
         pending: [],
-        payoff: null,
-        followUp: null,
+        celebrating: null,
+        chapterCelebrated: false,
         surface: "none",
         beforeLog: null,
         news: false,
@@ -151,6 +148,14 @@ export function anyDone(state: QuestState): boolean {
     return QUEST_PATHS.some((path) => state.quests[path].done);
 }
 
+export function allDone(state: QuestState): boolean {
+    return QUEST_PATHS.every((path) => state.quests[path].done);
+}
+
+export function doneCount(state: QuestState): number {
+    return QUEST_PATHS.filter((path) => state.quests[path].done).length;
+}
+
 export function questStatus(state: QuestState, path: QuestPath): QuestStatus {
     const entry = state.quests[path];
     if (entry.done) return "done";
@@ -158,9 +163,9 @@ export function questStatus(state: QuestState, path: QuestPath): QuestStatus {
     return entry.accepted ? "accepted" : "available";
 }
 
-/** The followed quest whose target is marked on the map: not hidden, not done (its payoff waiting). */
+/** The quest whose target is marked on the map: the tracked one, not done (its celebration waiting). */
 export function markedQuestPath(state: QuestState): QuestPath | null {
-    if (!state.tracked || state.hidden || state.quests[state.tracked].done) return null;
+    if (!state.tracked || state.quests[state.tracked].done) return null;
     return state.tracked;
 }
 
@@ -171,7 +176,7 @@ export function acceptedUntrackedCount(state: QuestState): number {
 
 /** The surface the dock rests on when nothing else is open. */
 export function restingSurface(state: QuestState): QuestSurface {
-    return state.tracked && !state.hidden ? "pill" : "none";
+    return state.tracked ? "pill" : "none";
 }
 
 /**
@@ -180,7 +185,6 @@ export function restingSurface(state: QuestState): QuestSurface {
 export function canOfferInvitation(state: QuestState): boolean {
     return (
         !state.declined &&
-        !state.hidden &&
         state.invitationSeen < MAX_INVITATION_SHOWS &&
         !anyAccepted(state) &&
         state.surface === "none"
@@ -207,9 +211,7 @@ function afterClose(state: QuestState): QuestSurface {
     switch (state.surface) {
         case "options":
             // Closing the options is not a decline: back to the invitation if nothing was picked yet.
-            return !anyAccepted(state) && !state.declined ? "invitation" : restingSurface(state);
-        case "card":
-            return restingSurface(state);
+            return canReturnToInvitation(state) ? "invitation" : restingSurface(state);
         case "log": {
             const before = state.beforeLog;
             if (before === "invitation" || before === "options") return canReturnToInvitation(state) ? before : "none";
@@ -221,7 +223,7 @@ function afterClose(state: QuestState): QuestSurface {
 }
 
 function canReturnToInvitation(state: QuestState): boolean {
-    return !state.declined && !state.hidden && !anyAccepted(state);
+    return !state.declined && !anyAccepted(state);
 }
 
 export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState {
@@ -248,7 +250,6 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             return state;
         case "open-options":
             state.surface = "options";
-            state.followUp = null;
             return state;
         case "accept": {
             const entry = state.quests[event.path];
@@ -260,8 +261,6 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             }
             if (event.path === "explore" && event.exploreArea) state.exploreArea = { ...event.exploreArea };
             state.tracked = event.path;
-            state.hidden = false;
-            state.followUp = null;
             // The card opens expanded so the objective and its buttons are read before it folds to the pill.
             state.surface = "card";
             state.beforeLog = null;
@@ -272,44 +271,33 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             const entry = state.quests[event.path];
             if (!entry.accepted || entry.done) return previous;
             state.tracked = event.path;
-            state.hidden = false;
             state.surface = "card";
             state.beforeLog = null;
             state.news = false;
             return state;
         }
         case "open-card":
-            if (!state.tracked || state.hidden) return previous;
+            if (!state.tracked) return previous;
             state.surface = "card";
             state.news = false;
             return state;
         case "open-log":
             if (state.surface === "log") return previous;
-            // Opening the log over a payoff or follow-up ends it, as tapping it away would.
-            state.beforeLog = state.surface === "payoff" || state.surface === "follow-up" ? null : state.surface;
-            state.payoff = null;
-            state.followUp = null;
+            // Opening the panel over a celebration ends it, as tapping it away would.
+            state.beforeLog = state.surface === "celebration" ? null : state.surface;
+            state.celebrating = null;
             state.surface = "log";
             state.news = false;
             return state;
+        case "toggle-log":
+            return reduceQuest(previous, { type: state.surface === "log" ? "close" : "open-log" });
         case "close":
             if (state.surface === "none" || state.surface === "pill" || state.surface === "invitation") {
                 return previous;
             }
-            if (state.surface === "payoff") return previous;
+            if (state.surface === "celebration") return previous;
             state.surface = afterClose(state);
             state.beforeLog = null;
-            state.followUp = null;
-            return state;
-        case "hide":
-            state.hidden = true;
-            state.payoff = null;
-            state.followUp = null;
-            if (state.surface !== "log") state.surface = "none";
-            return state;
-        case "show-quests":
-            state.hidden = false;
-            if (state.surface !== "log") state.surface = restingSurface(state);
             return state;
         case "complete": {
             const entry = state.quests[event.path];
@@ -317,7 +305,7 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             entry.done = true;
             entry.paused = null;
             entry.doneAt = event.now;
-            // Only the tracked quest earns a presentation. Any other finishes quietly in the log.
+            // Only the tracked quest earns a celebration. Any other finishes quietly in the panel.
             if (state.tracked === event.path) {
                 if (!state.pending.includes(event.path)) state.pending.push(event.path);
             } else {
@@ -341,21 +329,18 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             if (state.news) return previous;
             state.news = true;
             return state;
-        case "payoff-settled":
-            if (state.surface !== "payoff") return previous;
-            state.payoff = null;
-            state.followUp = event.followUp;
-            state.surface = event.followUp ? "follow-up" : restingSurface(state);
-            return state;
-        case "sign-in-later":
-            state.signInOfferSkipped = true;
-            state.followUp = event.continuation ? "continuation" : null;
-            state.surface = event.continuation ? "follow-up" : restingSurface(state);
-            return state;
-        case "follow-up-closed":
-            if (state.surface !== "follow-up") return previous;
-            state.followUp = null;
-            state.surface = restingSurface(state);
+        case "celebration-settled":
+            if (state.surface !== "celebration") return previous;
+            // A quest's celebration, with the whole chapter now done: the chapter's own follows once.
+            if (state.celebrating !== null && allDone(state) && !state.chapterCelebrated) {
+                state.celebrating = null;
+                return state;
+            }
+            if (state.celebrating === null) state.chapterCelebrated = true;
+            state.celebrating = null;
+            // Then the panel, with the finished quest ticked and what is left to do.
+            state.surface = "log";
+            state.beforeLog = null;
             return state;
     }
     return previous;
@@ -366,7 +351,7 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
  * person is busy (a call, Do not disturb, typing): the completion stays recorded and waits.
  *
  * A waiting completion belongs to the quest that was tracked when it finished. If the person has tracked another
- * quest since, the completion stays in the log and never takes over their new choice.
+ * quest since, the completion stays in the panel and never takes over their new choice.
  */
 export function revealPending(previous: QuestState, blocked: boolean): QuestState {
     let state = previous;
@@ -374,44 +359,41 @@ export function revealPending(previous: QuestState, blocked: boolean): QuestStat
     if (kept.length !== state.pending.length) state = { ...state, pending: kept };
     if (
         blocked ||
-        state.hidden ||
         state.pending.length === 0 ||
         state.surface === "log" ||
-        state.surface === "payoff" ||
-        state.surface === "follow-up" ||
+        state.surface === "celebration" ||
         state.surface === "options"
     ) {
         return state;
     }
-    const [payoff, ...pending] = state.pending;
+    const [celebrating, ...pending] = state.pending;
     return {
         ...state,
-        payoff,
+        celebrating,
         pending,
-        surface: "payoff",
-        tracked: state.tracked === payoff ? null : state.tracked,
+        surface: "celebration",
+        tracked: state.tracked === celebrating ? null : state.tracked,
     };
 }
 
-/** Whether the log has anything to show: something to start here, something accepted, or something done. */
+/** Whether the panel has anything to show: something to start here, something accepted, or something done. */
 export function questsOnOffer(state: QuestState, available: readonly QuestPath[], ready: boolean): boolean {
     return ready && (available.length > 0 || acceptedUntrackedCount(state) > 0 || anyDone(state));
 }
 
 /**
- * What the dock actually renders, given what is covering the game right now. With nothing followed and the bar not
- * hidden, the resting Quests pill ("quests") opens the log, as long as the room offers something (`offers`): a room
- * with nothing to do, or a map still loading, shows no pill (the Quests menu row is always there).
+ * What the dock actually renders, given what is covering the game right now. With nothing tracked, the Quests pill
+ * still rests there as long as the room offers something (`offers`): a room with nothing to do, or a map still
+ * loading, shows no pill (the Quests menu row is always there).
  */
 export function visibleSurface(
     state: QuestState,
     suppression: { surfaces: boolean; pill: boolean },
     offers = true
 ): QuestVisibleSurface {
-    if (state.hidden && state.surface !== "log") return "none";
-    if (state.surface === "pill" || (state.surface === "none" && state.tracked)) {
-        return suppression.pill ? "none" : "pill";
+    if (state.surface === "pill" || state.surface === "none") {
+        if (suppression.pill) return "none";
+        return state.tracked || offers ? "pill" : "none";
     }
-    if (state.surface === "none") return suppression.pill || !offers ? "none" : "quests";
     return suppression.surfaces ? "none" : state.surface;
 }
