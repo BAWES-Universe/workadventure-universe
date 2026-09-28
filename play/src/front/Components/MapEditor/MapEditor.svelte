@@ -64,6 +64,18 @@
 
     $: sheetTitle = getMapEditorToolLabel($LL, $mapEditorSelectedToolStore);
 
+    // Exploring is about the map: on mobile it opens with the sheet at peek so the list does not cover it.
+    let lastSelectedTool: EditorToolName | undefined;
+    $: onSelectedToolChange($mapEditorSelectedToolStore);
+
+    function onSelectedToolChange(tool: EditorToolName | undefined) {
+        if (tool === lastSelectedTool) return;
+        lastSelectedTool = tool;
+        if (tool === EditorToolName.ExploreTheRoom && $mapEditorIsMobileLayoutStore) {
+            mapEditorSheetSnapStore.set("peek");
+        }
+    }
+
     $: flyParams = isMobile ? { y: 100 } : { x: 100 };
 
     function closeMapEditor() {

@@ -942,6 +942,7 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     }
 
     public disableResistanceZone(): void {
+        this.resistanceCallback = undefined;
         this.scene.removeWhiteMask();
         if (this.resistZoomCallback) {
             this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.resistZoomCallback);
