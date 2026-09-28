@@ -47,9 +47,7 @@ import {
     questStateStore,
     resetQuests,
     setQuestWorld,
-    trackQuest,
 } from "../QuestStore";
-import { walkToQuestTarget } from "../QuestWalk";
 import { EMPTY_QUEST_WORLD } from "../QuestWorld";
 import * as uiStores from "../QuestUiStores";
 import QuestDock from "./QuestDock.svelte";
@@ -71,7 +69,6 @@ async function flush(ms = 0) {
 const GONE_MS = 600;
 
 const byTestId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-const player = () => (scene.current as TestScene).CurrentPlayer;
 const keyboardClick = (element: HTMLElement | null) => {
     element?.focus();
     element?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
@@ -124,7 +121,7 @@ afterEach(async () => {
 });
 
 describe("QuestDock", () => {
-    it("never goes empty: the Quests pill rests bottom-left, and toggles the panel above it", async () => {
+    it("never goes empty: the Quests pill rests bottom-left, and toggles the log above it", async () => {
         expect(byTestId("quest-status")?.getAttribute("role")).toBe("status");
         const pill = byTestId("quest-pill");
         expect(pill).not.toBeNull();
@@ -134,13 +131,13 @@ describe("QuestDock", () => {
         pill?.click();
         await flush();
         expect(byTestId("quest-panel")).not.toBeNull();
-        // The pill stays under the panel as its handle.
+        // The pill stays under the log as its handle.
         expect(byTestId("quest-pill")?.getAttribute("aria-expanded")).toBe("true");
         byTestId("quest-pill")?.click();
         await flush(GONE_MS);
         expect(byTestId("quest-panel")).toBeNull();
         expect(byTestId("quest-pill")?.getAttribute("aria-expanded")).toBe("false");
-        // The panel's own close works too.
+        // The log's own close works too.
         byTestId("quest-pill")?.click();
         await flush();
         byTestId("quest-panel-close")?.click();
@@ -149,22 +146,41 @@ describe("QuestDock", () => {
         expect(byTestId("quest-pill")).not.toBeNull();
     });
 
-    it("keeps the pill after Not now; a tap on an available row starts that quest", async () => {
+    it("Let's get started opens the log; a quest's details offer Accept, which closes the log onto the pill", async () => {
         dispatchQuest({ type: "invitation-shown" });
         await flush();
         expect(byTestId("quest-invitation")).not.toBeNull();
         expect(byTestId("quest-pill")).toBeNull();
-        declineQuestInvitation();
+        byTestId("quest-show-options")?.click();
         await flush(GONE_MS);
         expect(byTestId("quest-invitation")).toBeNull();
-        expect(byTestId("quest-pill")).not.toBeNull();
-        byTestId("quest-pill")?.click();
-        await flush();
+        expect(byTestId("quest-panel")).not.toBeNull();
+        // A tap on a row never starts it: it opens its details.
         byTestId("quest-row-explore")?.click();
+        await flush();
+        expect(get(questStateStore).quests.explore.accepted).toBe(false);
+        expect(byTestId("quest-detail-explore")).not.toBeNull();
+        byTestId("quest-detail-accept")?.click();
         await flush(GONE_MS);
         expect(get(questStateStore).tracked).toBe("explore");
         expect(byTestId("quest-panel")).toBeNull();
-        expect(byTestId("quest-card")).not.toBeNull();
+        // The pill keeps its place and now carries the objective.
+        expect(byTestId("quest-pill")).not.toBeNull();
+        expect(byTestId("quest-pill-glyph")?.querySelector("svg.quest-stamp")?.getAttribute("data-path")).toBe(
+            "explore"
+        );
+    });
+
+    it("keeps the pill after Not now, and the log still offers everything", async () => {
+        dispatchQuest({ type: "invitation-shown" });
+        await flush();
+        declineQuestInvitation();
+        await flush(GONE_MS);
+        expect(byTestId("quest-invitation")).toBeNull();
+        byTestId("quest-pill")?.click();
+        await flush();
+        expect(byTestId("quest-row-meet")).not.toBeNull();
+        expect(byTestId("quest-row-explore")).not.toBeNull();
     });
 
     it("shows no resting pill before the map is ready or where nothing is on offer", async () => {
@@ -177,167 +193,65 @@ describe("QuestDock", () => {
         expect(byTestId("quest-pill")).not.toBeNull();
     });
 
-    it("opens the card expanded on a start, with the objective and its buttons, then folds it after 10 s", async () => {
-        acceptQuest("explore", "invitation");
+    it("several quests in progress, one on the map: Show on map switches it and keeps the log open", async () => {
+        acceptQuest("explore", "log");
+        acceptQuest("build", "log");
         await flush();
-        const card = byTestId("quest-card");
-        expect(card).not.toBeNull();
-        expect(byTestId("quest-card-body")?.textContent).not.toBe("");
-        expect(byTestId("quest-walk")).not.toBeNull();
-        expect(byTestId("quest-choose-another")).not.toBeNull();
-        await flush(9_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-        await flush(1_100);
-        expect(byTestId("quest-card")).toBeNull();
-        const pill = byTestId("quest-pill");
-        expect(pill).not.toBeNull();
-        expect(byTestId("quest-pill-label")?.textContent).not.toBe("");
-        expect(get(questStateStore).tracked).toBe("explore");
-    });
-
-    it("folds the card on the player's first movement after 3 s, but not before", async () => {
-        acceptQuest("build", "invitation");
-        await flush();
-        expect(byTestId("quest-card")).not.toBeNull();
-        player().x = 10;
-        await flush(1_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-        await flush(2_500);
-        player().x = 20;
-        await flush(600);
-        expect(byTestId("quest-card")).toBeNull();
-        expect(byTestId("quest-pill")).not.toBeNull();
-    });
-
-    it("counts the 10 s only while the card can be seen", async () => {
-        acceptQuest("explore", "invitation");
-        await flush();
-        // The phone chat covers the game right after the start: the card was never seen.
-        suppression.set({ surfaces: true, pill: true });
-        await flush(15_000);
-        suppression.set({ surfaces: false, pill: false });
-        await flush(500);
-        expect(byTestId("quest-card")).not.toBeNull();
-        await flush(8_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-        await flush(2_000);
-        expect(byTestId("quest-card")).toBeNull();
-        expect(byTestId("quest-pill")).not.toBeNull();
-    });
-
-    it("never folds while keyboard focus is inside the card, or once the pointer is over it", async () => {
-        acceptQuest("explore", "invitation");
-        await flush();
-        byTestId("quest-walk")?.focus();
-        expect(byTestId("quest-card")?.contains(document.activeElement)).toBe(true);
-        await flush(12_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-        // Focus leaves, the player walks off: the card still stays (only the X, Escape or moving close it now).
-        byTestId("quest-walk")?.blur();
-        player().x = 40;
-        await flush(1_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-
-        dispatchQuest({ type: "close" });
-        await flush();
-        trackQuest("explore", "log");
-        await flush();
-        byTestId("quest-card")?.dispatchEvent(new Event("pointerenter"));
-        await flush(12_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-    });
-
-    it("a walk from the card that just ended is not the player leaving", async () => {
-        let arrive: () => void = () => {};
-        (scene.current as TestScene).moveTo = () =>
-            new Promise<void>((resolve) => {
-                arrive = resolve;
-            });
-        acceptQuest("explore", "invitation");
-        await flush(3_500);
-        void walkToQuestTarget({ kind: "place", x: 100, y: 100, radius: 16, name: "Courtyard" });
-        await flush();
-        expect(byTestId("quest-stop-walking")).not.toBeNull();
-        player().x = 50;
-        await flush(1_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-        // Arrived (after the last sample), the walk ends: the resting place is the new starting point.
-        player().x = 60;
-        arrive();
-        await flush(1_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-        // Walking away from there folds it.
-        player().x = 70;
-        await flush(500);
-        expect(byTestId("quest-card")).toBeNull();
-    });
-
-    it("folds on the X and stays on the map; the pill then opens the panel with that quest open", async () => {
-        acceptQuest("build", "invitation");
-        await flush();
-        byTestId("quest-card-close")?.click();
-        await flush();
-        expect(byTestId("quest-card")).toBeNull();
         expect(get(questStateStore).tracked).toBe("build");
-        byTestId("quest-pill")?.click();
+        dispatchQuest({ type: "open-log" });
         await flush();
+        byTestId("quest-row-explore")?.click();
+        await flush();
+        byTestId("quest-detail-track")?.click();
+        await flush();
+        expect(get(questStateStore).tracked).toBe("explore");
         expect(byTestId("quest-panel")).not.toBeNull();
         expect(byTestId("quest-on-map")).not.toBeNull();
-        expect(byTestId("quest-entry-build")?.classList.contains("quest-entry-open")).toBe(true);
-        expect(byTestId("quest-tracked-body")?.textContent).not.toBe("");
+        expect(byTestId("quest-detail-walk")).not.toBeNull();
     });
 
-    it("Build opens the map editor from the card where the person can edit, and steps aside for it", async () => {
-        setQuestWorld({ ...EMPTY_QUEST_WORLD, ready: true, roomName: "Lobby", canBuild: true });
-        acceptQuest("build", "invitation");
+    it("Abandon, confirmed, puts a quest back under Available", async () => {
+        acceptQuest("explore", "log");
         await flush();
-        expect(byTestId("quest-walk")).toBeNull();
-        byTestId("quest-open-editor")?.click();
+        dispatchQuest({ type: "open-log" });
+        await flush();
+        byTestId("quest-row-explore")?.click();
+        await flush();
+        byTestId("quest-detail-abandon")?.click();
+        await flush();
+        byTestId("quest-detail-abandon-confirm")?.click();
+        await flush();
+        expect(get(questStateStore).quests.explore.accepted).toBe(false);
+        expect(byTestId("quest-row-explore")?.querySelector(".quest-bang-chip")).not.toBeNull();
+    });
+
+    it("Build opens the map editor from its details where the person can edit, and the log steps aside", async () => {
+        setQuestWorld({ ...EMPTY_QUEST_WORLD, ready: true, roomName: "Lobby", canBuild: true });
+        acceptQuest("build", "log");
+        dispatchQuest({ type: "open-log" });
+        await flush();
+        byTestId("quest-row-build")?.click();
+        await flush();
+        expect(byTestId("quest-detail-walk")).toBeNull();
+        byTestId("quest-detail-editor")?.click();
         await flush();
         expect(get(mapEditorModeStore)).toBe(true);
         expect(get(questStateStore).surface).toBe("pill");
     });
 
-    it("a tap on an accepted row puts that quest on the map and opens its card", async () => {
-        acceptQuest("explore", "invitation");
-        acceptQuest("build", "log");
-        await flush();
-        dispatchQuest({ type: "open-log" });
-        await flush();
-        byTestId("quest-row-explore")?.click();
-        await flush(GONE_MS);
-        expect(byTestId("quest-panel")).toBeNull();
-        expect(byTestId("quest-card")).not.toBeNull();
-        expect(get(questStateStore).tracked).toBe("explore");
-    });
-
-    it("a start from a panel opened by the menu row focuses the new card, not the menu", async () => {
+    it("an Accept from the keyboard in a log the menu row opened gives focus back to the menu", async () => {
         const opener = document.createElement("button");
         document.body.appendChild(opener);
         openQuestLog(opener, true);
         await flush();
         expect(byTestId("quest-panel")?.contains(document.activeElement)).toBe(true);
         keyboardClick(byTestId("quest-row-explore"));
+        await flush();
+        expect(document.activeElement).toBe(byTestId("quest-detail-back"));
+        keyboardClick(byTestId("quest-detail-accept"));
         await flush(GONE_MS);
         expect(byTestId("quest-panel")).toBeNull();
-        expect(byTestId("quest-card")).not.toBeNull();
-        expect(byTestId("quest-card")?.contains(document.activeElement)).toBe(true);
-        expect(document.activeElement).not.toBe(opener);
-        // Used from the keyboard: it stays until closed.
-        await flush(12_000);
-        expect(byTestId("quest-card")).not.toBeNull();
-    });
-
-    it("Enter on an option focuses the card it opens", async () => {
-        dispatchQuest({ type: "invitation-shown" });
-        await flush();
-        keyboardClick(byTestId("quest-show-options"));
-        await flush();
-        expect(byTestId("quest-options")?.contains(document.activeElement)).toBe(true);
-        keyboardClick(byTestId("quest-option-explore"));
-        await flush();
-        expect(byTestId("quest-card")).not.toBeNull();
-        expect(byTestId("quest-card")?.contains(document.activeElement)).toBe(true);
+        expect(document.activeElement).toBe(opener);
     });
 
     it("keeps the dock narrow: the Express column stays visible beside every surface", () => {
@@ -346,10 +260,8 @@ describe("QuestDock", () => {
         expect(dockElement?.classList.contains("w-[calc(100%-5.5rem)]")).toBe(true);
     });
 
-    it("celebrates a completion once the game is free: sound and burst at once, the card for 3 s, then the panel", async () => {
+    it("celebrates a completion once the game is free: sound and burst at once, the card for 3 s, then the log", async () => {
         acceptQuest("explore", "invitation");
-        await flush();
-        dispatchQuest({ type: "close" });
         await flush();
         expect(byTestId("quest-pill")).not.toBeNull();
 
@@ -383,7 +295,7 @@ describe("QuestDock", () => {
         quiet.set(false);
         await flush(3_500);
         expect(byTestId("quest-celebration")).toBeNull();
-        // Then the panel, with the finished quest ticked and the rest to do; nothing on the map.
+        // Then the log, with the finished quest ticked and the rest to do; nothing on the map.
         expect(get(questStateStore).surface).toBe("log");
         expect(byTestId("quest-panel")).not.toBeNull();
         expect(byTestId("quest-row-explore")?.querySelector(".quest-check")).not.toBeNull();
@@ -413,23 +325,22 @@ describe("QuestDock", () => {
         expect(get(questStateStore).chapterCelebrated).toBe(true);
     });
 
-    it("never lets a waiting completion take over a quest tracked since", async () => {
+    it("never lets a waiting completion take over a quest put on the map since", async () => {
         acceptQuest("explore", "invitation");
         acceptQuest("build", "log");
         dispatchQuest({ type: "track", path: "explore" });
         suppression.set({ surfaces: true, pill: true });
         await flush();
         completeQuest("explore");
-        // Tracking another quest before the celebration could play.
         dispatchQuest({ type: "track", path: "build" });
         suppression.set({ surfaces: false, pill: false });
         await flush(2_000);
         expect(byTestId("quest-celebration")).toBeNull();
-        expect(byTestId("quest-card")).not.toBeNull();
+        expect(byTestId("quest-pill")).not.toBeNull();
         expect(get(questStateStore).tracked).toBe("build");
     });
 
-    it("tapping the celebration skips ahead to the panel", async () => {
+    it("tapping the celebration skips ahead to the log", async () => {
         acceptQuest("explore", "invitation");
         completeQuest("explore");
         await flush(1_500);
@@ -440,17 +351,16 @@ describe("QuestDock", () => {
         expect(byTestId("quest-panel")).not.toBeNull();
     });
 
-    it("opens the panel with its own history entry; Back closes it and the room stays", async () => {
+    it("opens the log with its own history entry; Back closes it and the room stays", async () => {
         const push = vi.spyOn(history, "pushState");
         acceptQuest("explore", "invitation");
         await flush();
-        dispatchQuest({ type: "close" });
         dispatchQuest({ type: "open-log" });
         await flush();
         expect(byTestId("quest-panel")).not.toBeNull();
         expect(push).toHaveBeenCalledTimes(1);
 
-        // Back from something opened over the panel lands on the panel's own entry: it stays.
+        // Back from something opened over the log lands on the log's own entry: it stays.
         window.dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
         await flush();
         expect(byTestId("quest-panel")).not.toBeNull();
@@ -462,7 +372,7 @@ describe("QuestDock", () => {
         push.mockRestore();
     });
 
-    it("steps back over its history entry when the panel is closed another way", async () => {
+    it("steps back over its history entry when the log is closed another way", async () => {
         const back = vi.spyOn(history, "back").mockImplementation(() => {});
         dispatchQuest({ type: "open-log" });
         await flush();
@@ -473,7 +383,7 @@ describe("QuestDock", () => {
         back.mockRestore();
     });
 
-    it("hides the panel (and everything else) while something covers the game, and brings it back", async () => {
+    it("hides the log (and everything else) while something covers the game, and brings it back", async () => {
         dispatchQuest({ type: "open-log" });
         await flush();
         suppression.set({ surfaces: true, pill: true });

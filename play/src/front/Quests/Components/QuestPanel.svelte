@@ -1,9 +1,11 @@
 <script lang="ts">
     import { createEventDispatcher, tick } from "svelte";
+    import { fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
     import ButtonClose from "../../Components/Input/ButtonClose.svelte";
     import type { QuestLogEntry } from "../QuestCopy";
     import type { QuestPath } from "../QuestModel";
+    import { motionMs } from "../QuestMotion";
     import type { QuestWorld } from "../QuestWorld";
     import { giverAsHost } from "../QuestWorld";
     import QuestHostPortrait from "./QuestHostPortrait.svelte";
@@ -16,23 +18,25 @@
     /** Done so far, out of the chapter's quests: the header's progress. */
     export let doneCount: number;
     export let total: number;
-    /** The quest on the map: its row is open, with its sentence and buttons. */
+    /** The quest on the map: its details offer the walk (or the editor, for Build). */
     export let tracked: QuestPath | null;
-    export let trackedBody = "";
     /** The walk control's label ("Walk to the Courtyard", "Walk there"), or undefined when there is nowhere to walk. */
     export let walkLabel: string | undefined = undefined;
     export let walking = false;
-    /** Build can open the editor from here. */
+    /** Build can open the editor from its details. */
     export let editorLabel: string | undefined = undefined;
+    /** Where the quest on the map is, in words, for people who can't see the marks. */
+    export let whereText: string | undefined = undefined;
     /** Guests with sign-in available: a row under Available to keep progress across devices. */
     export let showSignInRow = false;
 
     const dispatch = createEventDispatcher<{
         close: void;
-        /** An available quest is taken: it goes on the map. */
+        /** Accept, in an available quest's details. */
         accept: QuestPath;
-        /** An accepted quest goes on the map. */
+        /** Show on map, in an accepted quest's details. */
         track: QuestPath;
+        abandon: QuestPath;
         walk: void;
         stopWalking: void;
         openEditor: void;
@@ -62,8 +66,14 @@
         }
     }
 
-    let closeWrapper: HTMLElement | undefined;
+    // ---- List or details --------------------------------------------------------------------------------------
+    let selected: QuestPath | null = null;
+    let confirmingAbandon = false;
+    // The quest left the list (abandoned elsewhere, the room changed): back to the list.
+    $: entry = selected ? entries.find((candidate) => candidate.path === selected) : undefined;
+
     let panel: HTMLElement | undefined;
+    let closeWrapper: HTMLElement | undefined;
 
     export function focusClose(): void {
         closeWrapper?.querySelector("button")?.focus();
@@ -74,24 +84,25 @@
         return !!active && !!panel?.contains(active);
     }
 
-    /**
-     * Taking a quest moves its row to another section, which redraws it: pressed from the keyboard, focus follows
-     * the row instead of falling to the page.
-     */
-    async function moveEntry(event: MouseEvent, path: QuestPath, run: () => void) {
-        run();
-        if (event.detail !== 0) return;
+    /** From the keyboard (a click has detail 0), focus follows the view; a tap leaves none behind. */
+    async function show(path: QuestPath | null, event?: MouseEvent) {
+        const from = selected;
+        selected = path;
+        confirmingAbandon = false;
+        if (event && event.detail !== 0) return;
         await tick();
-        if (containsFocus()) return;
-        const row = panel?.querySelector<HTMLElement>(`[data-testid="quest-row-${path}"]`);
-        if (row) row.focus();
-        else focusClose();
+        if (path) panel?.querySelector<HTMLElement>("[data-testid='quest-detail-back']")?.focus();
+        else if (from) panel?.querySelector<HTMLElement>(`[data-testid="quest-row-${from}"]`)?.focus();
+    }
+
+    function onAbandon(path: QuestPath, event: MouseEvent) {
+        dispatch("abandon", path);
+        void show(null, event);
     }
 </script>
 
-<!-- The quest panel: slides up from the pill, which stays under it as its handle. One list, three sections. A row is
-     one tap: an available quest starts, an accepted one goes on the map. The one on the map shows its sentence and
-     buttons inline. Done rows keep their badge, ticked. -->
+<!-- The quest log: slides up from the pill, which stays under it as its handle. A row opens that quest's details:
+     Accept or Decline an available quest, show an accepted one on the map or abandon it. Back returns to the list. -->
 <div
     {id}
     class="quest-surface quest-panel pointer-events-auto flex w-full flex-col"
@@ -100,153 +111,300 @@
     aria-labelledby="{id}-title"
     data-testid="quest-panel"
     bind:this={panel}
-    use:escapeKey={() => dispatch("close")}
+    use:escapeKey={() => (selected ? void show(null) : dispatch("close"))}
     use:questKeyboardFocus
     use:questControls
 >
-    <div class="flex items-center gap-3 px-3 pt-3 pb-2">
-        <div class="order-last shrink-0" bind:this={closeWrapper}>
-            <ButtonClose
-                size="lg"
-                ariaLabel={$LL.quest.close()}
-                dataTestId="quest-panel-close"
-                on:click={() => dispatch("close")}
-            />
-        </div>
-        <div class="min-w-0 flex-1">
-            <h2 id="{id}-title" class="m-0 text-lg font-bold leading-tight">{$LL.quest.quests()}</h2>
-            {#if total > 0}
-                <p class="quest-secondary m-0" data-testid="quest-panel-progress">
-                    {$LL.quest.log.progress({ done: doneCount, total })}
-                </p>
-            {/if}
-        </div>
-    </div>
-    <!-- The chapter's progress: one segment per quest, lit as it is done. -->
-    {#if total > 0}
-        <div class="quest-progress mx-3 mb-1" aria-hidden="true">
-            {#each { length: total } as _, index (index)}
-                <span class="quest-progress-seg" class:lit={index < doneCount} />
-            {/each}
-        </div>
-    {/if}
+    {#key entry ? entry.path : "list"}
+        <div class="flex min-h-0 flex-1 flex-col" in:fly={{ x: entry ? 16 : -16, duration: motionMs(160) }}>
+            {#if entry}
+                {@const onMap = entry.status === "tracked"}
+                <!-- Details -->
+                <div class="flex items-center gap-2 px-2 pt-2 pb-1">
+                    <button
+                        type="button"
+                        class="quest-icon-btn"
+                        aria-label={$LL.quest.detail.back()}
+                        data-testid="quest-detail-back"
+                        on:click={(event) => show(null, event)}
+                    >
+                        <svg
+                            width="20"
+                            height="20"
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            aria-hidden="true"
+                            focusable="false"
+                        >
+                            <path
+                                d="M12.5 4.5 7 10l5.5 5.5"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            />
+                        </svg>
+                    </button>
+                    <h2 id="{id}-title" class="m-0 min-w-0 flex-1 truncate text-base font-bold leading-tight">
+                        {entry.title}
+                    </h2>
+                    <div class="shrink-0" bind:this={closeWrapper}>
+                        <ButtonClose
+                            size="lg"
+                            ariaLabel={$LL.quest.close()}
+                            dataTestId="quest-panel-close"
+                            on:click={() => dispatch("close")}
+                        />
+                    </div>
+                </div>
 
-    <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {#if allDone}
-            <p class="quest-secondary m-0 px-1 py-2" data-testid="quest-panel-all-done">{$LL.quest.log.allDone()}</p>
-        {/if}
-        {#each sections as section (section.key)}
-            <h3 class="quest-log-section px-1">{sectionLabel(section.key)}</h3>
-            <ul class="m-0 flex list-none flex-col gap-1 p-0">
-                {#each section.entries as entry (entry.path)}
-                    {@const onMap = entry.status === "tracked"}
-                    <li class="quest-entry" class:quest-entry-open={onMap} data-testid="quest-entry-{entry.path}">
-                        {#if entry.status === "done"}
-                            <div class="quest-row quest-row-done" data-testid="quest-row-{entry.path}">
-                                <QuestStamp path={entry.path} size={36} tilted={false} />
-                                <span class="min-w-0 flex-1">
-                                    <span class="block font-bold">{entry.title}</span>
-                                    <span class="quest-secondary block">{entry.line}</span>
-                                </span>
-                                <span class="quest-check" aria-hidden="true">
-                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" focusable="false">
-                                        <path
-                                            d="m3.5 8.5 3 3 6-7"
-                                            stroke="currentColor"
-                                            stroke-width="2.25"
-                                            stroke-linecap="round"
-                                            stroke-linejoin="round"
-                                        />
-                                    </svg>
-                                </span>
-                                <span class="sr-only">{$LL.quest.log.done()}</span>
-                            </div>
-                        {:else}
+                <div class="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-testid="quest-detail-{entry.path}">
+                    <div class="flex items-center gap-2">
+                        <QuestHostPortrait host={giverAsHost(entry.giver, world)} size="sm" />
+                        <div class="min-w-0 flex-1">
+                            <p class="quest-eyebrow m-0 truncate">{entry.origin}</p>
+                            <p class="quest-meta m-0">{$LL.quest.minutes({ minutes: entry.minutes })}</p>
+                        </div>
+                        {#if onMap}
+                            <span class="quest-tag" data-testid="quest-on-map">{$LL.quest.log.onMap()}</span>
+                        {:else if entry.status === "done"}
+                            <span class="quest-tag quest-tag-done">{$LL.quest.detail.completed()}</span>
+                        {/if}
+                    </div>
+                    <p class="m-0 mt-3 text-sm leading-snug" data-testid="quest-detail-description">
+                        {entry.description}
+                    </p>
+
+                    <h3 class="quest-detail-label">{$LL.quest.detail.objective()}</h3>
+                    <div class="quest-objective" class:quest-objective-done={entry.status === "done"}>
+                        <span class="quest-objective-box" aria-hidden="true">
+                            {#if entry.status === "done"}
+                                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" focusable="false">
+                                    <path
+                                        d="m3.5 8.5 3 3 6-7"
+                                        stroke="currentColor"
+                                        stroke-width="2.5"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    />
+                                </svg>
+                            {/if}
+                        </span>
+                        <span class="min-w-0 flex-1 font-semibold">{entry.objective}</span>
+                    </div>
+                    <p class="quest-secondary m-0 mt-1" data-testid="quest-detail-body">{entry.note ?? entry.body}</p>
+                    {#if entry.requirement}
+                        <p class="quest-secondary m-0 mt-1">{entry.requirement}</p>
+                    {/if}
+                    {#if onMap && whereText}
+                        <p class="sr-only">{whereText}</p>
+                    {/if}
+
+                    <h3 class="quest-detail-label">{$LL.quest.detail.reward()}</h3>
+                    <div class="flex items-center gap-2">
+                        <QuestStamp path={entry.path} size={40} tilted={false} />
+                        <span class="text-sm font-semibold text-[#e9c74c]">{entry.reward}</span>
+                    </div>
+                </div>
+
+                {#if entry.status !== "done"}
+                    <div class="quest-detail-actions" data-testid="quest-detail-actions">
+                        {#if confirmingAbandon}
+                            <p class="quest-secondary m-0 w-full">{$LL.quest.detail.abandonConfirm()}</p>
                             <button
                                 type="button"
-                                class="quest-row"
-                                aria-current={onMap ? "true" : undefined}
-                                data-testid="quest-row-{entry.path}"
-                                on:click={(event) => {
-                                    if (entry.status === "available") {
-                                        void moveEntry(event, entry.path, () => dispatch("accept", entry.path));
-                                    } else if (entry.status === "accepted") {
-                                        void moveEntry(event, entry.path, () => dispatch("track", entry.path));
-                                    }
-                                }}
+                                class="quest-btn quest-btn-small quest-danger"
+                                data-testid="quest-detail-abandon-confirm"
+                                on:click={(event) => entry && onAbandon(entry.path, event)}
                             >
-                                <QuestHostPortrait host={giverAsHost(entry.giver, world)} size="sm" />
-                                <span class="min-w-0 flex-1">
-                                    <span class="block font-bold">{entry.title}</span>
-                                    <span class="quest-secondary block">{entry.note ?? entry.line}</span>
-                                    <span class="quest-meta block">
-                                        {entry.origin} · {$LL.quest.minutes({ minutes: entry.minutes })}
-                                    </span>
-                                </span>
-                                {#if onMap}
-                                    <span class="quest-tag" data-testid="quest-on-map">{$LL.quest.log.onMap()}</span>
-                                {:else if entry.status === "available"}
-                                    <span class="quest-tag quest-tag-quiet">{$LL.quest.log.tapToStart()}</span>
-                                {:else}
-                                    <span class="quest-stamp-mini" aria-hidden="true">
-                                        <QuestStamp path={entry.path} size={20} glyphOnly tilted={false} />
-                                    </span>
-                                {/if}
+                                {$LL.quest.detail.abandon()}
                             </button>
-                            {#if onMap}
-                                <div class="quest-entry-details">
-                                    <p class="m-0" data-testid="quest-tracked-body">{trackedBody}</p>
-                                    {#if entry.requirement}
-                                        <p class="quest-secondary m-0 mt-1">{entry.requirement}</p>
-                                    {/if}
-                                    <p class="quest-secondary m-0 mt-1">{entry.reward}</p>
-                                    {#if (walkLabel && tracked === entry.path) || editorLabel}
-                                        <div class="mt-2 flex flex-wrap gap-2">
-                                            {#if walkLabel && tracked === entry.path}
-                                                <button
-                                                    type="button"
-                                                    class="quest-btn quest-btn-small u-cta"
-                                                    data-testid={walking ? "quest-panel-stop" : "quest-panel-walk"}
-                                                    on:click={() => dispatch(walking ? "stopWalking" : "walk")}
-                                                >
-                                                    {walking ? $LL.quest.card.stopWalking() : walkLabel}
-                                                </button>
-                                            {/if}
-                                            {#if editorLabel}
-                                                <button
-                                                    type="button"
-                                                    class="quest-btn quest-btn-small u-cta"
-                                                    data-testid="quest-panel-editor"
-                                                    on:click={() => dispatch("openEditor")}
-                                                >
-                                                    {editorLabel}
-                                                </button>
-                                            {/if}
-                                        </div>
-                                    {/if}
-                                </div>
+                            <button
+                                type="button"
+                                class="quest-btn quest-btn-small quest-ghost"
+                                data-testid="quest-detail-keep"
+                                on:click={() => (confirmingAbandon = false)}
+                            >
+                                {$LL.quest.detail.keep()}
+                            </button>
+                        {:else if entry.status === "available"}
+                            <button
+                                type="button"
+                                class="quest-btn u-cta flex-1"
+                                data-testid="quest-detail-accept"
+                                on:click={() => entry && dispatch("accept", entry.path)}
+                            >
+                                {$LL.quest.detail.accept()}
+                            </button>
+                            <button
+                                type="button"
+                                class="quest-btn quest-ghost flex-1"
+                                data-testid="quest-detail-decline"
+                                on:click={(event) => show(null, event)}
+                            >
+                                {$LL.quest.detail.decline()}
+                            </button>
+                        {:else}
+                            {#if onMap && walkLabel && tracked === entry.path}
+                                <button
+                                    type="button"
+                                    class="quest-btn u-cta flex-1"
+                                    data-testid={walking ? "quest-detail-stop" : "quest-detail-walk"}
+                                    on:click={() => dispatch(walking ? "stopWalking" : "walk")}
+                                >
+                                    {walking ? $LL.quest.card.stopWalking() : walkLabel}
+                                </button>
+                            {:else if onMap && editorLabel}
+                                <button
+                                    type="button"
+                                    class="quest-btn u-cta flex-1"
+                                    data-testid="quest-detail-editor"
+                                    on:click={() => dispatch("openEditor")}
+                                >
+                                    {editorLabel}
+                                </button>
+                            {:else if !onMap}
+                                <button
+                                    type="button"
+                                    class="quest-btn u-cta flex-1"
+                                    data-testid="quest-detail-track"
+                                    on:click={() => entry && dispatch("track", entry.path)}
+                                >
+                                    {$LL.quest.detail.showOnMap()}
+                                </button>
                             {/if}
+                            <button
+                                type="button"
+                                class="quest-btn quest-ghost flex-1"
+                                data-testid="quest-detail-abandon"
+                                on:click={() => (confirmingAbandon = true)}
+                            >
+                                {$LL.quest.detail.abandon()}
+                            </button>
                         {/if}
-                    </li>
-                {/each}
-                {#if section.key === "available" && showSignInRow}
-                    <li class="quest-entry">
-                        <button
-                            type="button"
-                            class="quest-row"
-                            data-testid="quest-row-sign-in"
-                            on:click={() => dispatch("signIn")}
-                        >
-                            <span class="min-w-0 flex-1">
-                                <span class="block font-bold">{$LL.quest.log.signInRow()}</span>
-                                <span class="quest-secondary block">{$LL.quest.log.needsAccount()}</span>
-                            </span>
-                        </button>
-                    </li>
+                    </div>
                 {/if}
-            </ul>
-        {:else}
-            <p class="quest-secondary m-0 px-1 py-2">{$LL.quest.log.nothingHere()}</p>
-        {/each}
-    </div>
+            {:else}
+                <!-- List -->
+                <div class="flex items-center gap-3 px-3 pt-3 pb-2">
+                    <div class="order-last shrink-0" bind:this={closeWrapper}>
+                        <ButtonClose
+                            size="lg"
+                            ariaLabel={$LL.quest.close()}
+                            dataTestId="quest-panel-close"
+                            on:click={() => dispatch("close")}
+                        />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h2 id="{id}-title" class="m-0 text-lg font-bold leading-tight">{$LL.quest.quests()}</h2>
+                        {#if total > 0}
+                            <p class="quest-secondary m-0" data-testid="quest-panel-progress">
+                                {$LL.quest.log.progress({ done: doneCount, total })}
+                            </p>
+                        {/if}
+                    </div>
+                </div>
+                <!-- The chapter's progress: one segment per quest, lit as it is done. -->
+                {#if total > 0}
+                    <div class="quest-progress mx-3 mb-1" aria-hidden="true">
+                        {#each { length: total } as _, index (index)}
+                            <span class="quest-progress-seg" class:lit={index < doneCount} />
+                        {/each}
+                    </div>
+                {/if}
+
+                <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+                    {#if allDone}
+                        <p class="quest-secondary m-0 px-1 py-2" data-testid="quest-panel-all-done">
+                            {$LL.quest.log.allDone()}
+                        </p>
+                    {/if}
+                    {#each sections as section (section.key)}
+                        <h3 class="quest-log-section px-1">{sectionLabel(section.key)}</h3>
+                        <ul class="m-0 flex list-none flex-col gap-1 p-0">
+                            {#each section.entries as row (row.path)}
+                                <li data-testid="quest-entry-{row.path}">
+                                    <button
+                                        type="button"
+                                        class="quest-row"
+                                        class:quest-row-done={row.status === "done"}
+                                        aria-label="{row.title}: {$LL.quest.detail.title()}"
+                                        data-testid="quest-row-{row.path}"
+                                        on:click={(event) => show(row.path, event)}
+                                    >
+                                        {#if row.status === "done"}
+                                            <QuestStamp path={row.path} size={36} tilted={false} />
+                                        {:else}
+                                            <QuestHostPortrait host={giverAsHost(row.giver, world)} size="sm" />
+                                        {/if}
+                                        <span class="min-w-0 flex-1">
+                                            <span class="block font-bold">{row.title}</span>
+                                            <span class="quest-secondary block truncate">{row.note ?? row.line}</span>
+                                        </span>
+                                        {#if row.status === "tracked"}
+                                            <span class="quest-tag">{$LL.quest.log.onMap()}</span>
+                                        {:else if row.status === "available"}
+                                            <span class="quest-bang-chip" aria-hidden="true">!</span>
+                                        {:else if row.status === "done"}
+                                            <span class="quest-check" aria-hidden="true">
+                                                <svg
+                                                    width="16"
+                                                    height="16"
+                                                    viewBox="0 0 16 16"
+                                                    fill="none"
+                                                    focusable="false"
+                                                >
+                                                    <path
+                                                        d="m3.5 8.5 3 3 6-7"
+                                                        stroke="currentColor"
+                                                        stroke-width="2.25"
+                                                        stroke-linecap="round"
+                                                        stroke-linejoin="round"
+                                                    />
+                                                </svg>
+                                            </span>
+                                        {/if}
+                                        <svg
+                                            class="quest-row-chevron"
+                                            width="16"
+                                            height="16"
+                                            viewBox="0 0 16 16"
+                                            fill="none"
+                                            aria-hidden="true"
+                                            focusable="false"
+                                        >
+                                            <path
+                                                d="m6 3.5 4.5 4.5L6 12.5"
+                                                stroke="currentColor"
+                                                stroke-width="1.75"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                            />
+                                        </svg>
+                                    </button>
+                                </li>
+                            {/each}
+                            {#if section.key === "available" && showSignInRow}
+                                <li>
+                                    <button
+                                        type="button"
+                                        class="quest-row"
+                                        data-testid="quest-row-sign-in"
+                                        on:click={() => dispatch("signIn")}
+                                    >
+                                        <span class="min-w-0 flex-1">
+                                            <span class="block font-bold">{$LL.quest.log.signInRow()}</span>
+                                            <span class="quest-secondary block">{$LL.quest.log.needsAccount()}</span>
+                                        </span>
+                                    </button>
+                                </li>
+                            {/if}
+                        </ul>
+                    {:else}
+                        <p class="quest-secondary m-0 px-1 py-2">{$LL.quest.log.nothingHere()}</p>
+                    {/each}
+                </div>
+            {/if}
+        </div>
+    {/key}
 </div>

@@ -117,7 +117,8 @@ describe("QuestStore", () => {
         expect(get(store.questAvailablePathsStore)).toEqual(["meet", "explore"]);
         store.acceptQuest("explore", "log", 1);
         expect(get(store.questStateStore).tracked).toBe("explore");
-        expect(get(store.questStateStore).surface).toBe("card");
+        // Accept closes the log: the quest is on the map, its objective on the pill.
+        expect(get(store.questStateStore).surface).toBe("pill");
     });
 
     it("a refresh after Not now offers again, and the bot that offers is the one frozen for a Start from the log", async () => {
@@ -233,6 +234,25 @@ describe("QuestStore", () => {
         const store = await loadStore();
         store.setMeetAlreadyExchanged(() => true);
         store.acceptQuest("meet", "invitation");
+        expect(get(store.questStateStore).quests.meet.done).toBe(true);
+    });
+
+    it("abandons a quest back to Available and records it; the map moves to what is still in progress", async () => {
+        const store = await loadStore();
+        store.setQuestWorld(readyWorld);
+        store.acceptQuest("meet", "log", 1);
+        store.acceptQuest("explore", "log", 2);
+        expect(get(store.questStateStore).tracked).toBe("explore");
+        store.abandonQuest("explore");
+        const state = get(store.questStateStore);
+        expect(state.quests.explore.accepted).toBe(false);
+        expect(state.exploreArea).toBeNull();
+        expect(state.tracked).toBe("meet");
+        expect(get(store.questAvailablePathsStore)).toContain("explore");
+        expect(analytics.questStopped).toHaveBeenCalledWith({ questId: "welcome.explore", reason: "abandoned" });
+        // Done quests stay done.
+        store.completeQuest("meet", "detected", 3);
+        store.abandonQuest("meet");
         expect(get(store.questStateStore).quests.meet.done).toBe(true);
     });
 

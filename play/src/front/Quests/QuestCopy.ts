@@ -114,21 +114,19 @@ export function questEyebrowFor(t: T, path: QuestPath, state: QuestState, world:
     return origin.giver?.name || origin.room || t.quest.welcome();
 }
 
-/** One path as a row of the options card. */
-export interface QuestOptionRow {
-    path: QuestPath;
-    title: string;
-    description: string;
-    minutes: number;
-}
-
 /** One entry of the panel, in words. */
 export interface QuestLogEntry {
     path: QuestPath;
     status: "tracked" | "accepted" | "available" | "done";
     title: string;
-    /** The objective ("Find the Courtyard"), or how it ended once done. */
+    /** The objective ("Find the Courtyard"), or how it ended once done: the row's second line. */
     line: string;
+    /** What the quest is about, as its giver puts it ("Say hi to whoever's here."). */
+    description: string;
+    /** The objective, always ("Find the Courtyard"). */
+    objective: string;
+    /** How to do it now ("Walk to the Courtyard and step inside."), or how it ended once done. */
+    body: string;
     minutes: number;
     /** Who gave it: for its portrait on the row. */
     giver: QuestGiver | null;
@@ -140,15 +138,6 @@ export interface QuestLogEntry {
     requirement?: string;
     /** "Nobody's here right now" while paused, or on Meet's Available row while nobody is here. */
     note?: string;
-}
-
-export function optionRows(t: T, paths: readonly QuestPath[], state: QuestState, world: QuestWorld): QuestOptionRow[] {
-    return paths.map((path) => ({
-        path,
-        title: questTitle(t, path),
-        description: questDescription(t, path, state, world),
-        minutes: QUEST_MINUTES[path],
-    }));
 }
 
 /**
@@ -167,7 +156,8 @@ export function logEntries(
     t: T,
     state: QuestState,
     world: QuestWorld,
-    available: readonly QuestPath[]
+    available: readonly QuestPath[],
+    meetProgress: MeetProgress = "idle"
 ): QuestLogEntry[] {
     const entries: QuestLogEntry[] = [];
     for (const path of QUEST_PATHS) {
@@ -180,6 +170,9 @@ export function logEntries(
             status,
             title: questTitle(t, path),
             line: status === "done" ? questPayoffLine(t, path, state, world) : questObjective(t, path, state, world),
+            description: questDescription(t, path, state, world),
+            objective: questObjective(t, path, state, world),
+            body: questBody(t, path, state, world, meetProgress),
             minutes: QUEST_MINUTES[path],
             giver,
             origin,

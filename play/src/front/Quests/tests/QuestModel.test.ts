@@ -20,23 +20,25 @@ const free = { surfaces: false, pill: false };
 const guide = { room: "Lobby", giver: { kind: "bot" as const, name: "Guide", uuid: "bot-1" } };
 
 describe("reduceQuest", () => {
-    it("goes invitation → options → card on accepting a path, and remembers who offered it", () => {
+    it("goes invitation → log → pill on accepting a path, and remembers who offered it", () => {
         const state = run(
             { type: "invitation-shown", origin: guide },
-            { type: "open-options" },
+            { type: "open-log" },
             { type: "accept", path: "meet", now: 5, origin: guide }
         );
-        expect(state.surface).toBe("card");
+        // Accept closes the log, as a quest giver's window does: the quest is on the map, its objective on the pill.
+        expect(state.surface).toBe("pill");
         expect(state.tracked).toBe("meet");
         expect(state.offeredBy).toEqual(guide);
         expect(state.quests.meet).toMatchObject({ accepted: true, done: false, acceptedAt: 5, origin: guide });
         expect(state.invitationSeen).toBe(1);
     });
 
-    it("closing the options goes back to the invitation: a close is not a decline", () => {
-        const state = run({ type: "invitation-shown" }, { type: "open-options" }, { type: "close" });
-        expect(state.surface).toBe("invitation");
+    it("closing the log opened from the invitation is not a decline, and rests on the pill", () => {
+        const state = run({ type: "invitation-shown" }, { type: "open-log" }, { type: "close" });
+        expect(state.surface).toBe("none");
         expect(state.declined).toBe(false);
+        expect(visibleSurface(state, free)).toBe("pill");
     });
 
     it("Not now dismisses the invitation for this page; the quests stay startable", () => {
@@ -51,7 +53,7 @@ describe("reduceQuest", () => {
         expect(visibleSurface(state, free)).toBe("pill");
         const started = reduceQuest(state, { type: "accept", path: "explore", now: 1 });
         expect(started.tracked).toBe("explore");
-        expect(started.surface).toBe("card");
+        expect(started.surface).toBe("pill");
     });
 
     it("a faded invitation leaves a dot and may come back once, then never", () => {
@@ -66,12 +68,12 @@ describe("reduceQuest", () => {
     });
 
     it("never offers the invitation once something is accepted", () => {
-        const state = run({ type: "accept", path: "explore", now: 1 }, { type: "close" });
+        const state = run({ type: "accept", path: "explore", now: 1 });
         expect(state.surface).toBe("pill");
         expect(canOfferInvitation(state)).toBe(false);
     });
 
-    it("putting another quest on the map keeps the previous one accepted", () => {
+    it("several quests can be in progress, one on the map; Show on map keeps the log open", () => {
         const state = run(
             { type: "accept", path: "meet", now: 1 },
             { type: "accept", path: "explore", now: 2 },
@@ -81,18 +83,29 @@ describe("reduceQuest", () => {
         expect(state.tracked).toBe("meet");
         expect(questStatus(state, "explore")).toBe("accepted");
         expect(acceptedUntrackedCount(state)).toBe(1);
-        // The card opens expanded over the closed panel.
-        expect(state.surface).toBe("card");
-        expect(state.beforeLog).toBeNull();
+        expect(state.surface).toBe("log");
+        // Already on the map: nothing changes.
+        expect(reduceQuest(state, { type: "track", path: "meet" })).toBe(state);
     });
 
-    it("the card's X folds it to the pill and never untracks", () => {
-        const state = run({ type: "accept", path: "build", now: 1 }, { type: "close" });
-        expect(state.surface).toBe("pill");
-        expect(state.tracked).toBe("build");
-        const reopened = reduceQuest(state, { type: "open-card" });
-        expect(reopened.surface).toBe("card");
-        expect(reduceQuest(reopened, { type: "close" }).surface).toBe("pill");
+    it("abandon returns a quest to Available and moves the map to what is still in progress", () => {
+        let state = run(
+            { type: "accept", path: "meet", now: 1 },
+            { type: "accept", path: "explore", now: 2, exploreArea: { id: "a", name: "Hall" } },
+            { type: "open-log" }
+        );
+        state = reduceQuest(state, { type: "abandon", path: "explore" });
+        expect(state.quests.explore).toMatchObject({ accepted: false, origin: null });
+        expect(state.exploreArea).toBeNull();
+        expect(state.tracked).toBe("meet");
+        expect(state.surface).toBe("log");
+        state = reduceQuest(state, { type: "abandon", path: "meet" });
+        expect(state.tracked).toBeNull();
+        expect(canOfferInvitation({ ...state, surface: "none" })).toBe(true);
+        // Never a quest that is done, or one never taken.
+        const done = run({ type: "accept", path: "build", now: 1 }, { type: "complete", path: "build", now: 2 });
+        expect(reduceQuest(done, { type: "abandon", path: "build" })).toBe(done);
+        expect(reduceQuest(initialQuestState(), { type: "abandon", path: "meet" })).toEqual(initialQuestState());
     });
 
     it("the pill toggles the panel", () => {
@@ -133,11 +146,12 @@ describe("reduceQuest", () => {
         expect(state.quests.meet.paused).toBeNull();
     });
 
-    it("closing the panel puts back what it covered", () => {
-        const state = run({ type: "invitation-shown" }, { type: "open-log" }, { type: "close" });
-        expect(state.surface).toBe("invitation");
+    it("closing the log rests on the pill", () => {
         const tracked = run({ type: "accept", path: "meet", now: 1 }, { type: "open-log" }, { type: "close" });
         expect(tracked.surface).toBe("pill");
+        // Only the log closes this way.
+        const invitation = run({ type: "invitation-shown" });
+        expect(reduceQuest(invitation, { type: "close" })).toBe(invitation);
     });
 
     it("a celebration settles into the panel, with the quest done and nothing on the map", () => {
@@ -219,7 +233,7 @@ describe("revealPending", () => {
         const next = revealPending(state, false);
         expect(next.pending).toEqual([]);
         expect(next.celebrating).toBeNull();
-        expect(next.surface).toBe("card");
+        expect(next.surface).toBe("pill");
         expect(next.tracked).toBe("meet");
         expect(next.quests.explore.done).toBe(true);
     });
@@ -244,12 +258,12 @@ describe("revealPending", () => {
 
 describe("visibleSurface", () => {
     it("hides surfaces but lets the pill stay under the Express tray", () => {
-        const pill = run({ type: "accept", path: "meet", now: 1 }, { type: "close" });
+        const pill = run({ type: "accept", path: "meet", now: 1 });
         expect(visibleSurface(pill, { surfaces: true, pill: false })).toBe("pill");
         expect(visibleSurface(pill, { surfaces: true, pill: true })).toBe("none");
-        const card = reduceQuest(pill, { type: "open-card" });
-        expect(visibleSurface(card, { surfaces: true, pill: false })).toBe("none");
-        expect(card.surface).toBe("card");
+        const log = reduceQuest(pill, { type: "open-log" });
+        expect(visibleSurface(log, { surfaces: true, pill: false })).toBe("none");
+        expect(log.surface).toBe("log");
     });
 
     it("rests on the Quests pill whenever nothing is on the map, unless covered or nothing is on offer", () => {
@@ -258,7 +272,7 @@ describe("visibleSurface", () => {
         expect(visibleSurface(fresh, { surfaces: false, pill: true })).toBe("none");
         // Nothing on offer here (or the map not there yet): no pill; the menu row stays the way in.
         expect(visibleSurface(fresh, free, false)).toBe("none");
-        const followed = run({ type: "accept", path: "meet", now: 1 }, { type: "close" });
+        const followed = run({ type: "accept", path: "meet", now: 1 });
         expect(visibleSurface(followed, free, false)).toBe("pill");
         const done = revealPending(
             run({ type: "accept", path: "build", now: 1 }, { type: "complete", path: "build", now: 2 }),
@@ -284,7 +298,7 @@ describe("questsOnOffer", () => {
 
 describe("markedQuestPath", () => {
     it("marks the quest on the map always, except already done", () => {
-        const state = run({ type: "accept", path: "explore", now: 1 }, { type: "close" });
+        const state = run({ type: "accept", path: "explore", now: 1 });
         expect(markedQuestPath(state)).toBe("explore");
         expect(markedQuestPath(reduceQuest(state, { type: "open-log" }))).toBe("explore");
         expect(markedQuestPath(reduceQuest(state, { type: "complete", path: "explore", now: 2 }))).toBeNull();

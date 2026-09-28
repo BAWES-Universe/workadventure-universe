@@ -28,6 +28,14 @@ const AREA_HOST_FLASH_MS = 3_000;
 const RING_GLOW_PX = 10;
 /** One breath of the ring: a little larger and softer, then back. */
 const PULSE_MS = 1_600;
+/** How much larger the ring is at the top of its breath. */
+const RING_GROWTH = 0.1;
+/**
+ * The breath is drawn ahead, one frame per size. The canvas is shown upscaled, so scaling one image made each edge
+ * jump a pixel on its own beat (right, then left, then top...): each frame here is drawn centred and anti-aliased,
+ * and the ring sits on whole pixels, so opposite edges always move together.
+ */
+const RING_FRAMES = 16;
 const BURST_MS = 900;
 const CONFETTI_COUNT = 36;
 
@@ -70,19 +78,23 @@ class SceneMarkers {
         const radius = target.kind === "place" ? target.radius : PERSON_RING_RADIUS;
         const key = this.ringTexture(radius);
         if (!key) return;
-        const image = this.scene.add.image(0, 0, key);
+        const image = this.scene.add.image(0, 0, key, "0");
         const ring: Ring = { image, target };
         if (!prefersReducedMotion()) {
             // A gentle, slow breath for as long as the ring is shown: the one ring, a little larger and softer,
             // then back. Still under reduced motion.
+            const breath = { t: 0 };
             ring.tween = this.scene.tweens.add({
-                targets: image,
-                scale: { from: 1, to: 1.1 },
-                alpha: { from: 1, to: 0.7 },
+                targets: breath,
+                t: 1,
                 duration: PULSE_MS,
                 yoyo: true,
                 repeat: -1,
                 ease: "Sine.easeInOut",
+                onUpdate: () => {
+                    image.setFrame(String(Math.round(breath.t * (RING_FRAMES - 1))));
+                    image.setAlpha(1 - 0.3 * breath.t);
+                },
             });
         }
         this.rings.set(slot, ring);
@@ -95,48 +107,34 @@ class SceneMarkers {
     }
 
     /**
-     * An ellipse, lavender at its heart shading to amber at its edge, with a soft amber glow, drawn once per radius
-     * on a canvas (Phaser's own gradient fills only suit rectangles). A dark edge underneath keeps it visible on
+     * An ellipse, lavender at its heart shading to amber at its edge, with a soft amber glow, drawn on a canvas
+     * (Phaser's own gradient fills only suit rectangles) once per radius, in RING_FRAMES sizes side by side: frame
+     * "0" is the ring at rest, the last one at the top of its breath. A dark edge underneath keeps it visible on
      * light floors.
      */
     private ringTexture(radius: number): string | undefined {
         const key = `quest-ring-${radius}`;
         if (this.scene.textures.exists(key)) return key;
-        const width = radius * 2 + RING_GLOW_PX * 2;
-        const height = radius + RING_GLOW_PX * 2;
-        const texture = this.scene.textures.createCanvas(key, width, height);
+        const even = (value: number) => Math.ceil(value / 2) * 2;
+        const largest = radius * (1 + RING_GROWTH);
+        const frameWidth = even(largest * 2 + RING_GLOW_PX * 2);
+        const frameHeight = even(largest + RING_GLOW_PX * 2);
+        const texture = this.scene.textures.createCanvas(key, frameWidth * RING_FRAMES, frameHeight);
         const context = texture?.getContext();
         if (!texture || !context) return undefined;
         this.textures.add(key);
-        const ellipse = () => {
+        for (let index = 0; index < RING_FRAMES; index++) {
+            const left = index * frameWidth;
+            const size = radius * (1 + (RING_GROWTH * index) / (RING_FRAMES - 1));
+            context.save();
+            // Each frame stays in its own cell: the glow never bleeds into the next one.
             context.beginPath();
-            context.ellipse(width / 2, height / 2, radius, radius / 2, 0, 0, Math.PI * 2);
-        };
-        // The dark edge, under everything.
-        ellipse();
-        context.lineWidth = 4;
-        context.strokeStyle = "rgba(27, 42, 65, 0.5)";
-        context.stroke();
-        // The glow and the soft radial fill: a circle drawn squashed to the ellipse, so the gradient is too.
-        context.save();
-        context.shadowColor = RING_GLOW;
-        context.shadowBlur = RING_GLOW_PX;
-        context.translate(width / 2, height / 2);
-        context.scale(1, 0.5);
-        const gradient = context.createRadialGradient(0, 0, 0, 0, 0, radius);
-        gradient.addColorStop(0, RING_INNER);
-        gradient.addColorStop(1, RING_EDGE);
-        context.beginPath();
-        context.arc(0, 0, radius, 0, Math.PI * 2);
-        context.globalAlpha = 0.4;
-        context.fillStyle = gradient;
-        context.fill();
-        context.restore();
-        // The amber edge on top.
-        ellipse();
-        context.lineWidth = 2;
-        context.strokeStyle = RING_EDGE;
-        context.stroke();
+            context.rect(left, 0, frameWidth, frameHeight);
+            context.clip();
+            drawRing(context, left + frameWidth / 2, frameHeight / 2, size);
+            context.restore();
+            texture.add(String(index), 0, left, 0, frameWidth, frameHeight);
+        }
         texture.refresh();
         return key;
     }
@@ -165,7 +163,7 @@ class SceneMarkers {
         const key = this.ringTexture(PERSON_RING_RADIUS);
         if (!key) return;
         const depth = this.scene.CurrentPlayer.depth + 1;
-        const wave = this.scene.add.image(feet.x, feet.y + FEET_OFFSET_Y, key);
+        const wave = this.scene.add.image(feet.x, feet.y + FEET_OFFSET_Y, key, "0");
         wave.setDepth(depth);
         this.flashes.add(wave);
         this.scene.tweens.add({
@@ -243,10 +241,11 @@ class SceneMarkers {
         this.textures.clear();
     }
 
+    /** On whole pixels, so the ring's drawn frames land on the screen as drawn: opposite edges move together. */
     private place(): void {
         for (const ring of this.rings.values()) {
             if (ring.target.kind === "place") {
-                ring.image.setPosition(ring.target.x, ring.target.y);
+                ring.image.setPosition(Math.round(ring.target.x), Math.round(ring.target.y));
                 ring.image.setDepth(ring.target.y);
                 ring.image.setVisible(true);
                 continue;
@@ -256,12 +255,43 @@ class SceneMarkers {
                 ring.image.setVisible(false);
                 continue;
             }
-            ring.image.setPosition(person.x, person.y + FEET_OFFSET_Y);
+            ring.image.setPosition(Math.round(person.x), Math.round(person.y + FEET_OFFSET_Y));
             // Just under the person: above the floor, behind their woka.
             ring.image.setDepth(person.depth - 1);
             ring.image.setVisible(true);
         }
     }
+}
+
+/** One ring, centred on (x, y): the dark edge, the glowing gradient fill, the amber edge. */
+function drawRing(context: CanvasRenderingContext2D, x: number, y: number, radius: number): void {
+    const ellipse = () => {
+        context.beginPath();
+        context.ellipse(x, y, radius, radius / 2, 0, 0, Math.PI * 2);
+    };
+    ellipse();
+    context.lineWidth = 4;
+    context.strokeStyle = "rgba(27, 42, 65, 0.5)";
+    context.stroke();
+    // The glow and the soft radial fill: a circle drawn squashed to the ellipse, so the gradient is too.
+    context.save();
+    context.shadowColor = RING_GLOW;
+    context.shadowBlur = RING_GLOW_PX;
+    context.translate(x, y);
+    context.scale(1, 0.5);
+    const gradient = context.createRadialGradient(0, 0, 0, 0, 0, radius);
+    gradient.addColorStop(0, RING_INNER);
+    gradient.addColorStop(1, RING_EDGE);
+    context.beginPath();
+    context.arc(0, 0, radius, 0, Math.PI * 2);
+    context.globalAlpha = 0.4;
+    context.fillStyle = gradient;
+    context.fill();
+    context.restore();
+    ellipse();
+    context.lineWidth = 2;
+    context.strokeStyle = RING_EDGE;
+    context.stroke();
 }
 
 function sameTarget(a: QuestTarget, b: QuestTarget): boolean {

@@ -18,9 +18,7 @@ import type { QuestLogEntry } from "../QuestCopy";
 import { EMPTY_QUEST_WORLD } from "../QuestWorld";
 import { KEY_HOLD_MS } from "./questActions";
 import QuestInvitation from "./QuestInvitation.svelte";
-import QuestOptions from "./QuestOptions.svelte";
 import QuestPill from "./QuestPill.svelte";
-import QuestCard from "./QuestCard.svelte";
 import QuestCelebration from "./QuestCelebration.svelte";
 import QuestPanel from "./QuestPanel.svelte";
 
@@ -117,52 +115,6 @@ describe("quest controls and the game's keys", () => {
     });
 });
 
-describe("QuestOptions", () => {
-    const rows = [
-        { path: "meet", title: "Meet someone", description: "Say hi", minutes: 2 },
-        { path: "explore", title: "Explore this place", description: "Find the Courtyard.", minutes: 1 },
-    ];
-
-    it("lists only the rows it is given; a tap accepts, close and Escape go back", async () => {
-        const { target, instance } = mount(QuestOptions, { host: { kind: "none" }, title: "What?", rows });
-        const events: string[] = [];
-        instance.$on("accept", (event: CustomEvent<string>) => events.push(`accept:${event.detail}`));
-        instance.$on("close", () => events.push("close"));
-
-        expect(byTestId(target, "quest-option-build")).toBeNull();
-        const dialog = byTestId(target, "quest-options");
-        expect(dialog?.getAttribute("role")).toBe("dialog");
-        expect(dialog?.getAttribute("aria-modal")).toBe("false");
-        // The close is first in focus order.
-        expect(dialog?.querySelector("button")?.dataset.testid).toBe("quest-options-close");
-
-        byTestId(target, "quest-option-explore")?.click();
-        byTestId(target, "quest-options-close")?.click();
-        escape(byTestId(target, "quest-option-meet"));
-        await tick();
-        expect(events).toEqual(["accept:explore", "close", "close"]);
-    });
-
-    it("stops the game reading movement keys only while keyboard focus is inside", () => {
-        const { target } = mount(QuestOptions, { host: { kind: "none" }, title: "What?", rows });
-        const close = byTestId(target, "quest-options-close");
-        const focusVisible = vi.spyOn(Element.prototype, "matches");
-
-        // A click or a tap focuses a button too, but must leave walking alone.
-        focusVisible.mockReturnValue(false);
-        close?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
-        expect(get(questInputFocusStore)).toBe(false);
-
-        // Keyboard focus: the game stops reading movement keys until focus leaves the surface.
-        focusVisible.mockImplementation((selector: string) => selector === ":focus-visible");
-        close?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
-        expect(get(questInputFocusStore)).toBe(true);
-        close?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
-        expect(get(questInputFocusStore)).toBe(false);
-        focusVisible.mockRestore();
-    });
-});
-
 describe("QuestPill", () => {
     it("is a 44px button named by its objective and state, the handle of the panel", async () => {
         const { target, instance } = mount(QuestPill, {
@@ -235,169 +187,156 @@ describe("QuestPill", () => {
     });
 });
 
-describe("QuestCard", () => {
-    const base = {
-        id: "quest-card",
-        host: { kind: "none" },
-        eyebrow: "Lobby",
-        title: "Find the Courtyard",
-        body: "Walk to the Courtyard and step inside.",
-    };
-
-    it("has two real buttons: the walk as the primary, Choose another as glass; no links, no Show me", async () => {
-        const { target, instance } = mount(QuestCard, { ...base, walkLabel: "Walk to the Courtyard" });
-        const events: string[] = [];
-        for (const name of ["close", "walk", "stopWalking", "chooseAnother"]) {
-            instance.$on(name, () => events.push(name));
-        }
-        expect(byTestId(target, "quest-card")?.getAttribute("aria-labelledby")).toBe("quest-card-title");
-        const walk = byTestId(target, "quest-walk");
-        const choose = byTestId(target, "quest-choose-another");
-        expect(walk?.tagName).toBe("BUTTON");
-        expect(choose?.tagName).toBe("BUTTON");
-        expect(walk?.classList.contains("u-cta")).toBe(true);
-        expect(walk?.classList.contains("quest-btn")).toBe(true);
-        expect(choose?.classList.contains("quest-ghost")).toBe(true);
-        expect(target.querySelectorAll(".u-cta")).toHaveLength(1);
-        expect(target.querySelector("a")).toBeNull();
-        expect(byTestId(target, "quest-show-me")).toBeNull();
-        expect(byTestId(target, "quest-switch")).toBeNull();
-        expect(byTestId(target, "quest-set-aside")).toBeNull();
-        walk?.click();
-        choose?.click();
-        byTestId(target, "quest-card-close")?.click();
-        escape(choose);
-        await tick();
-        expect(events).toEqual(["walk", "chooseAnother", "close", "close"]);
-    });
-
-    it("reads Stop walking while walking, hides the walk without a place, keeps the description", async () => {
-        const { target, instance } = mount(QuestCard, { ...base, walkLabel: "Walk", walking: false });
-        const walk = byTestId(target, "quest-walk");
-        walk?.focus();
-        instance.$set({ walking: true });
-        await tick();
-        // The same button, so keyboard focus stays on it.
-        expect(byTestId(target, "quest-walk")).toBeNull();
-        expect(byTestId(target, "quest-stop-walking")).toBe(walk);
-        expect(document.activeElement).toBe(walk);
-
-        instance.$set({ walkLabel: undefined, walking: false, whereDescription: "Courtyard is north of you" });
-        await tick();
-        expect(byTestId(target, "quest-walk")).toBeNull();
-        expect(byTestId(target, "quest-stop-walking")).toBeNull();
-        // Focus was on it: it moves to Choose another, never to the page.
-        expect(document.activeElement).toBe(byTestId(target, "quest-choose-another"));
-        expect(byTestId(target, "quest-card")?.getAttribute("aria-describedby")).toBe(
-            "quest-card-body quest-card-where"
-        );
-    });
-
-    it("says when it is being read or used: focus inside, the pointer over it", () => {
-        const { target, instance } = mount(QuestCard, { ...base, walkLabel: "Walk" });
-        let engaged = 0;
-        instance.$on("engage", () => engaged++);
-        byTestId(target, "quest-walk")?.focus();
-        expect(engaged).toBe(1);
-        byTestId(target, "quest-card")?.dispatchEvent(new Event("pointerenter"));
-        expect(engaged).toBe(2);
-    });
-
-    it("offers nothing to walk to once done (its celebration waiting), only Choose another", () => {
-        const { target } = mount(QuestCard, { ...base, walkLabel: "Walk", done: true });
-        expect(byTestId(target, "quest-walk")).toBeNull();
-        expect(byTestId(target, "quest-choose-another")).not.toBeNull();
-    });
-
-    it("offers the editor as the primary for Build, where there is nowhere to walk", async () => {
-        const { target, instance } = mount(QuestCard, { ...base, editorLabel: "Open the map editor" });
-        let opened = 0;
-        instance.$on("openEditor", () => opened++);
-        const editor = byTestId(target, "quest-open-editor");
-        expect(editor?.classList.contains("u-cta")).toBe(true);
-        editor?.click();
-        expect(opened).toBe(1);
-        instance.$set({ done: true });
-        await tick();
-        expect(byTestId(target, "quest-open-editor")).toBeNull();
-    });
-});
-
 describe("QuestPanel", () => {
     const entry = (path: QuestLogEntry["path"], status: QuestLogEntry["status"]): QuestLogEntry => ({
         path,
         status,
         title: path,
         line: `${path} objective`,
+        description: `${path} description`,
+        objective: `${path} objective`,
+        body: `${path} body`,
         minutes: 1,
         giver: { kind: "bot", name: "Guide", portrait: "data:image/png;base64,AAAA" },
         origin: "Guide · Lobby",
         reward: "badge",
     });
     const base = { id: "quest-panel", world: EMPTY_QUEST_WORLD, doneCount: 1, total: 3, tracked: "explore" };
+    const click = (element: Element | null | undefined) => (element as HTMLElement | null | undefined)?.click();
 
-    it("groups rows In progress, Available, Done; one tap starts or puts on the map; done rows are ticked", async () => {
-        const { target, instance } = mount(QuestPanel, {
+    it("lists In progress, Available, Done; a row opens that quest's details, Back returns to the list", async () => {
+        const { target } = mount(QuestPanel, {
             ...base,
             entries: [entry("build", "done"), entry("meet", "available"), entry("explore", "tracked")],
-            trackedBody: "Walk to the Courtyard and step inside.",
-            walkLabel: "Walk to the Courtyard",
         });
-        const events: string[] = [];
-        instance.$on("accept", (event: CustomEvent<string>) => events.push(`accept:${event.detail}`));
-        instance.$on("track", (event: CustomEvent<string>) => events.push(`track:${event.detail}`));
-        instance.$on("walk", () => events.push("walk"));
         const order = [...target.querySelectorAll("[data-testid^='quest-entry-']")].map((element) =>
             element.getAttribute("data-testid")
         );
         expect(order).toEqual(["quest-entry-explore", "quest-entry-meet", "quest-entry-build"]);
-        // The giver's face on every open row; the one on the map says so and shows its sentence and walk.
-        expect(
-            byTestId(target, "quest-entry-explore")?.querySelector("[data-testid='quest-portrait'] img")
-        ).not.toBeNull();
-        expect(byTestId(target, "quest-on-map")).not.toBeNull();
-        expect(byTestId(target, "quest-tracked-body")?.textContent).toBe("Walk to the Courtyard and step inside.");
-        byTestId(target, "quest-panel-walk")?.click();
-        // No Start, Follow or Following anywhere: the row itself is the control.
-        expect(target.querySelector("[data-testid^='quest-log-start']")).toBeNull();
-        expect(target.querySelector("[data-testid^='quest-log-follow']")).toBeNull();
-        byTestId(target, "quest-row-meet")?.click();
-        // Done: ticked, nothing to press.
-        const done = byTestId(target, "quest-row-build");
-        expect(done?.tagName).toBe("DIV");
-        expect(done?.querySelector(".quest-check")).not.toBeNull();
-        expect(byTestId(target, "quest-panel-progress")).not.toBeNull();
+        // Every row is a button that opens details; none starts anything by itself.
+        expect(byTestId(target, "quest-row-meet")?.tagName).toBe("BUTTON");
+        expect(byTestId(target, "quest-row-build")?.querySelector(".quest-check")).not.toBeNull();
+        expect(byTestId(target, "quest-row-meet")?.querySelector(".quest-bang-chip")).not.toBeNull();
         expect(target.querySelectorAll(".quest-progress-seg.lit")).toHaveLength(1);
-        expect(target.querySelector("a")).toBeNull();
 
-        instance.$set({ entries: [entry("build", "accepted"), entry("explore", "tracked")] });
+        click(byTestId(target, "quest-row-meet"));
         await tick();
-        byTestId(target, "quest-row-build")?.click();
+        expect(byTestId(target, "quest-detail-meet")).not.toBeNull();
+        expect(byTestId(target, "quest-detail-description")?.textContent).toContain("meet description");
+        expect(byTestId(target, "quest-detail-body")?.textContent).toContain("meet body");
+        expect(byTestId(target, "quest-entry-explore")).toBeNull();
+        click(byTestId(target, "quest-detail-back"));
         await tick();
-        expect(events).toEqual(["walk", "accept:meet", "track:build"]);
+        expect(byTestId(target, "quest-detail-meet")).toBeNull();
+        expect(byTestId(target, "quest-entry-explore")).not.toBeNull();
     });
 
-    it("keeps keyboard focus on a row that moves to another section", async () => {
+    it("an available quest: Accept, or Decline back to the list", async () => {
         const { target, instance } = mount(QuestPanel, {
             ...base,
             tracked: null,
-            entries: [entry("meet", "accepted")],
+            entries: [entry("meet", "available")],
         });
-        instance.$on("track", () => instance.$set({ tracked: "meet", entries: [entry("meet", "tracked")] }));
+        const events: string[] = [];
+        instance.$on("accept", (event: CustomEvent<string>) => events.push(`accept:${event.detail}`));
+        click(byTestId(target, "quest-row-meet"));
+        await tick();
+        expect(byTestId(target, "quest-detail-abandon")).toBeNull();
+        click(byTestId(target, "quest-detail-decline"));
+        await tick();
+        expect(byTestId(target, "quest-detail-meet")).toBeNull();
+        expect(events).toEqual([]);
+        click(byTestId(target, "quest-row-meet"));
+        await tick();
+        click(byTestId(target, "quest-detail-accept"));
+        expect(events).toEqual(["accept:meet"]);
+    });
+
+    it("the quest on the map: walk (or the editor) and Abandon, confirmed; another accepted one: Show on map", async () => {
+        const { target, instance } = mount(QuestPanel, {
+            ...base,
+            entries: [entry("explore", "tracked"), entry("build", "accepted")],
+            walkLabel: "Walk to the Courtyard",
+            whereText: "Courtyard is north of you",
+        });
+        const events: string[] = [];
+        for (const name of ["walk", "track", "abandon"]) {
+            instance.$on(name, (event: CustomEvent<string | null>) => events.push(`${name}:${event.detail ?? ""}`));
+        }
+        click(byTestId(target, "quest-row-explore"));
+        await tick();
+        expect(byTestId(target, "quest-on-map")).not.toBeNull();
+        expect(byTestId(target, "quest-detail-explore")?.textContent).toContain("Courtyard is north of you");
+        click(byTestId(target, "quest-detail-walk"));
+        click(byTestId(target, "quest-detail-abandon"));
+        await tick();
+        // Abandon asks first; Keep it goes back.
+        expect(byTestId(target, "quest-detail-walk")).toBeNull();
+        click(byTestId(target, "quest-detail-keep"));
+        await tick();
+        click(byTestId(target, "quest-detail-abandon"));
+        await tick();
+        click(byTestId(target, "quest-detail-abandon-confirm"));
+        await tick();
+        expect(byTestId(target, "quest-detail-explore")).toBeNull();
+
+        click(byTestId(target, "quest-row-build"));
+        await tick();
+        click(byTestId(target, "quest-detail-track"));
+        expect(events).toEqual(["walk:", "abandon:explore", "track:build"]);
+    });
+
+    it("a done quest shows how it ended and nothing to press", async () => {
+        const { target } = mount(QuestPanel, { ...base, entries: [entry("build", "done")] });
+        click(byTestId(target, "quest-row-build"));
+        await tick();
+        expect(byTestId(target, "quest-detail-build")).not.toBeNull();
+        expect(byTestId(target, "quest-detail-actions")).toBeNull();
+    });
+
+    it("keyboard: details focus Back, Back focuses the row it came from", async () => {
+        const { target } = mount(QuestPanel, { ...base, tracked: null, entries: [entry("meet", "available")] });
         const row = byTestId(target, "quest-row-meet");
         row?.focus();
         row?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
         await tick();
         await tick();
+        expect(document.activeElement).toBe(byTestId(target, "quest-detail-back"));
+        byTestId(target, "quest-detail-back")?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
+        await tick();
+        await tick();
         expect(document.activeElement).toBe(byTestId(target, "quest-row-meet"));
     });
 
-    it("closes on its close and Escape; says when everything is done", async () => {
-        const { target, instance } = mount(QuestPanel, { ...base, doneCount: 3, entries: [] });
+    it("stops the game reading movement keys only while keyboard focus is inside", () => {
+        const { target } = mount(QuestPanel, { ...base, entries: [] });
+        const close = target.querySelector(
+            "[data-testid='quest-panel-close'] button, [data-testid='quest-panel-close']"
+        );
+        const focusVisible = vi.spyOn(Element.prototype, "matches");
+        focusVisible.mockReturnValue(false);
+        close?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        expect(get(questInputFocusStore)).toBe(false);
+        focusVisible.mockImplementation((selector: string) => selector === ":focus-visible");
+        close?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+        expect(get(questInputFocusStore)).toBe(true);
+        close?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null }));
+        expect(get(questInputFocusStore)).toBe(false);
+        focusVisible.mockRestore();
+    });
+
+    it("closes on its close; Escape goes back from details, then closes; says when everything is done", async () => {
+        const { target, instance } = mount(QuestPanel, { ...base, doneCount: 3, entries: [entry("meet", "done")] });
         let closes = 0;
         instance.$on("close", () => closes++);
-        byTestId(target, "quest-panel-close")?.click();
-        escape(byTestId(target, "quest-panel-close"));
+        click(byTestId(target, "quest-row-meet"));
+        await tick();
+        escape(byTestId(target, "quest-detail-back"));
+        await tick();
+        expect(byTestId(target, "quest-detail-meet")).toBeNull();
+        expect(closes).toBe(0);
+        escape(byTestId(target, "quest-row-meet"));
+        click(byTestId(target, "quest-panel-close"));
         await tick();
         expect(closes).toBe(2);
         expect(byTestId(target, "quest-panel-all-done")).not.toBeNull();

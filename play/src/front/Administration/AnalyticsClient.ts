@@ -1206,7 +1206,7 @@ class AnalyticsClient {
     }
 
     /** The quest bar was hidden while a quest was followed: the only way a followed quest stops. */
-    questStopped(properties: { questId: QuestAnalyticsId; reason: "hidden" }): void {
+    questStopped(properties: { questId: QuestAnalyticsId; reason: "hidden" | "abandoned" }): void {
         this.captureQuest("wa_quest_stopped", properties);
     }
 

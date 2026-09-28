@@ -44,9 +44,9 @@ export interface QuestEntry {
 
 /**
  * What the dock shows. "none" is an empty dock (the Quests pill still rests there when the room offers something).
- * The panel ("log") opens above the pill and remembers what it covered. A "celebration" plays a completion.
+ * The panel ("log", the quest log) opens above the pill. A "celebration" plays a completion.
  */
-export type QuestSurface = "none" | "invitation" | "options" | "pill" | "card" | "log" | "celebration";
+export type QuestSurface = "none" | "invitation" | "pill" | "log" | "celebration";
 export type QuestVisibleSurface = QuestSurface;
 export type QuestStatus = "available" | "accepted" | "tracked" | "done";
 
@@ -76,8 +76,6 @@ export interface QuestState {
     /** The chapter's own celebration has played (once per browser). */
     chapterCelebrated: boolean;
     surface: QuestSurface;
-    /** What the panel covered, to put back when it closes. */
-    beforeLog: QuestSurface | null;
     /** Something happened the person has not seen yet: a dot on the Quests row. */
     news: boolean;
 }
@@ -93,10 +91,9 @@ export type QuestEvent =
     | { type: "invitation-shown"; origin?: QuestOrigin }
     | { type: "invitation-faded" }
     | { type: "decline" }
-    | { type: "open-options" }
     | { type: "accept"; path: QuestPath; now: number; exploreArea?: QuestAreaRef; origin?: QuestOrigin }
     | { type: "track"; path: QuestPath }
-    | { type: "open-card" }
+    | { type: "abandon"; path: QuestPath }
     | { type: "open-log" }
     | { type: "toggle-log" }
     | { type: "close" }
@@ -131,7 +128,6 @@ export function initialQuestState(): QuestState {
         celebrating: null,
         chapterCelebrated: false,
         surface: "none",
-        beforeLog: null,
         news: false,
     };
 }
@@ -207,25 +203,6 @@ function clone(state: QuestState): QuestState {
     };
 }
 
-function afterClose(state: QuestState): QuestSurface {
-    switch (state.surface) {
-        case "options":
-            // Closing the options is not a decline: back to the invitation if nothing was picked yet.
-            return canReturnToInvitation(state) ? "invitation" : restingSurface(state);
-        case "log": {
-            const before = state.beforeLog;
-            if (before === "invitation" || before === "options") return canReturnToInvitation(state) ? before : "none";
-            return restingSurface(state);
-        }
-        default:
-            return restingSurface(state);
-    }
-}
-
-function canReturnToInvitation(state: QuestState): boolean {
-    return !state.declined && !anyAccepted(state);
-}
-
 export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState {
     if (event.type === "reset") return initialQuestState();
     const state = clone(previous);
@@ -237,7 +214,7 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             state.surface = "invitation";
             return state;
         case "invitation-faded":
-            if (state.surface !== "invitation" && state.surface !== "options") return previous;
+            if (state.surface !== "invitation") return previous;
             if (anyAccepted(state)) return previous;
             state.surface = "none";
             state.news = true;
@@ -248,9 +225,6 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             state.invitationSeen = Math.max(0, state.invitationSeen - 1);
             state.surface = "none";
             return state;
-        case "open-options":
-            state.surface = "options";
-            return state;
         case "accept": {
             const entry = state.quests[event.path];
             if (entry.done) return previous;
@@ -260,32 +234,38 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
                 entry.origin = event.origin ? cloneOrigin(event.origin) : null;
             }
             if (event.path === "explore" && event.exploreArea) state.exploreArea = { ...event.exploreArea };
+            // The newest quest goes on the map, and the log closes, as a quest giver's window does on Accept.
             state.tracked = event.path;
-            // The card opens expanded so the objective and its buttons are read before it folds to the pill.
-            state.surface = "card";
-            state.beforeLog = null;
+            state.surface = restingSurface(state);
             state.news = false;
             return state;
         }
         case "track": {
             const entry = state.quests[event.path];
-            if (!entry.accepted || entry.done) return previous;
+            if (!entry.accepted || entry.done || state.tracked === event.path) return previous;
+            // Shown on the map from the log: the log stays open on that quest.
             state.tracked = event.path;
-            state.surface = "card";
-            state.beforeLog = null;
             state.news = false;
             return state;
         }
-        case "open-card":
-            if (!state.tracked) return previous;
-            state.surface = "card";
-            state.news = false;
+        case "abandon": {
+            const entry = state.quests[event.path];
+            if (!entry.accepted || entry.done) return previous;
+            state.quests[event.path] = emptyEntry();
+            if (event.path === "explore") state.exploreArea = null;
+            state.pending = state.pending.filter((path) => path !== event.path);
+            // The map keeps showing something while anything is in progress.
+            if (state.tracked === event.path) {
+                state.tracked =
+                    QUEST_PATHS.find((path) => state.quests[path].accepted && !state.quests[path].done) ?? null;
+            }
+            if (state.surface === "pill" && !state.tracked) state.surface = "none";
             return state;
+        }
         case "open-log":
             if (state.surface === "log") return previous;
-            // Opening the panel over a celebration ends it, as tapping it away would: the chapter's counts as played.
+            // Opening the log over a celebration ends it, as tapping it away would: the chapter's counts as played.
             if (state.surface === "celebration" && state.celebrating === null) state.chapterCelebrated = true;
-            state.beforeLog = state.surface === "celebration" ? null : state.surface;
             state.celebrating = null;
             state.surface = "log";
             state.news = false;
@@ -293,12 +273,9 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
         case "toggle-log":
             return reduceQuest(previous, { type: state.surface === "log" ? "close" : "open-log" });
         case "close":
-            if (state.surface === "none" || state.surface === "pill" || state.surface === "invitation") {
-                return previous;
-            }
-            if (state.surface === "celebration") return previous;
-            state.surface = afterClose(state);
-            state.beforeLog = null;
+            // Only the log closes: the invitation is answered, a celebration settles by itself.
+            if (state.surface !== "log") return previous;
+            state.surface = restingSurface(state);
             return state;
         case "complete": {
             const entry = state.quests[event.path];
@@ -339,9 +316,8 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             }
             if (state.celebrating === null) state.chapterCelebrated = true;
             state.celebrating = null;
-            // Then the panel, with the finished quest ticked and what is left to do.
+            // Then the log, with the finished quest ticked and what is left to do.
             state.surface = "log";
-            state.beforeLog = null;
             return state;
     }
     return previous;
@@ -358,13 +334,7 @@ export function revealPending(previous: QuestState, blocked: boolean): QuestStat
     let state = previous;
     const kept = state.pending.filter((path) => path === state.tracked);
     if (kept.length !== state.pending.length) state = { ...state, pending: kept };
-    if (
-        blocked ||
-        state.pending.length === 0 ||
-        state.surface === "log" ||
-        state.surface === "celebration" ||
-        state.surface === "options"
-    ) {
+    if (blocked || state.pending.length === 0 || state.surface === "log" || state.surface === "celebration") {
         return state;
     }
     const [celebrating, ...pending] = state.pending;

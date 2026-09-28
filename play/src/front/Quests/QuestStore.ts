@@ -188,13 +188,20 @@ export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: numb
     if (path === "meet" && world.present.length === 0) pauseQuest(path);
 }
 
-/** Puts an accepted quest on the map: it becomes the tracked one and its card opens. */
+/** Show on map, from the log: an accepted quest becomes the one marked on the map. */
 export function trackQuest(path: QuestPath, from: QuestAnalyticsFrom = "log"): void {
     const before = get(state);
     dispatchQuest({ type: "track", path });
     if (get(state) !== before && get(state).tracked === path) {
         analyticsClient.questTracked({ questId: questAnalyticsId(path), from });
     }
+}
+
+/** Abandon, from the log: the quest goes back to Available, and can be taken again. */
+export function abandonQuest(path: QuestPath): void {
+    const before = get(state);
+    dispatchQuest({ type: "abandon", path });
+    if (get(state) !== before) analyticsClient.questStopped({ questId: questAnalyticsId(path), reason: "abandoned" });
 }
 
 /** Records a met objective (every accepted quest, tracked or not). Presentation is separate: see revealPending. */

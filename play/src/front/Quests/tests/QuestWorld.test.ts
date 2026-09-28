@@ -218,7 +218,7 @@ describe("the quest giver", () => {
         };
         expect(offerHost(offering, helperFirst)).toEqual(guideHost);
         expect(questGiverUserId(offering, helperFirst, ["meet"])).toBe(2);
-        expect(offerHost(reduceQuest(offering, { type: "open-options" }), helperFirst)).toEqual(guideHost);
+        expect(offerHost(reduceQuest(offering, { type: "open-log" }), helperFirst)).toEqual(guideHost);
         // No offer made yet: whoever hosts now.
         expect(offerHost(initialQuestState(), helperFirst)).toMatchObject({ name: "Helper" });
     });

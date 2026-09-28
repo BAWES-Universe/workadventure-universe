@@ -176,7 +176,9 @@
                         const edge = edgeArrowPlacement(toScreen(feet), { ...view, width });
                         placed = { kind: "edge", x: edge.x, y: edge.y, angle: edge.angle };
                     }
-                    nextMark = { ...placed, ...rounded(placed) };
+                    // The giver is the target itself (Meet): its "!" already sits there, one mark is enough.
+                    const giverIsTarget = target.kind === "player" && target.userId === giverUserId;
+                    if (!(giverIsTarget && placed.kind === "above")) nextMark = { ...placed, ...rounded(placed) };
                 }
             }
             // The camera is read every frame; the page is only touched when a mark has moved.
