@@ -17,6 +17,8 @@
 
     function onPointerDown(event: PointerEvent) {
         if (event.button !== 0) return;
+        // Only the first finger drives the sheet; a second one must not take over mid-drag.
+        if (activePointerId !== undefined) return;
         activePointerId = event.pointerId;
         startY = event.clientY;
         startHeight = sheetHeight;
@@ -67,6 +69,7 @@
     on:pointermove={onPointerMove}
     on:pointerup={onPointerUp}
     on:pointercancel={onPointerCancel}
+    on:lostpointercapture={onPointerCancel}
 >
     <span class="block h-1.5 w-12 rounded-full bg-white/40" aria-hidden="true" />
     <span class="text-base font-bold truncate max-w-full">{title}</span>
