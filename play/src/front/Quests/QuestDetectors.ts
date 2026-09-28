@@ -40,13 +40,56 @@ export const MOVE_TO_WAIT_MS = 8_000;
  */
 export const SIM_BOT_REPLY_MS = 2_500;
 
+/** How often to look again for the proximity chat, which the scene creates once its connection is up. */
+export const CHAT_ROOM_RETRY_MS = 500;
+
+type MovementListener = Parameters<GameScene["onPlayerMovementEnded"]>[0];
+type EnterAreaListener = Parameters<ReturnType<GameScene["getGameMapFrontWrapper"]>["onEnterArea"]>[0];
+const movementHubs = new WeakMap<object, Set<MovementListener>>();
+const enterAreaHubs = new WeakMap<object, Set<EnterAreaListener>>();
+
+/**
+ * The scene and the map only let callbacks be added, never removed. One forwarding callback per scene (or map) feeds a
+ * set that quests can leave again, so arming the same map twice (the dock re-mounting) never piles callbacks up.
+ */
+function onMovementEnded(scene: GameScene, listener: MovementListener): () => void {
+    let hub = movementHubs.get(scene);
+    if (!hub) {
+        const listeners = new Set<MovementListener>();
+        hub = listeners;
+        movementHubs.set(scene, listeners);
+        scene.onPlayerMovementEnded((event) => {
+            for (const forward of Array.from(listeners)) forward(event);
+        });
+    }
+    hub.add(listener);
+    const listeners = hub;
+    return () => listeners.delete(listener);
+}
+
+function onEnterArea(scene: GameScene, listener: EnterAreaListener): () => void {
+    const map = scene.getGameMapFrontWrapper();
+    let hub = enterAreaHubs.get(map);
+    if (!hub) {
+        const listeners = new Set<EnterAreaListener>();
+        hub = listeners;
+        enterAreaHubs.set(map, listeners);
+        map.onEnterArea((...args: Parameters<EnterAreaListener>) => {
+            for (const forward of Array.from(listeners)) forward(...args);
+        });
+    }
+    hub.add(listener);
+    const listeners = hub;
+    return () => listeners.delete(listener);
+}
+
 function toQuestArea(area: AreaData): QuestArea {
     return { id: area.id, name: area.name, x: area.x, y: area.y, width: area.width, height: area.height };
 }
 
 /**
  * Watches one map for the three objectives and for who is here. Everything it registers is undone by the returned
- * function; callbacks it cannot unregister (area and movement hooks) are inert once it has run.
+ * function.
  */
 export function armQuestScene(scene: GameScene): () => void {
     let active = true;
@@ -178,7 +221,7 @@ export function armQuestScene(scene: GameScene): () => void {
             completeQuest("explore", "already-valid");
         }
     }
-    scene.getGameMapFrontWrapper().onEnterArea((entered) => {
+    const stopEnterArea = onEnterArea(scene, (entered) => {
         if (!active) return;
         const names = entered.map((area) => ({ id: area.id, name: area.name }));
         deferred(() => {
@@ -189,6 +232,7 @@ export function armQuestScene(scene: GameScene): () => void {
             if (names.some((area) => area.id === target.id || area.name === target.name)) completeQuest("explore");
         });
     });
+    cleanups.push(stopEnterArea);
 
     // Meet: a message each way within one bubble session. -----------------------------------------------------------
     const setMeetProgress = () => questMeetProgressStore.set(exchange.progress);
@@ -199,14 +243,16 @@ export function armQuestScene(scene: GameScene): () => void {
     setMeetAlreadyExchanged(() => active && exchange.progress === "exchanged");
     cleanups.push(() => setMeetAlreadyExchanged(undefined));
 
-    let room: ProximityChatRoom | undefined;
-    try {
-        room = scene.proximityChatRoom;
-    } catch {
-        room = undefined;
-    }
-    if (room) {
-        const chat = room;
+    // The scene creates its proximity chat once its connection is up, which can be after the map counts as loaded.
+    // Until then, keep looking; Meet starts listening as soon as it exists.
+    const chatRoom = (): ProximityChatRoom | undefined => {
+        try {
+            return scene.proximityChatRoom;
+        } catch {
+            return undefined;
+        }
+    };
+    const armMeet = (chat: ProximityChatRoom) => {
         const seen = new Set<string>();
         for (const message of Array.from(get(chat.messages))) seen.add(message.id);
         let participantNames: string[] = [];
@@ -262,7 +308,13 @@ export function armQuestScene(scene: GameScene): () => void {
             });
         });
         cleanups.push(() => saySubscription.unsubscribe());
-    }
+    };
+    const lookForChat = () => {
+        const chat = chatRoom();
+        if (chat) armMeet(chat);
+        else later(CHAT_ROOM_RETRY_MS, lookForChat);
+    };
+    lookForChat();
     cleanups.push(() => questMeetProgressStore.set("idle"));
 
     // Build: the first object this player places. -------------------------------------------------------------------
@@ -310,11 +362,13 @@ export function armQuestScene(scene: GameScene): () => void {
             });
         }
         if (!moved) {
-            scene.onPlayerMovementEnded(() => {
-                if (!active || moved) return;
-                moved = true;
-                settle();
-            });
+            cleanups.push(
+                onMovementEnded(scene, () => {
+                    if (!active || moved) return;
+                    moved = true;
+                    settle();
+                })
+            );
             later(MOVE_TO_WAIT_MS, () => {
                 moved = true;
                 settle();

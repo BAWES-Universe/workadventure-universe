@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
 
 const current = vi.hoisted(() => ({ scene: undefined as unknown }));
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
@@ -21,7 +21,7 @@ vi.mock("../../Stores/MenuStore", async () => {
 });
 
 import type { GameScene } from "../../Phaser/Game/GameScene";
-import { armQuestScene } from "../QuestDetectors";
+import { armQuestScene, CHAT_ROOM_RETRY_MS } from "../QuestDetectors";
 import { questWorldStore } from "../QuestStore";
 
 const areas = [
@@ -69,6 +69,69 @@ describe("quest detectors", () => {
         expect(world.host).toMatchObject({ kind: "area", name: "Hall" });
 
         disarm();
+        current.scene = undefined;
+    });
+
+    it("starts watching the proximity chat once the scene has created it", () => {
+        vi.useFakeTimers();
+        try {
+            const holder: { chat?: unknown } = {};
+            const subscribed = vi.fn();
+            const scene = fakeScene();
+            Object.defineProperty(scene, "proximityChatRoom", {
+                get: () => {
+                    if (!holder.chat) throw new Error("_proximityChatRoom not yet initialized");
+                    return holder.chat;
+                },
+            });
+            current.scene = scene;
+            const disarm = armQuestScene(scene);
+            expect(subscribed).not.toHaveBeenCalled();
+
+            const messages = writable<unknown[]>([]);
+            holder.chat = {
+                currentSessionId: undefined,
+                participants: writable([]),
+                messages: {
+                    subscribe: (run: (value: unknown[]) => void) => {
+                        subscribed();
+                        return messages.subscribe(run);
+                    },
+                },
+            };
+            vi.advanceTimersByTime(CHAT_ROOM_RETRY_MS);
+            const calls = subscribed.mock.calls.length;
+            expect(calls).toBeGreaterThan(0);
+
+            // Found once: it doesn't keep looking or subscribe again.
+            vi.advanceTimersByTime(CHAT_ROOM_RETRY_MS * 4);
+            expect(subscribed).toHaveBeenCalledTimes(calls);
+            disarm();
+        } finally {
+            vi.useRealTimers();
+            current.scene = undefined;
+        }
+    });
+
+    it("registers one area callback per map, however often it is armed", () => {
+        const onEnterArea = vi.fn();
+        const onPlayerMovementEnded = () => {};
+        const map = {
+            areasManager: { getCollidingAreas: () => [] },
+            getAreas: () => new Map(areas.map((area) => [area.id, area])),
+            onEnterArea,
+        };
+        const scene = {
+            ...fakeScene(),
+            getGameMapFrontWrapper: () => map,
+            onPlayerMovementEnded,
+        } as unknown as GameScene;
+        current.scene = scene;
+        const first = armQuestScene(scene);
+        first();
+        const second = armQuestScene(scene);
+        second();
+        expect(onEnterArea).toHaveBeenCalledTimes(1);
         current.scene = undefined;
     });
 });
