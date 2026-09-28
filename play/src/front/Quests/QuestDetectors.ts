@@ -350,7 +350,7 @@ export function armQuestScene(scene: GameScene): () => void {
         const settle = () => {
             if (moved && hostChecked) questArrivalStore.set("ready");
         };
-        const hostHere = () => world?.host.kind !== "none" || questSim !== "bot";
+        const hostHere = () => (world !== undefined && world.host.kind !== "none") || questSim !== "bot";
         if (hostHere()) hostChecked = true;
         else {
             const stopWaitingForHost = scene.MapPlayersByKey.subscribe(() => {
