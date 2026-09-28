@@ -25,6 +25,8 @@ services:
     volumes: []
     environment:
       ENABLE_OPENAPI_ENDPOINT: "true"
+      # End-to-end tests run the production behaviour: the quests proof slice (#511) stays off here.
+      FEATURE_FLAG_QUESTS_PROOF_SLICE: "false"
       STARTUP_COMMAND_0: ""
       STARTUP_COMMAND_1: ""
       STARTUP_COMMAND_2: ""
