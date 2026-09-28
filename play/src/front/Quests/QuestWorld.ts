@@ -140,6 +140,35 @@ export function resolveQuestHost(
     return { kind: "none" };
 }
 
+/**
+ * The host for the rest of this visit. The game only knows the people near the player's screen, so a host bot drops
+ * out of `present` as soon as the player walks off, though it is still in the room. Once a bot has hosted here it
+ * keeps hosting, out of view (`userId` null, its face kept) or back in view, unless the owner's choice says otherwise:
+ * the quest giver doesn't change or lose its face because the player walked away.
+ */
+export function keepQuestHost(
+    previous: QuestHost | undefined,
+    live: QuestHost,
+    present: readonly QuestPresent[],
+    override?: QuestHostOverride
+): QuestHost {
+    if (previous?.kind !== "bot") return live;
+    if (override?.kind === "none" || override?.kind === "area") return live;
+    if (override?.kind === "bot" && override.uuid !== previous.uuid) return live;
+    if (live.kind === "bot" && live.uuid === previous.uuid) {
+        return live.portrait || !previous.portrait ? live : { ...live, portrait: previous.portrait };
+    }
+    const here = present.find((person) => person.isBot && person.uuid === previous.uuid);
+    const portrait = here?.portrait ?? previous.portrait;
+    return {
+        kind: "bot",
+        userId: here?.userId ?? null,
+        uuid: previous.uuid,
+        name: here?.name ?? previous.name,
+        ...(portrait ? { portrait } : {}),
+    };
+}
+
 /** Whether a path can be completed in this room right now. For now every bot counts as conversational. */
 export function isPathCompletable(world: QuestWorld, path: QuestPath): boolean {
     switch (path) {

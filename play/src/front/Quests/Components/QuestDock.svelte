@@ -653,24 +653,33 @@
         gap: 0.5rem;
         font-size: 0.875rem;
     }
-    :global(.quest-objective-box) {
+    :global(.quest-objective-dot) {
         flex: none;
+        width: 0.375rem;
+        height: 0.375rem;
+        border-radius: 999px;
+        background: #f5a623;
+    }
+    :global(.quest-objective-count) {
+        flex: none;
+        font-size: 0.75rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: rgba(255, 255, 255, 0.7);
+    }
+    :global(.quest-objective-done .quest-objective-dot) {
+        background: #e9c74c;
+    }
+    :global(.quest-objective-done .font-semibold) {
+        opacity: 0.75;
+    }
+    :global(.quest-on-map-note) {
         display: flex;
         align-items: center;
-        justify-content: center;
-        width: 1.125rem;
-        height: 1.125rem;
-        border-radius: 0.25rem;
-        border: 1.5px solid rgba(255, 255, 255, 0.5);
-    }
-    :global(.quest-objective-done .quest-objective-box) {
-        color: #1b2a41;
-        background: #e9c74c;
-        border-color: #e9c74c;
-    }
-    :global(.quest-objective-done > span:last-child) {
-        text-decoration: line-through;
-        opacity: 0.7;
+        gap: 0.375rem;
+        margin: 0.5rem 0 0;
+        font-size: 0.8125rem;
+        color: #fbbf24;
     }
     :global(.quest-detail-actions) {
         display: flex;
@@ -689,59 +698,6 @@
         color: #1b2a41;
         background: #e9c74c;
     }
-    /* The WoW quest-giver mark, on an Available row. */
-    :global(.quest-bang-chip) {
-        flex: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 1.375rem;
-        height: 1.375rem;
-        border-radius: 999px;
-        font-weight: 900;
-        font-size: 0.875rem;
-        color: #1b2a41;
-        background: #f5a623;
-    }
-    :global(.quest-row-chevron) {
-        flex: none;
-        color: rgba(255, 255, 255, 0.5);
-    }
-    :global([dir="rtl"] .quest-row-chevron) {
-        transform: scaleX(-1);
-    }
-    :global(.quest-log-section) {
-        margin: 0.75rem 0 0.25rem;
-        font-size: 0.75rem;
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.6);
-    }
-    /* The chapter's progress: one segment per quest, amber once done. */
-    :global(.quest-progress) {
-        display: flex;
-        gap: 0.25rem;
-        height: 0.25rem;
-    }
-    :global(.quest-progress-seg) {
-        flex: 1;
-        border-radius: 2px;
-        background: rgba(255, 255, 255, 0.15);
-        transition: background 300ms ease;
-    }
-    :global(.quest-progress-seg.lit) {
-        background: linear-gradient(90deg, #c4b5fd, #f5a623);
-    }
-    /* Row tags: "On the map" in amber, "Tap to start" quiet. */
-    :global(.quest-tag) {
-        flex: none;
-        padding: 0.125rem 0.5rem;
-        border-radius: 999px;
-        font-size: 0.6875rem;
-        font-weight: 700;
-        white-space: nowrap;
-        color: #1b2a41;
-        background: #f5a623;
-    }
     :global(.quest-tag-quiet) {
         color: rgba(255, 255, 255, 0.7);
         background: rgba(255, 255, 255, 0.1);
@@ -749,7 +705,6 @@
     :global(.quest-stamp-mini) {
         flex: none;
         display: flex;
-        opacity: 0.8;
     }
     :global(.quest-check) {
         flex: none;

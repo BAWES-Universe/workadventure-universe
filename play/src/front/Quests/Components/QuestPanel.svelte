@@ -165,9 +165,7 @@
                             <p class="quest-eyebrow m-0 truncate">{entry.origin}</p>
                             <p class="quest-meta m-0">{$LL.quest.minutes({ minutes: entry.minutes })}</p>
                         </div>
-                        {#if onMap}
-                            <span class="quest-tag" data-testid="quest-on-map">{$LL.quest.log.onMap()}</span>
-                        {:else if entry.status === "done"}
+                        {#if entry.status === "done"}
                             <span class="quest-tag quest-tag-done">{$LL.quest.detail.completed()}</span>
                         {/if}
                     </div>
@@ -176,28 +174,53 @@
                     </p>
 
                     <h3 class="quest-detail-label">{$LL.quest.detail.objective()}</h3>
+                    <!-- A line of the quest tracker, as in an RPG: a bullet, then 0/1 while it's on, a tick once done. Nothing
+                         here is a control, so nothing looks like one. -->
                     <div class="quest-objective" class:quest-objective-done={entry.status === "done"}>
-                        <span class="quest-objective-box" aria-hidden="true">
-                            {#if entry.status === "done"}
-                                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" focusable="false">
+                        <span class="quest-objective-dot" aria-hidden="true" />
+                        <span class="min-w-0 flex-1 font-semibold">{entry.objective}</span>
+                        {#if entry.status === "done"}
+                            <span class="quest-check" aria-hidden="true">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" focusable="false">
                                     <path
                                         d="m3.5 8.5 3 3 6-7"
                                         stroke="currentColor"
-                                        stroke-width="2.5"
+                                        stroke-width="2.25"
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
                                     />
                                 </svg>
-                            {/if}
-                        </span>
-                        <span class="min-w-0 flex-1 font-semibold">{entry.objective}</span>
+                            </span>
+                        {:else if entry.status !== "available"}
+                            <span class="quest-objective-count" data-testid="quest-objective-count">0/1</span>
+                        {/if}
                     </div>
                     <p class="quest-secondary m-0 mt-1" data-testid="quest-detail-body">{entry.note ?? entry.body}</p>
                     {#if entry.requirement}
                         <p class="quest-secondary m-0 mt-1">{entry.requirement}</p>
                     {/if}
-                    {#if onMap && whereText}
-                        <p class="sr-only">{whereText}</p>
+                    {#if onMap}
+                        <p class="quest-on-map-note" data-testid="quest-on-map">
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                aria-hidden="true"
+                                focusable="false"
+                            >
+                                <path
+                                    d="M8 14.5s4.5-4.2 4.5-7.7A4.5 4.5 0 0 0 3.5 6.8c0 3.5 4.5 7.7 4.5 7.7Z"
+                                    stroke="currentColor"
+                                    stroke-width="1.6"
+                                />
+                                <circle cx="8" cy="6.8" r="1.6" fill="currentColor" />
+                            </svg>
+                            <span>{$LL.quest.detail.onMapNote()}</span>
+                        </p>
+                        {#if whereText}
+                            <p class="sr-only">{whereText}</p>
+                        {/if}
                     {/if}
 
                     <h3 class="quest-detail-label">{$LL.quest.detail.reward()}</h3>
@@ -340,12 +363,24 @@
                                         <span class="min-w-0 flex-1">
                                             <span class="block font-bold">{row.title}</span>
                                             <span class="quest-secondary block truncate">{row.note ?? row.line}</span>
+                                            {#if row.status !== "done"}
+                                                <span class="quest-meta block truncate">
+                                                    {row.origin} · {$LL.quest.minutes({ minutes: row.minutes })}
+                                                </span>
+                                            {/if}
                                         </span>
                                         {#if row.status === "tracked"}
                                             <span class="quest-tag">{$LL.quest.log.onMap()}</span>
-                                        {:else if row.status === "available"}
-                                            <span class="quest-bang-chip" aria-hidden="true">!</span>
-                                        {:else if row.status === "done"}
+                                        {:else if row.status !== "done"}
+                                            <!-- The badge this quest earns, as in the game's reward line. -->
+                                            <span
+                                                class="quest-stamp-mini"
+                                                data-testid="quest-row-reward-{row.path}"
+                                                aria-hidden="true"
+                                            >
+                                                <QuestStamp path={row.path} size={28} tilted={false} />
+                                            </span>
+                                        {:else}
                                             <span class="quest-check" aria-hidden="true">
                                                 <svg
                                                     width="16"

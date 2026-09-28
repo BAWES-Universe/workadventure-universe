@@ -2,7 +2,7 @@ import { derived } from "svelte/store";
 import LL from "../../i18n/i18n-svelte";
 import type { TranslationFunctions } from "../../i18n/i18n-types";
 import type { OrbitQuestEntry } from "../external-modules/admin-api/orbitBridge";
-import { entryOrigin, questTitle } from "./QuestCopy";
+import { entryOrigin, questObjective, questTitle } from "./QuestCopy";
 import type { QuestState } from "./QuestModel";
 import { QUEST_PATHS, QUEST_STAMPS, questStatus } from "./QuestModel";
 import { questAnalyticsId, questStateStore, questWorldStore } from "./QuestStore";
@@ -26,6 +26,7 @@ export function orbitQuestEntries(t: TranslationFunctions, state: QuestState, wo
             ...(status === "done" ? { stamp: QUEST_STAMPS[path] } : {}),
             ...(giver ? { giver: giver.name } : {}),
             room,
+            objective: questObjective(t, path, state, world),
         });
     }
     // Tracked first, then accepted, then done: the order of the game's log.

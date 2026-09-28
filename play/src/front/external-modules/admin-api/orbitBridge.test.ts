@@ -198,7 +198,9 @@ describe("Orbit bridge quest log", () => {
         const { bridge, posted } = makeBridge();
         bridge.onReady();
         const long = "x".repeat(200);
-        bridge.setQuestState(Array.from({ length: 12 }, () => ({ ...entry, title: long, giver: long, room: long })));
+        bridge.setQuestState(
+            Array.from({ length: 12 }, () => ({ ...entry, title: long, giver: long, room: long, objective: long }))
+        );
         const message = posted[1];
         expect(isOrbitQuestStateMessage(message)).toBe(true);
         if (message.type !== "orbit-quest-state") throw new Error("expected the quest log");
@@ -206,11 +208,14 @@ describe("Orbit bridge quest log", () => {
         expect(message.entries[0].title).toHaveLength(80);
         expect(message.entries[0].giver).toHaveLength(64);
         expect(message.entries[0].room).toHaveLength(80);
+        expect(message.entries[0].objective).toHaveLength(120);
     });
 
     it("rejects malformed quest logs", () => {
         const good = { type: "orbit-quest-state", version: 1, roomRevision: revision, entries: [entry] };
         expect(isOrbitQuestStateMessage(good)).toBe(true);
+        expect(isOrbitQuestStateMessage({ ...good, entries: [{ ...entry, objective: "Find the Hall" }] })).toBe(true);
+        expect(isOrbitQuestStateMessage({ ...good, entries: [{ ...entry, objective: "" }] })).toBe(false);
         expect(isOrbitQuestStateMessage({ ...good, roomRevision: undefined })).toBe(false);
         expect(isOrbitQuestStateMessage({ ...good, roomRevision: "short" })).toBe(false);
         expect(isOrbitQuestStateMessage({ ...good, version: 2 })).toBe(false);

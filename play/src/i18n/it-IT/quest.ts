@@ -102,6 +102,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         accept: "Accetta",
         decline: "Rifiuta",
         showOnMap: "Mostra sulla mappa",
+        onMapNote: "La tua mappa ti indica la strada per questa missione.",
         abandon: "Abbandona la missione",
         abandonConfirm: "Abbandonare questa missione? Potrai riprenderla più tardi.",
         keep: "Tienila",

@@ -36,7 +36,9 @@
     let giver: Point | undefined;
     let frame: number | undefined;
     let measuredAt = 0;
-    let measured: { layer: DOMRect; canvas: DOMRect; view: Box; column: Box | undefined } | undefined;
+    let measured:
+        | { layer: DOMRect; canvas: DOMRect; view: Box; dock: Box | undefined; column: Box | undefined }
+        | undefined;
 
     $: active = !suppressed && (path !== null || giverUserId !== undefined);
     $: if (active) start();
@@ -54,7 +56,11 @@
         measured = undefined;
     }
 
-    /** The part of the map the person can actually see: minus the camera strip at the top and the dock. */
+    /**
+     * The part of the map the person can actually see: minus the camera strip at the top. The dock is not cut out of it
+     * as a band across the whole width (an open panel would then hide every mark on the map): a mark is hidden only
+     * where it sits behind the dock itself (see dockBox).
+     */
     function mapView(layerRect: DOMRect): Box {
         let top = MARGIN;
         let bottom = layerRect.height - MARGIN;
@@ -62,9 +68,31 @@
         if (cameras && cameras.height > 0 && cameras.height < layerRect.height / 2) {
             top = Math.max(top, cameras.bottom - layerRect.top + MARGIN / 2);
         }
-        const dock = avoid?.getBoundingClientRect();
-        if (dock && dock.height > 0) bottom = Math.min(bottom, dock.top - layerRect.top - MARGIN / 2);
         return { left: MARGIN, top, width: layerRect.width - 2 * MARGIN, height: Math.max(0, bottom - top) };
+    }
+
+    /** The dock (pill or open panel), relative to the layer, with a little room around it. */
+    function dockBox(layerRect: DOMRect): Box | undefined {
+        const dock = avoid?.getBoundingClientRect();
+        if (!dock || dock.height <= 0 || dock.width <= 0) return undefined;
+        const pad = MARGIN / 2;
+        return {
+            left: dock.left - layerRect.left - pad,
+            top: dock.top - layerRect.top - pad,
+            width: dock.width + 2 * pad,
+            height: dock.height + 2 * pad,
+        };
+    }
+
+    /** Whether a mark whose bottom centre is at `point` would sit behind `box`. */
+    function behind(point: Point, box: Box | undefined): boolean {
+        if (!box) return false;
+        return (
+            point.x + MARK_SIZE / 2 > box.left &&
+            point.x - MARK_SIZE / 2 < box.left + box.width &&
+            point.y > box.top &&
+            point.y - MARK_SIZE < box.top + box.height
+        );
     }
 
     /** The bottom-right column (zoom tools, Express), relative to the layer: drawn above the quest layer. */
@@ -145,11 +173,12 @@
                     layer: layerRect,
                     canvas: scene.game.canvas.getBoundingClientRect(),
                     view: mapView(layerRect),
+                    dock: dockBox(layerRect),
                     column: rightColumn(layerRect),
                 };
                 measuredAt = now;
             }
-            const { layer: layerRect, canvas, view, column } = measured;
+            const { layer: layerRect, canvas, view, dock, column } = measured;
             const camera = scene.cameras.main;
             const toScreen = (world: Point) =>
                 worldToSectionPoint(
@@ -178,7 +207,10 @@
                     }
                     // The giver is the target itself (Meet): its "!" already sits there, one mark is enough.
                     const giverIsTarget = target.kind === "player" && target.userId === giverUserId;
-                    if (!(giverIsTarget && placed.kind === "above")) nextMark = { ...placed, ...rounded(placed) };
+                    const hiddenByDock = placed.kind === "above" && behind(placed, dock);
+                    if (!(giverIsTarget && placed.kind === "above") && !hiddenByDock) {
+                        nextMark = { ...placed, ...rounded(placed) };
+                    }
                 }
             }
             // The camera is read every frame; the page is only touched when a mark has moved.
@@ -190,7 +222,7 @@
                 if (person) {
                     // Only over the visible map: never over the cameras or the dock.
                     const point = rounded(toScreen({ x: person.x, y: person.y - NAME_LABEL_Y - ABOVE_NAME }));
-                    nextGiver = markInside(point, view) ? point : undefined;
+                    nextGiver = markInside(point, view) && !behind(point, dock) ? point : undefined;
                 }
             }
             if (!samePoint(giver, nextGiver)) giver = nextGiver;

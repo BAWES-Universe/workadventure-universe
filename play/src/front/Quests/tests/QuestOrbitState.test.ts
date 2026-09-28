@@ -22,9 +22,28 @@ describe("the quest log sent to Orbit", () => {
 
         const entries = orbitQuestEntries(t, state, world);
         expect(entries).toEqual([
-            { id: "welcome.meet", title: "Meet someone", status: "tracked", room: "Lobby" },
-            { id: "welcome.explore", title: "Explore this place", status: "accepted", room: "Lobby" },
-            { id: "welcome.build", title: "Try building", status: "done", stamp: "builder", room: "Lobby" },
+            {
+                id: "welcome.meet",
+                title: "Meet someone",
+                status: "tracked",
+                room: "Lobby",
+                objective: "Say hi to someone",
+            },
+            {
+                id: "welcome.explore",
+                title: "Explore this place",
+                status: "accepted",
+                room: "Lobby",
+                objective: "Find the Hall",
+            },
+            {
+                id: "welcome.build",
+                title: "Try building",
+                status: "done",
+                stamp: "builder",
+                room: "Lobby",
+                objective: "Add one thing",
+            },
         ]);
         expect(
             isOrbitQuestStateMessage({

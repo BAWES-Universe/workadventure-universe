@@ -12,8 +12,8 @@ import { mapEditorMenuVisibleStore } from "../Stores/MenuStore";
 import { classifyMeetMessage, MeetExchange } from "./MeetExchange";
 import type { MeetMessage } from "./MeetExchange";
 import { arrivalRule, consumeQuestHashSnapshot, questHashSnapshot, questTargetsForArrival } from "./QuestHash";
-import type { QuestArea, QuestPresent, QuestWorld } from "./QuestWorld";
-import { namedOpenAreas, pickExploreTarget, resolveQuestHost } from "./QuestWorld";
+import type { QuestArea, QuestHost, QuestPresent, QuestWorld } from "./QuestWorld";
+import { keepQuestHost, namedOpenAreas, pickExploreTarget, resolveQuestHost } from "./QuestWorld";
 import {
     completeQuest,
     pauseQuest,
@@ -180,6 +180,8 @@ export function armQuestScene(scene: GameScene): () => void {
         }
     };
 
+    // Who hosts this visit: kept while the host bot is out of view (see keepQuestHost).
+    let host: QuestHost | undefined;
     const buildWorld = (): QuestWorld => {
         const present = readPresent();
         const areas = readAreas();
@@ -195,10 +197,16 @@ export function armQuestScene(scene: GameScene): () => void {
                 ? { area: fixed, alreadyInside: false }
                 : undefined
             : pickExploreTarget(areas, playerFeet(), targets.questArea);
+        host = keepQuestHost(
+            host,
+            resolveQuestHost(questSim, present, areas, targets.questHost),
+            present,
+            targets.questHost
+        );
         return {
             ready: true,
             roomName: roomName(),
-            host: resolveQuestHost(questSim, present, areas, targets.questHost),
+            host,
             present,
             exploreTarget,
             canBuild: get(mapEditorMenuVisibleStore),

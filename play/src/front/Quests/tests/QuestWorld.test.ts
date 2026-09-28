@@ -7,6 +7,7 @@ import {
     EMPTY_QUEST_WORLD,
     giverAsHost,
     isPathCompletable,
+    keepQuestHost,
     namedOpenAreas,
     offerHost,
     pickExploreTarget,
@@ -221,5 +222,48 @@ describe("the quest giver", () => {
         expect(offerHost(reduceQuest(offering, { type: "open-log" }), helperFirst)).toEqual(guideHost);
         // No offer made yet: whoever hosts now.
         expect(offerHost(initialQuestState(), helperFirst)).toMatchObject({ name: "Helper" });
+    });
+});
+
+describe("keepQuestHost", () => {
+    const guide: QuestPresent = {
+        userId: 7,
+        uuid: "bot-guide",
+        name: "Guide",
+        isBot: true,
+        portrait: "data:image/png;base64,AA",
+    };
+    const other: QuestPresent = { userId: 8, uuid: "bot-other", name: "Other", isBot: true };
+    const first = resolveQuestHost("bot", [guide], []);
+
+    it("keeps the host bot and its face when the player walks out of its view", () => {
+        const live = resolveQuestHost("bot", [], []);
+        expect(keepQuestHost(first, live, [])).toEqual({
+            kind: "bot",
+            userId: null,
+            uuid: "bot-guide",
+            name: "Guide",
+            portrait: "data:image/png;base64,AA",
+        });
+    });
+
+    it("doesn't hand the role to another bot that comes into view first", () => {
+        const live = resolveQuestHost("bot", [other], []);
+        expect(keepQuestHost(first, live, [other])).toMatchObject({ uuid: "bot-guide", userId: null });
+        expect(keepQuestHost(first, resolveQuestHost("bot", [other, guide], []), [other, guide])).toMatchObject({
+            uuid: "bot-guide",
+            userId: 7,
+        });
+    });
+
+    it("follows the owner's choice, and starts from whoever hosts now", () => {
+        expect(keepQuestHost(first, { kind: "none" }, [], { kind: "none" })).toEqual({ kind: "none" });
+        expect(keepQuestHost(undefined, { kind: "none" }, [])).toEqual({ kind: "none" });
+        expect(
+            keepQuestHost(first, resolveQuestHost("bot", [other], [], { kind: "bot", uuid: "bot-other" }), [other], {
+                kind: "bot",
+                uuid: "bot-other",
+            })
+        ).toMatchObject({ uuid: "bot-other" });
     });
 });

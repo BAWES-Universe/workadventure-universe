@@ -216,7 +216,7 @@ describe("QuestPanel", () => {
         // Every row is a button that opens details; none starts anything by itself.
         expect(byTestId(target, "quest-row-meet")?.tagName).toBe("BUTTON");
         expect(byTestId(target, "quest-row-build")?.querySelector(".quest-check")).not.toBeNull();
-        expect(byTestId(target, "quest-row-meet")?.querySelector(".quest-bang-chip")).not.toBeNull();
+        expect(byTestId(target, "quest-row-reward-meet")).not.toBeNull();
         expect(target.querySelectorAll(".quest-progress-seg.lit")).toHaveLength(1);
 
         click(byTestId(target, "quest-row-meet"));
@@ -242,6 +242,10 @@ describe("QuestPanel", () => {
         click(byTestId(target, "quest-row-meet"));
         await tick();
         expect(byTestId(target, "quest-detail-abandon")).toBeNull();
+        // Before accepting, the objective is just a line: no box to tick, no count, no map note.
+        expect(target.querySelector(".quest-objective-box")).toBeNull();
+        expect(byTestId(target, "quest-objective-count")).toBeNull();
+        expect(byTestId(target, "quest-on-map")).toBeNull();
         click(byTestId(target, "quest-detail-decline"));
         await tick();
         expect(byTestId(target, "quest-detail-meet")).toBeNull();
@@ -266,6 +270,7 @@ describe("QuestPanel", () => {
         click(byTestId(target, "quest-row-explore"));
         await tick();
         expect(byTestId(target, "quest-on-map")).not.toBeNull();
+        expect(byTestId(target, "quest-objective-count")?.textContent).toBe("0/1");
         expect(byTestId(target, "quest-detail-explore")?.textContent).toContain("Courtyard is north of you");
         click(byTestId(target, "quest-detail-walk"));
         click(byTestId(target, "quest-detail-abandon"));

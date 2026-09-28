@@ -221,7 +221,7 @@ describe("QuestDock", () => {
         byTestId("quest-detail-abandon-confirm")?.click();
         await flush();
         expect(get(questStateStore).quests.explore.accepted).toBe(false);
-        expect(byTestId("quest-row-explore")?.querySelector(".quest-bang-chip")).not.toBeNull();
+        expect(byTestId("quest-row-reward-explore")).not.toBeNull();
     });
 
     it("Build opens the map editor from its details where the person can edit, and the log steps aside", async () => {

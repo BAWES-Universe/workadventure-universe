@@ -78,6 +78,8 @@ export interface OrbitQuestEntry {
     giver?: string;
     /** The room's display name. */
     room: string;
+    /** What to do, in the game's words ("Find the Courtyard"). */
+    objective?: string;
 }
 
 /** The player's quest log, as the game shows it. Bounded so a frame can't be flooded. */
@@ -89,7 +91,7 @@ export interface OrbitQuestStateMessage {
     entries: OrbitQuestEntry[];
 }
 
-export const ORBIT_QUEST_LIMITS = { entries: 8, id: 64, title: 80, giver: 64, room: 80 } as const;
+export const ORBIT_QUEST_LIMITS = { entries: 8, id: 64, title: 80, giver: 64, room: 80, objective: 120 } as const;
 
 export type OrbitBridgeOutgoing =
     | OrbitBridgeInitMessage
@@ -175,7 +177,8 @@ function isOrbitQuestEntry(value: unknown): value is OrbitQuestEntry {
         QUEST_STATUSES.includes(value.status) &&
         (value.stamp === undefined || (typeof value.stamp === "string" && QUEST_STAMPS.includes(value.stamp))) &&
         (value.giver === undefined || isBoundedString(value.giver, 1, ORBIT_QUEST_LIMITS.giver)) &&
-        isBoundedString(value.room, 0, ORBIT_QUEST_LIMITS.room)
+        isBoundedString(value.room, 0, ORBIT_QUEST_LIMITS.room) &&
+        (value.objective === undefined || isBoundedString(value.objective, 1, ORBIT_QUEST_LIMITS.objective))
     );
 }
 
@@ -199,6 +202,7 @@ function clip(text: string, max: number): string {
 export function boundOrbitQuestEntries(entries: readonly OrbitQuestEntry[]): OrbitQuestEntry[] {
     return entries.slice(0, ORBIT_QUEST_LIMITS.entries).map((entry) => {
         const giver = entry.giver?.trim();
+        const objective = entry.objective?.trim();
         return {
             id: clip(entry.id, ORBIT_QUEST_LIMITS.id),
             title: clip(entry.title, ORBIT_QUEST_LIMITS.title),
@@ -206,6 +210,7 @@ export function boundOrbitQuestEntries(entries: readonly OrbitQuestEntry[]): Orb
             ...(entry.stamp ? { stamp: entry.stamp } : {}),
             ...(giver ? { giver: clip(giver, ORBIT_QUEST_LIMITS.giver) } : {}),
             room: clip(entry.room, ORBIT_QUEST_LIMITS.room),
+            ...(objective ? { objective: clip(objective, ORBIT_QUEST_LIMITS.objective) } : {}),
         };
     });
 }

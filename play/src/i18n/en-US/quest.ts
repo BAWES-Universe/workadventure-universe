@@ -101,6 +101,7 @@ const quest: BaseTranslation = {
         accept: "Accept",
         decline: "Decline",
         showOnMap: "Show on map",
+        onMapNote: "Your map is showing the way to this quest.",
         abandon: "Abandon quest",
         abandonConfirm: "Abandon this quest? You can take it again later.",
         keep: "Keep it",

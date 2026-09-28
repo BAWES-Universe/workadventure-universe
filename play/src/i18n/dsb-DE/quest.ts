@@ -102,6 +102,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         accept: "Pśiwześ",
         decline: "Wótpokazaś",
         showOnMap: "Na kórśe pokazaś",
+        onMapNote: "Twója kórta śi pokazujo drogu k toś tomu nadawkoju.",
         abandon: "Nadawk wopušćiś",
         abandonConfirm: "Toś ten nadawk wopušćiś? Móžoš jen pózdźej zasej pśiwześ.",
         keep: "Wobchowaś",
