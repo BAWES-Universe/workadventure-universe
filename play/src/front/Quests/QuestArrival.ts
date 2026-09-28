@@ -77,7 +77,9 @@ export function startQuestArrival(): () => void {
             }, INVITATION_DELAY_MS);
         }
 
-        if ($state.surface !== "invitation") {
+        // Read the surface fresh: fading the invitation above can re-run this subscriber synchronously, and the
+        // stale `$state` would then restart the movement timer that the nested run just stopped.
+        if (get(questStateStore).surface !== "invitation") {
             stopWatchingMovement();
         } else {
             movementTimer ??= setInterval(() => {

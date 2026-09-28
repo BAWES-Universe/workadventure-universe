@@ -14,7 +14,7 @@ vi.mock("../QuestUiStores", async () => {
 });
 
 import { INVITATION_DELAY_MS, INVITATION_FADE_AFTER_MOVING_MS, startQuestArrival } from "../QuestArrival";
-import { questArrivalStore, questStateStore, resetQuests, setQuestWorld } from "../QuestStore";
+import { questArrivalStore, questStateStore, resetQuests, setQuestWorld, showQuestInvitation } from "../QuestStore";
 import * as uiStores from "../QuestUiStores";
 import { EMPTY_QUEST_WORLD } from "../QuestWorld";
 
@@ -114,5 +114,21 @@ describe("arrival invitation", () => {
         questArrivalStore.set("waiting");
         expect(surface()).toBe("none");
         expect(get(questStateStore).invitationSeen).toBe(1);
+    });
+
+    it("leaves no movement timer running when the fade re-enters the subscriber", () => {
+        stop?.();
+        showQuestInvitation();
+        expect(surface()).toBe("invitation");
+        const started = vi.spyOn(globalThis, "setInterval");
+        const cleared = vi.spyOn(globalThis, "clearInterval");
+        stop = startQuestArrival();
+        expect(surface()).toBe("none");
+        const live = started.mock.results
+            .map((result) => result.value as unknown)
+            .filter((id) => !cleared.mock.calls.some(([clearedId]) => clearedId === id));
+        expect(live).toEqual([]);
+        started.mockRestore();
+        cleared.mockRestore();
     });
 });
