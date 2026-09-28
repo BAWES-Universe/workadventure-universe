@@ -1,14 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { initialQuestState, reduceQuest, revealPending } from "../QuestModel";
+import { canOfferInvitation, initialQuestState, reduceQuest, revealPending } from "../QuestModel";
 import {
-    dayKey,
     parseInvitationSeen,
     parseStoredProgress,
-    QUEST_INVITATION_DISMISSED_KEY,
     QUEST_INVITATION_SEEN_KEY,
     QUEST_STATE_KEY,
-    readInvitationDismissed,
-    rememberInvitationDismissed,
     restoreQuestState,
     saveQuestState,
     serializeProgress,
@@ -159,21 +155,26 @@ describe("save and restore", () => {
         expect(fresh.surface).toBe("none");
     });
 
-    it("remembers Not now in the session, for the day, never in localStorage", () => {
+    it("never stores Not now: a fresh load offers again, and the declined show does not count as a fade", () => {
         const storage = memoryStorage();
-        const session = memoryStorage();
-        const today = new Date(2026, 8, 28, 15, 0);
-        saveQuestState(storage, reduceQuest(initialQuestState(), { type: "decline" }));
+        let state = reduceQuest(initialQuestState(), { type: "invitation-shown" });
+        state = reduceQuest(state, { type: "decline" });
+        saveQuestState(storage, state);
         expect([...storage.data.keys()]).toEqual([QUEST_STATE_KEY, QUEST_INVITATION_SEEN_KEY]);
+        expect(storage.data.get(QUEST_INVITATION_SEEN_KEY)).toBe("0");
+        expect(storage.data.get(QUEST_STATE_KEY)).not.toContain("declined");
 
-        rememberInvitationDismissed(session, today);
-        expect(session.data.get(QUEST_INVITATION_DISMISSED_KEY)).toBe(dayKey(today));
-        expect(readInvitationDismissed(session, today)).toBe(true);
-        expect(restoreQuestState(storage, session, today).declined).toBe(true);
-        // Tomorrow, or without the session: offered again.
-        expect(restoreQuestState(storage, session, new Date(2026, 8, 29, 9, 0)).declined).toBe(false);
-        expect(restoreQuestState(storage, memoryStorage(), today).declined).toBe(false);
-        expect(restoreQuestState(storage, undefined, today).declined).toBe(false);
+        const restored = restoreQuestState(storage);
+        expect(restored.declined).toBe(false);
+        expect(canOfferInvitation(restored)).toBe(true);
+
+        // Ignored twice, on the other hand, stays remembered.
+        let faded = reduceQuest(initialQuestState(), { type: "invitation-shown" });
+        faded = reduceQuest(faded, { type: "invitation-faded" });
+        faded = reduceQuest(faded, { type: "invitation-shown" });
+        faded = reduceQuest(faded, { type: "invitation-faded" });
+        saveQuestState(storage, faded);
+        expect(canOfferInvitation(restoreQuestState(storage))).toBe(false);
     });
 
     it("a payoff on screen when the page closed plays again after a reload", () => {
@@ -219,8 +220,7 @@ describe("save and restore", () => {
                 throw new Error("blocked");
             },
         };
-        expect(restoreQuestState(throwing, throwing)).toEqual(initialQuestState());
+        expect(restoreQuestState(throwing)).toEqual(initialQuestState());
         expect(() => saveQuestState(throwing, initialQuestState())).not.toThrow();
-        expect(() => rememberInvitationDismissed(throwing)).not.toThrow();
     });
 });

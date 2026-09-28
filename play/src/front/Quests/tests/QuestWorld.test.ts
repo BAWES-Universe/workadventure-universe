@@ -6,7 +6,9 @@ import {
     availablePaths,
     EMPTY_QUEST_WORLD,
     giverAsHost,
+    isPathCompletable,
     namedOpenAreas,
+    offerHost,
     pickExploreTarget,
     questGiverUserId,
     questOrigin,
@@ -112,11 +114,12 @@ describe("availablePaths", () => {
         canBuild: true,
     };
 
-    it("offers only what can be done here", () => {
+    it("offers what can be done here, and Meet always: people come and go", () => {
         expect(availablePaths(initialQuestState(), world, "bot")).toEqual(["meet", "explore", "build"]);
-        expect(availablePaths(initialQuestState(), { ...world, present: [], canBuild: false }, "bot")).toEqual([
-            "explore",
-        ]);
+        const alone = { ...world, present: [], canBuild: false };
+        expect(availablePaths(initialQuestState(), alone, "bot")).toEqual(["meet", "explore"]);
+        expect(isPathCompletable(alone, "meet")).toBe(false);
+        expect(availablePaths(initialQuestState(), { ...alone, exploreTarget: undefined }, "bot")).toEqual(["meet"]);
     });
 
     it("leaves out accepted and done paths", () => {
@@ -180,5 +183,26 @@ describe("the quest giver", () => {
         expect(
             questGiverUserId(reduceQuest(offering, { type: "accept", path: "meet", now: 1 }), lobbyWithGuide)
         ).toBeUndefined();
+    });
+
+    it("keeps the offer on screen with the bot that made it, never whichever bot is first now", () => {
+        const offering = reduceQuest(initialQuestState(), {
+            type: "invitation-shown",
+            origin: questOrigin(lobbyWithGuide),
+        });
+        // Walked out of the bot's range: no face to show, no bot to mark, but the offer stays its own.
+        expect(offerHost(offering, lobbyAlone)).toEqual({ kind: "none" });
+        expect(questGiverUserId(offering, lobbyAlone)).toBeUndefined();
+        // Another bot hosts here now: the "!" and the ring stay on the one that offered.
+        const helperFirst: QuestWorld = {
+            ...lobbyWithGuide,
+            host: { kind: "bot", userId: 5, uuid: "bot-5", name: "Helper" },
+            present: [person(5, "Helper", true), person(2, "Guide", true)],
+        };
+        expect(offerHost(offering, helperFirst)).toEqual(guideHost);
+        expect(questGiverUserId(offering, helperFirst)).toBe(2);
+        expect(offerHost(reduceQuest(offering, { type: "open-options" }), helperFirst)).toEqual(guideHost);
+        // No offer made yet: whoever hosts now.
+        expect(offerHost(initialQuestState(), helperFirst)).toMatchObject({ name: "Helper" });
     });
 });

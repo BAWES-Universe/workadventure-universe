@@ -74,15 +74,6 @@ function browserStorage(): StorageLike | undefined {
     }
 }
 
-/** This browser session's storage: what "Not now" remembers, gone with the tab. */
-function sessionStorageOrNone(): StorageLike | undefined {
-    try {
-        return typeof sessionStorage === "undefined" ? undefined : sessionStorage;
-    } catch {
-        return undefined;
-    }
-}
-
 export const questDockWidthStore = createQuestDockWidthStore(browserStorage());
 
-export { browserStorage as questBrowserStorage, sessionStorageOrNone as questSessionStorage };
+export { browserStorage as questBrowserStorage };

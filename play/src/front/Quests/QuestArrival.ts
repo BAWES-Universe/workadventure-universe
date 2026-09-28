@@ -13,6 +13,7 @@ import {
     showQuestInvitation,
 } from "./QuestStore";
 import { questSurfaceSuppressed } from "./QuestUiStores";
+import { isPathCompletable } from "./QuestWorld";
 
 /** The invitation appears this long after the first moment nothing covers the game. */
 export const INVITATION_DELAY_MS = 1_500;
@@ -59,11 +60,13 @@ export function startQuestArrival(): () => void {
         }
 
         const offerable = $arrival === "ready" && !offeredThisArrival && $world.ready && canOfferInvitation($state);
-        if (offerable && $paths.length === 0 && !unavailableReported) {
+        // The invitation waits for something that can be done right now (Meet alone in the room can only wait).
+        const doable = $paths.filter((path) => isPathCompletable($world, path));
+        if (offerable && doable.length === 0 && !unavailableReported) {
             unavailableReported = true;
             analyticsClient.questGiverUnavailable({ reason: "no-eligible-target" });
         }
-        if (!offerable || $paths.length === 0 || $suppressed) {
+        if (!offerable || doable.length === 0 || $suppressed) {
             clearShow();
         } else {
             showTimer ??= setTimeout(() => {

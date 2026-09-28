@@ -5,6 +5,7 @@ import {
     canOfferInvitation,
     initialQuestState,
     markedQuestPath,
+    questsOnOffer,
     questStatus,
     reduceQuest,
     revealPending,
@@ -38,11 +39,14 @@ describe("reduceQuest", () => {
         expect(state.declined).toBe(false);
     });
 
-    it("Not now dismisses the invitation for this visit; the quests stay startable", () => {
+    it("Not now dismisses the invitation for this page; the quests stay startable", () => {
         const state = run({ type: "invitation-shown" }, { type: "decline" });
         expect(state.declined).toBe(true);
         expect(state.surface).toBe("none");
         expect(canOfferInvitation(state)).toBe(false);
+        // An answered offer is not a faded one: the next page load (declined is never stored) may offer again.
+        expect(state.invitationSeen).toBe(0);
+        expect(canOfferInvitation({ ...state, declined: false })).toBe(true);
         // The bar never goes empty: the resting Quests pill opens the log.
         expect(visibleSurface(state, free)).toBe("quests");
         const started = reduceQuest(state, { type: "accept", path: "explore", now: 1 });
@@ -222,11 +226,28 @@ describe("visibleSurface", () => {
         expect(visibleSurface(fresh, free)).toBe("quests");
         expect(visibleSurface(fresh, { surfaces: false, pill: true })).toBe("none");
         expect(visibleSurface(reduceQuest(fresh, { type: "hide" }), free)).toBe("none");
+        // Nothing on offer here (or the map not there yet): no pill; the menu row stays the way in.
+        expect(visibleSurface(fresh, free, false)).toBe("none");
+        const followed = run({ type: "accept", path: "meet", now: 1 }, { type: "close" });
+        expect(visibleSurface(followed, free, false)).toBe("pill");
         const done = revealPending(
             run({ type: "accept", path: "build", now: 1 }, { type: "complete", path: "build", now: 2 }),
             false
         );
         expect(visibleSurface(reduceQuest(done, { type: "payoff-settled", followUp: null }), free)).toBe("quests");
+    });
+});
+
+describe("questsOnOffer", () => {
+    it("is true once the map is ready with something to start, accepted or done", () => {
+        const fresh = initialQuestState();
+        expect(questsOnOffer(fresh, [], true)).toBe(false);
+        expect(questsOnOffer(fresh, ["meet"], false)).toBe(false);
+        expect(questsOnOffer(fresh, ["meet"], true)).toBe(true);
+        const accepted = run({ type: "accept", path: "meet", now: 1 }, { type: "accept", path: "build", now: 2 });
+        expect(questsOnOffer(accepted, [], true)).toBe(true);
+        const done = run({ type: "accept", path: "meet", now: 1 }, { type: "complete", path: "meet", now: 2 });
+        expect(questsOnOffer(revealPending(done, false), [], true)).toBe(true);
     });
 });
 

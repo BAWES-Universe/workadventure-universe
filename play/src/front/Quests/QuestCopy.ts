@@ -18,18 +18,29 @@ export function exploreAreaName(state: QuestState, world: QuestWorld): string {
     return state.exploreArea?.name ?? world.exploreTarget?.area.name ?? "";
 }
 
+/**
+ * An Explore sentence with its area, or the quest's title while there is no area to name (the map still loading,
+ * another map): never "Find the ".
+ */
+function exploreLine(t: T, state: QuestState, world: QuestWorld, line: (area: string) => string): string {
+    const area = exploreAreaName(state, world);
+    return area ? line(area) : t.quest.paths.explore.title();
+}
+
 export function questTitle(t: T, path: QuestPath): string {
     return t.quest.paths[path].title();
 }
 
 export function questDescription(t: T, path: QuestPath, state: QuestState, world: QuestWorld): string {
-    if (path === "explore") return t.quest.paths.explore.description({ area: exploreAreaName(state, world) });
+    if (path === "explore") {
+        return exploreLine(t, state, world, (area) => t.quest.paths.explore.description({ area }));
+    }
     return t.quest.paths[path].description();
 }
 
 /** The short objective on the pill and the card title ("Find the Courtyard"). */
 export function questObjective(t: T, path: QuestPath, state: QuestState, world: QuestWorld): string {
-    if (path === "explore") return t.quest.paths.explore.objective({ area: exploreAreaName(state, world) });
+    if (path === "explore") return exploreLine(t, state, world, (area) => t.quest.paths.explore.objective({ area }));
     return t.quest.paths[path].objective();
 }
 
@@ -48,7 +59,7 @@ export function questBody(
             if (state.quests.meet.paused) return t.quest.card.nobodyHere();
             return meetProgress === "sent" ? t.quest.paths.meet.waiting() : t.quest.paths.meet.body();
         case "explore":
-            return t.quest.paths.explore.body({ area: exploreAreaName(state, world) });
+            return exploreLine(t, state, world, (area) => t.quest.paths.explore.body({ area }));
         case "build":
             return t.quest.paths.build.body();
     }
@@ -87,6 +98,16 @@ export function questEyebrow(t: T, world: QuestWorld): string {
     return world.roomName || t.quest.welcome();
 }
 
+/**
+ * Who is speaking for the offer on screen: the giver frozen when the invitation was shown (its name stays even once
+ * the bot is out of range), else whoever hosts here now.
+ */
+export function offerEyebrow(t: T, state: QuestState, world: QuestWorld): string {
+    const offer = state.offeredBy;
+    if (!offer) return questEyebrow(t, world);
+    return offer.giver?.name || offer.room || t.quest.welcome();
+}
+
 /** Who is speaking for one quest: the giver frozen when it was accepted, else its room, else "Welcome". */
 export function questEyebrowFor(t: T, path: QuestPath, state: QuestState, world: QuestWorld): string {
     const origin = entryOrigin(state, path, world);
@@ -114,7 +135,7 @@ export interface QuestLogEntry {
     reward: string;
     /** "Needs: edit rights in this room", when there is a requirement. */
     requirement?: string;
-    /** "Nobody's here right now" while paused. */
+    /** "Nobody's here right now" while paused, or on Meet's Available row while nobody is here. */
     note?: string;
     /** The host's acknowledgement on a Done entry. */
     lastTime?: string;
@@ -159,30 +180,40 @@ export function logEntries(
             origin,
             reward: t.quest.stamps.badge({ stamp: stampName(t, path) }),
             requirement: path === "build" && status !== "done" ? t.quest.paths.build.needs() : undefined,
-            note: status !== "done" && state.quests[path].paused ? t.quest.card.nobodyHere() : undefined,
+            note: showsNobodyHere(state, world, path, status) ? t.quest.card.nobodyHere() : undefined,
             lastTime: status === "done" ? questLastTime(t, path, state, world) : undefined,
         });
     }
     return entries;
 }
 
+function showsNobodyHere(state: QuestState, world: QuestWorld, path: QuestPath, status: QuestLogEntry["status"]) {
+    if (status === "done") return false;
+    if (state.quests[path].paused) return true;
+    // Meet can be started while alone: the row says it will wait.
+    return path === "meet" && status === "available" && world.present.length === 0;
+}
+
 /**
  * Where the target is, in words, for people who can't see the marker: "The Courtyard is north-east of you, about 6
- * steps". Announced when the card opens.
+ * steps". Announced when the card opens. Nothing when there is nothing positional to say (Build happens in the
+ * editor; the map is not there yet; nobody to walk to): the card's body already says what to do.
  */
 export function whereDescription(
     t: T,
     target: { name: string; position: Point } | undefined,
     player: Point | undefined,
     path: QuestPath,
-    /** Explore's fixed area, named when it is not on this map. */
-    exploreArea = ""
-): string {
-    if (!target || !player) {
-        if (path === "build") return t.quest.paths.build.noPosition();
-        if (path === "explore") return t.quest.paths.explore.notOnThisMap({ area: exploreArea });
-        return t.quest.card.nobodyHere();
+    /** Explore's fixed area, when the map is ready without it: it is in another room. */
+    missingExploreArea?: string
+): string | undefined {
+    if (path === "build") return undefined;
+    if (!target) {
+        return path === "explore" && missingExploreArea
+            ? t.quest.paths.explore.notOnThisMap({ area: missingExploreArea })
+            : undefined;
     }
+    if (!player) return undefined;
     const direction = compassDirection(player, target.position);
     return t.quest.card.direction({
         target: target.name,

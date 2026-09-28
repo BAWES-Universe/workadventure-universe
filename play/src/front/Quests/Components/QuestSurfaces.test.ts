@@ -262,6 +262,16 @@ describe("QuestCard", () => {
         );
     });
 
+    it("says when it is being read or used: focus inside, the pointer over it", () => {
+        const { target, instance } = mount(QuestCard, { ...base, walkLabel: "Walk" });
+        let engaged = 0;
+        instance.$on("engage", () => engaged++);
+        byTestId(target, "quest-walk")?.focus();
+        expect(engaged).toBe(1);
+        byTestId(target, "quest-card")?.dispatchEvent(new Event("pointerenter"));
+        expect(engaged).toBe(2);
+    });
+
     it("offers nothing to walk to once done (its payoff waiting), only Choose another", () => {
         const { target } = mount(QuestCard, { ...base, walkLabel: "Walk", done: true });
         expect(byTestId(target, "quest-walk")).toBeNull();

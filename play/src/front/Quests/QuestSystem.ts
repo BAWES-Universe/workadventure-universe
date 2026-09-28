@@ -5,8 +5,15 @@ import { gameSceneStore } from "../Stores/GameSceneStore";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { armQuestScene } from "./QuestDetectors";
 import type { QuestVisibleSurface } from "./QuestModel";
-import { visibleSurface } from "./QuestModel";
-import { dispatchQuest, questDevice, questStateStore, revealPendingQuest } from "./QuestStore";
+import { questsOnOffer, visibleSurface } from "./QuestModel";
+import {
+    dispatchQuest,
+    questAvailablePathsStore,
+    questDevice,
+    questStateStore,
+    questWorldStore,
+    revealPendingQuest,
+} from "./QuestStore";
 import { questPillSuppressed, questQuiet, questSuppressionStore, questSurfaceSuppressed } from "./QuestUiStores";
 
 /** A completion plays once the dock has been free this long. */
@@ -14,10 +21,11 @@ export const PAYOFF_SETTLE_MS = 500;
 /** A tracked pill hidden this long leaves a dot on the Quests row. */
 export const SUPPRESSED_NEWS_MS = 60_000;
 
-/** What the dock renders now. */
+/** What the dock renders now. The resting Quests pill only where the room offers something (see visibleSurface). */
 export const questVisibleSurfaceStore: Readable<QuestVisibleSurface> = derived(
-    [questStateStore, questSuppressionStore],
-    ([$state, $suppression]) => visibleSurface($state, $suppression)
+    [questStateStore, questSuppressionStore, questAvailablePathsStore, questWorldStore],
+    ([$state, $suppression, $available, $world]) =>
+        visibleSurface($state, $suppression, questsOnOffer($state, $available, $world.ready))
 );
 
 let users = 0;

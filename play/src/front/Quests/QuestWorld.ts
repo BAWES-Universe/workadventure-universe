@@ -149,12 +149,20 @@ export function isPathCompletable(world: QuestWorld, path: QuestPath): boolean {
     }
 }
 
-/** Paths that can be offered now: completable here, not accepted, not done. */
+/**
+ * Whether a path belongs in this room's offer. Meet is always on offer: people come and go, so it can be started
+ * while nobody is here and waits (paused) until someone comes. The others need their target or right here.
+ */
+export function isPathOfferable(world: QuestWorld, path: QuestPath): boolean {
+    return path === "meet" || isPathCompletable(world, path);
+}
+
+/** Paths that can be offered now (the log's Available, the options): on offer here, not accepted, not done. */
 export function availablePaths(state: QuestState, world: QuestWorld, sim: QuestSim): QuestPath[] {
     if (sim === "empty" || !world.ready) return [];
     return QUEST_PATHS.filter((path) => {
         const entry = state.quests[path];
-        return !entry.accepted && !entry.done && isPathCompletable(world, path);
+        return !entry.accepted && !entry.done && isPathOfferable(world, path);
     });
 }
 
@@ -205,11 +213,22 @@ export function giverAsHost(giver: QuestGiver | null, world: QuestWorld): QuestH
 }
 
 /**
- * The bot to mark as the quest giver (ring at its feet, "!" above its name): the host bot while its offer is on
- * screen (the invitation or the options), until something is accepted.
+ * Who the offer on screen (the invitation, the options) speaks for: the giver frozen when the invitation was shown,
+ * as a host for its portrait (no face once the bot is out of range, but the eyebrow keeps its name). Before any
+ * offer was made, whoever hosts here now.
+ */
+export function offerHost(state: QuestState, world: QuestWorld): QuestHost {
+    return state.offeredBy ? giverAsHost(state.offeredBy.giver, world) : world.host;
+}
+
+/**
+ * The bot to mark as the quest giver (ring at its feet, "!" above its name): the bot that made the offer on screen
+ * (the invitation or the options), while it is near, until something is accepted. Never whichever bot is first now.
  */
 export function questGiverUserId(state: QuestState, world: QuestWorld): number | undefined {
-    if (state.hidden || world.host.kind !== "bot") return undefined;
+    if (state.hidden) return undefined;
     const offering = state.surface === "invitation" || state.surface === "options";
-    return offering && !QUEST_PATHS.some((path) => state.quests[path].accepted) ? world.host.userId : undefined;
+    if (!offering || QUEST_PATHS.some((path) => state.quests[path].accepted)) return undefined;
+    const host = offerHost(state, world);
+    return host.kind === "bot" ? host.userId : undefined;
 }

@@ -2,24 +2,23 @@ import type { Readable } from "svelte/store";
 import { derived, get, writable } from "svelte/store";
 import type { QuestAnalyticsDevice, QuestAnalyticsFrom, QuestAnalyticsId } from "../Administration/AnalyticsClient";
 import { analyticsClient } from "../Administration/AnalyticsClient";
-import { consumeQuestReset, questBrowserStorage, questSessionStorage, readQuestSim } from "./QuestDevSettings";
+import { consumeQuestReset, questBrowserStorage, readQuestSim } from "./QuestDevSettings";
 import type { QuestSim } from "./QuestDevSettings";
 import type { MeetProgress } from "./MeetExchange";
 import type { QuestEvent, QuestFollowUp, QuestGiver, QuestPath, QuestState } from "./QuestModel";
 import { acceptedUntrackedCount, QUEST_PATHS, reduceQuest, revealPending } from "./QuestModel";
-import { clearQuestStorage, rememberInvitationDismissed, restoreQuestState, saveQuestState } from "./QuestPersistence";
+import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
 import type { QuestWorld } from "./QuestWorld";
 import { acceptanceOrigin, availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
 
 const storage = questBrowserStorage();
-const session = questSessionStorage();
 
-if (consumeQuestReset(storage)) clearQuestStorage(storage, session);
+if (consumeQuestReset(storage)) clearQuestStorage(storage);
 
 /** The dev host scenario for this page (localStorage `questSim`). */
 export const questSim: QuestSim = readQuestSim(storage);
 
-const state = writable<QuestState>(restoreQuestState(storage, session));
+const state = writable<QuestState>(restoreQuestState(storage));
 
 // Module-level, for the page's lifetime: progress is saved whatever is mounted.
 //eslint-disable-next-line svelte/no-ignored-unsubscribe
@@ -144,11 +143,10 @@ export function showQuestInvitation(): boolean {
     return true;
 }
 
-/** "Not now": the invitation stays away for this visit (and a reload today); the log still offers everything. */
+/** "Not now": the invitation stays away for this page (a refresh offers again); the log still offers everything. */
 export function declineQuestInvitation(): void {
     const offeredBy = get(state).offeredBy;
     dispatchQuest({ type: "decline" });
-    rememberInvitationDismissed(session);
     analyticsClient.questDeclined({
         scope: "welcome",
         questId: "welcome",
@@ -186,6 +184,8 @@ export function acceptQuest(path: QuestPath, from: QuestAnalyticsFrom, now: numb
     // Credit an objective that is already met: nobody is asked to leave and come back in.
     if (path === "explore" && target?.alreadyInside) completeQuest(path, "already-valid", now);
     if (path === "meet" && meetAlreadyExchanged()) completeQuest(path, "already-valid", now);
+    // Meet can be started while nobody is here: it waits (the detectors resume it when someone comes).
+    if (path === "meet" && world.present.length === 0) pauseQuest(path);
 }
 
 /** Follow an accepted quest: it becomes the tracked one and its card opens. */
@@ -197,13 +197,19 @@ export function trackQuest(path: QuestPath, from: QuestAnalyticsFrom = "log"): v
     }
 }
 
-/** "Hide the quest bar" and "Show the quest bar" in the log. Hiding while following is the only way a quest stops. */
+/**
+ * "Hide the quest bar" and "Show the quest bar" in the log. The followed quest stays followed underneath: hiding
+ * reports it stopped, showing reports it followed again, so the two pair up.
+ */
 export function setQuestsHidden(hidden: boolean): void {
     const before = get(state);
     dispatchQuest({ type: hidden ? "hide" : "show-quests" });
     if (before.hidden === hidden) return;
     if (hidden && before.tracked) {
         analyticsClient.questStopped({ questId: questAnalyticsId(before.tracked), reason: "hidden" });
+    }
+    if (!hidden && before.tracked) {
+        analyticsClient.questTracked({ questId: questAnalyticsId(before.tracked), from: "log" });
     }
     analyticsClient.questTracker({ action: hidden ? "hidden" : "restored", device: questDevice() });
 }
@@ -253,7 +259,7 @@ export function skipQuestSignInOffer(): void {
 }
 
 export function resetQuests(): void {
-    clearQuestStorage(storage, session);
+    clearQuestStorage(storage);
     dispatchQuest({ type: "reset" });
     questMeetProgressStore.set("idle");
 }

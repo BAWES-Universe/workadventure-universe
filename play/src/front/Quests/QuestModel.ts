@@ -52,9 +52,15 @@ export interface QuestState {
     version: 1;
     quests: Record<QuestPath, QuestEntry>;
     tracked: QuestPath | null;
-    /** "Not now" on the invitation: not offered again on this visit (the log still lists what is available). */
+    /**
+     * "Not now" on the invitation: not offered again on this page (the log still lists what is available). Never
+     * stored: a refresh offers again.
+     */
     declined: boolean;
-    /** How many times the invitation has been shown. Once more is allowed after it faded unanswered. */
+    /**
+     * How many times the invitation has been shown and left unanswered. Once more is allowed after it faded; an
+     * answered offer (Not now) does not count.
+     */
     invitationSeen: number;
     /** Who offered the quests when the invitation was shown, and where: what an acceptance freezes as its origin. */
     offeredBy: QuestOrigin | null;
@@ -236,6 +242,8 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             return state;
         case "decline":
             state.declined = true;
+            // An answered offer is not a faded one: it never counts against the limit, so a refresh offers again.
+            state.invitationSeen = Math.max(0, state.invitationSeen - 1);
             state.surface = "none";
             return state;
         case "open-options":
@@ -385,18 +393,25 @@ export function revealPending(previous: QuestState, blocked: boolean): QuestStat
     };
 }
 
+/** Whether the log has anything to show: something to start here, something accepted, or something done. */
+export function questsOnOffer(state: QuestState, available: readonly QuestPath[], ready: boolean): boolean {
+    return ready && (available.length > 0 || acceptedUntrackedCount(state) > 0 || anyDone(state));
+}
+
 /**
- * What the dock actually renders, given what is covering the game right now. The bar never goes empty: with nothing
- * followed and the bar not hidden, the resting Quests pill ("quests") opens the log.
+ * What the dock actually renders, given what is covering the game right now. With nothing followed and the bar not
+ * hidden, the resting Quests pill ("quests") opens the log, as long as the room offers something (`offers`): a room
+ * with nothing to do, or a map still loading, shows no pill (the Quests menu row is always there).
  */
 export function visibleSurface(
     state: QuestState,
-    suppression: { surfaces: boolean; pill: boolean }
+    suppression: { surfaces: boolean; pill: boolean },
+    offers = true
 ): QuestVisibleSurface {
     if (state.hidden && state.surface !== "log") return "none";
     if (state.surface === "pill" || (state.surface === "none" && state.tracked)) {
         return suppression.pill ? "none" : "pill";
     }
-    if (state.surface === "none") return suppression.pill ? "none" : "quests";
+    if (state.surface === "none") return suppression.pill || !offers ? "none" : "quests";
     return suppression.surfaces ? "none" : state.surface;
 }

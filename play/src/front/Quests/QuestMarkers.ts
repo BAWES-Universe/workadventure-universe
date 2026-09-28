@@ -9,6 +9,7 @@ import type { QuestPath, QuestState } from "./QuestModel";
 import { markedQuestPath } from "./QuestModel";
 import { prefersReducedMotion } from "./QuestMotion";
 import { questStateStore, questWorldStore } from "./QuestStore";
+import { questSuppressionStore } from "./QuestUiStores";
 import type { QuestTarget } from "./QuestTargets";
 import { FEET_OFFSET_Y, sceneQuestTarget } from "./QuestTargets";
 import type { QuestWorld } from "./QuestWorld";
@@ -198,18 +199,25 @@ function sameTarget(a: QuestTarget, b: QuestTarget): boolean {
     return false;
 }
 
+/**
+ * The plan follows the state, the world and what covers the game: while something does (a menu, the map editor,
+ * the person card, the phone chat), the rings go, as every quest surface does, and come back with it.
+ */
 function planStore(): Readable<MarkerPlan> {
     let previousSurface: QuestState["surface"] | undefined;
-    return derived([questStateStore, questWorldStore], ([$state, $world]) => {
+    return derived([questStateStore, questWorldStore, questSuppressionStore], ([$state, $world, $suppression]) => {
         const invitationJustShown = $state.surface === "invitation" && previousSurface !== "invitation";
         previousSurface = $state.surface;
+        const covered = $suppression.surfaces;
         return {
             state: $state,
             world: $world,
-            giverUserId: questGiverUserId($state, $world),
-            tracked: markedQuestPath($state),
+            giverUserId: covered ? undefined : questGiverUserId($state, $world),
+            tracked: covered ? null : markedQuestPath($state),
             flashHostArea:
-                invitationJustShown && !$state.hidden && $world.host.kind === "area" ? $world.host.areaId : undefined,
+                invitationJustShown && !covered && !$state.hidden && $world.host.kind === "area"
+                    ? $world.host.areaId
+                    : undefined,
         };
     });
 }

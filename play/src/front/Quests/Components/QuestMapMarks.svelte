@@ -2,6 +2,7 @@
     import { onDestroy } from "svelte";
     import { get } from "svelte/store";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { PLAYER_NAME_Y } from "../../Phaser/Entity/CharacterLayout";
     import type { Box, Point, TargetMark } from "../QuestGeometry";
     import { edgeArrowPlacement, targetMark, worldToSectionPoint } from "../QuestGeometry";
     import type { QuestPath } from "../QuestModel";
@@ -16,12 +17,16 @@
     export let layer: HTMLElement | undefined;
     /** The dock's surface: the edge arrow stays out of it. */
     export let avoid: HTMLElement | undefined;
+    /** Something covers the game (a menu, the map editor, the person card, the phone chat): no marks meanwhile. */
+    export let suppressed = false;
 
     const MARGIN = 20;
     /** Half the arrow chip (2.25rem). */
     const ARROW_HALF = 18;
-    /** A character's name label sits this far above its position (Character.ts); marks hover a little above it. */
-    const NAME_LABEL_Y = 25;
+    /** The down arrow and the "!" are about this tall and wide (px): they are kept inside the visible map. */
+    const MARK_SIZE = 34;
+    /** A character's name label sits this far above its position; marks hover a little above it. */
+    const NAME_LABEL_Y = -PLAYER_NAME_Y;
     const ABOVE_NAME = 14;
     /** The page is measured (layout reads) this often; the camera is read every frame. */
     const MEASURE_MS = 250;
@@ -32,7 +37,7 @@
     let measuredAt = 0;
     let measured: { layer: DOMRect; canvas: DOMRect; view: Box; column: Box | undefined } | undefined;
 
-    $: active = path !== null || giverUserId !== undefined;
+    $: active = !suppressed && (path !== null || giverUserId !== undefined);
     $: if (active) start();
     else stop();
 
@@ -95,8 +100,30 @@
         );
     }
 
-    function inside(point: Point, rect: DOMRect): boolean {
-        return point.x >= 0 && point.x <= rect.width && point.y >= 0 && point.y <= rect.height;
+    /** Whether a mark whose bottom centre is at `point` fits inside the visible map. */
+    function markInside(point: Point, view: Box): boolean {
+        return (
+            point.x - MARK_SIZE / 2 >= view.left &&
+            point.x + MARK_SIZE / 2 <= view.left + view.width &&
+            point.y - MARK_SIZE >= view.top &&
+            point.y <= view.top + view.height
+        );
+    }
+
+    function samePoint(a: Point | undefined, b: Point | undefined): boolean {
+        if (!a || !b) return a === b;
+        return a.x === b.x && a.y === b.y;
+    }
+
+    function sameMark(a: TargetMark | undefined, b: TargetMark | undefined): boolean {
+        if (!a || !b) return a === b;
+        if (a.kind !== b.kind || a.x !== b.x || a.y !== b.y) return false;
+        return a.kind === "edge" && b.kind === "edge" ? a.angle === b.angle : true;
+    }
+
+    /** To half a pixel: the marks only redraw when they have moved that much. */
+    function rounded(point: Point): Point {
+        return { x: Math.round(point.x * 2) / 2, y: Math.round(point.y * 2) / 2 };
     }
 
     // Per frame from the camera's view of the world: the marks follow panning, zoom and the people they sit on, and
@@ -132,7 +159,7 @@
                     layerRect
                 );
 
-            mark = undefined;
+            let nextMark: TargetMark | undefined;
             if (path) {
                 const target = sceneQuestTarget(scene, path, get(questStateStore), get(questWorldStore));
                 const feet = target ? targetPosition(scene, target) : undefined;
@@ -141,25 +168,29 @@
                         target.kind === "player"
                             ? { x: feet.x, y: feet.y - FEET_OFFSET_Y - NAME_LABEL_Y - ABOVE_NAME }
                             : { x: feet.x, y: feet.y - target.radius / 2 - ABOVE_NAME };
-                    let placed = targetMark(toScreen(feet), toScreen(above), view);
+                    let placed = targetMark(toScreen(feet), toScreen(above), view, MARK_SIZE);
                     // Under the zoom tools or Express it could not be seen: keep it left of that column.
                     if (placed.kind === "edge" && column && under(placed, column)) {
                         const width = Math.max(0, column.left - MARGIN / 2 - ARROW_HALF - view.left);
                         const edge = edgeArrowPlacement(toScreen(feet), { ...view, width });
                         placed = { kind: "edge", x: edge.x, y: edge.y, angle: edge.angle };
                     }
-                    mark = placed;
+                    nextMark = { ...placed, ...rounded(placed) };
                 }
             }
+            // The camera is read every frame; the page is only touched when a mark has moved.
+            if (!sameMark(mark, nextMark)) mark = nextMark;
 
-            giver = undefined;
+            let nextGiver: Point | undefined;
             if (giverUserId !== undefined) {
                 const person = scene.MapPlayersByKey.get(giverUserId);
                 if (person) {
-                    const point = toScreen({ x: person.x, y: person.y - NAME_LABEL_Y - ABOVE_NAME });
-                    giver = inside(point, layerRect) ? point : undefined;
+                    // Only over the visible map: never over the cameras or the dock.
+                    const point = rounded(toScreen({ x: person.x, y: person.y - NAME_LABEL_Y - ABOVE_NAME }));
+                    nextGiver = markInside(point, view) ? point : undefined;
                 }
             }
+            if (!samePoint(giver, nextGiver)) giver = nextGiver;
         } catch {
             mark = undefined;
             giver = undefined;

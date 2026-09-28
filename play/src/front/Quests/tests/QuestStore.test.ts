@@ -62,6 +62,12 @@ describe("QuestStore", () => {
         expect(JSON.parse(localStorage.getItem("quests.state") ?? "{}").hidden).toBe(true);
         expect(analytics.questStopped).toHaveBeenCalledWith({ questId: "welcome.meet", reason: "hidden" });
         expect(analytics.questTracker).toHaveBeenCalledWith(expect.objectContaining({ action: "hidden" }));
+        // Still followed underneath: showing the bar again reports it followed, pairing with the stop.
+        expect(analytics.questTracked).not.toHaveBeenCalled();
+        store.setQuestsHidden(false);
+        expect(get(store.questStateStore).tracked).toBe("meet");
+        expect(analytics.questTracked).toHaveBeenCalledWith({ questId: "welcome.meet", from: "log" });
+        expect(analytics.questTracker).toHaveBeenCalledWith(expect.objectContaining({ action: "restored" }));
     });
 
     it("questReset=1 forgets everything once, from localStorage on load", async () => {
@@ -70,7 +76,6 @@ describe("QuestStore", () => {
             JSON.stringify({ version: 1, quests: { meet: { accepted: true } }, tracked: "meet", hidden: true })
         );
         localStorage.setItem("quests.invitationSeen", "2");
-        sessionStorage.setItem("quests.invitationDismissed", "2026-09-28");
         localStorage.setItem("questReset", "1");
         const store = await loadStore();
         const state = get(store.questStateStore);
@@ -80,7 +85,6 @@ describe("QuestStore", () => {
         expect(state.declined).toBe(false);
         expect(localStorage.getItem("questReset")).toBeNull();
         expect(localStorage.getItem("quests.state")).not.toContain('"tracked":"meet"');
-        expect(sessionStorage.getItem("quests.invitationDismissed")).toBeNull();
     });
 
     it("reads the dev host simulation, bot by default", async () => {
@@ -90,7 +94,7 @@ describe("QuestStore", () => {
         expect((await loadStore()).questSim).toBe("area");
     });
 
-    it("offers once and records the offer; Not now lasts this visit and never reaches localStorage", async () => {
+    it("offers once and records the offer; Not now lasts this page and is never stored", async () => {
         const store = await loadStore();
         store.setQuestWorld(readyWorld);
         expect(store.showQuestInvitation()).toBe(true);
@@ -101,22 +105,65 @@ describe("QuestStore", () => {
         store.declineQuestInvitation();
         expect(analytics.questDeclined).toHaveBeenCalledWith(expect.objectContaining({ giverKind: "bot" }));
         expect(get(store.questStateStore).declined).toBe(true);
-        expect(sessionStorage.getItem("quests.invitationDismissed")).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(sessionStorage.length).toBe(0);
         expect(localStorage.getItem("quests.invitationDeclined")).toBeNull();
+        // An answered offer never counts against the fade limit.
+        expect(localStorage.getItem("quests.invitationSeen")).toBe("0");
 
-        // The log still offers everything, and Start works from it.
-        expect(get(store.questAvailablePathsStore)).toEqual(["explore"]);
+        // The log still offers everything (Meet too, alone in the room), and Start works from it.
+        expect(get(store.questAvailablePathsStore)).toEqual(["meet", "explore"]);
         store.acceptQuest("explore", "log", 1);
         expect(get(store.questStateStore).tracked).toBe("explore");
         expect(get(store.questStateStore).surface).toBe("card");
     });
 
-    it("a reload within the visit stays quiet; a new session or another day offers again", async () => {
-        sessionStorage.setItem("quests.invitationDismissed", new Date().toISOString().slice(0, 10));
-        expect(get((await loadStore()).questStateStore).declined).toBe(true);
+    it("a refresh after Not now offers again, and the bot that offers is the one frozen for a Start from the log", async () => {
+        let store = await loadStore();
+        store.setQuestWorld(readyWorld);
+        store.showQuestInvitation();
+        store.declineQuestInvitation();
+
+        // The page reloads: nothing about Not now survives, the invitation may show again.
         vi.resetModules();
-        sessionStorage.setItem("quests.invitationDismissed", "2000-01-01");
-        expect(get((await loadStore()).questStateStore).declined).toBe(false);
+        store = await loadStore();
+        expect(get(store.questStateStore).declined).toBe(false);
+        // Arriving away from the bot: the room offers.
+        store.setQuestWorld(awayFromGuide);
+        expect(store.showQuestInvitation()).toBe(true);
+        expect(get(store.questStateStore).offeredBy).toEqual({ room: "Lobby", giver: null });
+        store.declineQuestInvitation();
+
+        // Arriving next to the bot again: it offers, and a Start from the log keeps it as the giver even once the
+        // player has walked out of its range.
+        vi.resetModules();
+        store = await loadStore();
+        store.setQuestWorld(readyWorld);
+        expect(store.showQuestInvitation()).toBe(true);
+        store.declineQuestInvitation();
+        store.setQuestWorld(awayFromGuide);
+        store.acceptQuest("meet", "log", 1);
+        expect(get(store.questStateStore).quests.meet.origin).toEqual({
+            room: "Lobby",
+            giver: { kind: "bot", name: "Guide", uuid: "bot-3" },
+        });
+    });
+
+    it("an invitation that faded twice is not shown again after a reload", async () => {
+        localStorage.setItem("quests.invitationSeen", "2");
+        const store = await loadStore();
+        store.setQuestWorld(readyWorld);
+        expect(store.showQuestInvitation()).toBe(false);
+    });
+
+    it("Meet started while nobody is here waits, paused, until someone comes", async () => {
+        const store = await loadStore();
+        store.setQuestWorld(awayFromGuide);
+        expect(get(store.questAvailablePathsStore)).toContain("meet");
+        store.acceptQuest("meet", "log", 1);
+        const state = get(store.questStateStore);
+        expect(state.tracked).toBe("meet");
+        expect(state.quests.meet.paused).toBe("no-eligible-target");
+        expect(analytics.questPaused).toHaveBeenCalledWith({ questId: "welcome.meet", reason: "no-eligible-target" });
     });
 
     it("freezes the giver when the invitation is shown, whoever hosts when the quest is accepted or finished", async () => {

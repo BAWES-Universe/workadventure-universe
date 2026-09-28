@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { loadLocale } from "../../../i18n/i18n-util.sync";
 import { i18nObject } from "../../../i18n/i18n-util";
-import { logEntries, questBody, questEyebrow, questEyebrowFor, questPayoffLine, whereDescription } from "../QuestCopy";
+import {
+    logEntries,
+    offerEyebrow,
+    questBody,
+    questDescription,
+    questEyebrow,
+    questEyebrowFor,
+    questObjective,
+    questPayoffLine,
+    whereDescription,
+} from "../QuestCopy";
 import { initialQuestState, reduceQuest } from "../QuestModel";
 import type { QuestWorld } from "../QuestWorld";
 import { EMPTY_QUEST_WORLD } from "../QuestWorld";
@@ -33,6 +43,33 @@ describe("quest copy", () => {
             "You said hi. Welcome in."
         );
         expect(questPayoffLine(t, "explore", state, world)).toBe("You found the Courtyard.");
+    });
+
+    it("lets the offer on screen keep its giver's name once the bot is out of range", () => {
+        const offering = reduceQuest(initialQuestState(), { type: "invitation-shown", origin: fromGuide });
+        expect(offerEyebrow(t, offering, { ...world, host: { kind: "none" }, present: [] })).toBe("Guide");
+        const byRoom = reduceQuest(initialQuestState(), {
+            type: "invitation-shown",
+            origin: { room: "Lobby", giver: null },
+        });
+        expect(offerEyebrow(t, byRoom, world)).toBe("Lobby");
+        expect(offerEyebrow(t, initialQuestState(), world)).toBe("Guide");
+    });
+
+    it("never says 'Find the ' while Explore has no area to name", () => {
+        const state = initialQuestState();
+        const noArea: QuestWorld = { ...world, exploreTarget: undefined };
+        expect(questObjective(t, "explore", state, world)).toBe("Find the Courtyard");
+        expect(questObjective(t, "explore", state, noArea)).toBe("Explore this place");
+        expect(questDescription(t, "explore", state, noArea)).toBe("Explore this place");
+        expect(questBody(t, "explore", state, noArea, "idle")).toBe("Explore this place");
+    });
+
+    it("lists Meet as available while nobody is here, saying it will wait", () => {
+        const alone: QuestWorld = { ...world, host: { kind: "none" }, present: [] };
+        const [meet] = logEntries(t, initialQuestState(), alone, ["meet"]);
+        expect(meet).toMatchObject({ path: "meet", status: "available", note: "Nobody's here right now" });
+        expect(logEntries(t, initialQuestState(), world, ["meet"])[0].note).toBeUndefined();
     });
 
     it("keeps the giver frozen at acceptance on the card, the payoff and the log, wherever the player is now", () => {
@@ -98,14 +135,19 @@ describe("quest copy", () => {
         expect(entries[2].requirement).toBe("Needs: edit rights in this room");
     });
 
-    it("says where the target is in words, or what to open when there is no place", () => {
-        expect(
-            whereDescription(t, { name: "Courtyard", position: { x: 320, y: -320 } }, { x: 0, y: 0 }, "explore")
-        ).toBe("Courtyard is north-east of you, about 14 steps");
-        expect(whereDescription(t, undefined, { x: 0, y: 0 }, "build")).toBe("Open Tools, then Map editor.");
+    it("says where the target is in words, and nothing when there is nothing positional to say", () => {
+        const courtyard = { name: "Courtyard", position: { x: 320, y: -320 } };
+        expect(whereDescription(t, courtyard, { x: 0, y: 0 }, "explore")).toBe(
+            "Courtyard is north-east of you, about 14 steps"
+        );
+        // Build's body already names the menus; Meet without anyone, or any path without the map, adds nothing.
+        expect(whereDescription(t, courtyard, { x: 0, y: 0 }, "build")).toBeUndefined();
+        expect(whereDescription(t, undefined, { x: 0, y: 0 }, "meet")).toBeUndefined();
+        expect(whereDescription(t, courtyard, undefined, "explore")).toBeUndefined();
+        expect(whereDescription(t, undefined, { x: 0, y: 0 }, "explore")).toBeUndefined();
+        // Explore's area fixed on another map: said in words.
         expect(whereDescription(t, undefined, { x: 0, y: 0 }, "explore", "Courtyard")).toBe(
             "The Courtyard is in another room."
         );
-        expect(whereDescription(t, undefined, { x: 0, y: 0 }, "meet")).toBe("Nobody's here right now");
     });
 });

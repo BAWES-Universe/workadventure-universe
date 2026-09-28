@@ -59,6 +59,21 @@ describe("arrival invitation", () => {
         expect(surface()).toBe("invitation");
     });
 
+    it("waits for something that can be done right now: Meet alone in the room is not an invitation", () => {
+        setQuestWorld({ ...EMPTY_QUEST_WORLD, ready: true });
+        questArrivalStore.set("ready");
+        vi.advanceTimersByTime(INVITATION_DELAY_MS + 1);
+        expect(surface()).toBe("none");
+        // Someone comes: the invitation follows.
+        setQuestWorld({
+            ...EMPTY_QUEST_WORLD,
+            ready: true,
+            present: [{ userId: 2, uuid: "u-2", name: "Alice", isBot: false }],
+        });
+        vi.advanceTimersByTime(INVITATION_DELAY_MS);
+        expect(surface()).toBe("invitation");
+    });
+
     it("waits for the map: nothing while arriving, nothing for someone who came to meet a person", () => {
         vi.advanceTimersByTime(10_000);
         expect(surface()).toBe("none");

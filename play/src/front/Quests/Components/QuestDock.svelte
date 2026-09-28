@@ -11,11 +11,10 @@
     import { startQuestArrival } from "../QuestArrival";
     import {
         entryOrigin,
-        exploreAreaName,
         logEntries,
+        offerEyebrow,
         optionRows,
         questBody,
-        questEyebrow,
         questEyebrowFor,
         questObjective,
         questPayoffLine,
@@ -55,7 +54,7 @@
     } from "../QuestStore";
     import { questVisibleSurfaceStore, startQuestSystem } from "../QuestSystem";
     import { playerFeet, questTarget, sceneQuestTarget, targetKey, targetPosition } from "../QuestTargets";
-    import { questQuiet } from "../QuestUiStores";
+    import { questQuiet, questSurfaceSuppressed } from "../QuestUiStores";
     import {
         questUnreachableStore,
         questWalkingStore,
@@ -63,7 +62,7 @@
         stopQuestWalk,
         walkToQuestTarget,
     } from "../QuestWalk";
-    import { giverAsHost, questGiverUserId } from "../QuestWorld";
+    import { giverAsHost, offerHost, questGiverUserId } from "../QuestWorld";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { chatInputFocusStore } from "../../Stores/ChatStore";
     import { menuInputFocusStore } from "../../Stores/MenuInputFocusStore";
@@ -85,11 +84,11 @@
     const SETTLED_AFTER_MS = 60_000;
     /** Each announcement stays in the status region this long, so it is read before the next one. */
     const ANNOUNCE_MS = 1_500;
-    /** A card opened by Start or Follow folds to the pill after this long... */
+    /** A card opened by Start or Follow folds to the pill after this long of being seen... */
     export const CARD_FOLD_MS = 10_000;
     /** ...or on the player's first movement after this long, whichever comes first. */
     export const CARD_FOLD_MOVE_AFTER_MS = 3_000;
-    const CARD_MOVE_SAMPLE_MS = 500;
+    const CARD_FOLD_TICK_MS = 250;
     const CARD_ID = "quest-card";
 
     let dock: HTMLElement | undefined;
@@ -105,12 +104,14 @@
     $: world = $questWorldStore;
     $: visible = $questVisibleSurfaceStore;
     $: t = $LL;
-    // The invitation speaks for whoever hosts here now; a quest's card and payoff for the giver frozen at acceptance.
-    $: eyebrow = questEyebrow(t, world);
+    // The invitation and the options speak for the giver frozen when the offer was shown (its name stays as the
+    // player walks out of the bot's range); a quest's card and payoff for the giver frozen at acceptance.
+    $: eyebrow = offerEyebrow(t, state, world);
+    $: offerPortrait = offerHost(state, world);
     $: tracked = state.tracked;
     $: objective = tracked ? questObjective(t, tracked, state, world) : "";
     $: cardEyebrow = tracked ? questEyebrowFor(t, tracked, state, world) : eyebrow;
-    $: cardHost = tracked ? giverAsHost(entryOrigin(state, tracked, world).giver, world) : world.host;
+    $: cardHost = tracked ? giverAsHost(entryOrigin(state, tracked, world).giver, world) : offerPortrait;
 
     // Walk: an area, or a person on this map; hidden once no path leads there.
     $: walkTarget = tracked ? questTarget(tracked, state, world) : undefined;
@@ -169,7 +170,7 @@
             );
         }
         if (current.surface === "card" && previousSurface !== "card") {
-            // Opened by Start or Follow (not from its pill): it folds by itself once it has been read.
+            // Opened by Start or Follow (not from its pill): it folds by itself once it has been seen.
             if (previousSurface !== "pill") startAutoFold();
             announceWhere(current);
         } else if (current.surface !== "card") {
@@ -207,42 +208,72 @@
                 described = undefined;
             }
         }
-        whereText = whereDescription(t, described, player, path, exploreAreaName(current, world));
-        questAnnouncementStore.push(whereText);
+        // Explore's fixed area, when this map is ready without it: it is in another room.
+        const missingArea =
+            path === "explore" && current.exploreArea && world.ready && !world.exploreTarget
+                ? current.exploreArea.name
+                : undefined;
+        whereText = whereDescription(t, described, player, path, missingArea);
+        if (whereText) questAnnouncementStore.push(whereText);
     }
 
     // ---- The card's fold: on the X, the first movement after 3 s, or 10 s, whichever comes first ------------------
-    let foldTimer: ReturnType<typeof setTimeout> | undefined;
-    let foldMoveTimer: ReturnType<typeof setTimeout> | undefined;
-    let foldPoll: ReturnType<typeof setInterval> | undefined;
+    // Both count only while the card can be seen (not covered, a map there), like the payoff. Focus inside it or the
+    // pointer over it (the person is reading or using it) ends the countdown for good: then only the X, Escape or
+    // walking away close it.
+    let foldClock: ReturnType<typeof setInterval> | undefined;
+    let foldShownMs = 0;
+    let foldLast: Point | undefined;
+    let foldWasWalking = false;
 
     function stopAutoFold() {
-        if (foldTimer) clearTimeout(foldTimer);
-        if (foldMoveTimer) clearTimeout(foldMoveTimer);
-        if (foldPoll) clearInterval(foldPoll);
-        foldTimer = foldMoveTimer = foldPoll = undefined;
+        if (foldClock) clearInterval(foldClock);
+        foldClock = undefined;
+        foldShownMs = 0;
+        foldLast = undefined;
+        foldWasWalking = false;
     }
 
     function fold() {
         stopAutoFold();
+        if (cardEngaged()) return;
         if (get(questStateStore).surface === "card") dispatchQuest({ type: "close" });
+    }
+
+    /** Keyboard focus is inside the card (its dialog): a person is reading or using it. */
+    function cardEngaged(): boolean {
+        const active = document.activeElement;
+        return !!active && active !== document.body && !!document.getElementById(CARD_ID)?.contains(active);
     }
 
     function startAutoFold() {
         stopAutoFold();
-        foldTimer = setTimeout(fold, CARD_FOLD_MS);
-        foldMoveTimer = setTimeout(() => {
-            let last: Point | undefined;
-            foldPoll = setInterval(() => {
-                const player = gameManager.tryGetCurrentGameScene()?.CurrentPlayer;
-                if (!player) return;
-                const position = { x: player.x, y: player.y };
-                // The card's own "Walk there" is not the player leaving: its Stop walking stays in reach.
-                const moved = !!last && (last.x !== position.x || last.y !== position.y) && !get(questWalkingStore);
-                last = position;
-                if (moved) fold();
-            }, CARD_MOVE_SAMPLE_MS);
-        }, CARD_FOLD_MOVE_AFTER_MS);
+        foldClock = setInterval(tickAutoFold, CARD_FOLD_TICK_MS);
+    }
+
+    function tickAutoFold() {
+        if (visible !== "card" || !gameManager.tryGetCurrentGameScene()) return;
+        if (cardEngaged()) {
+            stopAutoFold();
+            return;
+        }
+        foldShownMs += CARD_FOLD_TICK_MS;
+        if (foldShownMs >= CARD_FOLD_MS) {
+            fold();
+            return;
+        }
+        if (foldShownMs < CARD_FOLD_MOVE_AFTER_MS) return;
+        const player = gameManager.tryGetCurrentGameScene()?.CurrentPlayer;
+        if (!player) return;
+        const position = { x: player.x, y: player.y };
+        // The card's own "Walk there" is not the player leaving: its Stop walking stays in reach, and where that
+        // walk left the player is the new starting point, not a movement.
+        const walking = get(questWalkingStore);
+        const moved =
+            !!foldLast && !walking && !foldWasWalking && (foldLast.x !== position.x || foldLast.y !== position.y);
+        foldLast = position;
+        foldWasWalking = walking;
+        if (moved) fold();
     }
 
     /** The quest whose pill has been reported shown (once per tracked quest). */
@@ -269,13 +300,17 @@
         // Only keyboard focus is ever inside: a click or a tap leaves none behind (questControls).
         if (!focusWasInside) return;
         if (before === "options" && next === "invitation") invitation?.focusShowOptions();
+        else if (before === "options" && next === "card") card?.focusClose();
         else if (before === "card" && next === "pill") pill?.focus();
         else if (before === "log") {
+            // The log closed because Start or Follow opened a card: focus goes there, and the log's opener (the
+            // profile menu's trigger, the pill) is forgotten. Closed to a resting surface: back to the opener.
             const opener = takeQuestLogOpener();
-            if (opener?.isConnected) opener.focus();
+            if (next === "card") card?.focusClose();
+            else if (next === "options") options?.focusClose();
+            else if (opener?.isConnected) opener.focus();
             else if (next === "pill") pill?.focus();
             else if (next === "quests") questsPill?.focus();
-            else if (next === "card") card?.focusClose();
             else profileMenuTrigger()?.focus();
         } else if (next === "none") {
             // Faded or covered: the surface is still fading out and holds focus until it goes. Move it now.
@@ -495,7 +530,13 @@
 
 <!-- The layer the stamp flies in and the map marks sit in: over the map, never catching a tap. -->
 <div class="absolute inset-0 overflow-hidden pointer-events-none" bind:this={layer}>
-    <QuestMapMarks path={markedPath} giverUserId={giverMarkUserId} {layer} avoid={dock} />
+    <QuestMapMarks
+        path={markedPath}
+        giverUserId={giverMarkUserId}
+        {layer}
+        avoid={dock}
+        suppressed={$questSurfaceSuppressed}
+    />
 </div>
 
 {#if visible === "log"}
@@ -536,7 +577,7 @@
                     {#if visible === "invitation"}
                         <QuestInvitation
                             bind:this={invitation}
-                            host={world.host}
+                            host={offerPortrait}
                             {eyebrow}
                             on:showOptions={(event) => onShowOptions(event.detail.keyboard)}
                             on:notNow={() => declineQuestInvitation()}
@@ -544,7 +585,7 @@
                     {:else if visible === "options"}
                         <QuestOptions
                             bind:this={options}
-                            host={world.host}
+                            host={offerPortrait}
                             title={optionsTitle}
                             {rows}
                             on:close={() => dispatchQuest({ type: "close" })}
@@ -577,6 +618,7 @@
                             walking={$questWalkingStore}
                             done={trackedDone}
                             on:close={() => dispatchQuest({ type: "close" })}
+                            on:engage={stopAutoFold}
                             on:walk={onWalk}
                             on:stopWalking={() => stopQuestWalk()}
                             on:chooseAnother={(event) => onOpenLog(event.detail.keyboard)}

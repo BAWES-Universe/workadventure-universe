@@ -11,8 +11,6 @@ import {
 // Same naming as Orbit's preference keys, so the engine can move them server-side later.
 export const QUEST_STATE_KEY = "quests.state";
 export const QUEST_INVITATION_SEEN_KEY = "quests.invitationSeen";
-/** Session storage: the day "Not now" was pressed. A new browser session or a new day forgets it. */
-export const QUEST_INVITATION_DISMISSED_KEY = "quests.invitationDismissed";
 
 /** The part of the state that outlives the page. Surfaces and payoffs in flight do not. */
 export interface StoredQuestProgress {
@@ -143,42 +141,13 @@ export function parseInvitationSeen(raw: string | null): number {
     return Math.min(value, MAX_INVITATION_SHOWS);
 }
 
-/** The local calendar day, the unit "Not now" is remembered for. */
-export function dayKey(now: Date): string {
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-    return `${now.getFullYear()}-${month}-${day}`;
-}
-
-/** Whether "Not now" was pressed today in this browser session. */
-export function readInvitationDismissed(session: StorageLike | undefined, now: Date = new Date()): boolean {
-    if (!session) return false;
-    try {
-        return session.getItem(QUEST_INVITATION_DISMISSED_KEY) === dayKey(now);
-    } catch {
-        return false;
-    }
-}
-
-export function rememberInvitationDismissed(session: StorageLike | undefined, now: Date = new Date()): void {
-    try {
-        session?.setItem(QUEST_INVITATION_DISMISSED_KEY, dayKey(now));
-    } catch {
-        // Private mode or a full quota: it stays dismissed for this page only.
-    }
-}
-
 /**
  * Builds the starting state from storage. A tracked quest comes back as its pill (a waiting payoff still plays from
- * there); otherwise the dock starts on its resting pill and arrival decides what to show.
+ * there); otherwise the dock starts on its resting pill and arrival decides what to show. "Not now" is never
+ * stored: a refresh offers again (an unanswered, faded invitation is what `invitationSeen` limits).
  */
-export function restoreQuestState(
-    storage: StorageLike | undefined,
-    session: StorageLike | undefined = undefined,
-    now: Date = new Date()
-): QuestState {
+export function restoreQuestState(storage: StorageLike | undefined): QuestState {
     const state = initialQuestState();
-    state.declined = readInvitationDismissed(session, now);
     if (!storage) return state;
     try {
         const progress = parseStoredProgress(storage.getItem(QUEST_STATE_KEY));
@@ -213,12 +182,10 @@ export function saveQuestState(storage: StorageLike | undefined, state: QuestSta
     }
 }
 
-/** Forgets everything, including this session's "Not now". */
-export function clearQuestStorage(storage: StorageLike | undefined, session?: StorageLike): void {
+export function clearQuestStorage(storage: StorageLike | undefined): void {
     try {
         storage?.removeItem(QUEST_STATE_KEY);
         storage?.removeItem(QUEST_INVITATION_SEEN_KEY);
-        session?.removeItem(QUEST_INVITATION_DISMISSED_KEY);
     } catch (error) {
         console.warn("Quests: could not clear saved progress", error);
     }

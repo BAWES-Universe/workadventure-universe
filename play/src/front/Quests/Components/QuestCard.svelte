@@ -25,6 +25,8 @@
         walk: void;
         stopWalking: void;
         chooseAnother: { keyboard: boolean };
+        /** The person is reading or using the card (focus inside, the pointer over it): it must not fold by itself. */
+        engage: void;
     }>();
 
     let closeWrapper: HTMLElement | undefined;
@@ -57,6 +59,9 @@
     use:escapeKey={() => dispatch("close")}
     use:questKeyboardFocus
     use:questControls
+    on:focusin={() => dispatch("engage")}
+    on:pointerenter={() => dispatch("engage")}
+    on:pointerdown={() => dispatch("engage")}
 >
     <div class="quest-header">
         <div class="quest-header-close" bind:this={closeWrapper}>

@@ -64,8 +64,12 @@ describe("targetMark", () => {
         if (off.kind === "edge") expect(off.angle).toBeCloseTo(Math.atan2(10, 400));
     });
 
-    it("keeps the down arrow while the feet are in view even if the point above them is not", () => {
-        expect(targetMark({ x: 50, y: 5 }, { x: 50, y: -40 }, view)).toEqual({ kind: "above", x: 50, y: -40 });
+    it("keeps the down arrow inside the view while the feet are in it, even if the point above them is not", () => {
+        // Standing right under the cameras: the arrow is drawn at the top of the visible map, not over the videos.
+        expect(targetMark({ x: 50, y: 5 }, { x: 50, y: -40 }, view, 28)).toEqual({ kind: "above", x: 50, y: 28 });
+        // Beside the dock: kept in from the side.
+        expect(targetMark({ x: 195, y: 60 }, { x: 195, y: 20 }, view, 28)).toEqual({ kind: "above", x: 186, y: 28 });
+        expect(targetMark({ x: 50, y: 60 }, { x: 50, y: 40 }, view, 28)).toEqual({ kind: "above", x: 50, y: 40 });
     });
 });
 

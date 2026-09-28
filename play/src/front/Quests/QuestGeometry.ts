@@ -76,14 +76,25 @@ export type TargetMark =
     | { kind: "edge"; x: number; y: number; angle: number }
     | { kind: "above"; x: number; y: number };
 
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
+}
+
 /**
- * Picks the mark for a target: while its feet are in `view`, a down-pointing arrow at `above` (a point over its
- * name); once they leave the view, the edge arrow pointing at the feet.
+ * Picks the mark for a target: while its feet are in `view`, a down-pointing arrow whose bottom sits at `above` (a
+ * point over its name); once they leave the view, the edge arrow pointing at the feet. The down arrow (`markSize`
+ * square) is kept inside the view: a target standing right under the cameras or beside the dock still gets its
+ * arrow, drawn over it rather than under what covers the map.
  */
-export function targetMark(feet: Point, above: Point, view: Box): TargetMark {
+export function targetMark(feet: Point, above: Point, view: Box, markSize = 0): TargetMark {
     const edge = edgeArrowPlacement(feet, view);
     if (edge.visible) return { kind: "edge", x: edge.x, y: edge.y, angle: edge.angle };
-    return { kind: "above", x: above.x, y: above.y };
+    const half = markSize / 2;
+    return {
+        kind: "above",
+        x: clamp(above.x, view.left + half, Math.max(view.left + half, view.left + view.width - half)),
+        y: clamp(above.y, view.top + markSize, Math.max(view.top + markSize, view.top + view.height)),
+    };
 }
 
 export type CompassDirection =
