@@ -6,7 +6,6 @@ const env = vi.hoisted(() => ({ ENABLE_OPENID: false, WOKA_SPEED: 9 }));
 vi.mock("../../Enum/EnvironmentVariable", () => env);
 vi.mock("../../Administration/AnalyticsClient", () => ({ analyticsClient: new Proxy({}, { get: () => () => {} }) }));
 // A map is loaded (timers act only then); its player can be moved by the test. No camera: the marks stay hidden.
-type TestScene = { CurrentPlayer: { x: number; y: number }; moveTo?: () => Promise<void> };
 const scene = vi.hoisted(() => ({ current: { CurrentPlayer: { x: 0, y: 0 } } as unknown }));
 vi.mock("../../Phaser/Game/GameManager", () => ({ gameManager: { tryGetCurrentGameScene: () => scene.current } }));
 vi.mock("../QuestDetectors", () => ({ armQuestScene: () => () => {} }));
