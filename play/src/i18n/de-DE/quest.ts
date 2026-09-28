@@ -103,6 +103,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         decline: "Ablehnen",
         showOnMap: "Auf der Karte zeigen",
         onMapNote: "Deine Karte zeigt dir den Weg zu dieser Quest.",
+        viewInOrbit: "In Orbit ansehen",
         abandon: "Quest abbrechen",
         abandonConfirm: "Diese Quest abbrechen? Du kannst sie später wieder annehmen.",
         keep: "Behalten",

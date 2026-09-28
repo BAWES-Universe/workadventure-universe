@@ -62,7 +62,7 @@ describe("QuestStore", () => {
         expect(get(store.questStateStore).surface).toBe("log");
         store.acceptQuest("explore", "log", 5);
         expect(JSON.parse(localStorage.getItem("quests.state") ?? "{}").tracked).toBe("explore");
-        store.toggleQuestLog();
+        // Accepted from the panel: the panel stays open on it; the toggle closes it onto the pill.
         expect(get(store.questStateStore).surface).toBe("log");
         store.toggleQuestLog();
         expect(get(store.questStateStore).surface).toBe("pill");
@@ -217,7 +217,7 @@ describe("QuestStore", () => {
         );
     });
 
-    it("an untracked completion is quiet: no celebration, a dot on the Quests row", async () => {
+    it("a completion off the map still gets its celebration", async () => {
         const store = await loadStore();
         store.setQuestWorld(readyWorld);
         store.acceptQuest("meet", "invitation", 0);
@@ -225,8 +225,7 @@ describe("QuestStore", () => {
         store.completeQuest("meet", "detected", 30_000);
         const state = get(store.questStateStore);
         expect(state.quests.meet.done).toBe(true);
-        expect(state.pending).toEqual([]);
-        expect(get(store.questNewsStore)).toBe(true);
+        expect(state.pending).toEqual(["meet"]);
         expect(analytics.questDone).toHaveBeenCalledWith({ questId: "welcome.meet", secondsSinceAccepted: 30 });
     });
 

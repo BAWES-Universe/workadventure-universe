@@ -234,9 +234,10 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
                 entry.origin = event.origin ? cloneOrigin(event.origin) : null;
             }
             if (event.path === "explore" && event.exploreArea) state.exploreArea = { ...event.exploreArea };
-            // The newest quest goes on the map, and the log closes, as a quest giver's window does on Accept.
+            // The newest quest goes on the map. Accepted from the panel, the panel stays open on it, with the way
+            // there and what to do; accepted anywhere else, the pill shows it.
             state.tracked = event.path;
-            state.surface = restingSurface(state);
+            if (state.surface !== "log") state.surface = restingSurface(state);
             state.news = false;
             return state;
         }
@@ -283,12 +284,8 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             entry.done = true;
             entry.paused = null;
             entry.doneAt = event.now;
-            // Only the tracked quest earns a celebration. Any other finishes quietly in the panel.
-            if (state.tracked === event.path) {
-                if (!state.pending.includes(event.path)) state.pending.push(event.path);
-            } else {
-                state.news = true;
-            }
+            // Every finished quest earns its celebration, on the map or not.
+            if (!state.pending.includes(event.path)) state.pending.push(event.path);
             return state;
         }
         case "pause": {
@@ -309,8 +306,13 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
             return state;
         case "celebration-settled":
             if (state.surface !== "celebration") return previous;
-            // A quest's celebration, with the whole chapter now done: the chapter's own follows once.
-            if (state.celebrating !== null && allDone(state) && !state.chapterCelebrated) {
+            // The last quest's celebration, with the whole chapter now done: the chapter's own follows once.
+            if (
+                state.celebrating !== null &&
+                allDone(state) &&
+                !state.chapterCelebrated &&
+                state.pending.length === 0
+            ) {
                 state.celebrating = null;
                 return state;
             }
@@ -325,18 +327,12 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
 
 /**
  * Plays the next waiting completion if the dock is free. `blocked` is true while surfaces are suppressed or the
- * person is busy (a call, Do not disturb, typing): the completion stays recorded and waits.
- *
- * A waiting completion belongs to the quest that was tracked when it finished. If the person has tracked another
- * quest since, the completion stays in the panel and never takes over their new choice.
+ * person is busy (a call, Do not disturb, typing): the completion stays recorded and waits. An open quest panel
+ * doesn't hold it back: the celebration plays at once and hands back to the panel.
  */
 export function revealPending(previous: QuestState, blocked: boolean): QuestState {
-    let state = previous;
-    const kept = state.pending.filter((path) => path === state.tracked);
-    if (kept.length !== state.pending.length) state = { ...state, pending: kept };
-    if (blocked || state.pending.length === 0 || state.surface === "log" || state.surface === "celebration") {
-        return state;
-    }
+    const state = previous;
+    if (blocked || state.pending.length === 0 || state.surface === "celebration") return state;
     const [celebrating, ...pending] = state.pending;
     return {
         ...state,

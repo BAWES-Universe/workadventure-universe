@@ -20,14 +20,15 @@ const free = { surfaces: false, pill: false };
 const guide = { room: "Lobby", giver: { kind: "bot" as const, name: "Guide", uuid: "bot-1" } };
 
 describe("reduceQuest", () => {
-    it("goes invitation → log → pill on accepting a path, and remembers who offered it", () => {
+    it("goes invitation → log, and Accept keeps the panel open on the quest now on the map", () => {
         const state = run(
             { type: "invitation-shown", origin: guide },
             { type: "open-log" },
             { type: "accept", path: "meet", now: 5, origin: guide }
         );
-        // Accept closes the log, as a quest giver's window does: the quest is on the map, its objective on the pill.
-        expect(state.surface).toBe("pill");
+        // The panel stays open on the accepted quest (the way there, what to do); closing it rests on the pill.
+        expect(state.surface).toBe("log");
+        expect(reduceQuest(state, { type: "close" }).surface).toBe("pill");
         expect(state.tracked).toBe("meet");
         expect(state.offeredBy).toEqual(guide);
         expect(state.quests.meet).toMatchObject({ accepted: true, done: false, acceptedAt: 5, origin: guide });
@@ -117,18 +118,17 @@ describe("reduceQuest", () => {
         expect(reduceQuest(fresh, { type: "toggle-log" }).surface).toBe("none");
     });
 
-    it("the tracked completion waits for its celebration; an untracked one finishes quietly with a dot", () => {
+    it("every completion waits for its celebration, on the map or not, in the order they finished", () => {
         let state = run(
             { type: "accept", path: "meet", now: 1 },
             { type: "accept", path: "explore", now: 2 },
             { type: "complete", path: "meet", now: 3 }
         );
         expect(state.quests.meet.done).toBe(true);
-        expect(state.pending).toEqual([]);
-        expect(state.news).toBe(true);
+        expect(state.pending).toEqual(["meet"]);
 
         state = reduceQuest(state, { type: "complete", path: "explore", now: 4 });
-        expect(state.pending).toEqual(["explore"]);
+        expect(state.pending).toEqual(["meet", "explore"]);
         expect(state.tracked).toBe("explore");
     });
 
@@ -179,6 +179,13 @@ describe("reduceQuest", () => {
             { type: "accept", path: "build", now: 5 },
             { type: "complete", path: "build", now: 6 }
         );
+        // Each quest's celebration in turn, the panel between them, then the chapter's.
+        for (const path of ["meet", "explore"] as const) {
+            state = revealPending(state, false);
+            expect(state.celebrating).toBe(path);
+            state = reduceQuest(state, { type: "celebration-settled" });
+            expect(state.surface).toBe("log");
+        }
         state = revealPending(state, false);
         expect(state.celebrating).toBe("build");
         state = reduceQuest(state, { type: "celebration-settled" });
@@ -200,7 +207,8 @@ describe("reduceQuest", () => {
             { type: "accept", path: "build", now: 5 },
             { type: "complete", path: "build", now: 6 }
         );
-        state = reduceQuest(revealPending(state, false), { type: "celebration-settled" });
+        for (let i = 0; i < 3; i++) state = reduceQuest(revealPending(state, false), { type: "celebration-settled" });
+        expect(state.surface).toBe("celebration");
         expect(state.celebrating).toBeNull();
         state = reduceQuest(state, { type: "open-log" });
         expect(state.surface).toBe("log");
@@ -227,15 +235,13 @@ describe("revealPending", () => {
         expect(shown.tracked).toBeNull();
     });
 
-    it("never hijacks a quest tracked after the completion", () => {
+    it("celebrates a completion even after another quest went on the map, and leaves that one there", () => {
         let state = completed();
         state = reduceQuest(state, { type: "accept", path: "meet", now: 3 });
         const next = revealPending(state, false);
-        expect(next.pending).toEqual([]);
-        expect(next.celebrating).toBeNull();
-        expect(next.surface).toBe("pill");
+        expect(next.celebrating).toBe("explore");
+        expect(next.surface).toBe("celebration");
         expect(next.tracked).toBe("meet");
-        expect(next.quests.explore.done).toBe(true);
     });
 
     it("opening the panel over a celebration ends it", () => {
@@ -245,9 +251,11 @@ describe("revealPending", () => {
         expect(reduceQuest(log, { type: "close" }).surface).toBe("none");
     });
 
-    it("does not interrupt the panel", () => {
+    it("plays over an open panel, then hands back to it", () => {
         const state = reduceQuest(completed(), { type: "open-log" });
-        expect(revealPending(state, false).surface).toBe("log");
+        const shown = revealPending(state, false);
+        expect(shown.surface).toBe("celebration");
+        expect(reduceQuest(shown, { type: "celebration-settled" }).surface).toBe("log");
     });
 
     it("returns the same object when nothing changes", () => {

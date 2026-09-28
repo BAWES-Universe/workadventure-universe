@@ -103,6 +103,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         decline: "Rifiuta",
         showOnMap: "Mostra sulla mappa",
         onMapNote: "La tua mappa ti indica la strada per questa missione.",
+        viewInOrbit: "Vedilo in Orbit",
         abandon: "Abbandona la missione",
         abandonConfirm: "Abbandonare questa missione? Potrai riprenderla più tardi.",
         keep: "Tienila",

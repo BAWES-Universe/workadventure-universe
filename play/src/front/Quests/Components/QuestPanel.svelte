@@ -25,6 +25,8 @@
     export let walking = false;
     /** Build can open the editor from its details. */
     export let editorLabel: string | undefined = undefined;
+    /** "See it in Orbit", when Orbit is there for this player: opens the quest's page (its badge) in Orbit. */
+    export let orbitLinkLabel: string | undefined = undefined;
     /** Where the quest on the map is, in words, for people who can't see the marks. */
     export let whereText: string | undefined = undefined;
     /** Guests with sign-in available: a row under Available to keep progress across devices. */
@@ -41,6 +43,8 @@
         stopWalking: void;
         openEditor: void;
         signIn: void;
+        /** "See it in Orbit", under the reward. */
+        viewInOrbit: QuestPath;
     }>();
 
     const SECTIONS: Array<{ key: "inProgress" | "available" | "done"; statuses: QuestLogEntry["status"][] }> = [
@@ -85,6 +89,19 @@
     }
 
     /** From the keyboard (a click has detail 0), focus follows the view; a tap leaves none behind. */
+    /**
+     * Accept keeps the details open on the quest, now on the map: focus moves to what to do next (Walk there, the
+     * editor, or Abandon), since the Accept button itself is gone.
+     */
+    async function onAccept(path: QuestPath) {
+        dispatch("accept", path);
+        await tick();
+        (
+            panel?.querySelector<HTMLElement>("[data-testid='quest-detail-actions'] button") ??
+            panel?.querySelector<HTMLElement>("[data-testid='quest-detail-back']")
+        )?.focus();
+    }
+
     async function show(path: QuestPath | null, event?: MouseEvent) {
         const from = selected;
         selected = path;
@@ -226,7 +243,19 @@
                     <h3 class="quest-detail-label">{$LL.quest.detail.reward()}</h3>
                     <div class="flex items-center gap-2">
                         <QuestStamp path={entry.path} size={40} tilted={false} />
-                        <span class="text-sm font-semibold text-[#e9c74c]">{entry.reward}</span>
+                        <span class="min-w-0 flex-1">
+                            <span class="block text-sm font-semibold text-[#e9c74c]">{entry.reward}</span>
+                            {#if orbitLinkLabel}
+                                <button
+                                    type="button"
+                                    class="quest-link"
+                                    data-testid="quest-detail-orbit"
+                                    on:click={() => entry && dispatch("viewInOrbit", entry.path)}
+                                >
+                                    {orbitLinkLabel}
+                                </button>
+                            {/if}
+                        </span>
                     </div>
                 </div>
 
@@ -255,7 +284,7 @@
                                 type="button"
                                 class="quest-btn u-cta flex-1"
                                 data-testid="quest-detail-accept"
-                                on:click={() => entry && dispatch("accept", entry.path)}
+                                on:click={() => entry && onAccept(entry.path)}
                             >
                                 {$LL.quest.detail.accept()}
                             </button>

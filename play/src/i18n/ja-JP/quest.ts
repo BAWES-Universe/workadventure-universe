@@ -103,6 +103,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         decline: "断る",
         showOnMap: "マップに表示",
         onMapNote: "マップにこのクエストへの道が表示されています。",
+        viewInOrbit: "Orbitで見る",
         abandon: "クエストを破棄",
         abandonConfirm: "このクエストを破棄しますか？あとでまた受注できます。",
         keep: "続ける",

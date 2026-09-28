@@ -231,6 +231,24 @@ describe("QuestPanel", () => {
         expect(byTestId(target, "quest-entry-explore")).not.toBeNull();
     });
 
+    it("the reward links to the quest in Orbit when Orbit is there, and not otherwise", async () => {
+        const { target, instance } = mount(QuestPanel, {
+            ...base,
+            entries: [entry("meet", "done")],
+            orbitLinkLabel: "See it in Orbit",
+        });
+        const events: string[] = [];
+        instance.$on("viewInOrbit", (event: CustomEvent<string>) => events.push(event.detail));
+        click(byTestId(target, "quest-row-meet"));
+        await tick();
+        expect(byTestId(target, "quest-detail-orbit")?.textContent?.trim()).toBe("See it in Orbit");
+        click(byTestId(target, "quest-detail-orbit"));
+        expect(events).toEqual(["meet"]);
+        instance.$set({ orbitLinkLabel: undefined });
+        await tick();
+        expect(byTestId(target, "quest-detail-orbit")).toBeNull();
+    });
+
     it("an available quest: Accept, or Decline back to the list", async () => {
         const { target, instance } = mount(QuestPanel, {
             ...base,

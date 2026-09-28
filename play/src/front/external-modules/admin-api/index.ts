@@ -15,6 +15,7 @@ import { hasCapability } from "../../Connection/Capabilities";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
+import { questOrbitLinkStore } from "../../Quests/QuestOrbitLink";
 import { watchOrbitQuestEntries } from "../../Quests/QuestOrbitState";
 import {
     ORBIT_AUTH_VERSION,
@@ -452,6 +453,8 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     // With quests on, Orbit's You page shows the same quest log as the game (nothing is stored server-side).
     unsubscribeQuests?.();
     unsubscribeQuests = watchOrbitQuestEntries((entries) => bridge?.setQuestState(entries));
+    // The quest panel's "See it in Orbit" opens that quest's page (its badge), for a signed-in player only.
+    questOrbitLinkStore.set(canOpenOrbit() ? (questId) => requestOrbitPage("quest", { questId }) : null);
 
     // Activate the Orbit button in the action bar (highest priority). Orbit opens only when asked: this runs on every
     // room join and reconnect, so opening here would bring Orbit back each time.

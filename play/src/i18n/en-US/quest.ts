@@ -102,6 +102,7 @@ const quest: BaseTranslation = {
         decline: "Decline",
         showOnMap: "Show on map",
         onMapNote: "Your map is showing the way to this quest.",
+        viewInOrbit: "See it in Orbit",
         abandon: "Abandon quest",
         abandonConfirm: "Abandon this quest? You can take it again later.",
         keep: "Keep it",

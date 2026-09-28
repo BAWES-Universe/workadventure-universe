@@ -20,7 +20,7 @@
 export const ORBIT_BRIDGE_VERSION = 1 as const;
 
 /** Pages the game may ask Orbit for. Orbit sends anything it does not know to its home. */
-export type OrbitNavigateIntent = "new-universe" | "world-members" | "visit-card";
+export type OrbitNavigateIntent = "new-universe" | "world-members" | "visit-card" | "quest";
 
 /** What changed, for a refresh hint. */
 export type OrbitEventTopic = "all" | "universes" | "worlds" | "rooms" | "profile" | "memberships";

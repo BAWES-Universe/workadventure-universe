@@ -145,7 +145,7 @@ describe("QuestDock", () => {
         expect(byTestId("quest-pill")).not.toBeNull();
     });
 
-    it("Let's get started opens the log; a quest's details offer Accept, which closes the log onto the pill", async () => {
+    it("Let's get started opens the log; Accept keeps the quest's details open, now on the map", async () => {
         dispatchQuest({ type: "invitation-shown" });
         await flush();
         expect(byTestId("quest-invitation")).not.toBeNull();
@@ -162,6 +162,13 @@ describe("QuestDock", () => {
         byTestId("quest-detail-accept")?.click();
         await flush(GONE_MS);
         expect(get(questStateStore).tracked).toBe("explore");
+        // The details stay, with what to do and the way there; Accept and Decline give way to the quest's actions.
+        expect(byTestId("quest-detail-explore")).not.toBeNull();
+        expect(byTestId("quest-detail-accept")).toBeNull();
+        expect(byTestId("quest-detail-body")).not.toBeNull();
+        expect(byTestId("quest-on-map")).not.toBeNull();
+        byTestId("quest-panel-close")?.click();
+        await flush(GONE_MS);
         expect(byTestId("quest-panel")).toBeNull();
         // The pill keeps its place and now carries the objective.
         expect(byTestId("quest-pill")).not.toBeNull();
@@ -238,7 +245,7 @@ describe("QuestDock", () => {
         expect(get(questStateStore).surface).toBe("pill");
     });
 
-    it("an Accept from the keyboard in a log the menu row opened gives focus back to the menu", async () => {
+    it("an Accept from the keyboard keeps focus in the panel, on what to do next", async () => {
         const opener = document.createElement("button");
         document.body.appendChild(opener);
         openQuestLog(opener, true);
@@ -249,8 +256,8 @@ describe("QuestDock", () => {
         expect(document.activeElement).toBe(byTestId("quest-detail-back"));
         keyboardClick(byTestId("quest-detail-accept"));
         await flush(GONE_MS);
-        expect(byTestId("quest-panel")).toBeNull();
-        expect(document.activeElement).toBe(opener);
+        expect(byTestId("quest-panel")).not.toBeNull();
+        expect(byTestId("quest-detail-actions")?.contains(document.activeElement)).toBe(true);
     });
 
     it("keeps the dock narrow: the Express column stays visible beside every surface", () => {
@@ -324,7 +331,7 @@ describe("QuestDock", () => {
         expect(get(questStateStore).chapterCelebrated).toBe(true);
     });
 
-    it("never lets a waiting completion take over a quest put on the map since", async () => {
+    it("celebrates a completion off the map too, and leaves the quest on the map where it is", async () => {
         acceptQuest("explore", "invitation");
         acceptQuest("build", "log");
         dispatchQuest({ type: "track", path: "explore" });
@@ -334,8 +341,7 @@ describe("QuestDock", () => {
         dispatchQuest({ type: "track", path: "build" });
         suppression.set({ surfaces: false, pill: false });
         await flush(2_000);
-        expect(byTestId("quest-celebration")).toBeNull();
-        expect(byTestId("quest-pill")).not.toBeNull();
+        expect(byTestId("quest-celebration")).not.toBeNull();
         expect(get(questStateStore).tracked).toBe("build");
     });
 

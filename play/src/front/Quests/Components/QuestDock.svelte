@@ -33,6 +33,7 @@
         declineQuestInvitation,
         dispatchQuest,
         questAcceptedCountStore,
+        questAnalyticsId,
         questAnnouncementStore,
         questAvailablePathsStore,
         questDevice,
@@ -42,6 +43,7 @@
         settleQuestCelebration,
         trackQuest,
     } from "../QuestStore";
+    import { questOrbitLinkStore } from "../QuestOrbitLink";
     import { questVisibleSurfaceStore, startQuestSystem } from "../QuestSystem";
     import { playerFeet, questTarget, sceneQuestTarget, targetKey, targetPosition } from "../QuestTargets";
     import { questQuiet, questSurfaceSuppressed } from "../QuestUiStores";
@@ -443,6 +445,8 @@
                     on:stopWalking={() => stopQuestWalk()}
                     on:openEditor={onOpenEditor}
                     on:signIn={onSignIn}
+                    orbitLinkLabel={$questOrbitLinkStore ? t.quest.detail.viewInOrbit() : undefined}
+                    on:viewInOrbit={(event) => $questOrbitLinkStore?.(questAnalyticsId(event.detail))}
                 />
             </div>
         {/if}
@@ -694,9 +698,24 @@
         background: #b4233c;
         border: 1px solid #b4233c;
     }
+    /* Done is success: green, as a tick is anywhere else. Gold stays for the badge itself. */
     :global(.quest-tag-done) {
-        color: #1b2a41;
-        background: #e9c74c;
+        color: #6ee7b7;
+        background: rgba(16, 185, 129, 0.16);
+    }
+    :global(.quest-link) {
+        display: inline-flex;
+        align-items: center;
+        min-height: 1.75rem;
+        padding: 0;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: #c4b5fd;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+    }
+    :global(.quest-link:hover) {
+        color: #fff;
     }
     :global(.quest-tag-quiet) {
         color: rgba(255, 255, 255, 0.7);
@@ -714,8 +733,8 @@
         width: 1.5rem;
         height: 1.5rem;
         border-radius: 999px;
-        color: #1b2a41;
-        background: #e9c74c;
+        color: #06281c;
+        background: #34d399;
     }
     /* The pill: a 44px glass capsule with a 1px hairline in the landing page's lavender-to-amber, drawn by a masked
        pseudo-element behind a transparent border (a gradient cannot round a border by itself). */
