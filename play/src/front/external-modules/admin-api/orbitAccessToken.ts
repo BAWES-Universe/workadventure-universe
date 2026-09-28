@@ -107,6 +107,10 @@ export async function freshOrbitAccessToken(
     force: boolean,
     isCurrent: () => boolean
 ): Promise<string | null> {
+    // Another caller (Orbit's frame, the bot editor, a reconnect) may have renewed the game's token since this holder
+    // got it: start from the newest one, since a rotated refresh token makes the old one useless.
+    const stored = localUserStore.getAuthToken();
+    if (stored && stored !== holder.userAccessToken) holder.userAccessToken = stored;
     const gameToken = holder.userAccessToken;
     const current = getAccessTokenFromJwt(gameToken);
     if (!gameToken || !current) return null;

@@ -1,7 +1,6 @@
 import type { BotData } from "../types";
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
-import { localUserStore } from "../../../Connection/LocalUserStore";
 
 interface AuthError extends Error {
     isAuthError: boolean;
@@ -198,10 +197,6 @@ export class BotApiService {
     private async freshAccessToken(force: boolean): Promise<string | null> {
         const holder = this.gameToken;
         if (!holder) return this.accessToken;
-        // Orbit's frame (or a reconnect) may have renewed the game's token since the room loaded: start from the
-        // newest one, since a rotated refresh token makes the old one useless.
-        const stored = localUserStore.getAuthToken();
-        if (stored && stored !== holder.userAccessToken) holder.userAccessToken = stored;
         const accessToken = await freshOrbitAccessToken(holder, force, () => this.gameToken === holder);
         if (!accessToken || this.gameToken !== holder) return null;
         // Same player, renewed token: an Orbit session already cached is still theirs.
