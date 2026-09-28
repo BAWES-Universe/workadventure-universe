@@ -164,8 +164,11 @@ export function armQuestScene(scene: GameScene): () => void {
             ? areas.find((area) => area.id === state.exploreArea?.id) ??
               areas.find((area) => area.name === state.exploreArea?.name)
             : undefined;
-        const exploreTarget = fixed
-            ? { area: fixed, alreadyInside: false }
+        // Once Explore is accepted its area is fixed: on a map without it there is no target, never a nearby stand-in.
+        const exploreTarget = state.exploreArea
+            ? fixed
+                ? { area: fixed, alreadyInside: false }
+                : undefined
             : pickExploreTarget(areas, playerFeet(), targets.questArea);
         return {
             ready: true,

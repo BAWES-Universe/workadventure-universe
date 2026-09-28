@@ -106,7 +106,9 @@ export function parseStoredProgress(raw: string | null): StoredQuestProgress | n
 }
 
 export function serializeProgress(state: QuestState): string {
-    const pending = state.payoff ? [state.payoff, ...state.pending] : state.pending;
+    // A waiting payoff belongs to the quest still tracked; once another quest is tracked it was superseded.
+    const kept = state.pending.filter((path) => path === state.tracked);
+    const pending = state.payoff ? [state.payoff, ...kept] : kept;
     // A payoff on screen had already released the tracked slot; keep it tracked so it can play again after a reload.
     const tracked = state.payoff ?? state.tracked;
     const stored: StoredQuestProgress = {
@@ -144,7 +146,8 @@ export function restoreQuestState(storage: StorageLike | undefined): QuestState 
             state.news = progress.news;
             state.signInOfferSkipped = progress.signInOfferSkipped;
             // A done quest that was still waiting for its payoff comes back tracked, so it can still play.
-            const waiting = progress.pending[0];
+            // If another quest is tracked, a saved payoff was superseded and must not take its place.
+            const waiting = progress.tracked === null ? progress.pending[0] : undefined;
             state.tracked = waiting ?? progress.tracked;
             state.pending = waiting ? [waiting] : [];
             state.surface = restingSurface(state);

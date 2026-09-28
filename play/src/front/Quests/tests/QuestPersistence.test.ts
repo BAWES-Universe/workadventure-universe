@@ -155,6 +155,23 @@ describe("save and restore", () => {
         expect(revealPending(restored, false).payoff).toBe("meet");
     });
 
+    it("a payoff still waiting when another quest was tracked never takes that quest's place", () => {
+        let state = initialQuestState();
+        state = reduceQuest(state, { type: "accept", path: "explore", now: 1 });
+        state = reduceQuest(state, { type: "complete", path: "explore", now: 2 });
+        // Before the payoff could play, the player chose Meet.
+        state = reduceQuest(state, { type: "accept", path: "meet", now: 3 });
+        expect(state.tracked).toBe("meet");
+        const saved = serializeProgress(state);
+        expect(JSON.parse(saved).pending).toEqual([]);
+
+        // An older save that still carries the stale payoff restores the player's choice too.
+        const stale = JSON.stringify({ ...JSON.parse(saved), pending: ["explore"] });
+        const restored = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: stale }));
+        expect(restored.tracked).toBe("meet");
+        expect(restored.pending).toEqual([]);
+    });
+
     it("survives storage that throws", () => {
         vi.spyOn(console, "warn").mockImplementation(() => {});
         const throwing = {
