@@ -1,7 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher } from "svelte";
     import { LL } from "../../../i18n/i18n-svelte";
-    import AchievementIcon from "../../Components/Icons/AchievementIcon.svelte";
+    import QuestStamp from "./QuestStamp.svelte";
     import { questControls } from "./questActions";
 
     /** Quests available here or accepted and not followed: what the log has to offer. */
@@ -15,7 +15,8 @@
     }
 </script>
 
-<!-- The bar never goes empty: with nothing followed, this 44px pill opens the log. -->
+<!-- The bar never goes empty: with nothing followed, this 44px pill opens the log. The same capsule as the followed
+     pill, with the Explorer compass in lavender for an icon. -->
 <button
     type="button"
     class="quest-pill"
@@ -25,7 +26,9 @@
     use:questControls
     on:click={(event) => dispatch("open", { keyboard: event.detail === 0 })}
 >
-    <AchievementIcon height="h-5" width="w-5" strokeColor="stroke-[#e9c74c]" hover="" classList="shrink-0" />
+    <span class="quest-pill-glyph" data-testid="quests-pill-glyph">
+        <QuestStamp path="explore" size={22} glyphOnly tilted={false} glyphColor="#c4b5fd" />
+    </span>
     <span class="quest-pill-label">{$LL.quest.quests()}</span>
     {#if count > 0}
         <span class="u-count shrink-0" aria-hidden="true">{count}</span>

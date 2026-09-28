@@ -9,7 +9,8 @@
     import { questStateStore, questWorldStore } from "../QuestStore";
     import { FEET_OFFSET_Y, sceneQuestTarget, targetPosition } from "../QuestTargets";
 
-    /** The followed quest whose target is marked: the edge arrow off screen, a down arrow above it on screen. */
+    /** The followed quest whose target is marked: the edge arrow off screen, a down arrow above it on screen. Amber, as
+     the floor ring's edge: the world marks alone wear it. */
     export let path: QuestPath | null;
     /** The quest giver bot, marked with a "!" above its name while its offer is on screen. */
     export let giverUserId: number | undefined = undefined;
@@ -211,11 +212,19 @@
     data-testid="quest-edge-arrow"
 >
     <svg width="28" height="28" viewBox="0 0 28 28" fill="none" focusable="false">
-        <path d="M9 7l10 7-10 7" stroke="#c4b5fd" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <path
+            d="M9 7l10 7-10 7"
+            stroke="#1b2a41"
+            stroke-width="6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-opacity=".7"
+        />
+        <path d="M9 7l10 7-10 7" stroke="#f5a623" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
 </div>
 
-<!-- A gold arrow hovering above the target while it is on screen, pointing down at it. -->
+<!-- An amber arrow hovering above the target while it is on screen, pointing down at it. -->
 <div
     class="quest-mark"
     class:visible={mark?.kind === "above"}
@@ -235,12 +244,12 @@
                 stroke-linejoin="round"
                 stroke-opacity=".7"
             />
-            <path d="M7 9l7 8 7-8" stroke="#e9c74c" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M7 9l7 8 7-8" stroke="#f5a623" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
     </div>
 </div>
 
-<!-- The quest giver: a gold "!" above its name while its offer is on screen. -->
+<!-- The quest giver: an amber "!" above its name while its offer is on screen. -->
 <div
     class="quest-mark"
     class:visible={giver !== undefined}
@@ -272,21 +281,21 @@
         justify-content: center;
         border-radius: 999px;
         background: rgba(27, 42, 65, 0.9);
-        box-shadow: 0 0 12px -2px rgba(167, 139, 250, 0.45);
+        box-shadow: 0 0 12px -2px rgba(245, 166, 35, 0.45);
     }
     .quest-bob {
         display: flex;
         align-items: center;
         justify-content: center;
         animation: quest-bob 900ms ease-in-out infinite alternate;
-        filter: drop-shadow(0 0 6px rgba(233, 199, 76, 0.55));
+        filter: drop-shadow(0 0 6px rgba(245, 166, 35, 0.55));
     }
     .quest-bang {
         font-family: "Press Start 2P", ui-monospace, monospace;
         font-size: 1.375rem;
         line-height: 1;
         font-weight: 900;
-        color: #e9c74c;
+        color: #f5a623;
         text-shadow: 2px 0 #1b2a41, -2px 0 #1b2a41, 0 2px #1b2a41, 0 -2px #1b2a41, 1px 1px #1b2a41, -1px -1px #1b2a41,
             1px -1px #1b2a41, -1px 1px #1b2a41;
         padding: 0 0.25rem 0.25rem;

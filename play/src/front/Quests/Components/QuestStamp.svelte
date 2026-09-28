@@ -5,31 +5,41 @@
     /** Rendered size in px. 56 for the payoff, smaller as an icon. */
     export let size = 56;
     export let tilted = true;
+    /** Only the glyph (butterfly, compass, cube), without the ring: the pills wear it as their icon. */
+    export let glyphOnly = false;
+    /** The glyph's colour. The stamp's own gold unless told otherwise. */
+    export let glyphColor = "#e9c74c";
 </script>
 
 <!-- An ink stamp: a lavender scalloped ring around a gold glyph (butterfly, compass, cube). Decorative: the name is
      always said in text next to it. -->
 <svg
     class="quest-stamp"
-    class:tilted
+    class:tilted={tilted && !glyphOnly}
     width={size}
     height={size}
-    viewBox="0 0 120 120"
+    viewBox={glyphOnly ? "26 26 66 66" : "0 0 120 120"}
     fill="none"
+    style="--quest-glyph-color: {glyphColor}"
     aria-hidden="true"
     focusable="false"
+    data-testid="quest-stamp"
+    data-path={path}
+    data-glyph-only={glyphOnly ? "true" : undefined}
 >
-    <g class="ring">
-        <path
-            d="M60 5 70 11 82 10 89 20 100 24 102 37 111 46 108 59 114 70 105 80 103 93 90 97 82 108 70 107 59 114 48 108 35 109 28 99 16 95 14 82 5 73 9 60 3 48 12 39 14 26 27 22 35 11 48 12Z"
-            fill="currentColor"
-            fill-opacity=".1"
-            stroke="currentColor"
-            stroke-width="1.5"
-        />
-        <circle cx="59" cy="59" r="42" stroke="currentColor" stroke-dasharray="1 4" />
-        <circle cx="59" cy="59" r="36" stroke="currentColor" stroke-opacity=".45" />
-    </g>
+    {#if !glyphOnly}
+        <g class="ring">
+            <path
+                d="M60 5 70 11 82 10 89 20 100 24 102 37 111 46 108 59 114 70 105 80 103 93 90 97 82 108 70 107 59 114 48 108 35 109 28 99 16 95 14 82 5 73 9 60 3 48 12 39 14 26 27 22 35 11 48 12Z"
+                fill="currentColor"
+                fill-opacity=".1"
+                stroke="currentColor"
+                stroke-width="1.5"
+            />
+            <circle cx="59" cy="59" r="42" stroke="currentColor" stroke-dasharray="1 4" />
+            <circle cx="59" cy="59" r="36" stroke="currentColor" stroke-opacity=".45" />
+        </g>
+    {/if}
     <g class="glyph">
         {#if path === "meet"}
             <path
@@ -46,7 +56,9 @@
             <path d="m59 36 23 13v25L59 87 37 74V49l22-13Z" stroke="currentColor" stroke-width="2.5" />
             <path d="m37 49 22 13 23-13M59 62v25M48 43l22 13v13" stroke="currentColor" stroke-width="2.5" />
         {/if}
-        <path d="m24 16 1.8 4.2L30 22l-4.2 1.8L24 28l-1.8-4.2L18 22l4.2-1.8L24 16Z" fill="currentColor" />
+        {#if !glyphOnly}
+            <path d="m24 16 1.8 4.2L30 22l-4.2 1.8L24 28l-1.8-4.2L18 22l4.2-1.8L24 16Z" fill="currentColor" />
+        {/if}
     </g>
 </svg>
 
@@ -62,6 +74,6 @@
         color: #c4b5fd;
     }
     .glyph {
-        color: #e9c74c;
+        color: var(--quest-glyph-color, #e9c74c);
     }
 </style>

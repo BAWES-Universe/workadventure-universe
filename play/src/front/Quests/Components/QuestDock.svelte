@@ -600,8 +600,10 @@
                     {:else if visible === "pill" && tracked}
                         <QuestPill
                             bind:this={pill}
+                            path={tracked}
                             label={objective}
                             done={trackedDone}
+                            walking={$questWalkingStore}
                             cardId={CARD_ID}
                             on:open={(event) => onOpenCard(event.detail.keyboard)}
                         />
@@ -769,7 +771,10 @@
     :global(.quest-row:hover) {
         background: rgba(255, 255, 255, 0.08);
     }
+    /* The pills: a 44px glass capsule with a 1px hairline in the landing page's lavender-to-amber, drawn by a masked
+       pseudo-element behind a transparent border (a gradient cannot round a border by itself). */
     :global(.quest-pill) {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 0.5rem;
@@ -781,7 +786,8 @@
         border-radius: 999px;
         color: #fff;
         background: rgb(27 42 65 / 0.9);
-        border: 1px solid rgba(167, 139, 250, 0.22);
+        border: 1px solid transparent;
+        background-clip: padding-box;
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
         font-size: 0.875rem;
@@ -789,6 +795,54 @@
         white-space: nowrap;
         pointer-events: auto;
         cursor: pointer;
+        transition: transform 150ms ease;
+    }
+    :global(.quest-pill::before) {
+        content: "";
+        position: absolute;
+        inset: -1px;
+        padding: 1px;
+        border-radius: inherit;
+        background: linear-gradient(135deg, #c4b5fd, #f5a623);
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        opacity: 0.6;
+        pointer-events: none;
+        transition: opacity 150ms ease;
+    }
+    :global(button.quest-pill:hover),
+    :global(button.quest-pill:focus-visible) {
+        transform: translateY(-1px);
+    }
+    :global(button.quest-pill:hover::before),
+    :global(button.quest-pill:focus-visible::before) {
+        opacity: 1;
+    }
+    :global(button.quest-pill:active) {
+        transform: translateY(0);
+    }
+    /* The badge's glyph: the pill's icon. It pops once on completion. */
+    :global(.quest-pill-glyph) {
+        flex: none;
+        display: flex;
+        width: 1.375rem;
+        height: 1.375rem;
+    }
+    :global(.quest-pill-pop) {
+        animation: quest-pill-pop 350ms ease-out both;
+    }
+    @keyframes quest-pill-pop {
+        0% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(1.25);
+        }
+        100% {
+            transform: scale(1);
+        }
     }
     /* The label always has room: it shrinks with an ellipsis, never to nothing. */
     :global(.quest-pill-label) {
@@ -797,6 +851,48 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+    /* The chevron keeps its place and shows on hover or keyboard focus. */
+    :global(.quest-pill-chevron) {
+        flex: none;
+        opacity: 0;
+        color: rgba(255, 255, 255, 0.85);
+        transition: opacity 150ms ease;
+    }
+    :global(.quest-pill:hover .quest-pill-chevron),
+    :global(.quest-pill:focus-visible .quest-pill-chevron) {
+        opacity: 1;
+    }
+    /* While "Walk there" walks the player: a 2px amber line runs along the bottom edge, inside the capsule. */
+    :global(.quest-pill-progress) {
+        position: absolute;
+        left: 0.875rem;
+        right: 0.875rem;
+        bottom: 3px;
+        height: 2px;
+        border-radius: 1px;
+        overflow: hidden;
+        background: rgba(245, 166, 35, 0.25);
+        pointer-events: none;
+    }
+    :global(.quest-pill-progress::after) {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 40%;
+        border-radius: inherit;
+        background: #f5a623;
+        animation: quest-pill-shimmer 1.2s ease-in-out infinite;
+    }
+    @keyframes quest-pill-shimmer {
+        from {
+            transform: translateX(-100%);
+        }
+        to {
+            transform: translateX(250%);
+        }
     }
     :global(.quest-payoff) {
         display: flex;
@@ -881,12 +977,28 @@
     }
     @media (prefers-reduced-motion: reduce) {
         :global(.quest-surface .u-cta),
-        :global(.quest-surface .u-cta::before) {
+        :global(.quest-surface .u-cta::before),
+        :global(.quest-pill),
+        :global(.quest-pill::before),
+        :global(.quest-pill-chevron) {
             transition: none;
         }
         :global(.quest-surface .u-cta:hover),
-        :global(.quest-surface .u-cta:active) {
+        :global(.quest-surface .u-cta:active),
+        :global(button.quest-pill:hover),
+        :global(button.quest-pill:focus-visible) {
             transform: none;
+        }
+        :global(.quest-pill-pop) {
+            animation: none;
+        }
+        /* A still, full line: still says "walking". */
+        :global(.quest-pill-progress) {
+            background: #f5a623;
+        }
+        :global(.quest-pill-progress::after) {
+            animation: none;
+            display: none;
         }
     }
 </style>

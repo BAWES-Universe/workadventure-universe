@@ -164,7 +164,11 @@ describe("QuestOptions", () => {
 
 describe("QuestPill", () => {
     it("is a 44px button named by its objective and state, opening the card", async () => {
-        const { target, instance } = mount(QuestPill, { label: "Find the Courtyard", cardId: "quest-card" });
+        const { target, instance } = mount(QuestPill, {
+            path: "explore",
+            label: "Find the Courtyard",
+            cardId: "quest-card",
+        });
         let opened: { keyboard: boolean } | undefined;
         instance.$on("open", (event: CustomEvent<{ keyboard: boolean }>) => (opened = event.detail));
         const pill = byTestId(target, "quest-pill");
@@ -178,10 +182,48 @@ describe("QuestPill", () => {
         expect(label?.classList.contains("sr-only")).toBe(false);
         expect(label?.classList.contains("quest-pill-label")).toBe(true);
         expect(pill?.querySelector(".sr-only")).not.toBeNull();
-        expect(pill?.querySelector("svg.quest-ring")?.getAttribute("aria-hidden")).toBe("true");
+        // No rosette, no empty ring: the chevron is the only end mark, and it is decoration.
+        expect(pill?.querySelector("svg.quest-ring")).toBeNull();
+        expect(byTestId(target, "quest-pill-chevron")?.getAttribute("aria-hidden")).toBe("true");
         pill?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 }));
         await tick();
         expect(opened).toEqual({ keyboard: true });
+    });
+
+    it("wears the followed path's own badge glyph next to the label", async () => {
+        const { target, instance } = mount(QuestPill, {
+            path: "meet",
+            label: "Say hello to someone",
+            cardId: "quest-card",
+        });
+        const glyph = byTestId(target, "quest-pill-glyph")?.querySelector("svg.quest-stamp");
+        expect(glyph?.getAttribute("data-path")).toBe("meet");
+        expect(glyph?.getAttribute("data-glyph-only")).toBe("true");
+        expect(glyph?.getAttribute("aria-hidden")).toBe("true");
+        expect(glyph?.querySelector(".ring")).toBeNull();
+        expect(byTestId(target, "quest-pill-label")?.textContent).toBe("Say hello to someone");
+
+        instance.$set({ path: "build" });
+        await tick();
+        expect(byTestId(target, "quest-pill-glyph")?.querySelector("svg.quest-stamp")?.getAttribute("data-path")).toBe(
+            "build"
+        );
+    });
+
+    it("runs a progress line along the bottom while walking, and pops the glyph once done", async () => {
+        const { target, instance } = mount(QuestPill, {
+            path: "explore",
+            label: "Find the Courtyard",
+            cardId: "quest-card",
+        });
+        expect(byTestId(target, "quest-pill-progress")).toBeNull();
+        instance.$set({ walking: true });
+        await tick();
+        expect(byTestId(target, "quest-pill-progress")?.getAttribute("aria-hidden")).toBe("true");
+        instance.$set({ walking: false, done: true });
+        await tick();
+        expect(byTestId(target, "quest-pill-progress")).toBeNull();
+        expect(byTestId(target, "quest-pill-glyph")?.classList.contains("quest-pill-pop")).toBe(true);
     });
 });
 
@@ -193,6 +235,11 @@ describe("QuestsPill", () => {
         const pill = byTestId(target, "quests-pill");
         expect(pill?.tagName).toBe("BUTTON");
         expect(pill?.classList.contains("quest-pill")).toBe(true);
+        // The Explorer compass, in lavender, for an icon.
+        const glyph = byTestId(target, "quests-pill-glyph")?.querySelector("svg.quest-stamp");
+        expect(glyph?.getAttribute("data-path")).toBe("explore");
+        expect(glyph?.getAttribute("data-glyph-only")).toBe("true");
+        expect(glyph?.getAttribute("style")).toContain("#c4b5fd");
         expect(pill?.querySelector(".u-count")?.textContent).toBe("2");
         pill?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
         await tick();

@@ -1,16 +1,14 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy } from "svelte";
     import { LL } from "../../../i18n/i18n-svelte";
-    import AchievementIcon from "../../Components/Icons/AchievementIcon.svelte";
     import type { Point } from "../QuestGeometry";
     import type { QuestPath } from "../QuestModel";
     import { prefersReducedMotion } from "../QuestMotion";
-    import QuestRing from "./QuestRing.svelte";
     import QuestStamp from "./QuestStamp.svelte";
     import { escapeKey, questControls } from "./questActions";
 
     export let path: QuestPath;
-    /** The objective, shown on the pill while its ring ticks. */
+    /** The objective, shown on the pill while its glyph pops. */
     export let objective: string;
     export let eyebrow: string;
     /** The one line, e.g. "You found the Courtyard." */
@@ -22,7 +20,7 @@
     /** The layer the stamp flies in (the dock's, over the map). */
     export let layer: HTMLElement | undefined = undefined;
 
-    /** The ring ticks on the pill first, then the line takes its place. */
+    /** The glyph pops on the pill first (350 ms), then the line takes its place. */
     const TICK_MS = 700;
 
     const dispatch = createEventDispatcher<{ ticked: void; dismiss: void }>();
@@ -91,11 +89,13 @@
 </script>
 
 {#if phase === "tick"}
+    <!-- The followed pill, a moment longer: its glyph pops for the completion. -->
     <div class="quest-pill" data-testid="quest-payoff-tick">
-        <AchievementIcon height="h-5" width="w-5" strokeColor="stroke-[#c4b5fd]" hover="" classList="shrink-0" />
-        <span class="min-w-0 truncate">{objective}</span>
+        <span class="quest-pill-glyph quest-pill-pop" data-testid="quest-payoff-glyph">
+            <QuestStamp {path} size={22} glyphOnly tilted={false} />
+        </span>
+        <span class="quest-pill-label">{objective}</span>
         <span class="sr-only">{$LL.quest.pill.done()}</span>
-        <QuestRing done={true} />
     </div>
 {:else}
     <!-- Tapping the line (or Escape on it) ends it early. -->

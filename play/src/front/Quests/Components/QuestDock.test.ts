@@ -359,12 +359,16 @@ describe("QuestDock", () => {
         expect(byTestId("quest-payoff-tick")).toBeNull();
         expect(byTestId("quest-payoff")).toBeNull();
 
-        // Free again: after half a second the ring ticks on the pill, then the line with its stamp.
+        // Free again: after half a second the glyph pops on the pill, then the line with its stamp.
         suppression.set({ surfaces: false, pill: false });
         await flush(400);
         expect(byTestId("quest-payoff-tick")).toBeNull();
         await flush(200);
         expect(byTestId("quest-payoff-tick")).not.toBeNull();
+        expect(byTestId("quest-payoff-glyph")?.classList.contains("quest-pill-pop")).toBe(true);
+        expect(byTestId("quest-payoff-glyph")?.querySelector("svg.quest-stamp")?.getAttribute("data-path")).toBe(
+            "explore"
+        );
         await flush(800);
         expect(byTestId("quest-payoff")).not.toBeNull();
 

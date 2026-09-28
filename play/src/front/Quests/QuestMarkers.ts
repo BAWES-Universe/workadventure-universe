@@ -17,9 +17,10 @@ import { questGiverUserId } from "./QuestWorld";
 
 const LAVENDER = 0xc4b5fd;
 const INK = 0x1b2a41;
-/** The brand gradient, as the buttons and highlighted words wear it. */
-const GRADIENT_START = "#8629fc";
-const GRADIENT_END = "#4156f6";
+/** The landing page's pair: lavender at the heart of a ring, amber at its edge. Only the world marks wear amber. */
+const RING_INNER = "#c4b5fd";
+const RING_EDGE = "#f5a623";
+const RING_GLOW = "rgba(245, 166, 35, 0.85)";
 const PERSON_RING_RADIUS = 18;
 const AREA_HOST_FLASH_MS = 3_000;
 /** The soft glow drawn around a ring, in px of texture on each side. */
@@ -70,7 +71,7 @@ class SceneMarkers {
         const image = this.scene.add.image(0, 0, key);
         const ring: Ring = { image, target };
         if (!prefersReducedMotion()) {
-            // A gentle, slow breath; still under reduced motion.
+            // A gentle, slow breath for as long as the ring is shown (repeat: -1); still under reduced motion.
             ring.tween = this.scene.tweens.add({
                 targets: image,
                 scale: { from: 1, to: 1.1 },
@@ -86,8 +87,9 @@ class SceneMarkers {
     }
 
     /**
-     * An ellipse filled and edged with the brand gradient, with a soft glow, drawn once per radius on a canvas
-     * (Phaser's own gradient fills only suit rectangles). A dark edge underneath keeps it visible on light floors.
+     * An ellipse, lavender at its heart shading to amber at its edge, with a soft amber glow, drawn once per radius
+     * on a canvas (Phaser's own gradient fills only suit rectangles). A dark edge underneath keeps it visible on
+     * light floors.
      */
     private ringTexture(radius: number): string | undefined {
         const key = `quest-ring-${radius}`;
@@ -98,9 +100,6 @@ class SceneMarkers {
         const context = texture?.getContext();
         if (!texture || !context) return undefined;
         this.textures.add(key);
-        const gradient = context.createLinearGradient(RING_GLOW_PX, 0, RING_GLOW_PX + radius * 2, 0);
-        gradient.addColorStop(0, GRADIENT_START);
-        gradient.addColorStop(1, GRADIENT_END);
         const ellipse = () => {
             context.beginPath();
             context.ellipse(width / 2, height / 2, radius, radius / 2, 0, 0, Math.PI * 2);
@@ -110,19 +109,25 @@ class SceneMarkers {
         context.lineWidth = 4;
         context.strokeStyle = "rgba(27, 42, 65, 0.5)";
         context.stroke();
-        // The glow and the soft fill.
+        // The glow and the soft radial fill: a circle drawn squashed to the ellipse, so the gradient is too.
         context.save();
-        context.shadowColor = "rgba(134, 41, 252, 0.85)";
+        context.shadowColor = RING_GLOW;
         context.shadowBlur = RING_GLOW_PX;
-        ellipse();
-        context.globalAlpha = 0.35;
+        context.translate(width / 2, height / 2);
+        context.scale(1, 0.5);
+        const gradient = context.createRadialGradient(0, 0, 0, 0, 0, radius);
+        gradient.addColorStop(0, RING_INNER);
+        gradient.addColorStop(1, RING_EDGE);
+        context.beginPath();
+        context.arc(0, 0, radius, 0, Math.PI * 2);
+        context.globalAlpha = 0.4;
         context.fillStyle = gradient;
         context.fill();
         context.restore();
-        // The gradient edge on top.
+        // The amber edge on top.
         ellipse();
         context.lineWidth = 2;
-        context.strokeStyle = gradient;
+        context.strokeStyle = RING_EDGE;
         context.stroke();
         texture.refresh();
         return key;
