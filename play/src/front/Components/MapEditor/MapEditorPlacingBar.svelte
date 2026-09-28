@@ -29,18 +29,20 @@
     });
 
     // Snap the sheet down to peek while placing on mobile, and put it back afterwards
-    // unless the user moved it in the meantime.
+    // unless the user moved it in the meantime. Switching from one placing state to another
+    // (say entity to trash from the toolbar) drops back to peek and keeps the original snap.
     let snapBeforePlacing: MapEditorSheetSnap | undefined;
 
-    $: onPlacingChange(placing !== undefined);
+    $: onPlacingChange(placing?.kind);
 
-    function onPlacingChange(isPlacing: boolean) {
-        if (isPlacing && snapBeforePlacing === undefined) {
-            if ($mapEditorIsMobileLayoutStore) {
+    function onPlacingChange(kind: MapEditorPlacingState["kind"] | undefined) {
+        if (kind !== undefined) {
+            if (!$mapEditorIsMobileLayoutStore) return;
+            if (snapBeforePlacing === undefined) {
                 snapBeforePlacing = $mapEditorSheetSnapStore;
-                mapEditorSheetSnapStore.set("peek");
             }
-        } else if (!isPlacing && snapBeforePlacing !== undefined) {
+            mapEditorSheetSnapStore.set("peek");
+        } else if (snapBeforePlacing !== undefined) {
             if ($mapEditorSheetSnapStore === "peek") {
                 mapEditorSheetSnapStore.set(snapBeforePlacing);
             }
