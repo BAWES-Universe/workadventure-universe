@@ -46,6 +46,11 @@
     let mainModal: HTMLDivElement;
 
     let turningOnMegaphone = false;
+    // After "Turn it on", the server takes a moment to grant access. Keep the button pending until then, instead of
+    // briefly showing "not allowed". Give up after a few seconds (e.g. the room's rights exclude this user).
+    let awaitingMegaphoneAccess = false;
+    let awaitingMegaphoneAccessTimeout: ReturnType<typeof setTimeout> | undefined;
+    $: if ($megaphoneCanBeUsedStore) awaitingMegaphoneAccess = false;
 
     function getMegaphoneSettings() {
         // Called from a reactive statement: don't throw while the scene is switching or reconnecting.
@@ -78,6 +83,13 @@
             });
             // The command updated the local WAM settings; don't wait for the server round trip to refresh the card.
             megaphoneOnInRoom = getMegaphoneSettings()?.enabled ?? false;
+            if (megaphoneOnInRoom && !$megaphoneCanBeUsedStore) {
+                awaitingMegaphoneAccess = true;
+                clearTimeout(awaitingMegaphoneAccessTimeout);
+                awaitingMegaphoneAccessTimeout = setTimeout(() => {
+                    awaitingMegaphoneAccess = false;
+                }, 5000);
+            }
         } finally {
             // eslint-disable-next-line require-atomic-updates
             turningOnMegaphone = false;
@@ -116,6 +128,7 @@
     });
 
     onDestroy(() => {
+        clearTimeout(awaitingMegaphoneAccessTimeout);
         unsubscribeLocalStreamStore();
         displayedMegaphoneScreenStore.set(false);
     });
@@ -296,7 +309,7 @@
                         </button>
 
                         {#if !$megaphoneCanBeUsedStore}
-                            {#if !megaphoneOnInRoom && $mapEditorActivated}
+                            {#if (!megaphoneOnInRoom || awaitingMegaphoneAccess) && $mapEditorActivated}
                                 <div class="flex flex-row flex-wrap items-center gap-2 mb-4">
                                     <p class="help-text !mb-0">
                                         <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
@@ -306,7 +319,7 @@
                                         class="btn btn-secondary btn-sm"
                                         data-testid="megaphone-turn-on"
                                         on:click={turnOnMegaphone}
-                                        disabled={turningOnMegaphone}
+                                        disabled={turningOnMegaphone || awaitingMegaphoneAccess}
                                     >
                                         {$LL.megaphone.modal.liveMessage.turnOn()}
                                     </button>
