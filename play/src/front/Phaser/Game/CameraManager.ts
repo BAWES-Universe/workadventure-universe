@@ -931,6 +931,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         resistanceRadiusAroundWoka: number | undefined,
         player: Player
     ): void {
+        // A resistance in progress belongs to the previous zone: stop it before swapping zones.
+        this.stopResistZoom();
         this._resistanceStartZoomLevel = startZoomLevel;
         this._resistanceEndZoomLevel = endZoomLevel;
         this._resistanceStrength = strength;
@@ -943,11 +945,16 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
     public disableResistanceZone(): void {
         this.resistanceCallback = undefined;
+        this.stopResistZoom();
+    }
+
+    private stopResistZoom(): void {
         this.scene.removeWhiteMask();
         if (this.resistZoomCallback) {
             this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.resistZoomCallback);
             this.resistZoomCallback = undefined;
         }
+        this.resistanceZoneEnterDate = 0;
     }
 
     get resistanceStartZoomLevel(): number {

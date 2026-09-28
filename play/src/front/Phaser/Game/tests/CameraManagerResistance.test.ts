@@ -133,4 +133,19 @@ describe("CameraManager zoom resistance zone (explore the room)", () => {
 
         expect(onPassed).toHaveBeenCalledTimes(1);
     });
+
+    it("stops a resistance in progress when the zone is swapped", async () => {
+        const { manager, scene, scale, player } = await makeCameraManager();
+        const onEnter = vi.fn();
+        manager.setResistanceZone(0.6, 0.3, 1, onEnter, true, undefined, player as never);
+        scale.zoomModifier = 0.5;
+        manager.zoomByFactor(0.9, true);
+        const [resist] = resistanceUpdates(scene, manager);
+
+        manager.setResistanceZone(0.3, 0.6, 1, vi.fn(), false, undefined, player as never);
+
+        expect(scene.events.off).toHaveBeenCalledWith("update", resist);
+        expect(scene.removeWhiteMask).toHaveBeenCalled();
+        expect(onEnter).not.toHaveBeenCalled();
+    });
 });
