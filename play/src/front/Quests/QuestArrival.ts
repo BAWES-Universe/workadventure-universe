@@ -72,8 +72,10 @@ export function startQuestArrival(): () => void {
             showTimer ??= setTimeout(() => {
                 showTimer = undefined;
                 if (!gameManager.tryGetCurrentGameScene()) return;
+                // Count the arrival as offered only once the invitation is really up, so a refused show can retry.
+                if (!showQuestInvitation()) return;
                 offeredThisArrival = true;
-                if (showQuestInvitation()) questAnnouncementStore.push(get(LL).quest.invitation.line());
+                questAnnouncementStore.push(get(LL).quest.invitation.line());
             }, INVITATION_DELAY_MS);
         }
 

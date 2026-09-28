@@ -116,6 +116,17 @@ describe("arrival invitation", () => {
         expect(get(questStateStore).invitationSeen).toBe(1);
     });
 
+    it("still offers the invitation when a menu opened and closed during the delay", () => {
+        questArrivalStore.set("ready");
+        vi.advanceTimersByTime(INVITATION_DELAY_MS - 500);
+        suppressed.set(true);
+        vi.advanceTimersByTime(5_000);
+        expect(surface()).toBe("none");
+        suppressed.set(false);
+        vi.advanceTimersByTime(INVITATION_DELAY_MS);
+        expect(surface()).toBe("invitation");
+    });
+
     it("leaves no movement timer running when the fade re-enters the subscriber", () => {
         stop?.();
         showQuestInvitation();
