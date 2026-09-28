@@ -35,7 +35,7 @@ const chat: BaseTranslation = {
         follow: "Locate",
         walkTo: "Walk to",
         walkToUser: "Walk to {userName}",
-        editMyVisitCard: "Edit my visit card",
+        editMyVisitCard: "Edit my profile",
         goToRoom: "Go to room",
         goToRoomOfUser: "Go to {userName}'s room",
         locateUser: "Locate {userName}",

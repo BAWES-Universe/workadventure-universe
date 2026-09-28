@@ -1115,7 +1115,16 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
-    /** The game was still not back long after a dropped connection: the page reloads itself (or would, if it just did). */
+
+    /** Orbit opened, and what opened it (the button, a quest's Show me, the game asking for a page, or on its own). */
+    orbitOpened(properties: { source: "button" | "quest" | "link" | "auto" }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_orbit_opened", properties);
+            })
+            .catch((e) => console.error(e));
+    }
+
     /** The interface had stopped updating (see StoreFreezeWatchdog), and whether the page was reloaded. */
     uiFrozen(properties: { reloaded: boolean }): void {
         this.posthogPromise
@@ -1124,6 +1133,8 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+
+    /** The game was still not back long after a dropped connection: the page reloads itself (or would, if it just did). */
     reconnectStuck(properties: {
         stuckMs: number;
         screen: "reconnecting" | "none";

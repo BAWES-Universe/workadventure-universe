@@ -35,7 +35,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         follow: "تحديد الموقع",
         walkTo: "المشي إلى",
         walkToUser: "المشي إلى {userName}",
-        editMyVisitCard: "تعديل بطاقة الزيارة الخاصة بي",
+        editMyVisitCard: "تعديل ملفي الشخصي",
         goToRoom: "الذهاب إلى الغرفة",
         goToRoomOfUser: "الذهاب إلى غرفة {userName}",
         message: "رسالة",

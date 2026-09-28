@@ -1,13 +1,13 @@
 # Admin API Extension Module
 
-This extension module integrates your Admin API with WorkAdventure. It automatically opens a modal with your Admin API dashboard after authentication and adds a button to reopen it.
+This extension module integrates your Admin API with WorkAdventure. It activates the Orbit button in the action bar after authentication; Orbit opens only when the person asks for it.
 
 ## Features
 
-- **Automatic Modal Opening**: Opens your Admin API dashboard in a modal after user authentication
-- **Action Bar Button**: Adds a button to the action bar apps menu to reopen the dashboard
-- **Unified Authentication**: Uses the same OIDC access token from WorkAdventure authentication
-- **No External Scripts Required**: Everything is self-contained in the extension module
+-   **Opens on request only**: Orbit never opens by itself (not on arrival, a room change or a reconnect)
+-   **Action Bar Button**: Adds a button to the action bar apps menu to reopen the dashboard
+-   **Unified Authentication**: Uses the same OIDC access token from WorkAdventure authentication
+-   **No External Scripts Required**: Everything is self-contained in the extension module
 
 ## Setup
 
@@ -17,10 +17,10 @@ In your Admin API's `/api/room/access` response, include the module in the metad
 
 ```typescript
 {
-  // ... other response fields
-  metadata: {
-    modules: ["admin-api"]  // This matches the folder name
-  }
+    // ... other response fields
+    metadata: {
+        modules: ["admin-api"]; // This matches the folder name
+    }
 }
 ```
 
@@ -44,6 +44,7 @@ Your Admin API should have a `/dashboard` endpoint that:
 4. Displays the dashboard interface
 
 Example endpoint:
+
 ```
 GET /dashboard?accessToken=<oidc_token>&playUri=<room_url>
 ```
@@ -52,16 +53,16 @@ GET /dashboard?accessToken=<oidc_token>&playUri=<room_url>
 
 Your Admin API should:
 
-- Verify the OIDC access token on first load
-- Create a session (cookie or localStorage) that persists
-- Allow users to reopen the modal without re-authenticating
-- Handle token refresh if needed
+-   Verify the OIDC access token on first load
+-   Create a session (cookie or localStorage) that persists
+-   Allow users to reopen the modal without re-authenticating
+-   Handle token refresh if needed
 
 ## How It Works
 
 1. **User Authentication**: When a user authenticates in WorkAdventure, the extension module is initialized
 2. **Token Extraction**: The module extracts the OIDC access token from the JWT stored in localStorage
-3. **Modal Opening**: After a short delay (1.5s), the module automatically opens a modal with your Admin API dashboard
+3. **Modal Opening**: The dashboard opens in a modal when the person clicks the Orbit button; each opening is recorded as `wa_orbit_opened` with its `source`
 4. **Button Addition**: A button is added to the action bar apps menu
 5. **Reopening**: Users can click the button to reopen the modal at any time
 
@@ -78,10 +79,11 @@ Your Admin API should:
 ### Modal Configuration
 
 The modal is configured with:
-- **Position**: Center of the screen
-- **Fullscreen**: Enabled
-- **API Access**: Enabled (allows the iframe to use WorkAdventure scripting API)
-- **Permissions**: Fullscreen allowed
+
+-   **Position**: Center of the screen
+-   **Fullscreen**: Enabled
+-   **API Access**: Enabled (allows the iframe to use WorkAdventure scripting API)
+-   **Permissions**: Fullscreen allowed
 
 ### Button Location
 
@@ -96,50 +98,39 @@ The button is removed from the apps menu. The Orbit button in the main action ba
 ### Changing Modal Behavior
 
 Modify the `openAdminModal` function in `index.ts` to:
-- Change the modal position (`center`, `left`, `right`)
-- Adjust the auto-open delay
-- Modify the dashboard URL structure
 
-### Disabling Auto-Open
-
-To disable automatic modal opening, remove or comment out the `setTimeout` call in `initializeAdminIntegration`:
-
-```typescript
-// Auto-open after a short delay
-// setTimeout(() => {
-//     openAdminModal(options);
-// }, 1500);
-```
+-   Change the modal position (`center`, `left`, `right`)
+-   Modify the dashboard URL structure
 
 ## Troubleshooting
 
 ### Modal Doesn't Open
 
-- Check that `ADMIN_URL` is set correctly
-- Verify the user is authenticated (`localUserStore.isLogged()`)
-- Check browser console for errors
-- Ensure the OIDC access token is present in the JWT
+-   Check that `ADMIN_URL` is set correctly
+-   Verify the user is authenticated (`localUserStore.isLogged()`)
+-   Check browser console for errors
+-   Ensure the OIDC access token is present in the JWT
 
 ### Button Doesn't Appear
 
-- Verify the module is registered in your Admin API's metadata
-- Check that the user is authenticated
-- Look for errors in the browser console
+-   Verify the module is registered in your Admin API's metadata
+-   Check that the user is authenticated
+-   Look for errors in the browser console
 
 ### Token Issues
 
-- Ensure your OIDC provider is configured correctly
-- Verify the token is being extracted from the JWT payload
-- Check that your Admin API can verify the token
+-   Ensure your OIDC provider is configured correctly
+-   Verify the token is being extracted from the JWT payload
+-   Check that your Admin API can verify the token
 
 ## Files
 
-- `index.ts` - Main extension module implementation
-- `README.md` - This documentation
+-   `index.ts` - Main extension module implementation
+-   `README.md` - This documentation
 
 ## Notes
 
-- The extension module uses WorkAdventure's internal APIs directly
-- No external scripts need to be hosted
-- The module is self-contained and won't interfere with upstream WorkAdventure updates
-- The `admin-api` folder is tracked in git (not ignored) so you can version control your customizations
+-   The extension module uses WorkAdventure's internal APIs directly
+-   No external scripts need to be hosted
+-   The module is self-contained and won't interfere with upstream WorkAdventure updates
+-   The `admin-api` folder is tracked in git (not ignored) so you can version control your customizations
