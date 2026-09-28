@@ -1,6 +1,7 @@
 <script lang="ts">
     //import { fly } from "svelte/transition";
     import { onDestroy, onMount } from "svelte";
+    import { UpdateMegaphoneSettingMessage } from "@workadventure/messages";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { showModalGlobalComminucationVisibilityStore } from "../../Stores/ModalStore";
     import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
@@ -33,6 +34,9 @@
         requestedMegaphoneStore,
     } from "../../Stores/MegaphoneStore";
     import { userIsAdminStore } from "../../Stores/GameStore";
+    import { mapEditorActivated } from "../../Stores/MenuStore";
+    import { gameManager } from "../../Phaser/Game/GameManager";
+    import { executeUpdateWAMSettings } from "../../Phaser/Game/MapEditor/Commands/Facades";
     import Tooltip from "../Util/Tooltip.svelte";
     import ButtonClose from "../Input/ButtonClose.svelte";
     import Select from "../Input/Select.svelte";
@@ -40,6 +44,44 @@
     import { IconAlertTriangle, IconInfoCircle, IconMessageShare, IconMusicShare, IconSpeakerPhone } from "@wa-icons";
 
     let mainModal: HTMLDivElement;
+
+    let turningOnMegaphone = false;
+
+    function getMegaphoneSettings() {
+        return gameManager.getCurrentGameScene().getGameMap().getWam()?.settings?.megaphone;
+    }
+
+    // megaphoneCanBeUsedStore only says whether *this user* can use the megaphone. Read the room setting to tell
+    // "off in this room" apart from "on, but you are not in the allowed tags". The server resends
+    // megaphoneCanBeUsedStore after every megaphone setting change, so re-read the setting whenever it changes.
+    let megaphoneOnInRoom = false;
+    $: megaphoneOnInRoom = $megaphoneCanBeUsedStore || (getMegaphoneSettings()?.enabled ?? false);
+
+    async function turnOnMegaphone() {
+        if (turningOnMegaphone) {
+            return;
+        }
+        const settings = getMegaphoneSettings();
+        turningOnMegaphone = true;
+        try {
+            // Send the full setting (same defaults as Configure my room > Megaphone): the pusher builds the
+            // megaphone space URL from the scope and title of this message alone.
+            await executeUpdateWAMSettings({
+                $case: "updateMegaphoneSettingMessage",
+                updateMegaphoneSettingMessage: UpdateMegaphoneSettingMessage.fromJSON({
+                    enabled: true,
+                    scope: settings?.scope ?? "WORLD",
+                    title: settings?.title ?? "MyMegaphone",
+                    rights: settings?.rights ?? [],
+                }),
+            });
+            // The command updated the local WAM settings; don't wait for the server round trip to refresh the card.
+            megaphoneOnInRoom = getMegaphoneSettings()?.enabled ?? false;
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            turningOnMegaphone = false;
+        }
+    }
 
     let inputSendTextActive = false;
     let uploadAudioActive = false;
@@ -253,10 +295,29 @@
                         </button>
 
                         {#if !$megaphoneCanBeUsedStore}
-                            <p class="help-text !text-danger-800">
-                                <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
-                                {$LL.megaphone.modal.audioMessage.noAccess()}
-                            </p>
+                            {#if !megaphoneOnInRoom && $mapEditorActivated}
+                                <div class="flex flex-row flex-wrap items-center gap-2 mb-4">
+                                    <p class="help-text !mb-0">
+                                        <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
+                                        {$LL.megaphone.modal.liveMessage.offInRoom()}
+                                    </p>
+                                    <button
+                                        class="btn btn-secondary btn-sm"
+                                        data-testid="megaphone-turn-on"
+                                        on:click={turnOnMegaphone}
+                                        disabled={turningOnMegaphone}
+                                    >
+                                        {$LL.megaphone.modal.liveMessage.turnOn()}
+                                    </button>
+                                </div>
+                            {:else}
+                                <p class="help-text !text-danger-800">
+                                    <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
+                                    {megaphoneOnInRoom
+                                        ? $LL.megaphone.modal.liveMessage.notAllowed()
+                                        : $LL.megaphone.modal.liveMessage.offAskEditor()}
+                                </p>
+                            {/if}
                         {/if}
 
                         <p class="text-white text-sm whitespace-pre-line">
@@ -276,95 +337,75 @@
                         </div>
                     </div>
 
-                    <div
-                        id="content-textMessage"
-                        class="flex flex-col md:w-1/3 w-full px-5 mb-6 h-full justify-between"
-                    >
-                        <h4 class="text-white mb-2">
-                            <IconMessageShare
-                                class="h-8 w-8 mr-1 inline"
-                                alt={$LL.megaphone.modal.textMessage.title()}
-                                draggable="false"
-                            />
-                            {$LL.megaphone.modal.textMessage.title()}
-                        </h4>
-
-                        <button
-                            class="btn-lg btn btn-light btn-border mb-4"
-                            on:click={activateInputText}
-                            disabled={!$userIsAdminStore}
+                    {#if $userIsAdminStore}
+                        <div
+                            id="content-textMessage"
+                            class="flex flex-col md:w-1/3 w-full px-5 mb-6 h-full justify-between"
                         >
-                            {$LL.megaphone.modal.textMessage.button()}
-                        </button>
+                            <h4 class="text-white mb-2">
+                                <IconMessageShare
+                                    class="h-8 w-8 mr-1 inline"
+                                    alt={$LL.megaphone.modal.textMessage.title()}
+                                    draggable="false"
+                                />
+                                {$LL.megaphone.modal.textMessage.title()}
+                            </h4>
 
-                        {#if !$userIsAdminStore}
-                            <p class="help-text !text-danger-800">
-                                <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
-                                {$LL.megaphone.modal.textMessage.noAccess()}
+                            <button class="btn-lg btn btn-light btn-border mb-4" on:click={activateInputText}>
+                                {$LL.megaphone.modal.textMessage.button()}
+                            </button>
+
+                            <p class="text-white text-sm whitespace-pre-line">
+                                {$LL.megaphone.modal.textMessage.notice()}
                             </p>
-                        {/if}
 
-                        <p class="text-white text-sm whitespace-pre-line">
-                            {$LL.megaphone.modal.textMessage.notice()}
-                        </p>
-
-                        <div class="mt-auto pt-4">
-                            <video
-                                src="https://workadventure-chat-uploads.s3.eu-west-1.amazonaws.com/upload/video/global_text_message.mp4"
-                                class="w-full cursor-pointer rounded"
-                                controls
-                                muted
-                                on:mouseover={playVideo}
-                                on:mouseout={stopVideo}
-                                on:click={fullScreenVideo}
-                            />
+                            <div class="mt-auto pt-4">
+                                <video
+                                    src="https://workadventure-chat-uploads.s3.eu-west-1.amazonaws.com/upload/video/global_text_message.mp4"
+                                    class="w-full cursor-pointer rounded"
+                                    controls
+                                    muted
+                                    on:mouseover={playVideo}
+                                    on:mouseout={stopVideo}
+                                    on:click={fullScreenVideo}
+                                />
+                            </div>
                         </div>
-                    </div>
 
-                    <div
-                        id="content-soundMessage"
-                        class="flex flex-col md:w-1/3 w-full px-5 mb-6 h-full justify-between"
-                    >
-                        <h4 class="text-white mb-2">
-                            <IconMusicShare
-                                class="h-8 w-8 mr-1 inline"
-                                alt={$LL.megaphone.modal.audioMessage.title()}
-                                draggable="false"
-                            />
-                            {$LL.megaphone.modal.audioMessage.title()}
-                        </h4>
-
-                        <button
-                            class="btn-lg btn btn-light btn-border mb-4"
-                            on:click={activateUploadAudio}
-                            disabled={!$userIsAdminStore}
+                        <div
+                            id="content-soundMessage"
+                            class="flex flex-col md:w-1/3 w-full px-5 mb-6 h-full justify-between"
                         >
-                            {$LL.megaphone.modal.audioMessage.button()}
-                        </button>
+                            <h4 class="text-white mb-2">
+                                <IconMusicShare
+                                    class="h-8 w-8 mr-1 inline"
+                                    alt={$LL.megaphone.modal.audioMessage.title()}
+                                    draggable="false"
+                                />
+                                {$LL.megaphone.modal.audioMessage.title()}
+                            </h4>
 
-                        {#if !$userIsAdminStore}
-                            <p class="help-text !text-danger-800">
-                                <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
-                                {$LL.megaphone.modal.audioMessage.noAccess()}
+                            <button class="btn-lg btn btn-light btn-border mb-4" on:click={activateUploadAudio}>
+                                {$LL.megaphone.modal.audioMessage.button()}
+                            </button>
+
+                            <p class="text-white text-sm whitespace-pre-line">
+                                {$LL.megaphone.modal.audioMessage.notice()}
                             </p>
-                        {/if}
 
-                        <p class="text-white text-sm whitespace-pre-line">
-                            {$LL.megaphone.modal.audioMessage.notice()}
-                        </p>
-
-                        <div class="mt-auto pt-4">
-                            <video
-                                src="https://workadventure-chat-uploads.s3.eu-west-1.amazonaws.com/upload/video/global_audio_message.mp4"
-                                class="w-full cursor-pointer rounded"
-                                controls
-                                muted
-                                on:mouseover={playVideo}
-                                on:mouseout={stopVideo}
-                                on:click={fullScreenVideo}
-                            />
+                            <div class="mt-auto pt-4">
+                                <video
+                                    src="https://workadventure-chat-uploads.s3.eu-west-1.amazonaws.com/upload/video/global_audio_message.mp4"
+                                    class="w-full cursor-pointer rounded"
+                                    controls
+                                    muted
+                                    on:mouseover={playVideo}
+                                    on:mouseout={stopVideo}
+                                    on:click={fullScreenVideo}
+                                />
+                            </div>
                         </div>
-                    </div>
+                    {/if}
                 </div>
             {/if}
 
