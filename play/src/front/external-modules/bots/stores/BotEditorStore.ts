@@ -300,33 +300,43 @@ export async function sendLiveUpdate(
     }
 }
 
-// Position saves per bot, chained so a bot dragged twice can't have its first save land after its second
-const positionSaves = new Map<string, Promise<void>>();
+// Saves per bot, run one after another. The bots server reads the stored config, merges the update and writes it
+// back, so two saves in flight for the same bot can overwrite each other (a late AI save putting back the behavior
+// type a config save just changed, or a first drag's save landing after the second's)
+const botSaveQueues = new Map<string, Promise<unknown>>();
+
+/** Run a save for a bot once its earlier saves have finished */
+export function queueBotSave<T>(botId: string, run: () => Promise<T>): Promise<T> {
+    const save = (botSaveQueues.get(botId) ?? Promise.resolve()).then(run);
+    // The next save waits for this one whether it succeeds or fails
+    const settled = save.then(
+        () => undefined,
+        () => undefined
+    );
+    botSaveQueues.set(botId, settled);
+    void settled.then(() => {
+        if (botSaveQueues.get(botId) === settled) {
+            botSaveQueues.delete(botId);
+        }
+    });
+    return save;
+}
 
 function saveBotBehaviorConfig(bot: BotData): Promise<void> {
     if (!botApiService.isInitialized()) {
         return Promise.resolve();
     }
-    const save = (positionSaves.get(bot.id) ?? Promise.resolve())
-        .then(() =>
-            botApiService.updateBot(bot.id, {
-                behaviorType: bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle",
-                behaviorConfig: bot.behaviorConfig,
-            })
-        )
-        .then(
-            () => undefined,
-            (error) => {
-                console.error("[BotEditorStore] Failed to save bot position:", error);
-            }
-        );
-    positionSaves.set(bot.id, save);
-    void save.then(() => {
-        if (positionSaves.get(bot.id) === save) {
-            positionSaves.delete(bot.id);
+    return queueBotSave(bot.id, () =>
+        botApiService.updateBot(bot.id, {
+            behaviorType: bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle",
+            behaviorConfig: bot.behaviorConfig,
+        })
+    ).then(
+        () => undefined,
+        (error) => {
+            console.error("[BotEditorStore] Failed to save bot position:", error);
         }
-    });
-    return save;
+    );
 }
 
 /**

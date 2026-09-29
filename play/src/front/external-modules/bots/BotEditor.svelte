@@ -18,6 +18,7 @@
         startPlacingBot,
         cancelPlacement,
         loadBotPreviews,
+        queueBotSave,
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
@@ -120,10 +121,12 @@
                             // Extract behaviorType from behaviorConfig if present, or use top-level
                             const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
 
-                            await botApiService.updateBot(bot.id, {
-                                behaviorType, // Include behaviorType explicitly to ensure it's saved
-                                behaviorConfig: bot.behaviorConfig,
-                            });
+                            await queueBotSave(bot.id, () =>
+                                botApiService.updateBot(bot.id, {
+                                    behaviorType, // Include behaviorType explicitly to ensure it's saved
+                                    behaviorConfig: bot.behaviorConfig,
+                                })
+                            );
                             lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
@@ -160,17 +163,19 @@
                                     chatInstructions: bot.chatInstructions?.substring(0, 50),
                                 });
                             }
-                            // Include behaviorType to ensure it's saved when AI config changes. Read it when the
-                            // save runs, not from this snapshot: the behavior may have been switched in the meantime,
-                            // and a stale type would switch it back.
-                            const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
-                            const behaviorType =
-                                currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
-
-                            await botApiService.updateBot(bot.id, {
-                                behaviorType, // Include behaviorType explicitly to ensure it's saved
-                                aiProviderRef: bot.aiProviderRef,
-                                chatInstructions: bot.chatInstructions,
+                            // Include behaviorType to ensure it's saved when AI config changes. The save is queued
+                            // behind this bot's other saves, and reads the type when it runs rather than from this
+                            // snapshot: the behavior may have been switched in the meantime, and a stale type would
+                            // switch it back.
+                            await queueBotSave(bot.id, () => {
+                                const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
+                                const behaviorType =
+                                    currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
+                                return botApiService.updateBot(bot.id, {
+                                    behaviorType, // Include behaviorType explicitly to ensure it's saved
+                                    aiProviderRef: bot.aiProviderRef,
+                                    chatInstructions: bot.chatInstructions,
+                                });
                             });
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
@@ -474,7 +479,8 @@
                 chatInstructions: selectedBot.chatInstructions,
             };
 
-            const updatedBot = await botApiService.updateBot(selectedBot.id, updateData);
+            const botId = selectedBot.id;
+            const updatedBot = await queueBotSave(botId, () => botApiService.updateBot(botId, updateData));
 
             // Convert API response back to BotData format
             const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
