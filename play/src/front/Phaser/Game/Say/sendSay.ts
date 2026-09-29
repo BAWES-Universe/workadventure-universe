@@ -1,4 +1,5 @@
 import { AvailabilityStatus, SayMessageType } from "@workadventure/messages";
+import { Subject } from "rxjs";
 import type { ExpressionSource } from "../../../Administration/AnalyticsClient";
 import { analyticsClient } from "../../../Administration/AnalyticsClient";
 import { gameManager } from "../GameManager";
@@ -10,6 +11,9 @@ export const SAY_DURATION_MS = 5000;
 
 /** Maximum length of a say or think bubble. */
 export const SAY_MAX_LENGTH = 100;
+
+/** Each say or think bubble the player sends. Read-only observation (the Welcome quests' Meet listens for a say). */
+export const saySent$ = new Subject<SayType>();
 
 /**
  * Some statuses force the bubble type: in a meeting you can only speak out loud,
@@ -52,4 +56,5 @@ export function sendSayBubble(text: string, type: SayType, source: ExpressionSou
             type === "say" ? SAY_DURATION_MS : undefined
         );
     analyticsClient.saySent(type, source);
+    saySent$.next(type);
 }

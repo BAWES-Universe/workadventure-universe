@@ -10,6 +10,9 @@
  * scripting API (`WA.*`), so the bridge has no message for them. The one thing Orbit tells the game is that you
  * renamed yourself in your profile (`orbit-profile-changed`), which the game applies as its own rename does.
  *
+ * With quests on, the game also tells Orbit what is in the player's quest log (`orbit-quest-state`, at most eight short
+ * entries, no ids of people or rooms) on bridge init and whenever it changes, so Orbit's You page shows the same log.
+ *
  * Every visit (a room join or a reconnect) gets a new room revision. Requests carry it; Orbit refuses one from another
  * revision, and the game ignores answers from another revision, so an old Orbit frame can't act after a room or
  * account change.
@@ -17,7 +20,7 @@
 export const ORBIT_BRIDGE_VERSION = 1 as const;
 
 /** Pages the game may ask Orbit for. Orbit sends anything it does not know to its home. */
-export type OrbitNavigateIntent = "new-universe" | "world-members" | "visit-card";
+export type OrbitNavigateIntent = "new-universe" | "world-members" | "visit-card" | "quest";
 
 /** What changed, for a refresh hint. */
 export type OrbitEventTopic = "all" | "universes" | "worlds" | "rooms" | "profile" | "memberships";
@@ -62,7 +65,40 @@ export interface OrbitViewMessage {
     view: OrbitView;
 }
 
-export type OrbitBridgeOutgoing = OrbitBridgeInitMessage | OrbitNavigateMessage | OrbitEventMessage | OrbitViewMessage;
+export type OrbitQuestStatus = "tracked" | "accepted" | "done";
+export type OrbitQuestStamp = "first-hello" | "explorer" | "builder";
+
+export interface OrbitQuestEntry {
+    /** A fixed quest key, e.g. "welcome.meet". */
+    id: string;
+    title: string;
+    status: OrbitQuestStatus;
+    stamp?: OrbitQuestStamp;
+    /** The host's display name, when there is one. */
+    giver?: string;
+    /** The room's display name. */
+    room: string;
+    /** What to do, in the game's words ("Find the Courtyard"). */
+    objective?: string;
+}
+
+/** The player's quest log, as the game shows it. Bounded so a frame can't be flooded. */
+export interface OrbitQuestStateMessage {
+    type: "orbit-quest-state";
+    version: typeof ORBIT_BRIDGE_VERSION;
+    /** Like every outgoing message: lets Orbit drop a log from a frame it no longer shows. */
+    roomRevision: string;
+    entries: OrbitQuestEntry[];
+}
+
+export const ORBIT_QUEST_LIMITS = { entries: 8, id: 64, title: 80, giver: 64, room: 80, objective: 120 } as const;
+
+export type OrbitBridgeOutgoing =
+    | OrbitBridgeInitMessage
+    | OrbitNavigateMessage
+    | OrbitEventMessage
+    | OrbitViewMessage
+    | OrbitQuestStateMessage;
 
 // Orbit → game
 export interface OrbitBridgeReadyMessage {
@@ -129,6 +165,56 @@ export function isOrbitProfileChangedMessage(value: unknown): value is OrbitProf
     );
 }
 
+const QUEST_STATUSES: readonly string[] = ["tracked", "accepted", "done"];
+const QUEST_STAMPS: readonly string[] = ["first-hello", "explorer", "builder"];
+
+function isOrbitQuestEntry(value: unknown): value is OrbitQuestEntry {
+    return (
+        isRecord(value) &&
+        isBoundedString(value.id, 1, ORBIT_QUEST_LIMITS.id) &&
+        isBoundedString(value.title, 1, ORBIT_QUEST_LIMITS.title) &&
+        typeof value.status === "string" &&
+        QUEST_STATUSES.includes(value.status) &&
+        (value.stamp === undefined || (typeof value.stamp === "string" && QUEST_STAMPS.includes(value.stamp))) &&
+        (value.giver === undefined || isBoundedString(value.giver, 1, ORBIT_QUEST_LIMITS.giver)) &&
+        isBoundedString(value.room, 0, ORBIT_QUEST_LIMITS.room) &&
+        (value.objective === undefined || isBoundedString(value.objective, 1, ORBIT_QUEST_LIMITS.objective))
+    );
+}
+
+export function isOrbitQuestStateMessage(value: unknown): value is OrbitQuestStateMessage {
+    return (
+        isRecord(value) &&
+        value.type === "orbit-quest-state" &&
+        value.version === ORBIT_BRIDGE_VERSION &&
+        isBoundedString(value.roomRevision, 16, 128) &&
+        Array.isArray(value.entries) &&
+        value.entries.length <= ORBIT_QUEST_LIMITS.entries &&
+        value.entries.every(isOrbitQuestEntry)
+    );
+}
+
+function clip(text: string, max: number): string {
+    return text.length <= max ? text : text.slice(0, max - 1) + "…";
+}
+
+/** Trims a log to what the message allows: at most eight entries, each text cut to its limit. */
+export function boundOrbitQuestEntries(entries: readonly OrbitQuestEntry[]): OrbitQuestEntry[] {
+    return entries.slice(0, ORBIT_QUEST_LIMITS.entries).map((entry) => {
+        const giver = entry.giver?.trim();
+        const objective = entry.objective?.trim();
+        return {
+            id: clip(entry.id, ORBIT_QUEST_LIMITS.id),
+            title: clip(entry.title, ORBIT_QUEST_LIMITS.title),
+            status: entry.status,
+            ...(entry.stamp ? { stamp: entry.stamp } : {}),
+            ...(giver ? { giver: clip(giver, ORBIT_QUEST_LIMITS.giver) } : {}),
+            room: clip(entry.room, ORBIT_QUEST_LIMITS.room),
+            ...(objective ? { objective: clip(objective, ORBIT_QUEST_LIMITS.objective) } : {}),
+        };
+    });
+}
+
 /** A fresh room revision for a new visit. */
 export function newRoomRevision(): string {
     return `rev-${crypto.randomUUID()}`;
@@ -155,6 +241,8 @@ export class OrbitBridge {
     private waiting: PendingRequest[] = [];
     private readonly inFlight = new Map<string, unknown>();
     private nextRequest = 0;
+    /** The player's quest log, once the game has quests on (undefined otherwise: no capability, no message). */
+    private questEntries: OrbitQuestEntry[] | undefined;
 
     constructor(
         private readonly env: OrbitBridgeEnv,
@@ -169,10 +257,11 @@ export class OrbitBridge {
             type: "orbit-bridge-init",
             version: ORBIT_BRIDGE_VERSION,
             roomRevision: this.roomRevision,
-            capabilities: ["navigate", "event", "view", "profile"],
+            capabilities: ["navigate", "event", "view", "profile", ...(this.questEntries ? ["quests"] : [])],
             view: this.view,
             ...(this.maxNameLength ? { maxNameLength: this.maxNameLength } : {}),
         });
+        this.postQuestState();
         const waiting = this.waiting;
         this.waiting = [];
         for (const request of waiting) this.send(request);
@@ -202,6 +291,12 @@ export class OrbitBridge {
         if (this.ready) this.env.post({ type: "orbit-view", version: ORBIT_BRIDGE_VERSION, view });
     }
 
+    /** The quest log changed: Orbit gets it now if it is listening, else on its next init. */
+    setQuestState(entries: readonly OrbitQuestEntry[]): void {
+        this.questEntries = boundOrbitQuestEntries(entries);
+        if (this.ready) this.postQuestState();
+    }
+
     navigate(intent: OrbitNavigateIntent, params?: Record<string, string>): void {
         this.request({ kind: "navigate", intent, params });
     }
@@ -212,6 +307,18 @@ export class OrbitBridge {
 
     get isReady(): boolean {
         return this.ready;
+    }
+
+    private postQuestState(): void {
+        if (!this.questEntries) return;
+        const message: OrbitQuestStateMessage = {
+            type: "orbit-quest-state",
+            version: ORBIT_BRIDGE_VERSION,
+            roomRevision: this.roomRevision,
+            entries: this.questEntries,
+        };
+        if (isOrbitQuestStateMessage(message)) this.env.post(message);
+        else console.warn("Quests: the log did not fit the Orbit message, not sent");
     }
 
     private request(request: PendingRequest): void {

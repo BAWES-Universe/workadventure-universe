@@ -21,8 +21,10 @@ import say from "./say";
 import mapEditor from "./mapEditor";
 import externalModule from "./externalModule";
 import locate from "./locate";
+import quest from "./quest";
 
 const ca_ES = merge(en_US, {
+    quest,
     audio,
     camera,
     chat,

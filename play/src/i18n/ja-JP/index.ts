@@ -23,8 +23,10 @@ import area from "./area";
 import externalModule from "./externalModule";
 import form from "./form";
 import locate from "./locate";
+import quest from "./quest";
 
 const ja_JP = merge(en_US, {
+    quest,
     area,
     audio,
     camera,

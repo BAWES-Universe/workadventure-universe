@@ -13,6 +13,8 @@ import { hasCapability } from "../../Connection/Capabilities";
 import { isUserNameValid, maxUserNameLength } from "../../Connection/LocalUserUtils";
 import type { ModalEvent } from "../../Api/Events/ModalEvent";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
+import { questOrbitLinkStore } from "../../Quests/QuestOrbitLink";
+import { watchOrbitQuestEntries } from "../../Quests/QuestOrbitState";
 import {
     ORBIT_AUTH_VERSION,
     buildAdminLoginUrl,
@@ -38,6 +40,7 @@ let launcher: HTMLElement | null = null;
 let unsubscribeUserConnected: (() => void) | null = null;
 let unsubscribeModal: (() => void) | null = null;
 let unsubscribeFullScreen: (() => void) | null = null;
+let unsubscribeQuests: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
 let adminOrigin: string | null = null;
 /** A name you saved in your Orbit profile, shown in the game once Orbit closes. */
@@ -166,7 +169,7 @@ function handleAdminAuthMessage(event: MessageEvent<unknown>) {
 }
 
 /**
- * What opened Orbit: the action-bar button, a quest's "Show me", the game asking Orbit for a page, or Orbit opening
+ * What opened Orbit: the action-bar button, a quest, the game asking Orbit for a page, or Orbit opening
  * on its own. Only the button opens it today; Orbit never opens on its own any more, and "auto" stays so the numbers
  * show it at zero.
  */
@@ -346,6 +349,11 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     unsubscribeFullScreen = modalFullScreenStore.subscribe((full) => {
         bridge?.setView(full ? "full" : "compact");
     });
+    // With quests on, Orbit's You page shows the same quest log as the game (nothing is stored server-side).
+    unsubscribeQuests?.();
+    unsubscribeQuests = watchOrbitQuestEntries((entries) => bridge?.setQuestState(entries));
+    // The quest panel's "See it in Orbit" opens that quest's page (its badge), for a signed-in player only.
+    questOrbitLinkStore.set(canOpenOrbit() ? (questId) => requestOrbitPage("quest", { questId }) : null);
 
     // Activate the Orbit button in the action bar (highest priority). Orbit opens only when asked: this runs on every
     // room join and reconnect, so opening here would bring Orbit back each time.
@@ -405,6 +413,9 @@ const adminExtensionModule: ExtensionModule = {
         window.removeEventListener("popstate", handlePopState);
         unsubscribeFullScreen?.();
         unsubscribeFullScreen = null;
+        unsubscribeQuests?.();
+        unsubscribeQuests = null;
+        questOrbitLinkStore.set(null);
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
         historyEntryId = null;

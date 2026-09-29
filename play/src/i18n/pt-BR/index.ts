@@ -26,8 +26,10 @@ import refreshPrompt from "./refreshPrompt";
 import statusModal from "./statusModal";
 import say from "./say";
 import locate from "./locate";
+import quest from "./quest";
 
 const pt_BR = merge(en_US, {
+    quest,
     audio,
     camera,
     chat,

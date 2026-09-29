@@ -25,8 +25,10 @@ import externalModule from "./externalModule";
 import form from "./form";
 import say from "./say";
 import locate from "./locate";
+import quest from "./quest";
 
 const nl_NL = merge(en_US, {
+    quest,
     area,
     audio,
     camera,

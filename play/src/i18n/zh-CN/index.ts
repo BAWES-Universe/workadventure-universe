@@ -18,8 +18,10 @@ import video from "./video";
 import form from "./form";
 import say from "./say";
 import locate from "./locate";
+import quest from "./quest";
 
 const zh_CN = merge(en_US, {
+    quest,
     audio,
     camera,
     chat,

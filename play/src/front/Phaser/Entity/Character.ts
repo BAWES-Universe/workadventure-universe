@@ -27,12 +27,13 @@ import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager"
 import { SpeechDomElement } from "./SpeechDomElement";
 import { SayStack } from "./SayStack";
 import { SayStackDomView } from "./SayStackView";
+import { PLAYER_NAME_Y } from "./CharacterLayout";
 import Text = Phaser.GameObjects.Text;
 import Container = Phaser.GameObjects.Container;
 import Sprite = Phaser.GameObjects.Sprite;
 import DOMElement = Phaser.GameObjects.DOMElement;
 
-const playerNameY = -25;
+const playerNameY = PLAYER_NAME_Y;
 const interactiveRadius = 25;
 
 export const CHARACTER_BODY_WIDTH = 16;
