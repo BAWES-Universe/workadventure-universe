@@ -19,6 +19,7 @@ import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
 import { MCPConnector } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
+import { buildQuestPromptSection } from './QuestKnowledge';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
 
@@ -413,6 +414,17 @@ export class AIService {
                 }
             }
 
+            // The quests this bot gives (workadventure-universe#565), from Orbit, cached per bot like the map
+            // context. Empty when Orbit could not be asked: the bot then says nothing new about quests.
+            let questContextInfo = '';
+            if (adminApiService && typeof adminApiService.getBotQuests === 'function') {
+                try {
+                    questContextInfo = buildQuestPromptSection(await adminApiService.getBotQuests(botId));
+                } catch (error) {
+                    console.error(`[AIService] Failed to fetch quests for bot ${botId}:`, error);
+                }
+            }
+
             // Build system prompt
             // CRITICAL: Chat instructions define the bot's personality and MUST be followed
             let systemPrompt = '';
@@ -432,6 +444,9 @@ The technical rules below are guidelines for HOW to respond (formatting, tool us
 
             if (mapContextInfo) {
                 systemPrompt += mapContextInfo;
+            }
+            if (questContextInfo) {
+                systemPrompt += questContextInfo;
             }
             // Current date context — lets the bot reason about time gaps when
             // recalling past conversations (issue #268). Without a date anchor
