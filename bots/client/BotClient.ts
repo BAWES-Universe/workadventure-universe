@@ -267,10 +267,11 @@ export class BotClient {
      * Set behavior for this bot
      */
     setBehavior(behavior: BaseBehavior): void {
-        if (this.behavior && this.behavior !== behavior) {
-            // Switching behaviors (e.g. from the bot editor). The old behavior may have left the bot
-            // mid-walk: idle never moves, so it never calls stop(), and players would keep seeing it
-            // walking in place. Drop the old path and stand still, facing down, before the new one starts.
+        if (this.behavior && this.behavior.constructor !== behavior.constructor) {
+            // Switching to another kind of behavior (e.g. from the bot editor). The old behavior may have
+            // left the bot mid-walk: idle never moves, so it never calls stop(), and players would keep seeing
+            // it walking in place. Drop the old path and stand still, facing down, before the new one starts.
+            // A config change rebuilds the same kind of behavior; that one keeps walking where it was going.
             this.cancelPathfinding();
             this.state.setDirection(PositionMessage_Direction.DOWN);
             this.sendStoppedPosition();

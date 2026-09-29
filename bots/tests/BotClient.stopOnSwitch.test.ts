@@ -31,8 +31,17 @@ function joinedBotWithFakeSocket() {
     return { bot, sent };
 }
 
-function fakeBehavior(): BaseBehavior {
-    return { setBot: () => undefined, update: () => undefined } as unknown as BaseBehavior;
+class FakeWalking {
+    setBot() {}
+    update() {}
+}
+class FakeIdle {
+    setBot() {}
+    update() {}
+}
+
+function fakeBehavior(kind: typeof FakeWalking | typeof FakeIdle = FakeWalking): BaseBehavior {
+    return new kind() as unknown as BaseBehavior;
 }
 
 function moves(sent: ClientToServerMessage[]) {
@@ -46,13 +55,24 @@ describe('BotClient stops when the editor changes it', () => {
         bot.getState().setMoving(true);
         bot.getState().setDirection(PositionMessage_Direction.UP);
 
-        bot.setBehavior(fakeBehavior());
+        bot.setBehavior(fakeBehavior(FakeIdle));
         bot.update(16);
 
         expect(bot.getState().isMoving()).toBe(false);
         expect(moves(sent)).toEqual([
             expect.objectContaining({ x: 100, y: 100, moving: false, direction: PositionMessage_Direction.DOWN }),
         ]);
+    });
+
+    it('keeps walking when a config change rebuilds the same kind of behavior', () => {
+        const { bot, sent } = joinedBotWithFakeSocket();
+        bot.setBehavior(fakeBehavior());
+        bot.getState().setMoving(true);
+
+        bot.setBehavior(fakeBehavior());
+
+        expect(bot.getState().isMoving()).toBe(true);
+        expect(moves(sent)).toEqual([]);
     });
 
     it('teleports without a follow-up "moving" update at the new spot', () => {
