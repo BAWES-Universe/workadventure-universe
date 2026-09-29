@@ -23,6 +23,10 @@ export function enterExploreTheRoom(): void {
 
 /** Leave "Explore the room" and go back to your avatar, like "Show my location". */
 export function leaveExploreTheRoom(): void {
-    mapEditorModeStore.switchMode(false);
+    // Equip the close tool first: it turns the mode off itself, so the editor does not remember
+    // "Explore the room" as the tool to reopen with.
     gameManager.getCurrentGameScene().getMapEditorModeManager()?.equipTool(EditorToolName.CloseMapEditor);
+    if (get(mapEditorModeStore)) {
+        mapEditorModeStore.switchMode(false);
+    }
 }
