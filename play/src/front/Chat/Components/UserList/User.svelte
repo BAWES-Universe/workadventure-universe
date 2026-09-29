@@ -16,6 +16,7 @@
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
     import { canOpenOrbit } from "../../../external-modules/admin-api/index";
+    import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -80,6 +81,9 @@
 
     const roomCreationInProgress = gameManager.chatConnection.roomCreationInProgress;
 
+    // Orbit is set up a moment after the map loads (it turns its action bar button on then): re-checked when it is.
+    $: canViewProfiles = $adminDashboardActivatedStore && canOpenOrbit();
+
     $: actions = getPersonActions({
         isSelf: isMe,
         isMyAccount: isMine,
@@ -93,7 +97,7 @@
         isMatrixChatEnabled,
         roomCreationInProgress: showRoomCreationInProgress,
         iAmAdmin,
-        canViewProfiles: canOpenOrbit(),
+        canViewProfiles,
     });
 
     $: displayName = username.match(/\[\d*]/) ? username.substring(0, username.search(/\[\d*]/)) : username;
