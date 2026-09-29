@@ -14,6 +14,8 @@
     // Orbit's "You are here" and its orbit.
 
     export let room: UniverseRoomDescription;
+    /** Its place in the row: cards pop in one after another, like the Express emotes. */
+    export let index = 0;
 
     const dispatch = createEventDispatcher<{ select: UniverseRoomDescription }>();
 
@@ -25,6 +27,7 @@
 <button
     type="button"
     class="explore-card shrink-0 snap-start w-64 sm:w-72 text-start {room.isCurrent ? 'current' : ''}"
+    style="--i: {Math.min(index, 8)}"
     aria-current={room.isCurrent ? "location" : undefined}
     data-testid="explore-room-card"
     on:click={() => dispatch("select", room)}
@@ -162,7 +165,24 @@
         font: inherit;
         text-transform: none;
         cursor: pointer;
-        transition: border-color 160ms;
+        transition: border-color 160ms, transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        /* The Express emotes' entrance (ExpressTray.svelte), gentler for a bigger card */
+        animation: card-in 360ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+        animation-delay: calc(var(--i) * 28ms + 40ms);
+    }
+    .explore-card:active {
+        transform: scale(0.97);
+        transition-duration: 80ms;
+    }
+    @keyframes card-in {
+        from {
+            opacity: 0;
+            transform: translateY(10px) scale(0.9);
+        }
+        to {
+            opacity: 1;
+            transform: none;
+        }
     }
     /* Orbit's room wash, shown on hover */
     .explore-card::before {
@@ -319,6 +339,7 @@
     @media (prefers-reduced-motion: reduce) {
         .explore-card,
         .explore-card::before {
+            animation: none;
             transition: none;
         }
     }

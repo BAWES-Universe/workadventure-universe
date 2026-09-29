@@ -31,4 +31,10 @@ describe("displayName", () => {
         expect(displayName("my Office")).toBe("My Office");
         expect(displayName("")).toBe("");
     });
+
+    it("writes a name typed all in capitals as a sentence", () => {
+        expect(displayName("TEST")).toBe("Test");
+        expect(displayName("MY OFFICE")).toBe("My office");
+        expect(displayName("404")).toBe("404");
+    });
 });
