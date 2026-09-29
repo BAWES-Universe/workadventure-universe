@@ -3,6 +3,8 @@ import type { BotData } from "../types";
 
 const TILE_SIZE = 32;
 const BOT_DEPTH = 1000;
+// How far the pointer may move between press and release for it to still count as a click
+const CLICK_MAX_DISTANCE = 4;
 
 // Behavior colors
 const COLORS = {
@@ -149,8 +151,10 @@ export class BotPreview extends Phaser.GameObjects.Container {
             if (!this.isDragging) this.setHovered(false);
         });
 
-        this.on(Phaser.Input.Events.POINTER_DOWN, () => {
-            if (!this.isResizing) {
+        // Select on release rather than press, and only for a click: dragging a bot to reposition it
+        // shouldn't open its card. A little jitter during the click still counts as a click.
+        this.on(Phaser.Input.Events.POINTER_UP, (pointer: Phaser.Input.Pointer) => {
+            if (!this.isResizing && pointer.getDistance() <= CLICK_MAX_DISTANCE) {
                 this.emit(BotPreviewEvent.Selected, this);
             }
         });
