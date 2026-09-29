@@ -791,6 +791,9 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
     async function openedWith(gameToken: string) {
         vi.resetModules();
         const index = (await import("./index")) as { default: AdminModuleLike };
+        // The game keeps the same token it hands the module, and whatever a renewal saves.
+        mocks.getAuthToken.mockReturnValue(gameToken);
+        mocks.setAuthToken.mockImplementation((token: string) => mocks.getAuthToken.mockReturnValue(token));
         index.default.init({}, makeOptions(gameToken));
         vi.advanceTimersByTime(3000);
         return index;
@@ -926,6 +929,16 @@ describe("Signing Orbit in when the OIDC access token has run out", () => {
         await vi.runAllTimersAsync();
         expect(mocks.setAuthToken).not.toHaveBeenCalled();
         expect(frame.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("starts from the game's newest token when the bot editor already renewed it", async () => {
+        const expired = makeOidcToken(nowSeconds() - 10);
+        const renewed = makeOidcToken(nowSeconds() + 3600);
+        await openedWith(makeAccessTokenJwt(expired));
+        mocks.getAuthToken.mockReturnValue(makeAccessTokenJwt(renewed));
+        await orbitAsks();
+        expect(mocks.pusherGet).not.toHaveBeenCalled();
+        expect(frame.postMessage).toHaveBeenCalledWith(expect.objectContaining({ accessToken: renewed }), ADMIN);
     });
 
     it("says nothing to a window that isn't Orbit's frame", async () => {
