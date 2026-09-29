@@ -45,6 +45,8 @@ let unsubscribeModal: (() => void) | null = null;
 let unsubscribeFullScreen: (() => void) | null = null;
 let unsubscribeQuests: (() => void) | null = null;
 let extensionOptions: ExtensionModuleOptions | null = null;
+/** The visit the quest engine client was made for: init can run twice for one visit, and must not replace it. */
+let questEngineOptions: ExtensionModuleOptions | null = null;
 let adminOrigin: string | null = null;
 /** A name you saved in your Orbit profile, shown in the game once Orbit closes. */
 let pendingPlayerName: string | null = null;
@@ -359,12 +361,15 @@ function initializeAdminIntegration(options: ExtensionModuleOptions) {
     questOrbitLinkStore.set(canOpenOrbit() ? (questId) => requestOrbitPage("quest", { questId }) : null);
     // A signed-in player's quest progress lives in Orbit's quest engine, so it follows them between browsers. It
     // signs in with the Orbit session the bots module keeps (set up on room enter for everyone).
-    questEngineStore.set(
-        createQuestEngineHttpClient(
-            (endpoint, init) => botApiService.requestOrbit(endpoint, init),
-            () => options.roomId
-        )
-    );
+    if (questEngineOptions !== options) {
+        questEngineOptions = options;
+        questEngineStore.set(
+            createQuestEngineHttpClient(
+                (endpoint, init) => botApiService.requestOrbit(endpoint, init),
+                () => options.roomId
+            )
+        );
+    }
 
     // Activate the Orbit button in the action bar (highest priority). Orbit opens only when asked: this runs on every
     // room join and reconnect, so opening here would bring Orbit back each time.
@@ -428,6 +433,7 @@ const adminExtensionModule: ExtensionModule = {
         unsubscribeQuests = null;
         questOrbitLinkStore.set(null);
         questEngineStore.set(null);
+        questEngineOptions = null;
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
         historyEntryId = null;

@@ -129,10 +129,25 @@ export function createQuestEngineHttpClient(request: OrbitRequest, roomId: () =>
         return current?.progressIds.get(path) ?? null;
     }
 
-    async function putTracked(path: QuestPath): Promise<void> {
-        const progressId = await progressIdOf(path);
-        // Not in the log we read: throw, so `track` reads the log again and retries once.
-        if (!progressId) throw new Error(`Quests: no progress for ${path} in the engine's log`);
+    /**
+     * Runs a route that takes the quest's progress id. When the log lacks it, or the engine refuses (most likely
+     * another tab or device moved first, a 409), reads the log again and tries once more.
+     */
+    async function withProgressId(path: QuestPath, route: (progressId: string) => Promise<void>): Promise<void> {
+        const attempt = async () => {
+            const progressId = await progressIdOf(path);
+            if (!progressId) throw new Error(`Quests: no progress for ${path} in the engine's log`);
+            await route(progressId);
+        };
+        try {
+            await attempt();
+        } catch {
+            await readLog();
+            await attempt();
+        }
+    }
+
+    async function putTracked(progressId: string): Promise<void> {
         const revision = log?.tracked.revision ?? 0;
         const response = await request(`${QUEST_ENGINE_PATH}/tracked`, {
             method: "PUT",
@@ -142,14 +157,8 @@ export function createQuestEngineHttpClient(request: OrbitRequest, roomId: () =>
         if (log && typeof next.revision === "number") log.tracked = { progressId, revision: next.revision };
     }
 
-    async function track(path: QuestPath): Promise<void> {
-        try {
-            await putTracked(path);
-        } catch {
-            // Most likely another tab or device moved first (409): read where things stand and try once more.
-            await readLog();
-            await putTracked(path);
-        }
+    async function stop(progressId: string): Promise<void> {
+        await request(`${QUEST_ENGINE_PATH}/${encodeURIComponent(progressId)}/stop`, { method: "POST" });
     }
 
     async function send(action: QuestEngineAction): Promise<void> {
@@ -168,13 +177,9 @@ export function createQuestEngineHttpClient(request: OrbitRequest, roomId: () =>
                 return;
             }
             case "track":
-                return track(path);
-            case "stop": {
-                const progressId = await progressIdOf(path);
-                if (!progressId) return;
-                await request(`${QUEST_ENGINE_PATH}/${encodeURIComponent(progressId)}/stop`, { method: "POST" });
-                return;
-            }
+                return withProgressId(path, putTracked);
+            case "stop":
+                return withProgressId(path, stop);
             case "observe": {
                 await request(`${QUEST_ENGINE_PATH}/observations`, {
                     method: "POST",
@@ -190,25 +195,26 @@ export function createQuestEngineHttpClient(request: OrbitRequest, roomId: () =>
         }
     }
 
-    // One report at a time, in the order the player acted: an accept lands before the track that follows it.
+    /**
+     * One call at a time, in the order they were made: an accept lands before the track that follows it, and a read
+     * of the log never lands between a report and the one after it. A failed call does not stop the ones queued behind.
+     */
     let queue: Promise<unknown> = Promise.resolve();
+    function enqueue<T>(run: () => Promise<T>): Promise<T> {
+        const result = queue.then(run, run);
+        queue = result.catch(() => undefined);
+        return result;
+    }
 
     return {
-        async list() {
-            try {
-                return (await readLog())?.quests ?? null;
-            } catch (error) {
+        list() {
+            return enqueue(async () => (await readLog())?.quests ?? null).catch((error) => {
                 console.warn("Quests: the engine's list is not available", error);
                 return null;
-            }
+            });
         },
         send(action: QuestEngineAction) {
-            const result = queue.then(
-                () => send(action).then(() => true),
-                () => send(action).then(() => true)
-            );
-            queue = result.catch(() => undefined);
-            return result.catch((error) => {
+            return enqueue(() => send(action).then(() => true)).catch((error) => {
                 console.warn(`Quests: the engine did not take "${action.action}"`, error);
                 return false;
             });

@@ -144,6 +144,75 @@ describe("createQuestEngineHttpClient", () => {
         ]);
     });
 
+    it("stops a quest the log it held did not have yet, after reading the log again", async () => {
+        const calls: string[] = [];
+        let reads = 0;
+        const request = (endpoint: string, init?: RequestInit) => {
+            calls.push(`${init?.method} ${endpoint}`);
+            if (init?.method === "GET") {
+                reads += 1;
+                const quests =
+                    reads === 1
+                        ? LOG.quests
+                        : [
+                              ...LOG.quests,
+                              {
+                                  id: "p9",
+                                  key: "welcome.build",
+                                  status: "ACCEPTED",
+                                  acceptedAt: null,
+                                  completedAt: null,
+                              },
+                          ];
+                return Promise.resolve(new Response(JSON.stringify({ ...LOG, quests })));
+            }
+            return Promise.resolve(new Response("{}"));
+        };
+        const client = createQuestEngineHttpClient(request, () => null);
+        await client.list();
+        expect(await client.send({ action: "stop", questId: "welcome.build" })).toBe(true);
+        expect(calls).toEqual(["GET /api/me/quests", "GET /api/me/quests", "POST /api/me/quests/p9/stop"]);
+    });
+
+    it("reads the log in turn with the reports, never between them", async () => {
+        const calls: string[] = [];
+        let accepted = false;
+        const request = (endpoint: string, init?: RequestInit) => {
+            calls.push(`${init?.method} ${endpoint}`);
+            if (init?.method === "GET") {
+                const build = {
+                    id: "p9",
+                    key: "welcome.build",
+                    status: "ACCEPTED",
+                    acceptedAt: null,
+                    completedAt: null,
+                };
+                const quests = accepted ? [...LOG.quests, build] : LOG.quests;
+                return Promise.resolve(new Response(JSON.stringify({ ...LOG, quests })));
+            }
+            if (endpoint.endsWith("/accept")) {
+                accepted = true;
+                return Promise.resolve(new Response(JSON.stringify({ id: "p9" })));
+            }
+            return Promise.resolve(new Response("{}"));
+        };
+        const client = createQuestEngineHttpClient(request, () => null);
+        await client.list();
+        const results = await Promise.all([
+            client.send({ action: "accept", questId: "welcome.build" }),
+            client.list(),
+            client.send({ action: "stop", questId: "welcome.build" }),
+        ]);
+        expect(results[0]).toBe(true);
+        expect(results[2]).toBe(true);
+        expect(calls).toEqual([
+            "GET /api/me/quests",
+            "POST /api/me/quests/accept",
+            "GET /api/me/quests",
+            "POST /api/me/quests/p9/stop",
+        ]);
+    });
+
     it("lists nothing when Orbit cannot answer", async () => {
         const client = createQuestEngineHttpClient(
             () => Promise.reject(new Error("offline")),
