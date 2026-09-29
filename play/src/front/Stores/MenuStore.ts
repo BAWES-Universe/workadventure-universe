@@ -258,6 +258,7 @@ export function handleOpenMenuEvent(key: string) {
         if (get(userIsAdminStore)) {
             menuVisiblilityStore.set(false);
             showModalGlobalComminucationVisibilityStore.set(true);
+            analyticsClient.globalMessage();
         }
         return;
     }
