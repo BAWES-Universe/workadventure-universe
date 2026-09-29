@@ -16,6 +16,7 @@
     import ConfigureMyRoom from "./WAMSettingsEditor.svelte";
     import MapEditorResizeHandle from "./MapEditorResizeHandle.svelte";
     import MapEditorSheetHandle from "./MapEditorSheetHandle.svelte";
+    import MapEditorPlacingBar from "./MapEditorPlacingBar.svelte";
     import { mapEditorSideBarWidthStore } from "./MapEditorSideBarWidthStore";
     import { getMapEditorToolLabel, mapEditorIsMobileLayoutStore, mapEditorSheetSnapStore } from "./MapEditorTools";
     import { clampSheetHeight, getSheetSnapHeights, nearestSheetSnap, nextSheetSnap } from "./MapEditorSheet";
@@ -83,6 +84,7 @@
 {#if $mapEditorSelectedToolStore === EditorToolName.WAMSettingsEditor}
     <ConfigureMyRoom />
 {/if}
+<MapEditorPlacingBar />
 <div
     id="map-editor-container"
     class="z-[500] absolute pointer-events-none {isMobile

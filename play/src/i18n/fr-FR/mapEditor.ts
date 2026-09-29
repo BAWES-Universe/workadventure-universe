@@ -5,6 +5,16 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
     map: {
         refreshPrompt: "Nouvelle version de la carte détectée. Actualisation nécessaire",
     },
+    placing: {
+        entity: "Touchez la carte pour placer {name}",
+        bot: "Touchez la carte pour placer {name}",
+        botUnnamed: "Touchez la carte pour placer le bot",
+        waypoint: "Touchez la carte pour ajouter des points de patrouille",
+        area: "Glissez sur la carte pour dessiner une zone",
+        trash: "Touchez un élément de la carte pour le supprimer",
+        done: "Terminé",
+        cancel: "Annuler",
+    },
     sideBar: {
         areaEditor: "Outil d'édition de zone",
         entityEditor: "Outil d'édition d'entités",
