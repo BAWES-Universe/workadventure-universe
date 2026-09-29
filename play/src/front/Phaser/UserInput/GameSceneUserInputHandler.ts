@@ -17,6 +17,7 @@ import { openChat } from "../../Chat/openChat";
 import { expressTrayStore } from "../../Stores/ExpressStore";
 import { isPopupJustClosed } from "../Game/Say/SayManager";
 import LL from "../../../i18n/i18n-svelte";
+import { botEditorToolActiveStore } from "../../external-modules/bots/stores/BotEditorStore";
 import { isQuickTap } from "./QuickTap";
 import type { Shortcut } from "./UserInputManager";
 
@@ -107,6 +108,11 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
         if (pointer.wasTouch || pointer.leftButtonReleased()) {
             for (const object of gameObjects) {
                 if (isActivatable(object)) {
+                    // While the bot editor is open, clicks on the map are for placing and moving bots:
+                    // don't open an avatar's card over the editor.
+                    if (object instanceof RemotePlayer && get(botEditorToolActiveStore)) {
+                        return;
+                    }
                     this.gameScene.getActivatablesManager().handlePointerDownEvent(object);
                     return;
                 }
