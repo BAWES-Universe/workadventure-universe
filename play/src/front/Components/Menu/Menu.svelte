@@ -59,7 +59,11 @@
         }
     });
 
-    function switchMenu(menu: MenuItem) {
+    function switchMenu(menu: MenuItem | undefined) {
+        // The active index can point past the end after a scripting menu is unregistered.
+        if (menu === undefined) {
+            return;
+        }
         if (menu.type === "translated") {
             activeSubMenu = menu;
             activeSubMenuStore.activateByMenuItem(menu);
