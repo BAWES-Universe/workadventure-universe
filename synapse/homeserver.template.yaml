@@ -112,3 +112,15 @@ rc_login:
 rc_room_creation:
   per_second: 10
   burst_count: 10000
+# Synapse's default invite limits are keyed on the invited user (burst 5, then about 1 per 5 minutes).
+# The pusher invites the same user into every area chat room it enters, so the e2e suite runs past them.
+rc_invites:
+  per_room:
+    per_second: 10
+    burst_count: 10000
+  per_user:
+    per_second: 10
+    burst_count: 10000
+  per_issuer:
+    per_second: 10
+    burst_count: 10000
