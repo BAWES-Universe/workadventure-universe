@@ -309,6 +309,8 @@
         } catch (e) {
             console.error("[BotEditor] Failed to load bots:", e);
             error = e instanceof Error ? e.message : "Failed to load bots";
+            // The list shown may be stale now, so the next open reloads it from scratch
+            botsLoadedForRoomIdStore.set(null);
         } finally {
             isLoading = false;
         }
