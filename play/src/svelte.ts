@@ -6,6 +6,7 @@ import App from "./front/Components/App.svelte";
 import { HtmlUtils } from "./front/WebRtc/HtmlUtils";
 import { e2eHooks } from "./front/Utils/E2EHooks";
 import { installViewportGuard, isTouchScreen } from "./front/Utils/ViewportGuard";
+import { isIOS } from "./front/WebRtc/DeviceUtils";
 import { installViewportResync } from "./front/Utils/ViewportResync";
 import { analyticsClient } from "./front/Administration/AnalyticsClient";
 import { startStoreFreezeWatchdog } from "./front/Utils/StoreFreezeWatchdog";
@@ -19,13 +20,15 @@ declare global {
 }
 window.e2eHooks = e2eHooks;
 
-// Keeps the app pinned to the screen and unzoomed on phones and tablets (the keyboard, a pinch on the interface).
-// Desktop never pans or zooms the page this way, so nothing changes there.
 if (isTouchScreen(window)) {
-    document.documentElement.classList.add("touch-screen");
-    installViewportGuard(undefined, {
-        onZoomReset: (scale, reason) => analyticsClient.pageZoomReset({ scale, reason }),
-    });
+    // Keeps the app pinned to the screen and unzoomed on iPhones and iPads (the keyboard, a pinch on the interface).
+    // Only iOS pans or zooms the page this way (#486, #487), so desktop and Android keep their original layout.
+    if (isIOS()) {
+        document.documentElement.classList.add("touch-screen");
+        installViewportGuard(undefined, {
+            onZoomReset: (scale, reason) => analyticsClient.pageZoomReset({ scale, reason }),
+        });
+    }
     // A phone can report a wrong size to a page loaded or restored in the background, with no `resize` once it's
     // right: check again whenever the page is shown.
     installViewportResync(undefined, {

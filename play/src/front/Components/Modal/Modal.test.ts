@@ -58,4 +58,20 @@ describe("Orbit's live modal frame", () => {
         expect(target.querySelector("iframe") === iframe).toBe(true);
         expect(iframe.src).toBe("https://admin.example.com/admin/profile");
     });
+
+    it("keeps its frame and place while it closes, and closes cleanly, when the store is emptied at once", async () => {
+        // Opening Explore or the menu closes the panel and empties the store in one turn.
+        modal = new Modal({ target });
+        await tick();
+        const iframe = target.querySelector("iframe")!;
+
+        modalIframeStore.set(null);
+        await tick();
+
+        expect(target.querySelector("iframe") === iframe).toBe(true);
+        expect(target.querySelector(".menu-container")?.classList.contains("right")).toBe(true);
+        expect(() => modal?.$destroy()).not.toThrow();
+        modal = undefined;
+        expect(target.querySelector(".menu-container")).toBeNull();
+    });
 });

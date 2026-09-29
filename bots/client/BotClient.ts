@@ -97,6 +97,9 @@ export class BotClient {
     private lastPathEndTime: number = 0; // Track when path ended to prevent immediate recalculation
     private readonly PATH_RECALC_COOLDOWN = 500; // Minimum 500ms between recalculations
     private readonly PATH_END_COOLDOWN = 1000; // Minimum 1 second before creating new path after one ends/cancels
+    // Bumped by every path request and every cancel, so a path computed for a superseded or
+    // cancelled request is dropped instead of being followed
+    private pathRequestId = 0;
     private stuckDetectionTime: number = 0;
     private lastPosition: PositionInterface | null = null;
     private readonly STUCK_THRESHOLD = 10; // Pixels - increased to account for slow movement
@@ -267,8 +270,34 @@ export class BotClient {
      * Set behavior for this bot
      */
     setBehavior(behavior: BaseBehavior): void {
+        if (this.behavior && this.behavior.constructor !== behavior.constructor) {
+            // Switching to another kind of behavior (e.g. from the bot editor). The old behavior may have
+            // left the bot mid-walk: idle never moves, so it never calls stop(), and players would keep seeing
+            // it walking in place. Drop the old path and stand still, facing down, before the new one starts.
+            // A config change rebuilds the same kind of behavior; that one keeps walking where it was going.
+            // End any leading too: the old behavior's followers would otherwise keep following a bot that stopped
+            this.cancelPathfinding(true);
+            this.state.setDirection(PositionMessage_Direction.DOWN);
+            this.sendStoppedPosition();
+        }
         this.behavior = behavior;
         behavior.setBot(this);
+    }
+
+    /**
+     * Stop moving and tell players right away, recording what was sent so the update loop
+     * doesn't follow up with a stale "moving" update for the same spot.
+     */
+    private sendStoppedPosition(): void {
+        this.state.setMoving(false);
+        const position = this.state.getPosition();
+        const direction = this.state.getDirection();
+        this.sendPosition(position, direction, false);
+        this.config.position = { ...position };
+        this.lastSentPosition = { ...position };
+        this.lastSentDirection = direction;
+        this.lastSentMoving = false;
+        this.lastSentTime = Date.now();
     }
 
     /**
@@ -653,7 +682,15 @@ export class BotClient {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
         console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Finding path from (${Math.round(botPos.x)}, ${Math.round(botPos.y)}) to (${Math.round(x)}, ${Math.round(y)})...`);
         }
+        const requestId = ++this.pathRequestId;
         const rawPath = await this.pathfindingManager.findPath(botPos, { x, y }, true);
+        if (requestId !== this.pathRequestId) {
+            // Cancelled or superseded while the path was being computed: don't follow a stale path
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] ⏹️ moveToWithPathfinding: request superseded or cancelled, dropping path`);
+            }
+            return false;
+        }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
         console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Pathfinding returned ${rawPath.length} waypoints`);
         }
@@ -758,6 +795,7 @@ export class BotClient {
             }
         }
         
+        this.pathRequestId++;
         this.isFollowingPath = false;
         this.currentPath = [];
         this.pathIndex = 0;
@@ -1988,9 +2026,11 @@ export class BotClient {
      * Teleport bot to a new position instantly
      */
     teleportTo(x: number, y: number): void {
+        // A path from the old spot no longer applies, and a bot still marked as moving makes players'
+        // clients extrapolate past the new spot (the bot overshoots where it was dropped).
+        this.cancelPathfinding();
         this.state.setPosition({ x, y });
-        this.config.position = { x, y };
-        this.sendPosition(this.state.getPosition(), this.state.getDirection(), false);
+        this.sendStoppedPosition();
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Teleported to (${x}, ${y})`);
         }

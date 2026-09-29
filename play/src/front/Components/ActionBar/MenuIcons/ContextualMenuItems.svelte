@@ -7,6 +7,7 @@
     import { requestedMegaphoneStore } from "../../../Stores/MegaphoneStore";
     import LL from "../../../../i18n/i18n-svelte";
     import AppsMenuItem from "./AppsMenuItem.svelte";
+    import ExploreMenuItem from "./ExploreMenuItem.svelte";
     import FollowMenuItem from "./FollowMenuItem.svelte";
     import LockDiscussionMenuItem from "./LockDiscussionMenuItem.svelte";
     import MusicMenuItem from "./MusicMenuItem.svelte";
@@ -28,6 +29,7 @@
 {/if}
 
 {#if !inProfileMenu}
+    <ExploreMenuItem />
     <AppsMenuItem />
 {/if}
 
@@ -48,6 +50,7 @@
 {/if}
 
 {#if inProfileMenu}
+    <ExploreMenuItem />
     <!-- In the profile menu, the apps submenu is displayed at the end (because it contains a heading) -->
     <AppsMenuItem />
 {/if}
