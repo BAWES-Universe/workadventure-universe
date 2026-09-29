@@ -341,7 +341,6 @@ export class BotManager {
                 if (typeof transformed.maxConcurrentConversations === 'undefined') {
                     transformed.maxConcurrentConversations = 1;
                 }
-                if (!transformed.conversationTopics) transformed.conversationTopics = [];
                 // Use assignedSpace for wander area
                 if (config.assignedSpace) {
                     transformed.wanderRadius = config.assignedSpace.radius || 200;
@@ -757,7 +756,6 @@ export class BotManager {
                     if (typeof transformed.maxConcurrentConversations === 'undefined') {
                         transformed.maxConcurrentConversations = 1;
                     }
-                    if (!transformed.conversationTopics) transformed.conversationTopics = [];
                     
                     // Use assignedSpace for wander area
                     const assignedSpace = (cfg.assignedSpace || instance.config.assignedSpace) as { center: { x: number; y: number }; radius: number } | undefined;

@@ -15,7 +15,6 @@ import {
     buildBotInitiatedGreetingPrompt,
     isAvailableForApproach,
     isInOtherBubble,
-    pickFallbackGreeting,
     shouldAbandonApproach,
 } from './socialRules';
 
@@ -27,12 +26,10 @@ export interface SocialBehaviorConfig extends BehaviorConfig {
     conversationHistorySize: number; // Remember last N players
     respectPlayerStatus: boolean; // Check player availability
     maxConcurrentConversations: number; // Limit active chats
-    conversationTopics: string[]; // Topics to discuss
     wanderRadius: number; // Area to wander in
     wanderCenter: { x: number; y: number };
     wanderSpeed: number; // Movement speed
     approachDistance: number; // How close to get before starting conversation
-    greetingMessages?: string[]; // Greetings to use when the bot has no AI provider
 }
 
 export class SocialBehavior extends BaseBehavior {
@@ -1768,20 +1765,13 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        const config = this.config as SocialBehaviorConfig;
-        const topics = config.conversationTopics || [];
         // Whether the bot walked over to this player itself (consumed: one greeting per approach)
         const initiatedByBot = this.botInitiatedPlayers.delete(playerId);
 
         // Get bot configuration from client (stored at spawn, no HTTP request needed)
         const botConfig = this.bot.getFullConfig();
         if (!this.aiService || !botConfig?.aiProviderRef) {
-            // No AI provider configured: send a configured or topic-based greeting instead of staying silent
-            if (this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
-                const greeting = pickFallbackGreeting(config.greetingMessages, topics);
-                this.bot.sendStreamMessage(spaceName, `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`, '', true, greeting);
-                this.conversationMemory?.addMessage(botId, playerId, greeting, 'bot', spaceName);
-            }
+            // No AI provider configured: the bot stays silent
             return;
         }
 
@@ -1810,7 +1800,7 @@ export class SocialBehavior extends BaseBehavior {
             }
 
             const playerMessage = initiatedByBot
-                ? buildBotInitiatedGreetingPrompt(playerName, hasContext, topics)
+                ? buildBotInitiatedGreetingPrompt(playerName, hasContext)
                 : hasContext
                 ? playerName
                     ? `${playerName} just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history. Past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`

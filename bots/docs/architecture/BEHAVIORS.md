@@ -188,12 +188,10 @@ interface SocialBehaviorConfig extends BehaviorConfig {
   conversationHistorySize: number;  // Remember last N players
   respectPlayerStatus: boolean;  // Check player availability
   maxConcurrentConversations: number;  // Limit active chats
-  conversationTopics: string[];  // Topics the bot opens with when it starts a conversation
   wanderRadius: number;  // Area to wander in
   wanderCenter: { x: number; y: number };
   wanderSpeed: number;  // Movement speed
   approachDistance: number;  // How close to get before starting conversation
-  greetingMessages?: string[];  // Random greetings (optional, has default fallback)
 }
 ```
 
@@ -214,9 +212,9 @@ interface SocialBehaviorConfig extends BehaviorConfig {
 
 **Engagement Logic:**
 - **Always accepts spaces** (uses default `shouldJoinProximitySpace = true`)
-- **Bot-initiated** (`targetPlayerId` set when the space is joined): the greeting says the bot walked over and opens with a reason to talk, drawn from `conversationTopics` when set
+- **Bot-initiated** (`targetPlayerId` set when the space is joined): the greeting says the bot walked over and opens with a reason to talk that fits the bot's chat instructions
 - **Player-initiated** (no target): the bot greets the players who are actually in the space (from `addSpaceUserMessage`/`initSpaceUsersMessage`), never a bystander who is merely nearby
-- **No AI provider**: the bot sends one of `greetingMessages`, or a topic-based opener, instead of staying silent
+- **No AI provider**: the bot stays silent (social bots are meant to run with an AI provider)
 - A message from a player whose conversation was reset (e.g. by `maxConversationDuration`) gets an answer, not a second greeting
 
 **Summon Behavior:**

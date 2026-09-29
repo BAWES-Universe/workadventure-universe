@@ -26,7 +26,6 @@ function createConfig(overrides: Partial<SocialBehaviorConfig> = {}): SocialBeha
         conversationHistorySize: 50,
         respectPlayerStatus: true,
         maxConcurrentConversations: 1,
-        conversationTopics: ['space travel'],
         wanderRadius: 200,
         wanderCenter: { x: 0, y: 0 },
         wanderSpeed: 50,
@@ -221,7 +220,7 @@ describe('SocialBehavior greetings', () => {
         };
     }
 
-    it('opens a conversation it started with a reason for coming over, including its topics', async () => {
+    it('opens a conversation it started with a reason for coming over', async () => {
         const bot = createBot([player(1)], { aiProviderRef: 'provider-1' });
         const ai = createAi();
         const behavior = new SocialBehavior(createConfig());
@@ -237,7 +236,7 @@ describe('SocialBehavior greetings', () => {
 
         const prompt = ai.generateBotResponseStream.mock.calls[0][2] as string;
         expect(prompt).toContain('walked over to start a conversation');
-        expect(prompt).toContain('space travel');
+        expect(prompt).toContain('fits your character');
         expect(prompt).not.toContain('just approached you');
     });
 
@@ -299,17 +298,16 @@ describe('SocialBehavior greetings', () => {
         expect((behavior as any).activeConversations.size).toBe(0);
     });
 
-    it('sends a configured greeting when the bot has no AI provider', async () => {
+    it('stays silent when the bot has no AI provider', async () => {
         const bot = createBot([player(1)]);
-        const behavior = new SocialBehavior(createConfig({ greetingMessages: ['Welcome, traveller!'] }));
+        const behavior = new SocialBehavior(createConfig());
         behavior.setBot(bot as any);
 
         behavior.onSpaceJoined(SPACE);
         await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1' } as any);
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
-        await vi.waitFor(() =>
-            expect(bot.sendStreamMessage).toHaveBeenCalledWith(SPACE, expect.any(String), '', true, 'Welcome, traveller!')
-        );
+        expect(bot.sendStreamMessage).not.toHaveBeenCalled();
     });
 
     it('does not greet again when a player messages after the conversation was reset', async () => {

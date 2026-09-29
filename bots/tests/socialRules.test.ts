@@ -5,7 +5,6 @@ import {
     buildBotInitiatedGreetingPrompt,
     isAvailableForApproach,
     isInOtherBubble,
-    pickFallbackGreeting,
     shouldAbandonApproach,
 } from '../behaviors/socialRules';
 
@@ -81,26 +80,15 @@ describe('shouldAbandonApproach', () => {
 });
 
 describe('buildBotInitiatedGreetingPrompt', () => {
-    it('says the bot walked over and includes the topics', () => {
-        const prompt = buildBotInitiatedGreetingPrompt('Sam', false, ['space travel', ' ', 'music']);
+    it('says the bot walked over and asks for a reason that fits its character', () => {
+        const prompt = buildBotInitiatedGreetingPrompt('Sam', false);
         expect(prompt).toContain('noticed Sam nearby and walked over');
-        expect(prompt).toContain('space travel, music');
+        expect(prompt).toContain('fits your character');
         expect(prompt).not.toContain('approached you');
     });
 
     it('mentions shared history for returning players', () => {
-        expect(buildBotInitiatedGreetingPrompt('Sam', true, [])).toContain('met them before');
-        expect(buildBotInitiatedGreetingPrompt(undefined, false, [])).toContain('noticed someone nearby');
-    });
-});
-
-describe('pickFallbackGreeting', () => {
-    it('prefers configured greetings', () => {
-        expect(pickFallbackGreeting(['Hey there!', 'Yo!'], ['music'], () => 0.99)).toBe('Yo!');
-    });
-
-    it('falls back to a topic opener, then a plain hello', () => {
-        expect(pickFallbackGreeting([], ['music'], () => 0)).toBe("Hi! I'd love to chat about music. What do you think?");
-        expect(pickFallbackGreeting(undefined, [])).toBe('Hello! How are you doing today?');
+        expect(buildBotInitiatedGreetingPrompt('Sam', true)).toContain('met them before');
+        expect(buildBotInitiatedGreetingPrompt(undefined, false)).toContain('noticed someone nearby');
     });
 });

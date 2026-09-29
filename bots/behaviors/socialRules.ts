@@ -70,42 +70,12 @@ export function shouldAbandonApproach(params: {
 /**
  * The prompt for a greeting the bot starts itself, after walking over to someone.
  * Unlike a player-initiated greeting, the bot is the one who came over, so it opens
- * with a reason to talk, drawn from its conversation topics when it has any.
+ * with a reason to talk that fits its character (its chat instructions).
  */
-export function buildBotInitiatedGreetingPrompt(
-    playerName: string | undefined,
-    hasHistory: boolean,
-    topics: string[]
-): string {
+export function buildBotInitiatedGreetingPrompt(playerName: string | undefined, hasHistory: boolean): string {
     const who = playerName || 'someone';
     const history = hasHistory
         ? ` You have met ${playerName ? 'them' : 'this person'} before, so greet them like someone familiar, based on your shared history.`
         : '';
-    const cleanTopics = topics.map((topic) => topic.trim()).filter(Boolean);
-    const reason =
-        cleanTopics.length > 0
-            ? ` Open with a friendly reason for coming over, about one of these topics you like to chat about: ${cleanTopics.join(', ')}.`
-            : ' Open with a friendly reason for coming over, and give them something easy to reply to.';
-    return `You noticed ${who} nearby and walked over to start a conversation.${history}${reason} Keep it short and natural.`;
-}
-
-/**
- * A greeting to send without an AI provider: one of the configured greetings,
- * otherwise a topic-based opener.
- */
-export function pickFallbackGreeting(
-    greetingMessages: string[] | undefined,
-    topics: string[],
-    random: () => number = Math.random
-): string {
-    const greetings = (greetingMessages || []).map((greeting) => greeting.trim()).filter(Boolean);
-    if (greetings.length > 0) {
-        return greetings[Math.floor(random() * greetings.length)];
-    }
-    const cleanTopics = topics.map((topic) => topic.trim()).filter(Boolean);
-    if (cleanTopics.length > 0) {
-        const topic = cleanTopics[Math.floor(random() * cleanTopics.length)];
-        return `Hi! I'd love to chat about ${topic}. What do you think?`;
-    }
-    return 'Hello! How are you doing today?';
+    return `You noticed ${who} nearby and walked over to start a conversation.${history} Open with a friendly reason for coming over that fits your character, and give them something easy to reply to. Keep it short and natural.`;
 }
