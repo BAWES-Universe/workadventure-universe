@@ -1,0 +1,40 @@
+import { describe, expect, it } from "vitest";
+import { displayName, formatPeakHour } from "../exploreText";
+
+describe("formatPeakHour", () => {
+    it("shows a UTC hour on the viewer's clock", () => {
+        const now = new Date("2026-09-29T12:00:00Z");
+        const expected = new Date("2026-09-29T14:00:00Z").getHours();
+        const label = formatPeakHour(14, now);
+        expect(label).toBe(`${expected % 12 || 12} ${expected < 12 ? "AM" : "PM"}`);
+    });
+
+    it("writes midnight and noon as 12", () => {
+        // Find the UTC hours that land on local midnight and noon today, whatever the test machine's zone.
+        const now = new Date("2026-09-29T12:00:00Z");
+        const utcHourFor = (localHour: number) =>
+            Array.from({ length: 24 }, (_, h) => h).find((h) => {
+                const at = new Date(now.getTime());
+                at.setUTCHours(h, 0, 0, 0);
+                return at.getHours() === localHour;
+            });
+        const midnight = utcHourFor(0);
+        const noon = utcHourFor(12);
+        if (midnight !== undefined) expect(formatPeakHour(midnight, now)).toBe("12 AM");
+        if (noon !== undefined) expect(formatPeakHour(noon, now)).toBe("12 PM");
+    });
+});
+
+describe("displayName", () => {
+    it("capitalises the first letter and keeps the rest as typed", () => {
+        expect(displayName("test")).toBe("Test");
+        expect(displayName("my Office")).toBe("My Office");
+        expect(displayName("")).toBe("");
+    });
+
+    it("writes a name typed all in capitals as a sentence", () => {
+        expect(displayName("TEST")).toBe("Test");
+        expect(displayName("MY OFFICE")).toBe("My office");
+        expect(displayName("404")).toBe("404");
+    });
+});

@@ -3,6 +3,8 @@ import type { BotData } from "../types";
 
 const TILE_SIZE = 32;
 const BOT_DEPTH = 1000;
+// How far the pointer may move between press and release for it to still count as a click
+const CLICK_MAX_DISTANCE = 4;
 
 // Behavior colors
 const COLORS = {
@@ -37,6 +39,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
     private isHovered = false;
     private isDragging = false;
     private isResizing = false;
+    private dragStart = { x: 0, y: 0 };
 
     constructor(scene: Phaser.Scene, botData: BotData) {
         const x = botData.behaviorConfig?.assignedSpace?.center?.x || 0;
@@ -149,8 +152,10 @@ export class BotPreview extends Phaser.GameObjects.Container {
             if (!this.isDragging) this.setHovered(false);
         });
 
-        this.on(Phaser.Input.Events.POINTER_DOWN, () => {
-            if (!this.isResizing) {
+        // Select on release rather than press, and only for a click: dragging a bot to reposition it
+        // shouldn't open its card. A little jitter during the click still counts as a click.
+        this.on(Phaser.Input.Events.POINTER_UP, (pointer: Phaser.Input.Pointer) => {
+            if (!this.isResizing && pointer.getDistance() <= CLICK_MAX_DISTANCE) {
                 this.emit(BotPreviewEvent.Selected, this);
             }
         });
@@ -158,6 +163,7 @@ export class BotPreview extends Phaser.GameObjects.Container {
         this.on(Phaser.Input.Events.DRAG_START, () => {
             if (!this.isResizing) {
                 this.isDragging = true;
+                this.dragStart = { x: this.x, y: this.y };
                 this.setAlpha(0.7);
                 this.emit(BotPreviewEvent.DragStart, this);
             }
@@ -169,10 +175,18 @@ export class BotPreview extends Phaser.GameObjects.Container {
             }
         });
 
-        this.on(Phaser.Input.Events.DRAG_END, () => {
+        this.on(Phaser.Input.Events.DRAG_END, (pointer: Phaser.Input.Pointer) => {
             if (!this.isResizing) {
                 this.isDragging = false;
                 this.setAlpha(1);
+
+                // A click (the pointer barely moved) isn't a move: put the square back and don't save or
+                // teleport the bot
+                if (pointer.getDistance() <= CLICK_MAX_DISTANCE) {
+                    this.setPosition(this.dragStart.x, this.dragStart.y);
+                    this.emit(BotPreviewEvent.DragEnd, this);
+                    return;
+                }
 
                 // Update data
                 if (this.botData.behaviorConfig?.assignedSpace?.center) {

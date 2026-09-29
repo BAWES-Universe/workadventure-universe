@@ -26,6 +26,28 @@ export function resolveAdminApiEndpoint(adminApiUrl: string | URL, endpoint: str
     return new URL(endpoint.replace(/^\/+/, ''), baseUrl).toString();
 }
 
+let warnedInsecureAdminUrl = false;
+
+/**
+ * Whether an Orbit session may be sent to this Admin API URL. Production needs https. Outside production,
+ * plain http is also allowed to hosts that only exist on a local or docker network (loopback, *.localhost,
+ * single-label docker service names, host.docker.internal and private IPv4 ranges), never to public hosts.
+ */
+export function canSendSessionTo(adminApiUrl: URL, nodeEnv: string | undefined = process.env.NODE_ENV): boolean {
+    if (adminApiUrl.protocol === 'https:') return true;
+    if (adminApiUrl.protocol !== 'http:' || nodeEnv === 'production') return false;
+
+    const hostname = adminApiUrl.hostname.toLowerCase();
+    if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '[::1]') return true;
+    if (hostname === 'host.docker.internal' || hostname.endsWith('.internal')) return true;
+    if (!hostname.includes('.')) return true; // docker compose service name, e.g. http://admin:3000
+
+    const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!ipv4) return false;
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
 export interface BotConfiguration {
     botId: string;
     name: string;
@@ -504,16 +526,17 @@ export class AdminApiService {
         let adminApiUrl: URL;
         try {
             adminApiUrl = new URL(this.adminApiUrl);
-            const hostname = adminApiUrl.hostname.toLowerCase();
-            const isLoopback =
-                hostname === 'localhost' ||
-                hostname.endsWith('.localhost') ||
-                hostname === '127.0.0.1' ||
-                hostname === '[::1]';
-            const allowsDevelopmentHttp =
-                process.env.NODE_ENV !== 'production' && isLoopback && adminApiUrl.protocol === 'http:';
-            if (adminApiUrl.protocol !== 'https:' && !allowsDevelopmentHttp) return null;
         } catch {
+            return null;
+        }
+        if (!canSendSessionTo(adminApiUrl)) {
+            if (!warnedInsecureAdminUrl) {
+                warnedInsecureAdminUrl = true;
+                console.warn(
+                    `[AdminApiService] Not validating Orbit sessions against ${adminApiUrl.origin}: ` +
+                        'ADMIN_API_URL must be https, or http to a local or private host outside production'
+                );
+            }
             return null;
         }
 
