@@ -415,6 +415,7 @@ const adminExtensionModule: ExtensionModule = {
         unsubscribeFullScreen = null;
         unsubscribeQuests?.();
         unsubscribeQuests = null;
+        questOrbitLinkStore.set(null);
         closeAdminModal();
         // The room is changing: its history entry stays behind and is stepped over later (see handlePopState).
         historyEntryId = null;

@@ -76,7 +76,7 @@ export function questPayoffLine(t: T, path: QuestPath, state: QuestState, world:
                 ? t.quest.paths.meet.payoff()
                 : t.quest.paths.meet.payoffNeutral();
         case "explore":
-            return t.quest.paths.explore.payoff({ area: exploreAreaName(state, world) });
+            return exploreLine(t, state, world, (area) => t.quest.paths.explore.payoff({ area }));
         case "build":
             return t.quest.paths.build.payoff();
     }
@@ -84,7 +84,7 @@ export function questPayoffLine(t: T, path: QuestPath, state: QuestState, world:
 
 /** The acknowledgement on a Done entry in the panel. */
 export function questLastTime(t: T, path: QuestPath, state: QuestState, world: QuestWorld): string {
-    if (path === "explore") return t.quest.paths.explore.lastTime({ area: exploreAreaName(state, world) });
+    if (path === "explore") return exploreLine(t, state, world, (area) => t.quest.paths.explore.lastTime({ area }));
     return t.quest.paths[path].lastTime();
 }
 

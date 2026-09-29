@@ -235,6 +235,29 @@ describe("save and restore", () => {
         expect(restored.pending).toEqual(["build", "meet"]);
     });
 
+    it("the chapter's celebration, cut short by a reload, plays after it, and only once", () => {
+        let state = initialQuestState();
+        for (const [index, path] of (["meet", "explore", "build"] as const).entries()) {
+            state = reduceQuest(state, { type: "accept", path, now: index * 2 + 1 });
+            state = reduceQuest(state, { type: "complete", path, now: index * 2 + 2 });
+        }
+        for (let i = 0; i < 3; i++) state = reduceQuest(revealPending(state, false), { type: "celebration-settled" });
+        // The chapter's celebration is on screen when the page closes.
+        expect(state.surface).toBe("celebration");
+        expect(state.celebrating).toBeNull();
+        const restored = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(state) }));
+        expect(restored.pending).toEqual([]);
+        expect(revealPending(restored, true)).toBe(restored);
+        const replayed = revealPending(restored, false);
+        expect(replayed.surface).toBe("celebration");
+        expect(replayed.celebrating).toBeNull();
+        const settled = reduceQuest(replayed, { type: "celebration-settled" });
+        expect(settled.chapterCelebrated).toBe(true);
+        // Played to its end, it stays played across the next reload.
+        const again = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(settled) }));
+        expect(revealPending(again, false)).toBe(again);
+    });
+
     it("keeps the room's address with a quest, from this game only", () => {
         const origin = (url: unknown) =>
             parseStoredProgress(

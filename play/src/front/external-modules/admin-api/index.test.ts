@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
 
 const mocks = vi.hoisted(() => ({
     isLogged: vi.fn(() => true),
@@ -315,6 +316,17 @@ describe("Opening Orbit on one of its pages", () => {
         index.default.init({}, { ...(makeOptions() as object), adminUrl: "" });
         vi.advanceTimersByTime(3000);
         expect(index.canOpenOrbit()).toBe(false);
+    });
+
+    it("offers the quest panel a way to Orbit only while the integration is up", async () => {
+        const index = await freshIndex();
+        const { questOrbitLinkStore } = await import("../../Quests/QuestOrbitLink");
+        index.default.init({}, makeOptions());
+        vi.advanceTimersByTime(3000);
+        expect(get(questOrbitLinkStore)).toBeTypeOf("function");
+        // Leaving the room tears the integration down: the panel must not keep a link to a dead Orbit.
+        index.default.destroy();
+        expect(get(questOrbitLinkStore)).toBeNull();
     });
 
     it("can't open Orbit before the integration is set up (a guest)", async () => {

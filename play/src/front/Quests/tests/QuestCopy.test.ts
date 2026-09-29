@@ -8,6 +8,7 @@ import {
     questDescription,
     questEyebrow,
     questEyebrowFor,
+    questLastTime,
     questObjective,
     questPayoffLine,
     whereDescription,
@@ -63,6 +64,9 @@ describe("quest copy", () => {
         expect(questObjective(t, "explore", state, noArea)).toBe("Explore this place");
         expect(questDescription(t, "explore", state, noArea)).toBe("Explore this place");
         expect(questBody(t, "explore", state, noArea, "idle")).toBe("Explore this place");
+        expect(questPayoffLine(t, "explore", state, noArea)).toBe("Explore this place");
+        expect(questLastTime(t, "explore", state, noArea)).toBe("Explore this place");
+        expect(questLastTime(t, "explore", state, world)).toBe("You found the Courtyard last time.");
     });
 
     it("lists Meet as available while nobody is here, saying it will wait", () => {

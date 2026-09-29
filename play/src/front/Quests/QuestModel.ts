@@ -338,7 +338,12 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
  */
 export function revealPending(previous: QuestState, blocked: boolean): QuestState {
     const state = previous;
-    if (blocked || state.pending.length === 0 || state.surface === "celebration") return state;
+    if (blocked || state.surface === "celebration") return state;
+    if (state.pending.length === 0) {
+        // The chapter's own celebration, if it never played to its end (a reload between the last quest's and it).
+        if (!allDone(state) || state.chapterCelebrated) return state;
+        return { ...state, celebrating: null, surface: "celebration" };
+    }
     const [celebrating, ...pending] = state.pending;
     return {
         ...state,

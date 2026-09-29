@@ -163,7 +163,7 @@ class SceneMarkers {
         const key = this.ringTexture(PERSON_RING_RADIUS);
         if (!key) return;
         const depth = this.scene.CurrentPlayer.depth + 1;
-        const wave = this.scene.add.image(feet.x, feet.y + FEET_OFFSET_Y, key, "0");
+        const wave = this.scene.add.image(feet.x, feet.y, key, "0");
         wave.setDepth(depth);
         this.flashes.add(wave);
         this.scene.tweens.add({
