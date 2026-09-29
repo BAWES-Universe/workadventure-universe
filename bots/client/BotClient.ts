@@ -99,6 +99,9 @@ export class BotClient {
     private lastPathEndTime: number = 0; // Track when path ended to prevent immediate recalculation
     private readonly PATH_RECALC_COOLDOWN = 500; // Minimum 500ms between recalculations
     private readonly PATH_END_COOLDOWN = 1000; // Minimum 1 second before creating new path after one ends/cancels
+    // Bumped by every path request and every cancel, so a path computed for a superseded or
+    // cancelled request is dropped instead of being followed
+    private pathRequestId = 0;
     private stuckDetectionTime: number = 0;
     private lastPosition: PositionInterface | null = null;
     private readonly STUCK_THRESHOLD = 10; // Pixels - increased to account for slow movement
@@ -655,7 +658,15 @@ export class BotClient {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
         console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Finding path from (${Math.round(botPos.x)}, ${Math.round(botPos.y)}) to (${Math.round(x)}, ${Math.round(y)})...`);
         }
+        const requestId = ++this.pathRequestId;
         const rawPath = await this.pathfindingManager.findPath(botPos, { x, y }, true);
+        if (requestId !== this.pathRequestId) {
+            // Cancelled or superseded while the path was being computed: don't follow a stale path
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.log(`[Bot ${this.config.botId}] ⏹️ moveToWithPathfinding: request superseded or cancelled, dropping path`);
+            }
+            return false;
+        }
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
         console.log(`[Bot ${this.config.botId}] 🔍 moveToWithPathfinding: Pathfinding returned ${rawPath.length} waypoints`);
         }
@@ -760,6 +771,7 @@ export class BotClient {
             }
         }
         
+        this.pathRequestId++;
         this.isFollowingPath = false;
         this.currentPath = [];
         this.pathIndex = 0;

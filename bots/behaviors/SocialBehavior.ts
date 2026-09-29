@@ -40,6 +40,8 @@ export class SocialBehavior extends BaseBehavior {
     private targetPlayerId: number | null = null;
     private approachStartedAt: number = 0; // When the bot started walking to targetPlayerId
     private approachInProgress: boolean = false; // Prevent concurrent pathfinding requests while approaching
+    private approachRetryAt: number = 0; // Don't ask for a new path to the target before this time
+    private readonly APPROACH_RETRY_DELAY = 1000; // Wait between path requests after one is declined
     // Players the bot walked up to itself; their greeting opens with a reason for coming over
     private botInitiatedPlayers: Set<number> = new Set();
     private wanderTarget: PositionInterface | null = null;
@@ -1972,6 +1974,7 @@ export class SocialBehavior extends BaseBehavior {
             if (this.canStartConversation(player.userId, config, currentTime)) {
                 this.targetPlayerId = player.userId;
                 this.approachStartedAt = currentTime;
+                this.approachRetryAt = 0;
                 break;
             }
         }
@@ -2085,6 +2088,9 @@ export class SocialBehavior extends BaseBehavior {
 
         // Always try pathfinding first if available and not already following a path - don't move through walls
         if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
+            if (Date.now() < this.approachRetryAt) {
+                return;
+            }
             this.approachInProgress = true;
             let success = false;
             try {
@@ -2096,11 +2102,13 @@ export class SocialBehavior extends BaseBehavior {
                 // Pathfinding will handle movement via updatePathFollowing
                 return;
             }
-            // Pathfinding failed - the player can't be reached, so give up instead of freezing in place
-            console.warn(`[SocialBehavior] Pathfinding failed for player approach, giving up on player ${playerId}`);
-            if (this.targetPlayerId === playerId) {
-                this.abandonApproach(Date.now());
+            // Pathfinding declined. That can be temporary (cooldown right after a path ended or was
+            // cancelled) or permanent (no path to the player), so retry shortly; the approach time
+            // limit in update() gives up on players who can't be reached.
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(`[SocialBehavior] Pathfinding declined for approach to player ${playerId}, retrying shortly`);
             }
+            this.approachRetryAt = Date.now() + this.APPROACH_RETRY_DELAY;
             return;
         }
 

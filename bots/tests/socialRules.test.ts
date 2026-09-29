@@ -41,6 +41,8 @@ describe('isInOtherBubble', () => {
         expect(isInOtherBubble([1, 2], 5, 99)).toBe(false);
         expect(isInOtherBubble([5, 6], 5, 99)).toBe(true);
         expect(isInOtherBubble([5, 99], 5, 99)).toBe(false);
+        expect(isInOtherBubble(undefined, 5, null)).toBe(false);
+        expect(isInOtherBubble([5, 6], 5, null)).toBe(true);
     });
 });
 

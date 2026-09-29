@@ -177,7 +177,7 @@ describe('SocialBehavior approach', () => {
         expect(target(behavior)).toBeNull();
     });
 
-    it('gives up when the player cannot be reached instead of freezing', async () => {
+    it('retries a declined path, then gives up on a player it cannot reach', async () => {
         const bot = createBot([player(1)]);
         bot.moveToWithPathfinding.mockResolvedValue(false);
         const behavior = new SocialBehavior(createConfig());
@@ -185,8 +185,17 @@ describe('SocialBehavior approach', () => {
         lookForPeople(behavior);
         expect(target(behavior)).toBe(1);
 
+        // A declined path can be temporary (cooldown after a path ended), so the bot keeps its target
         await (behavior as any).approachPlayer(1, (behavior as any).config);
+        expect(target(behavior)).toBe(1);
 
+        // ...but waits before asking again
+        await (behavior as any).approachPlayer(1, (behavior as any).config);
+        expect(bot.moveToWithPathfinding).toHaveBeenCalledTimes(1);
+
+        // and gives up once the approach time limit passes
+        vi.setSystemTime(1_000_000 + APPROACH_TIMEOUT_MS + 1);
+        behavior.update(16);
         expect(target(behavior)).toBeNull();
     });
 
@@ -206,7 +215,7 @@ describe('SocialBehavior approach', () => {
 describe('SocialBehavior greetings', () => {
     function createAi() {
         return {
-            generateBotResponseStream: vi.fn(async function* () {
+            generateBotResponseStream: vi.fn(async function* (..._args: unknown[]) {
                 yield { content: 'Hi!', done: true };
             }),
         };

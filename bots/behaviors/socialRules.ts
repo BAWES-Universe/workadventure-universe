@@ -40,10 +40,11 @@ export function isAvailableForApproach(status: number | undefined): boolean {
 
 /**
  * Whether a player is already in a conversation bubble that the bot is not part of.
+ * A bot that hasn't joined the room yet (no user id) can't be in any bubble.
  */
-export function isInOtherBubble(bubbleUserIds: number[] | undefined, playerId: number, botUserId: number): boolean {
+export function isInOtherBubble(bubbleUserIds: number[] | undefined, playerId: number, botUserId: number | null): boolean {
     if (!bubbleUserIds || !bubbleUserIds.includes(playerId)) return false;
-    return !bubbleUserIds.includes(botUserId);
+    return botUserId === null || !bubbleUserIds.includes(botUserId);
 }
 
 /**
