@@ -109,7 +109,7 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
             for (const object of gameObjects) {
                 if (isActivatable(object)) {
                     // While the bot editor is open, clicks on the map are for placing and moving bots:
-                    // don't open an avatar's card over the editor.
+                    // don't open an avatar's card over the editor (your own card is skipped below).
                     if (object instanceof RemotePlayer && get(botEditorToolActiveStore)) {
                         return;
                     }
@@ -117,8 +117,10 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
                     return;
                 }
             }
-            // Your own avatar: a quick tap or click opens your card (a hold or a joystick drag from it doesn't).
+            // Your own avatar: a quick tap or click opens your card (a hold or a joystick drag from it doesn't),
+            // except while the bot editor is open.
             if (
+                !get(botEditorToolActiveStore) &&
                 this.gameScene.userInputManager.isControlsEnabled &&
                 isQuickTap(pointer) &&
                 gameObjects.includes(this.gameScene.CurrentPlayer)

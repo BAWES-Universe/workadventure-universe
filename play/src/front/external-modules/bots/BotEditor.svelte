@@ -160,8 +160,12 @@
                                     chatInstructions: bot.chatInstructions?.substring(0, 50),
                                 });
                             }
-                            // Include behaviorType to ensure it's saved when AI config changes
-                            const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
+                            // Include behaviorType to ensure it's saved when AI config changes. Read it when the
+                            // save runs, not from this snapshot: the behavior may have been switched in the meantime,
+                            // and a stale type would switch it back.
+                            const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
+                            const behaviorType =
+                                currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
 
                             await botApiService.updateBot(bot.id, {
                                 behaviorType, // Include behaviorType explicitly to ensure it's saved

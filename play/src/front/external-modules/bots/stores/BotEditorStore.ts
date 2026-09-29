@@ -300,18 +300,33 @@ export async function sendLiveUpdate(
     }
 }
 
-async function saveBotBehaviorConfig(bot: BotData): Promise<void> {
+// Position saves per bot, chained so a bot dragged twice can't have its first save land after its second
+const positionSaves = new Map<string, Promise<void>>();
+
+function saveBotBehaviorConfig(bot: BotData): Promise<void> {
     if (!botApiService.isInitialized()) {
-        return;
+        return Promise.resolve();
     }
-    try {
-        await botApiService.updateBot(bot.id, {
-            behaviorType: bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle",
-            behaviorConfig: bot.behaviorConfig,
-        });
-    } catch (error) {
-        console.error("[BotEditorStore] Failed to save bot position:", error);
-    }
+    const save = (positionSaves.get(bot.id) ?? Promise.resolve())
+        .then(() =>
+            botApiService.updateBot(bot.id, {
+                behaviorType: bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle",
+                behaviorConfig: bot.behaviorConfig,
+            })
+        )
+        .then(
+            () => undefined,
+            (error) => {
+                console.error("[BotEditorStore] Failed to save bot position:", error);
+            }
+        );
+    positionSaves.set(bot.id, save);
+    void save.then(() => {
+        if (positionSaves.get(bot.id) === save) {
+            positionSaves.delete(bot.id);
+        }
+    });
+    return save;
 }
 
 /**
