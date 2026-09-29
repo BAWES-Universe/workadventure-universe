@@ -219,6 +219,22 @@ describe("save and restore", () => {
         expect(revealPending(restored, false).celebrating).toBe("explore");
     });
 
+    it("quests finished together: the one playing and the ones still waiting all come back after a reload", () => {
+        let state = initialQuestState();
+        state = reduceQuest(state, { type: "accept", path: "meet", now: 1 });
+        state = reduceQuest(state, { type: "accept", path: "build", now: 2 });
+        state = reduceQuest(state, { type: "complete", path: "build", now: 3 });
+        state = reduceQuest(state, { type: "complete", path: "meet", now: 4 });
+        // The first celebration plays and releases the map; the second still waits.
+        state = revealPending(state, false);
+        expect(state.celebrating).toBe("build");
+        expect(state.tracked).toBeNull();
+        const saved = serializeProgress(state);
+        expect(JSON.parse(saved).pending).toEqual(["build", "meet"]);
+        const restored = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: saved }));
+        expect(restored.pending).toEqual(["build", "meet"]);
+    });
+
     it("keeps the room's address with a quest, from this game only", () => {
         const origin = (url: unknown) =>
             parseStoredProgress(
