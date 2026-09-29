@@ -1,52 +1,20 @@
 <script lang="ts">
     import { setContext } from "svelte";
-    import { openedMenuStore, roomListActivated } from "../../../Stores/MenuStore";
+    import { openedMenuStore } from "../../../Stores/MenuStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import ExternalComponents from "../../ExternalModules/ExternalComponents.svelte";
     import LL from "../../../../i18n/i18n-svelte";
-    import {
-        isActivatedStore as isCalendarActivatedStore,
-        isCalendarVisibleStore,
-    } from "../../../Stores/CalendarStore";
-    import {
-        isActivatedStore as isTodoListActivatedStore,
-        isTodoListVisibleStore,
-    } from "../../../Stores/TodoListStore";
+    import { isCalendarVisibleStore } from "../../../Stores/CalendarStore";
+    import { isTodoListVisibleStore } from "../../../Stores/TodoListStore";
+    import { calendarAppVisibleStore, todoListAppVisibleStore } from "../../../Stores/AppsMenuStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
-    import {
-        modalIframeStore,
-        modalVisibilityStore,
-        roomListVisibilityStore,
-        showModalGlobalComminucationVisibilityStore,
-    } from "../../../Stores/ModalStore";
     import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
-    import { chatVisibilityStore } from "../../../Stores/ChatStore";
-    import { userIsAdminStore } from "../../../Stores/GameStore";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconCalendar, IconCheckList, IconWorldSearch } from "@wa-icons";
+    import { IconCalendar, IconCheckList } from "@wa-icons";
 
     // The ActionBarButton component is displayed differently in the menu.
     // We use the context to decide how to render it.
     setContext("inMenu", true);
-
-    function resetChatVisibility() {
-        chatVisibilityStore.set(false);
-    }
-
-    function resetModalVisibility() {
-        modalVisibilityStore.set(false);
-        modalIframeStore.set(null);
-        showModalGlobalComminucationVisibilityStore.set(false);
-    }
-
-    function showRoomList() {
-        analyticsClient.openedRoomList();
-        resetChatVisibility();
-        resetModalVisibility();
-
-        roomListVisibilityStore.set(true);
-        openedMenuStore.closeAll();
-    }
 
     function openExternalModuleCalendar() {
         analyticsClient.openExternalModuleCalendar();
@@ -65,35 +33,15 @@
     }
 </script>
 
-<!-- Room list part -->
-{#if $roomListActivated || $userIsAdminStore}
-    <ActionBarButton
-        on:click={showRoomList}
-        on:keydown={showRoomList}
-        label={$LL.actionbar.help.roomList.title()}
-        state={$roomListActivated ? "normal" : "disabled"}
-    >
-        <IconWorldSearch font-size="16" class="text-white" />
-    </ActionBarButton>
-{/if}
-
-<!-- Calendar integration -->
-{#if $isCalendarActivatedStore || $userIsAdminStore}
-    <ActionBarButton
-        on:click={openExternalModuleCalendar}
-        label={$LL.actionbar.calendar()}
-        state={$isCalendarActivatedStore ? "normal" : "disabled"}
-    >
+<!-- Built-in apps, hidden until they are finished (BUILT_IN_APPS_ENABLED, see docs/developer/apps-menu.md) -->
+{#if $calendarAppVisibleStore}
+    <ActionBarButton on:click={openExternalModuleCalendar} label={$LL.actionbar.calendar()}>
         <IconCalendar width="20" height="20" />
     </ActionBarButton>
 {/if}
 
-{#if $isTodoListActivatedStore || $userIsAdminStore}
-    <ActionBarButton
-        on:click={openExternalModuleTodoList}
-        label={$LL.actionbar.todoList()}
-        state={$isTodoListActivatedStore ? "normal" : "disabled"}
-    >
+{#if $todoListAppVisibleStore}
+    <ActionBarButton on:click={openExternalModuleTodoList} label={$LL.actionbar.todoList()}>
         <IconCheckList width="20" height="20" />
     </ActionBarButton>
 {/if}
