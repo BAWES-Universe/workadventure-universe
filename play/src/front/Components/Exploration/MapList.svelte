@@ -27,6 +27,8 @@
     $: worlds = ($exploreStore.universe?.worlds ?? [])
         .map((world) => ({
             ...world,
+            // The header counts every room, as the people sidebar counts before its search filters.
+            total: world.rooms.length,
             rooms: query ? world.rooms.filter((room) => matches(query, world, room)) : world.rooms,
         }))
         .filter((world) => world.rooms.length > 0);
@@ -147,7 +149,7 @@
                             on:click={() => toggle(world.slug)}
                         >
                             <span class="u-eyebrow truncate">{displayName(world.name)}</span>
-                            <span class="u-count shrink-0">{world.rooms.length}</span>
+                            <span class="u-count shrink-0">{world.total}</span>
                             <span class="grow" />
                             <IconChevronDown
                                 font-size="16"
