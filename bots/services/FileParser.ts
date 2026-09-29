@@ -14,6 +14,8 @@
  *  - application/pdf: extract text via pdf-parse
  *  - Word documents (.docx/.doc): extract text via mammoth
  *  - Spreadsheets (.xlsx/.xls): parse cells via xlsx
+ *  - Presentations (.pptx): slide text, tables and speaker notes via
+ *    yauzl (streaming unzip) + linkedom (XML); legacy binary .ppt is declined
  *  - text/html: extract clean markdown via Readability + Turndown
  *  - image/*: note URL, no content extraction
  *  - audio/*: note type only
@@ -25,6 +27,17 @@ import { extractWebContent } from './WebPageExtractor';
 
 const MAX_FILE_CHARS = 10_000;
 const FILE_PARSER_TIMEOUT_MS = 10_000;
+
+// Presentation (.pptx) bounds. A .pptx is a zip, so the 25MB download cap
+// alone doesn't bound memory or CPU: a small archive can inflate to GBs.
+// Only slide, notes and index parts are inflated, and inflation stops as
+// soon as one part or the running total crosses these caps.
+const PPTX_MAX_PART_BYTES = 5 * 1024 * 1024;
+const PPTX_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+const PPTX_MAX_SLIDES = 1000;
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+const PPSX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.slideshow';
+const PPT_MIME = 'application/vnd.ms-powerpoint';
 
 export interface ParsedFile {
     type: 'text' | 'image' | 'audio' | 'video' | 'document' | 'webpage' | 'unknown';
@@ -40,6 +53,7 @@ export interface ParsedFile {
         pageCount?: number;
         rowCount?: number;
         sheetCount?: number;
+        slideCount?: number;
     };
 }
 
@@ -107,6 +121,11 @@ export class FileParser {
             mt === 'application/vnd.ms-excel'
         ) {
             return FileParser.parseSpreadsheet(url, base);
+        }
+
+        // Presentations (.pptx/.ppsx, and legacy .ppt which is declined)
+        if (mt === PPTX_MIME || mt === PPSX_MIME || mt === PPT_MIME) {
+            return FileParser.parsePresentation(url, base);
         }
 
         // Web pages (HTML) — extract with Readability + Turndown
@@ -323,6 +342,339 @@ export class FileParser {
                 metadata: { sheetCount: undefined, rowCount: undefined },
             };
         }
+    }
+
+    /**
+     * Parse a PowerPoint deck (.pptx) into readable per-slide text:
+     *
+     *   Slide 1: <title>
+     *   - bullet
+     *     - sub-bullet
+     *   | cell | cell |
+     *   Notes: <speaker notes>
+     *
+     * Legacy binary .ppt (and password-protected .pptx, which is stored in
+     * the same OLE container) can't be read; the bot is told to ask for a
+     * .pptx or PDF instead. Every failure returns a summary — never throws.
+     */
+    private static async parsePresentation(
+        url: string,
+        base: { url: string; mimeType: string }
+    ): Promise<ParsedFile> {
+        const failed = (reason: string, summary = 'Failed to parse PowerPoint presentation'): ParsedFile => ({
+            ...base,
+            type: 'document',
+            text: `[Couldn't read this PowerPoint file: ${reason}]`,
+            summary,
+        });
+
+        try {
+            await FileParser.validateUrl(url);
+
+            const buffer = await FileParser.fetchBuffer(url);
+            const deadline = Date.now() + FILE_PARSER_TIMEOUT_MS;
+            const bytes = new Uint8Array(buffer);
+
+            if (bytes.length === 0) {
+                return failed('the file is empty');
+            }
+            // OLE compound file: legacy .ppt, or an encrypted .pptx
+            if (bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
+                return base.mimeType.toLowerCase() === PPT_MIME
+                    ? failed(
+                          'the old .ppt format is not supported. Ask the user to save it as .pptx or PDF and send it again',
+                          'Legacy PowerPoint (.ppt) — not supported'
+                      )
+                    : failed(
+                          'it is password-protected (or an old .ppt file renamed to .pptx). Ask the user for an unprotected .pptx or a PDF',
+                          'Password-protected PowerPoint — not readable'
+                      );
+            }
+            // Zip local file header "PK\x03\x04"
+            if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+                return failed('it is not a valid PowerPoint file');
+            }
+
+            const partPattern = /^ppt\/(presentation\.xml|_rels\/presentation\.xml\.rels|slides\/slide\d+\.xml|slides\/_rels\/slide\d+\.xml\.rels|notesSlides\/notesSlide\d+\.xml)$/;
+            const parts = await FileParser.readZipParts(Buffer.from(buffer), partPattern, deadline);
+
+            const { DOMParser } = await import('linkedom');
+            const parseXml = (path: string): any | null => {
+                const part = parts.get(path);
+                if (!part) return null;
+                return new DOMParser().parseFromString(part.toString('utf8'), 'text/xml');
+            };
+            const relTargets = (relsPath: string, baseDir: string): Map<string, string> => {
+                const targets = new Map<string, string>();
+                const rels = parseXml(relsPath);
+                if (!rels) return targets;
+                for (const rel of Array.from(rels.getElementsByTagName('Relationship')) as any[]) {
+                    const id = rel.getAttribute('Id');
+                    const target = rel.getAttribute('Target');
+                    if (id && target) targets.set(id, FileParser.resolveZipPath(baseDir, target));
+                }
+                return targets;
+            };
+
+            // Slide order comes from presentation.xml; fall back to file numbering
+            let slidePaths: string[] = [];
+            const presentation = parseXml('ppt/presentation.xml');
+            if (presentation) {
+                const targets = relTargets('ppt/_rels/presentation.xml.rels', 'ppt');
+                for (const sldId of Array.from(presentation.getElementsByTagName('p:sldId')) as any[]) {
+                    const target = targets.get(sldId.getAttribute('r:id'));
+                    if (target && parts.has(target)) slidePaths.push(target);
+                }
+            }
+            if (slidePaths.length === 0) {
+                slidePaths = Array.from(parts.keys())
+                    .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+                    .sort((a, b) => Number(a.match(/(\d+)\.xml$/)![1]) - Number(b.match(/(\d+)\.xml$/)![1]));
+            }
+            if (slidePaths.length === 0) {
+                return failed('no slides were found in it');
+            }
+
+            const slideCount = slidePaths.length;
+            const sections: string[] = [];
+            let length = 0;
+            let stoppedEarly = false;
+            for (let i = 0; i < slideCount; i++) {
+                // Stop once there's enough text, or the time budget is spent
+                if (i >= PPTX_MAX_SLIDES || length > MAX_FILE_CHARS || Date.now() > deadline) {
+                    stoppedEarly = true;
+                    break;
+                }
+                const slidePath = slidePaths[i];
+                const slide = parseXml(slidePath);
+                if (!slide) continue;
+
+                const { title, lines } = FileParser.extractSlideText(slide);
+                const slideDir = slidePath.slice(0, slidePath.lastIndexOf('/'));
+                const slideRels = `${slideDir}/_rels/${slidePath.slice(slidePath.lastIndexOf('/') + 1)}.rels`;
+                let notes = '';
+                for (const target of relTargets(slideRels, slideDir).values()) {
+                    if (!/^ppt\/notesSlides\//.test(target)) continue;
+                    const notesDoc = parseXml(target);
+                    if (notesDoc) notes = FileParser.extractNotesText(notesDoc);
+                    break;
+                }
+
+                const section = [`Slide ${i + 1}${title ? `: ${title}` : ''}`, ...lines];
+                if (notes) section.push(`Notes: ${notes}`);
+                const sectionText = section.join('\n');
+                sections.push(sectionText);
+                length += sectionText.length + 2;
+            }
+
+            const text = sections.join('\n\n').trim();
+            const hasContent = sections.some((section) => section.includes('\n') || /^Slide \d+: /.test(section));
+            if (!hasContent) {
+                return {
+                    ...base,
+                    type: 'document',
+                    text: '[PowerPoint presentation — no extractable text content]',
+                    summary: `PowerPoint presentation (${slideCount} slides, no extractable text)`,
+                    metadata: { slideCount },
+                };
+            }
+
+            const truncated = stoppedEarly || text.length > MAX_FILE_CHARS;
+            return {
+                ...base,
+                type: 'document',
+                text: text.length > MAX_FILE_CHARS ? text.slice(0, MAX_FILE_CHARS) : text,
+                summary: `PowerPoint presentation (${slideCount} slides, ${text.length} chars${truncated ? ', truncated' : ''})`,
+                truncated,
+                metadata: { slideCount },
+            };
+        } catch (error: any) {
+            return failed(error?.message || 'Unknown error');
+        }
+    }
+
+    /**
+     * Read the zip entries whose names match `pattern`, with hard bounds.
+     *
+     * yauzl inflates through Node's streaming zlib, so decompression is
+     * async (never blocks the event loop) and can be stopped mid-entry.
+     * validateEntrySizes makes an entry that inflates past its declared size
+     * error out, and the byte counters below stop reading as soon as a part
+     * or the running total crosses its cap, so a zip bomb costs at most a
+     * few MB of work. The whole read is also bounded by `deadline`.
+     */
+    private static async readZipParts(
+        data: Buffer,
+        pattern: RegExp,
+        deadline: number
+    ): Promise<Map<string, Buffer>> {
+        const yauzl = await import('yauzl');
+        const zip = await new Promise<import('yauzl').ZipFile>((resolve, reject) => {
+            yauzl.fromBuffer(
+                data,
+                { lazyEntries: true, validateEntrySizes: true, strictFileNames: false, decodeStrings: true },
+                (err, zipfile) => (err || !zipfile ? reject(err || new Error('invalid zip data')) : resolve(zipfile))
+            );
+        });
+
+        const parts = new Map<string, Buffer>();
+        let total = 0;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const reading = new Promise<Map<string, Buffer>>((resolve, reject) => {
+            let settled = false;
+            const fail = (error: Error) => {
+                if (settled) return;
+                settled = true;
+                zip.close();
+                reject(error);
+            };
+            zip.on('error', fail);
+            zip.on('end', () => {
+                if (settled) return;
+                settled = true;
+                resolve(parts);
+            });
+            zip.on('entry', (entry: import('yauzl').Entry) => {
+                if (settled) return;
+                if (!pattern.test(entry.fileName)) {
+                    zip.readEntry();
+                    return;
+                }
+                if (
+                    entry.uncompressedSize > PPTX_MAX_PART_BYTES ||
+                    total + entry.uncompressedSize > PPTX_MAX_TOTAL_BYTES
+                ) {
+                    fail(new Error('its slides are too large to read'));
+                    return;
+                }
+                zip.openReadStream(entry, (err, stream) => {
+                    if (err || !stream) {
+                        fail(err || new Error(`could not open ${entry.fileName}`));
+                        return;
+                    }
+                    const chunks: Buffer[] = [];
+                    let size = 0;
+                    stream.on('data', (chunk: Buffer) => {
+                        size += chunk.length;
+                        total += chunk.length;
+                        if (size > PPTX_MAX_PART_BYTES || total > PPTX_MAX_TOTAL_BYTES) {
+                            stream.destroy();
+                            fail(new Error('its slides are too large to read'));
+                            return;
+                        }
+                        chunks.push(chunk);
+                    });
+                    stream.on('error', (streamErr: Error) => fail(streamErr));
+                    stream.on('end', () => {
+                        if (settled) return;
+                        parts.set(entry.fileName, Buffer.concat(chunks));
+                        zip.readEntry();
+                    });
+                });
+            });
+            zip.readEntry();
+
+            timer = setTimeout(
+                () => fail(new Error('it took too long to read')),
+                Math.max(0, deadline - Date.now())
+            );
+        });
+
+        try {
+            return await reading;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
+    /** Resolve a relationship Target (relative to baseDir) to a zip entry path. */
+    private static resolveZipPath(baseDir: string, target: string): string {
+        if (target.startsWith('/')) return target.slice(1);
+        const segments = baseDir.split('/').filter(Boolean);
+        for (const segment of target.split('/')) {
+            if (segment === '..') segments.pop();
+            else if (segment && segment !== '.') segments.push(segment);
+        }
+        return segments.join('/');
+    }
+
+    /** Text of one DrawingML paragraph (<a:p>), with line breaks as spaces. */
+    private static paragraphText(paragraph: any): string {
+        // Walk children by hand: linkedom's XML mode doesn't support
+        // getElementsByTagName('*'), and <a:br> order matters.
+        const pieces: string[] = [];
+        const walk = (node: any) => {
+            for (const child of Array.from(node.children || []) as any[]) {
+                if (child.tagName === 'a:t') pieces.push(child.textContent || '');
+                else if (child.tagName === 'a:br') pieces.push(' ');
+                else walk(child);
+            }
+        };
+        walk(paragraph);
+        return pieces.join('').replace(/\s+/g, ' ').trim();
+    }
+
+    /**
+     * Walk a slide's shape tree in document order: title placeholder becomes
+     * the slide title, other text shapes become bullets (indented by level),
+     * tables become "| a | b |" rows. Groups are walked recursively.
+     */
+    private static extractSlideText(slide: any): { title: string; lines: string[] } {
+        let title = '';
+        const lines: string[] = [];
+        const tree = slide.getElementsByTagName('p:spTree')[0];
+        if (!tree) return { title, lines };
+
+        const walk = (container: any) => {
+            for (const child of Array.from(container.children || []) as any[]) {
+                const tag = child.tagName;
+                if (tag === 'p:grpSp') {
+                    walk(child);
+                } else if (tag === 'p:sp') {
+                    const placeholder = child.getElementsByTagName('p:ph')[0];
+                    const phType = placeholder?.getAttribute('type') || '';
+                    // Slide number / date / footer placeholders are layout noise
+                    if (phType === 'sldNum' || phType === 'dt' || phType === 'ftr') continue;
+                    const paragraphs = Array.from(child.getElementsByTagName('a:p')) as any[];
+                    if ((phType === 'title' || phType === 'ctrTitle') && !title) {
+                        title = paragraphs.map((p) => FileParser.paragraphText(p)).filter(Boolean).join(' ');
+                        continue;
+                    }
+                    for (const paragraph of paragraphs) {
+                        const text = FileParser.paragraphText(paragraph);
+                        if (!text) continue;
+                        const level = Number(paragraph.getElementsByTagName('a:pPr')[0]?.getAttribute('lvl')) || 0;
+                        lines.push(`${'  '.repeat(Math.min(level, 8))}- ${text}`);
+                    }
+                } else if (tag === 'p:graphicFrame') {
+                    for (const row of Array.from(child.getElementsByTagName('a:tr')) as any[]) {
+                        const cells = (Array.from(row.getElementsByTagName('a:tc')) as any[]).map((cell) =>
+                            (Array.from(cell.getElementsByTagName('a:p')) as any[])
+                                .map((p) => FileParser.paragraphText(p))
+                                .filter(Boolean)
+                                .join(' ')
+                        );
+                        if (cells.some(Boolean)) lines.push(`| ${cells.join(' | ')} |`);
+                    }
+                }
+            }
+        };
+        walk(tree);
+        return { title, lines };
+    }
+
+    /** Speaker notes: text of the notes page's body placeholder only. */
+    private static extractNotesText(notes: any): string {
+        const texts: string[] = [];
+        for (const shape of Array.from(notes.getElementsByTagName('p:sp')) as any[]) {
+            const placeholder = shape.getElementsByTagName('p:ph')[0];
+            if (placeholder?.getAttribute('type') !== 'body') continue;
+            for (const paragraph of Array.from(shape.getElementsByTagName('a:p')) as any[]) {
+                const text = FileParser.paragraphText(paragraph);
+                if (text) texts.push(text);
+            }
+        }
+        return texts.join(' ');
     }
 
     /**

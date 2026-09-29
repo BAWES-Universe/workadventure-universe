@@ -29,7 +29,8 @@
     "turndown": "^7.2.4",
     "uuid": "^9.0.0",
     "ws": "^8.16.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.5",
@@ -37,6 +38,7 @@
     "@types/turndown": "^5.0.6",
     "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",
+    "@types/yauzl": "^3.4.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
     "vitest": "^3.2.4"
