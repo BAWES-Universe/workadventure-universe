@@ -45,29 +45,53 @@
         signIn: void;
         /** "See it in Orbit", under the reward. */
         viewInOrbit: QuestPath;
+        /** "Go to {room}": the room a quest came from, next to its giver. */
+        goTo: string;
     }>();
 
-    const SECTIONS: Array<{ key: "inProgress" | "available" | "done"; statuses: QuestLogEntry["status"][] }> = [
-        { key: "inProgress", statuses: ["tracked", "accepted"] },
-        { key: "available", statuses: ["available"] },
-        { key: "done", statuses: ["done"] },
-    ];
+    /** Within a giver's group: what you're on first, then what's on offer, then what's done. */
+    const STATUS_ORDER: Record<QuestLogEntry["status"], number> = { tracked: 0, accepted: 1, available: 2, done: 3 };
 
-    $: sections = SECTIONS.map((section) => ({
-        ...section,
-        entries: entries.filter((entry) => section.statuses.includes(entry.status)),
-    })).filter((section) => section.entries.length > 0 || (section.key === "available" && showSignInRow));
+    interface GiverGroup {
+        key: string;
+        giver: QuestLogEntry["giver"];
+        room: string;
+        elsewhere: boolean;
+        entries: QuestLogEntry[];
+    }
+
+    /**
+     * The log grouped by who gave each quest, as the "!" above a giver promises: this room's givers first, then
+     * givers met in other rooms. One group per giver and room.
+     */
+    $: groups = entries
+        .reduce<GiverGroup[]>((list, candidate) => {
+            const group = list.find((existing) => existing.key === candidate.group);
+            if (group) group.entries.push(candidate);
+            else
+                list.push({
+                    key: candidate.group,
+                    giver: candidate.giver,
+                    room: candidate.room,
+                    elsewhere: candidate.elsewhere,
+                    entries: [candidate],
+                });
+            return list;
+        }, [])
+        .map((group) => ({
+            ...group,
+            entries: [...group.entries].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]),
+        }))
+        .sort((a, b) => Number(a.elsewhere) - Number(b.elsewhere));
     $: allDone = total > 0 && doneCount === total;
 
-    function sectionLabel(key: (typeof SECTIONS)[number]["key"]): string {
-        switch (key) {
-            case "inProgress":
-                return $LL.quest.log.inProgress();
-            case "available":
-                return $LL.quest.log.available();
-            case "done":
-                return $LL.quest.log.done();
-        }
+    /** Givers folded away by the player, for as long as the panel lives. */
+    let collapsed = new Set<string>();
+    function toggleGroup(key: string) {
+        const next = new Set(collapsed);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        collapsed = next;
     }
 
     // ---- List or details --------------------------------------------------------------------------------------
@@ -328,6 +352,16 @@
                                     {$LL.quest.detail.showOnMap()}
                                 </button>
                             {/if}
+                            {#if entry.goToUrl}
+                                <button
+                                    type="button"
+                                    class="quest-btn quest-ghost flex-1"
+                                    data-testid="quest-detail-go"
+                                    on:click={() => entry?.goToUrl && dispatch("goTo", entry.goToUrl)}
+                                >
+                                    {$LL.quest.detail.goTo({ room: entry.room })}
+                                </button>
+                            {/if}
                             <button
                                 type="button"
                                 class="quest-btn quest-ghost flex-1"
@@ -374,10 +408,54 @@
                             {$LL.quest.log.allDone()}
                         </p>
                     {/if}
-                    {#each sections as section (section.key)}
-                        <h3 class="quest-log-section px-1">{sectionLabel(section.key)}</h3>
-                        <ul class="m-0 flex list-none flex-col gap-1 p-0">
-                            {#each section.entries as row (row.path)}
+                    {#each groups as group, index (group.key)}
+                        {@const open = !collapsed.has(group.key)}
+                        <!-- A giver: its face and name over its quests, as the "!" above it on the map promises. The
+                             header folds its quests away. -->
+                        <h3 class="m-0">
+                            <button
+                                type="button"
+                                class="quest-giver"
+                                aria-expanded={open}
+                                aria-controls="{id}-giver-{index}"
+                                data-testid="quest-giver"
+                                on:click={() => toggleGroup(group.key)}
+                            >
+                                <QuestHostPortrait host={giverAsHost(group.giver, world)} size="sm" />
+                                <span class="quest-giver-name min-w-0 flex-1 truncate">
+                                    {group.giver?.name || group.room || $LL.quest.welcome()}
+                                    {#if group.elsewhere && group.giver}
+                                        <span class="quest-giver-room">· {group.room}</span>
+                                    {/if}
+                                </span>
+                                <span class="quest-giver-count" aria-hidden="true">{group.entries.length}</span>
+                                <svg
+                                    class="quest-giver-chevron"
+                                    class:open
+                                    width="16"
+                                    height="16"
+                                    viewBox="0 0 16 16"
+                                    fill="none"
+                                    aria-hidden="true"
+                                    focusable="false"
+                                >
+                                    <path
+                                        d="m4 6 4 4 4-4"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    />
+                                </svg>
+                            </button>
+                        </h3>
+                        <ul
+                            id="{id}-giver-{index}"
+                            class="m-0 flex list-none flex-col gap-1 p-0"
+                            hidden={!open}
+                            data-testid="quest-giver-quests"
+                        >
+                            {#each group.entries as row (row.path)}
                                 <li data-testid="quest-entry-{row.path}">
                                     <button
                                         type="button"
@@ -404,6 +482,8 @@
                                             <span class="quest-tag" data-testid="quest-row-on-map">
                                                 {$LL.quest.log.onMap()}
                                             </span>
+                                        {:else if row.status === "accepted"}
+                                            <span class="quest-tag quest-tag-quiet">{$LL.quest.log.inProgress()}</span>
                                         {:else if row.status === "done"}
                                             <span class="quest-check" aria-hidden="true">
                                                 <svg
@@ -430,25 +510,27 @@
                                     </button>
                                 </li>
                             {/each}
-                            {#if section.key === "available" && showSignInRow}
-                                <li>
-                                    <button
-                                        type="button"
-                                        class="quest-row"
-                                        data-testid="quest-row-sign-in"
-                                        on:click={() => dispatch("signIn")}
-                                    >
-                                        <span class="min-w-0 flex-1">
-                                            <span class="block font-bold">{$LL.quest.log.signInRow()}</span>
-                                            <span class="quest-secondary block">{$LL.quest.log.needsAccount()}</span>
-                                        </span>
-                                    </button>
-                                </li>
-                            {/if}
                         </ul>
                     {:else}
                         <p class="quest-secondary m-0 px-1 py-2">{$LL.quest.log.nothingHere()}</p>
                     {/each}
+                    {#if showSignInRow}
+                        <ul class="m-0 mt-2 flex list-none flex-col gap-1 p-0">
+                            <li>
+                                <button
+                                    type="button"
+                                    class="quest-row"
+                                    data-testid="quest-row-sign-in"
+                                    on:click={() => dispatch("signIn")}
+                                >
+                                    <span class="min-w-0 flex-1">
+                                        <span class="block font-bold">{$LL.quest.log.signInRow()}</span>
+                                        <span class="quest-secondary block">{$LL.quest.log.needsAccount()}</span>
+                                    </span>
+                                </button>
+                            </li>
+                        </ul>
+                    {/if}
                 </div>
             {/if}
         </div>

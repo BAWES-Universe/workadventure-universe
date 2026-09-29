@@ -31,6 +31,8 @@ export interface QuestOrigin {
     room: string;
     /** Null: the room itself offered it. */
     giver: QuestGiver | null;
+    /** The room's address, to go back to it from anywhere ("Go to {room}"). */
+    url?: string;
 }
 
 export interface QuestEntry {
@@ -188,7 +190,11 @@ export function canOfferInvitation(state: QuestState): boolean {
 }
 
 export function cloneOrigin(origin: QuestOrigin): QuestOrigin {
-    return { room: origin.room, giver: origin.giver ? { ...origin.giver } : null };
+    return {
+        room: origin.room,
+        giver: origin.giver ? { ...origin.giver } : null,
+        ...(origin.url ? { url: origin.url } : {}),
+    };
 }
 
 function clone(state: QuestState): QuestState {

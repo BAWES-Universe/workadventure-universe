@@ -34,6 +34,7 @@ function parseAreaRef(raw: unknown): QuestAreaRef | null {
 }
 
 const MAX_ORIGIN_FIELD_LENGTH = 128;
+const MAX_ROOM_URL_LENGTH = 512;
 /** A Woka snapshot is a small PNG data URL; anything bigger is dropped rather than kept. */
 const MAX_PORTRAIT_LENGTH = 64 * 1024;
 
@@ -57,11 +58,28 @@ function parseGiver(raw: unknown): QuestGiver | null {
     return giver;
 }
 
+/**
+ * A room's address to go back to: this game's own origin only, over http(s). Anything else (another site, a script
+ * URL, too long) is dropped, and the quest simply offers no way back.
+ */
+function parseRoomUrl(raw: unknown): string | undefined {
+    if (typeof raw !== "string" || raw.length > MAX_ROOM_URL_LENGTH) return undefined;
+    try {
+        const url = new URL(raw);
+        if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+        if (typeof window !== "undefined" && url.origin !== window.location.origin) return undefined;
+        return url.toString();
+    } catch {
+        return undefined;
+    }
+}
+
 function parseOrigin(raw: unknown): QuestOrigin | null {
     if (!isRecord(raw)) return null;
     const { room, giver } = raw;
     if (typeof room !== "string" || room.length > MAX_ORIGIN_FIELD_LENGTH) return null;
-    return { room, giver: parseGiver(giver) };
+    const url = parseRoomUrl(raw.url);
+    return { room, giver: parseGiver(giver), ...(url ? { url } : {}) };
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -107,7 +125,7 @@ export function parseStoredProgress(raw: string | null): StoredQuestProgress | n
     for (const path of QUEST_PATHS) quests[path] = parseEntry(questsRaw[path]);
     const tracked =
         isQuestPath(data.tracked) && quests[data.tracked].accepted && !quests[data.tracked].done ? data.tracked : null;
-    // A waiting celebration only survives for the quest still tracked when it finished (see revealPending).
+    // Every finished quest waiting for its celebration (see revealPending), once each.
     const pending = Array.isArray(data.pending)
         ? [...new Set(data.pending.filter((path): path is QuestPath => isQuestPath(path) && quests[path].done))]
         : [];
@@ -123,13 +141,12 @@ export function parseStoredProgress(raw: string | null): StoredQuestProgress | n
 }
 
 export function serializeProgress(state: QuestState): string {
-    // A waiting celebration belongs to the quest still tracked; once another quest is tracked it was superseded.
-    const kept = state.pending.filter((path) => path === state.tracked);
+    // A celebration on screen when the page closes plays again after a reload, first.
     const celebrating = state.surface === "celebration" ? state.celebrating : null;
-    const pending = celebrating ? [celebrating, ...kept] : kept;
-    // A celebration on screen had already released the tracked slot; keep it tracked so it can play again after a
-    // reload.
-    const tracked = celebrating ?? state.tracked;
+    const pending = celebrating
+        ? [celebrating, ...state.pending.filter((path) => path !== celebrating)]
+        : state.pending;
+    const tracked = state.tracked;
     const stored: StoredQuestProgress = {
         version: 1,
         quests: state.quests,
@@ -163,11 +180,9 @@ export function restoreQuestState(storage: StorageLike | undefined): QuestState 
             state.exploreArea = progress.exploreArea;
             state.news = progress.news;
             state.chapterCelebrated = progress.chapterCelebrated;
-            // A done quest that was still waiting for its celebration comes back tracked, so it can still play.
-            // If another quest is tracked, a saved celebration was superseded and must not take its place.
-            const waiting = progress.tracked === null ? progress.pending[0] : undefined;
-            state.tracked = waiting ?? progress.tracked;
-            state.pending = waiting ? [waiting] : [];
+            // Waiting celebrations come back and play once the dock is free; the quest on the map stays there.
+            state.tracked = progress.tracked;
+            state.pending = progress.pending;
             state.surface = restingSurface(state);
         }
         state.invitationSeen = parseInvitationSeen(storage.getItem(QUEST_INVITATION_SEEN_KEY));

@@ -104,6 +104,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         showOnMap: "지도에 표시",
         onMapNote: "지도에 이 퀘스트로 가는 길이 표시되고 있어요.",
         viewInOrbit: "Orbit에서 보기",
+        goTo: "{room}(으)로 이동",
         abandon: "퀘스트 포기",
         abandonConfirm: "이 퀘스트를 포기할까요? 나중에 다시 수락할 수 있어요.",
         keep: "계속하기",

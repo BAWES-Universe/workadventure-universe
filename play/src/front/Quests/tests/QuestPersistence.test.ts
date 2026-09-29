@@ -201,25 +201,38 @@ describe("save and restore", () => {
         const storage = memoryStorage({ [QUEST_STATE_KEY]: serializeProgress(state) });
         const restored = restoreQuestState(storage);
         expect(restored.pending).toEqual(["meet"]);
-        expect(restored.tracked).toBe("meet");
+        expect(restored.tracked).toBeNull();
         expect(revealPending(restored, false).celebrating).toBe("meet");
     });
 
-    it("a celebration still waiting when another quest was tracked never takes that quest's place", () => {
+    it("a celebration still waiting survives a reload, and the quest on the map stays there", () => {
         let state = initialQuestState();
         state = reduceQuest(state, { type: "accept", path: "explore", now: 1 });
         state = reduceQuest(state, { type: "complete", path: "explore", now: 2 });
         // Before the celebration could play, the player chose Meet.
         state = reduceQuest(state, { type: "accept", path: "meet", now: 3 });
-        expect(state.tracked).toBe("meet");
         const saved = serializeProgress(state);
-        expect(JSON.parse(saved).pending).toEqual([]);
-
-        // An older save that still carries the stale celebration restores the player's choice too.
-        const stale = JSON.stringify({ ...JSON.parse(saved), pending: ["explore"] });
-        const restored = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: stale }));
+        expect(JSON.parse(saved).pending).toEqual(["explore"]);
+        const restored = restoreQuestState(memoryStorage({ [QUEST_STATE_KEY]: saved }));
         expect(restored.tracked).toBe("meet");
-        expect(restored.pending).toEqual([]);
+        expect(restored.pending).toEqual(["explore"]);
+        expect(revealPending(restored, false).celebrating).toBe("explore");
+    });
+
+    it("keeps the room's address with a quest, from this game only", () => {
+        const origin = (url: unknown) =>
+            parseStoredProgress(
+                JSON.stringify({
+                    version: 1,
+                    quests: { meet: { accepted: true, origin: { room: "test", giver: null, url } } },
+                })
+            )?.quests.meet.origin?.url;
+        const here = `${window.location.origin}/@/bawes/hq/test`;
+        expect(origin(here)).toBe(here);
+        expect(origin("https://elsewhere.example/@/a/b/c")).toBeUndefined();
+        expect(origin("javascript:alert(1)")).toBeUndefined();
+        expect(origin(`${window.location.origin}/${"x".repeat(600)}`)).toBeUndefined();
+        expect(origin(42)).toBeUndefined();
     });
 
     it("survives storage that throws", () => {

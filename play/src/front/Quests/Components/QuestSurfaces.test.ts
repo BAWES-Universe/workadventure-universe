@@ -199,7 +199,9 @@ describe("QuestPanel", () => {
         minutes: 1,
         giver: { kind: "bot", name: "Guide", portrait: "data:image/png;base64,AAAA" },
         origin: "Guide · Lobby",
+        room: "Lobby",
         elsewhere: false,
+        group: "bot:Guide@Lobby",
         objectives: { done: status === "done" ? 1 : 0, total: 1 },
         reward: "badge",
     });
@@ -234,6 +236,47 @@ describe("QuestPanel", () => {
         await tick();
         expect(byTestId(target, "quest-detail-meet")).toBeNull();
         expect(byTestId(target, "quest-entry-explore")).not.toBeNull();
+    });
+
+    it("groups quests under their giver, a header that folds them away; a quest from another room offers Go to", async () => {
+        const fromHall: QuestLogEntry = {
+            ...entry("build", "accepted"),
+            giver: { kind: "bot", name: "Nova", uuid: "bot-nova" },
+            room: "Hall",
+            elsewhere: true,
+            group: "bot:bot-nova@Hall",
+            goToUrl: "https://play.example/@/u/w/hall#moveToUser=bot-nova",
+        };
+        const { target, instance } = mount(QuestPanel, {
+            ...base,
+            entries: [entry("meet", "available"), entry("explore", "tracked"), fromHall],
+        });
+        const goTo: string[] = [];
+        instance.$on("goTo", (event: CustomEvent<string>) => goTo.push(event.detail));
+        const headers = [...target.querySelectorAll("[data-testid='quest-giver']")];
+        // This room's giver first, then the one met elsewhere, with its room.
+        expect(headers.map((header) => header.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+            "Guide 2",
+            "Nova · Hall 1",
+        ]);
+        const lists = target.querySelectorAll("[data-testid='quest-giver-quests']");
+        // In a giver's group: what you're on first.
+        expect(
+            [...lists[0].querySelectorAll("[data-testid^='quest-entry-']")].map((row) =>
+                row.getAttribute("data-testid")
+            )
+        ).toEqual(["quest-entry-explore", "quest-entry-meet"]);
+        expect(headers[0].getAttribute("aria-expanded")).toBe("true");
+        click(headers[0]);
+        await tick();
+        expect(headers[0].getAttribute("aria-expanded")).toBe("false");
+        expect((lists[0] as HTMLElement).hidden).toBe(true);
+        expect((lists[1] as HTMLElement).hidden).toBe(false);
+
+        click(byTestId(target, "quest-row-build"));
+        await tick();
+        click(byTestId(target, "quest-detail-go"));
+        expect(goTo).toEqual(["https://play.example/@/u/w/hall#moveToUser=bot-nova"]);
     });
 
     it("the reward links to the badge in Orbit once earned, when Orbit is there, and not otherwise", async () => {

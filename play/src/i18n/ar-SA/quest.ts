@@ -104,6 +104,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         showOnMap: "عرض على الخريطة",
         onMapNote: "خريطتك تدلّك على طريق هذه المهمة.",
         viewInOrbit: "شاهدها في Orbit",
+        goTo: "اذهب إلى {room}",
         abandon: "التخلي عن المهمة",
         abandonConfirm: "هل تريد التخلي عن هذه المهمة؟ يمكنك قبولها لاحقًا.",
         keep: "الاحتفاظ بها",

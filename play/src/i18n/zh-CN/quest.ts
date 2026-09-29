@@ -104,6 +104,7 @@ const quest: DeepPartial<Translation["quest"]> = {
         showOnMap: "在地图上显示",
         onMapNote: "地图正在为你指引前往这个任务的路。",
         viewInOrbit: "在 Orbit 中查看",
+        goTo: "前往 {room}",
         abandon: "放弃任务",
         abandonConfirm: "要放弃这个任务吗？之后可以重新接受。",
         keep: "保留",

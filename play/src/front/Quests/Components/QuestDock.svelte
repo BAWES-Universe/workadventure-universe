@@ -9,6 +9,7 @@
     import { gameSceneStore } from "../../Stores/GameSceneStore";
     import { mapEditorModeStore } from "../../Stores/MapEditorStore";
     import { goToLogin } from "../../Components/ActionBar/MenuIcons/goToLogin";
+    import { scriptUtils } from "../../Api/ScriptUtils";
     import { startQuestArrival } from "../QuestArrival";
     import {
         logEntries,
@@ -447,6 +448,7 @@
                     on:signIn={onSignIn}
                     orbitLinkLabel={$questOrbitLinkStore ? t.quest.detail.viewInOrbit() : undefined}
                     on:viewInOrbit={(event) => $questOrbitLinkStore?.(questAnalyticsId(event.detail))}
+                    on:goTo={(event) => scriptUtils.goToPage(event.detail)}
                 />
             </div>
         {/if}
@@ -603,6 +605,61 @@
     :global(.quest-surface h3) {
         text-transform: none;
         letter-spacing: 0;
+    }
+    /* A giver's header: face, name, how many quests, and a chevron that folds them away. */
+    :global(.quest-giver) {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        width: 100%;
+        min-height: 2.75rem;
+        margin: 0.25rem 0 0.125rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.625rem;
+        color: #fff;
+        background: transparent;
+        text-align: start;
+        cursor: pointer;
+    }
+    :global(.quest-giver:hover) {
+        background: rgba(255, 255, 255, 0.06);
+    }
+    :global(.quest-giver:focus-visible) {
+        outline: 2px solid #c4b5fd;
+        outline-offset: 2px;
+    }
+    :global(.quest-giver-name) {
+        font-size: 0.875rem;
+        font-weight: 700;
+        color: #c4b5fd;
+    }
+    :global(.quest-giver-room) {
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.55);
+    }
+    :global(.quest-giver-count) {
+        flex: none;
+        min-width: 1.375rem;
+        padding: 0 0.375rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        line-height: 1.375rem;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.75);
+        background: rgba(255, 255, 255, 0.1);
+    }
+    :global(.quest-giver-chevron) {
+        flex: none;
+        color: rgba(255, 255, 255, 0.6);
+        transform: rotate(-90deg);
+        transition: transform 150ms ease;
+    }
+    :global(.quest-giver-chevron.open) {
+        transform: none;
+    }
+    :global([dir="rtl"] .quest-giver-chevron:not(.open)) {
+        transform: rotate(90deg);
     }
     :global(.quest-log-section) {
         margin: 0.875rem 0 0.25rem;
@@ -988,7 +1045,8 @@
         :global(.quest-pill),
         :global(.quest-pill::before),
         :global(.quest-pill-chevron),
-        :global(.quest-progress-seg) {
+        :global(.quest-progress-seg),
+        :global(.quest-giver-chevron) {
             transition: none;
         }
         :global(.quest-surface .u-cta:hover),

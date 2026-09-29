@@ -132,8 +132,17 @@ export interface QuestLogEntry {
     giver: QuestGiver | null;
     /** "Guide · Lobby", or "Lobby". */
     origin: string;
-    /** Accepted in another room: the row says where it came from. */
+    /** The room it came from ("test"). */
+    room: string;
+    /** Accepted in another room. */
     elsewhere: boolean;
+    /** Which giver's group it sits in: the same giver in the same room is one group. */
+    group: string;
+    /**
+     * Where "Go to {room}" leads, for a quest from another room that isn't done: that room, next to its giver bot
+     * when there is one (the People tab's own way of going to someone).
+     */
+    goToUrl?: string;
     /** The objectives met, out of the quest's: one each for the Welcome chapter. */
     objectives: { done: number; total: number };
     /** "First Hello badge". */
@@ -170,7 +179,8 @@ export function logEntries(
     for (const path of QUEST_PATHS) {
         const status = questStatus(state, path);
         if (status === "available" && !available.includes(path)) continue;
-        const { room, giver } = entryOrigin(state, path, world);
+        const { room, giver, url } = entryOrigin(state, path, world);
+        const elsewhere = room !== "" && world.roomName !== undefined && room !== world.roomName;
         const origin = giver ? t.quest.log.fromHost({ host: giver.name, room }) : t.quest.log.here({ room });
         entries.push({
             path,
@@ -183,7 +193,10 @@ export function logEntries(
             minutes: QUEST_MINUTES[path],
             giver,
             origin,
-            elsewhere: room !== "" && world.roomName !== undefined && room !== world.roomName,
+            room,
+            elsewhere,
+            group: giverGroup(giver, room),
+            ...(elsewhere && url && status !== "done" ? { goToUrl: roomLink(url, giver) } : {}),
             objectives: { done: status === "done" ? 1 : 0, total: 1 },
             reward: t.quest.stamps.badge({ stamp: stampName(t, path) }),
             requirement: path === "build" && status !== "done" ? t.quest.paths.build.needs() : undefined,
@@ -191,6 +204,16 @@ export function logEntries(
         });
     }
     return entries;
+}
+
+/** One group per giver and room: two rooms' Guides are two givers. */
+function giverGroup(giver: QuestGiver | null, room: string): string {
+    if (!giver) return `room:${room}`;
+    return giver.kind === "bot" ? `bot:${giver.uuid ?? giver.name}@${room}` : `area:${giver.name}@${room}`;
+}
+
+function roomLink(url: string, giver: QuestGiver | null): string {
+    return giver?.kind === "bot" && giver.uuid ? `${url}#moveToUser=${encodeURIComponent(giver.uuid)}` : url;
 }
 
 function showsNobodyHere(state: QuestState, world: QuestWorld, path: QuestPath, status: QuestLogEntry["status"]) {

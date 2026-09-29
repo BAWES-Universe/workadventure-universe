@@ -183,6 +183,14 @@ export function armQuestScene(scene: GameScene): () => void {
         }
     };
 
+    const roomUrl = (): string | undefined => {
+        try {
+            return scene.room.key;
+        } catch {
+            return undefined;
+        }
+    };
+
     const buildWorld = (): QuestWorld => {
         const present = readPresent();
         const areas = readAreas();
@@ -201,6 +209,7 @@ export function armQuestScene(scene: GameScene): () => void {
         return {
             ready: true,
             roomName: roomName(),
+            roomUrl: roomUrl(),
             host: resolveQuestHost(questSim, present, areas, targets.questHost),
             present,
             exploreTarget,

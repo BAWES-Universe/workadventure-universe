@@ -89,6 +89,29 @@ describe("quest copy", () => {
         expect(logEntries(t, byRoom, garden, [])[0].origin).toBe("Lobby");
     });
 
+    it("groups by giver and room, and leads a quest from another room back to its giver there", () => {
+        const withUrl = { ...fromGuide, url: "https://play.example/@/u/w/lobby" };
+        const state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1, origin: withUrl });
+        const [elsewhere] = logEntries(t, state, garden, []);
+        expect(elsewhere).toMatchObject({ room: "Lobby", elsewhere: true, group: "bot:bot-3@Lobby" });
+        expect(elsewhere.goToUrl).toBe("https://play.example/@/u/w/lobby#moveToUser=bot-3");
+        // In its own room there is nowhere to go; once done, nothing to go back for.
+        expect(logEntries(t, state, world, [])[0].goToUrl).toBeUndefined();
+        const done = reduceQuest(state, { type: "complete", path: "meet", now: 2 });
+        expect(logEntries(t, done, garden, [])[0].goToUrl).toBeUndefined();
+        // A room's own quest goes back to the room.
+        const byRoom = reduceQuest(initialQuestState(), {
+            type: "accept",
+            path: "build",
+            now: 1,
+            origin: { room: "Lobby", giver: null, url: "https://play.example/@/u/w/lobby" },
+        });
+        expect(logEntries(t, byRoom, garden, [])[0]).toMatchObject({
+            group: "room:Lobby",
+            goToUrl: "https://play.example/@/u/w/lobby",
+        });
+    });
+
     it("tells Meet's progress in the card: waiting after the hello, nobody here while paused", () => {
         let state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1, origin: fromGuide });
         expect(questBody(t, "meet", state, world, "idle")).toBe("Walk up to someone. When the bubble opens, say hi.");

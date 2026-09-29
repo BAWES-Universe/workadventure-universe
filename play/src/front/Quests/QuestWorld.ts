@@ -41,6 +41,8 @@ export interface QuestWorld {
     /** A map is loaded and its detectors are armed. */
     ready: boolean;
     roomName: string | undefined;
+    /** The room's address (no query, no hash), kept with a quest so the player can come back to it. */
+    roomUrl?: string;
     host: QuestHost;
     /** People and bots on this map, the player's own tabs excluded. */
     present: QuestPresent[];
@@ -199,7 +201,11 @@ export function hostAsGiver(host: QuestHost): QuestGiver | null {
 
 /** Who offers quests here and where, right now: what an offer freezes as its origin. */
 export function questOrigin(world: QuestWorld): QuestOrigin {
-    return { room: world.roomName ?? "", giver: hostAsGiver(world.host) };
+    return {
+        room: world.roomName ?? "",
+        giver: hostAsGiver(world.host),
+        ...(world.roomUrl ? { url: world.roomUrl } : {}),
+    };
 }
 
 /**
