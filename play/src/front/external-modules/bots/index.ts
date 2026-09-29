@@ -50,10 +50,10 @@ export function openBotEditorFromMenu(): void {
         mapEditorModeStore.switchMode(true);
     }
 
-    const sidebarReady = () => {
-        const sidebar = document.querySelector(".side-bar-container");
-        return sidebar !== null && get(mapEditorActivated);
-    };
+    // openBotEditor() selects the bot editor tool straight away and injectBotEditorComponent() waits for the
+    // sidebar itself, so only the permission needs to be in place. Opening before the sidebar renders means
+    // it renders with the bot editor selected, instead of flashing the entity editor for a poll interval.
+    const sidebarReady = () => get(mapEditorActivated);
 
     if (sidebarReady()) {
         openBotEditor();
@@ -76,7 +76,7 @@ export function openBotEditorFromMenu(): void {
         } else if (Date.now() < deadline) {
             setTimeout(tryOpen, 300);
         } else {
-            console.warn("[Bot Extension] Bot editor: sidebar did not appear after map editor activation");
+            console.warn("[Bot Extension] Bot editor: map editing never became available for this room");
         }
     };
     tryOpen();
