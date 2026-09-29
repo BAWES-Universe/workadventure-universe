@@ -151,7 +151,7 @@ import { SpaceScriptingBridgeService } from "../../Space/Utils/SpaceScriptingBri
 import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from "../../Utils/Debuggers";
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
-import { megaphoneCanBeUsedStore, megaphoneSpaceStore } from "../../Stores/MegaphoneStore";
+import { megaphoneCanBeUsedStore, megaphoneEnabledInRoomStore, megaphoneSpaceStore } from "../../Stores/MegaphoneStore";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
 import { scriptUtils } from "../../Api/ScriptUtils";
@@ -2113,6 +2113,7 @@ export class GameScene extends DirtyScene {
                 this.connection.megaphoneSettingsMessageStream.subscribe((megaphoneSettingsMessage) => {
                     if (megaphoneSettingsMessage) {
                         megaphoneCanBeUsedStore.set(megaphoneSettingsMessage.enabled);
+                        megaphoneEnabledInRoomStore.set(Boolean(megaphoneSettingsMessage.url));
                         if (
                             megaphoneSettingsMessage.url &&
                             get(availabilityStatusStore) !== AvailabilityStatus.DO_NOT_DISTURB

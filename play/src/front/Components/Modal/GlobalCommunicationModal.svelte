@@ -31,6 +31,7 @@
     import {
         currentLiveStreamingSpaceStore,
         megaphoneCanBeUsedStore,
+        megaphoneEnabledInRoomStore,
         megaphoneSpaceStore,
         requestedMegaphoneStore,
     } from "../../Stores/MegaphoneStore";
@@ -58,11 +59,9 @@
         return gameManager.tryGetCurrentGameScene()?.wamFile?.settings?.megaphone;
     }
 
-    // megaphoneCanBeUsedStore only says whether *this user* can use the megaphone. Read the room setting to tell
-    // "off in this room" apart from "on, but you are not in the allowed tags". The server resends
-    // megaphoneCanBeUsedStore after every megaphone setting change, so re-read the setting whenever it changes.
-    let megaphoneOnInRoom = false;
-    $: megaphoneOnInRoom = $megaphoneCanBeUsedStore || (getMegaphoneSettings()?.enabled ?? false);
+    // megaphoneCanBeUsedStore only says whether *this user* can use the megaphone. megaphoneEnabledInRoomStore tells
+    // "off in this room" apart from "on, but you are not in the allowed tags", and follows changes made by others.
+    $: megaphoneOnInRoom = $megaphoneCanBeUsedStore || $megaphoneEnabledInRoomStore;
     // Room settings live in the WAM file. A map without one (a plain TMJ map) has no megaphone setting to turn on.
     $: canTurnOnMegaphone = $mapEditorActivated && gameManager.tryGetCurrentGameScene()?.wamFile !== undefined;
 
@@ -84,9 +83,8 @@
                     rights: settings?.rights ?? [],
                 }),
             });
-            // The command updated the local WAM settings; don't wait for the server round trip to refresh the card.
-            megaphoneOnInRoom = getMegaphoneSettings()?.enabled ?? false;
-            if (megaphoneOnInRoom && !$megaphoneCanBeUsedStore) {
+            // Keep the button pending until the server confirms, instead of flashing the old state.
+            if (!$megaphoneCanBeUsedStore) {
                 awaitingMegaphoneAccess = true;
                 clearTimeout(awaitingMegaphoneAccessTimeout);
                 awaitingMegaphoneAccessTimeout = setTimeout(() => {
