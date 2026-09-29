@@ -1,7 +1,15 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { getPage } from "./utils/auth";
 import { publicTestMapUrl } from "./utils/urls";
 import Map from "./utils/map";
+
+/**
+ * Whether the page sees a mouse, as the Express button does before showing its shortcut card or focusing the tray's
+ * text field. Emulated phones have none, and neither does headless Firefox.
+ */
+async function hasFinePointer(page: Page): Promise<boolean> {
+    return page.evaluate(() => window.matchMedia("(pointer: fine)").matches);
+}
 
 test.describe("Express button @nowebkit", () => {
     test("should send a say bubble from the Express tray", async ({ browser }) => {
@@ -107,7 +115,8 @@ test.describe("Express button @nowebkit", () => {
         await expect(page.getByTestId("express-tray")).toBeVisible();
     });
 
-    test("should keep the Express button beside the chat on a desktop", async ({ browser }) => {
+    // On phones the chat covers the game, and the Express button with it, by design.
+    test("should keep the Express button beside the chat on a desktop @nomobile", async ({ browser }) => {
         await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
 
         await expect(page.getByTestId("express-button")).toBeVisible();
@@ -118,6 +127,7 @@ test.describe("Express button @nowebkit", () => {
 
     test("should show the shortcuts when hovering the Express button", async ({ browser }) => {
         await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
+        test.skip(!(await hasFinePointer(page)), "The shortcut card only shows on devices with a mouse");
 
         await page.getByTestId("express-button").hover();
         await expect(page.getByTestId("express-shortcuts")).toBeVisible();
@@ -130,6 +140,7 @@ test.describe("Express button @nowebkit", () => {
     });
     test("should type into the tray instead of triggering game shortcuts", async ({ browser }) => {
         await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/empty.json", "express"));
+        test.skip(!(await hasFinePointer(page)), "The tray only focuses its text field on devices with a mouse");
 
         await page.getByTestId("express-button").click();
         await expect(page.getByTestId("express-input")).toBeFocused();

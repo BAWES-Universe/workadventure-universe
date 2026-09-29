@@ -9,9 +9,9 @@ select {
 body {
     overflow: hidden;
 }
-// On touch screens the app is one fixed screen. Pinning the root leaves nothing for the on-screen keyboard to pan
+// On iPhones and iPads the app is one fixed screen. Pinning the root leaves nothing for the on-screen keyboard to pan
 // into or strand off-screen; the ViewportGuard puts the page back if it still moves (see Utils/ViewportGuard.ts).
-// Desktop is left as it was.
+// Desktop and Android are left as they were (the class is only set on iOS, see svelte.ts).
 html.touch-screen,
 html.touch-screen body {
     position: fixed;

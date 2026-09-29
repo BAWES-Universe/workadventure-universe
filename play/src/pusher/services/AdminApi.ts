@@ -37,6 +37,7 @@ import type { AdminInterface } from "./AdminInterface";
 import type { AuthTokenData } from "./JWTTokenManager";
 import { jwtTokenManager } from "./JWTTokenManager";
 import { ShortMapDescriptionList } from "./ShortMapDescription";
+import { UniverseRoomsData } from "./UniverseRooms";
 import { WorldChatMembersData } from "./WorldChatMembersData";
 import { iceServersService } from "./IceServersService";
 
@@ -738,6 +739,44 @@ class AdminApi implements AdminInterface {
             .then((data) => {
                 return ShortMapDescriptionList.parse(data.data);
             });
+    }
+
+    async getRoomsFromSameUniverse(roomUrl: string, userUuid: string, locale?: string): Promise<UniverseRoomsData> {
+        /**
+         * @openapi
+         * /api/room/sameUniverse:
+         *   get:
+         *     tags: ["AdminAPI"]
+         *     description: Every room the player may see in the universe of the room, grouped by world (current world first, then by visits), each with its stars, visits and busiest UTC hour
+         *     security:
+         *      - Bearer: []
+         *     produces:
+         *      - "application/json"
+         *     parameters:
+         *      - name: "roomUrl"
+         *        in: "query"
+         *        description: "The URL of the room the player is in"
+         *        type: "string"
+         *        required: true
+         *        example: "http://example.com/@/universeSlug/worldSlug/roomSlug"
+         *      - name: "userUuid"
+         *        in: "query"
+         *        description: "The player's uuid, for private worlds and rooms they may see"
+         *        type: "string"
+         *        required: false
+         *     responses:
+         *       200:
+         *         description: The universe's name and its worlds with their rooms
+         */
+        const url = new URL(`${ADMIN_API_URL}/api/room/sameUniverse`);
+        url.searchParams.append("roomUrl", roomUrl);
+        if (userUuid) {
+            url.searchParams.append("userUuid", userUuid);
+        }
+        const response = await axios.get<unknown>(url.toString(), {
+            headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
+        });
+        return UniverseRoomsData.parse(response.data);
     }
 
     getProfileUrl(accessToken: string, playUri: string): string {
