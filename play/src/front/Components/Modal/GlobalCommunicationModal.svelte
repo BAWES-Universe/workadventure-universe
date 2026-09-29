@@ -56,7 +56,8 @@
     };
 
     function selectKind(next: GlobalMessageKind) {
-        if (next === kind) {
+        // Switching mid-send would unmount the form that is still uploading and mislabel the confirmation.
+        if (next === kind || status === "sending") {
             return;
         }
         // Leaving the live tab while only previewing the camera: stop the preview. A running broadcast keeps going.
@@ -91,18 +92,21 @@
         if (!canSend) {
             return;
         }
-        const broadcastToWorld = isBroadcastToWorld(target);
+        // Capture what is being sent: the confirmation must describe this message, not the form's later state.
+        const sendingKind = kind;
+        const sendingTarget = target;
+        const broadcastToWorld = isBroadcastToWorld(sendingTarget);
         status = "sending";
         let sent = false;
-        if (kind === "text") {
+        if (sendingKind === "text") {
             analyticsClient.sendGlocalTextMessage();
             sent = handleSendText.sendTextMessage(broadcastToWorld);
-        } else if (kind === "audio") {
+        } else if (sendingKind === "audio") {
             analyticsClient.sendGlobalSoundMessage();
             sent = await handleSendAudio.sendAudioMessage(broadcastToWorld);
         }
-        sentKind = kind;
-        sentTarget = target;
+        sentKind = sendingKind;
+        sentTarget = sendingTarget;
         status = sent ? "sent" : "failed";
         showPreview = false;
     }
@@ -202,6 +206,7 @@
                         aria-selected={kind === tabKind}
                         aria-controls="global-message-panel"
                         tabindex={kind === tabKind ? 0 : -1}
+                        disabled={status === "sending" && kind !== tabKind}
                         class="m-0 flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-2 text-sm font-bold transition-all {kind ===
                         tabKind
                             ? 'bg-white text-contrast'
@@ -311,6 +316,7 @@
                                         name="global-message-target"
                                         value={option}
                                         bind:group={target}
+                                        disabled={status === "sending"}
                                         data-testid="global-message-target-{option}"
                                     />
                                     <span class="text-sm font-bold">
