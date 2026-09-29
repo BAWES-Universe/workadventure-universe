@@ -5,6 +5,7 @@
  */
 
 import axios, { type AxiosResponse } from 'axios';
+import { parseBotQuestList, type BotQuestList } from '../ai/QuestKnowledge';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -88,6 +89,9 @@ export class AdminApiService {
     // Cache for room metadata (room URL -> metadata, cached for 5 minutes)
     private roomMetadataCache: Map<string, { data: { universeName: string; worldName: string; roomName: string }; cachedAt: number }> = new Map();
     private readonly ROOM_METADATA_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+    // Cache for the quests a bot gives (bot id -> list), refreshed like the room metadata
+    private botQuestsCache: Map<string, { data: BotQuestList | null; cachedAt: number }> = new Map();
+    private readonly BOT_QUESTS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     private adminApiToken: string;
 
     constructor(adminApiUrl?: string, adminApiToken?: string) {
@@ -197,6 +201,58 @@ export class AdminApiService {
             console.error('[AdminApiService] Error getting bot configuration:', error);
             captureException(error);
             throw error;
+        }
+    }
+
+    /**
+     * The quests a bot gives, as Orbit lists them (GET /api/bots/:id/quests, workadventure-universe#565), cached
+     * per bot for a few minutes so a conversation's turns don't each ask again. Null when Orbit is not configured
+     * or could not answer (the bot then says nothing new about quests); an empty list when it gives none.
+     */
+    async getBotQuests(botId: string): Promise<BotQuestList | null> {
+        if (!this.isConfigured()) {
+            return null;
+        }
+
+        const cached = this.botQuestsCache.get(botId);
+        if (cached && Date.now() - cached.cachedAt < this.BOT_QUESTS_CACHE_TTL) {
+            return cached.data;
+        }
+
+        try {
+            const response = await axios.get(
+                resolveAdminApiEndpoint(this.adminApiUrl, `/api/bots/${encodeURIComponent(botId)}/quests`),
+                {
+                    headers: {
+                        Authorization: `Bearer ${this.adminApiToken}`,
+                    },
+                    timeout: 10000,
+                }
+            );
+            const list = parseBotQuestList(response.data);
+            if (!list) {
+                console.warn(`[AdminApiService] Orbit's quest list for bot ${botId} is not in the expected shape`);
+            }
+            // A malformed answer is cached as unknown too, so a bad deploy doesn't mean a request per turn.
+            this.botQuestsCache.set(botId, { data: list, cachedAt: Date.now() });
+            return list;
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 404) {
+                // An Orbit without the endpoint yet, or a bot Orbit doesn't know: nothing to say about quests.
+                this.botQuestsCache.set(botId, { data: null, cachedAt: Date.now() });
+                return null;
+            }
+            console.error(`[AdminApiService] Error getting quests for bot ${botId}:`, error);
+            return null;
+        }
+    }
+
+    /** Forget a bot's cached quests (a publish or pause in Orbit), so the next conversation asks again. */
+    clearBotQuestsCache(botId?: string): void {
+        if (botId === undefined) {
+            this.botQuestsCache.clear();
+        } else {
+            this.botQuestsCache.delete(botId);
         }
     }
 
