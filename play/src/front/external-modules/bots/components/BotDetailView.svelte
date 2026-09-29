@@ -1,14 +1,12 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
-    import { gameManager } from "../../../Phaser/Game/GameManager";
-    import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import type { BotData } from "../types";
-    import type { WokaData } from "../../../Components/Woka/WokaTypes";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
     import { selectedBotStore, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
+    import { botWokaCatalogStore, ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
     import BotTexturePicker from "./BotTexturePicker.svelte";
     import BotBehaviorEditor from "./BotBehaviorEditor.svelte";
     import BotProviderEditor from "./BotProviderEditor.svelte";
@@ -25,7 +23,6 @@
     let currentBot: BotData | null = null;
     let isSaving = false;
     let saveError: string | null = null;
-    let wokaData: WokaData | null = null;
     let assetsDirection: number = 0;
     let availableProviders: Array<{ providerId: string; name: string; enabled: boolean }> = [];
 
@@ -195,35 +192,6 @@
         return `${ABSOLUTE_PUSHER_URL}${relativeUrl}`;
     }
 
-    async function loadWokaData() {
-        try {
-            let roomUrl: string;
-            if (gameManager?.currentStartedRoom?.href) {
-                roomUrl = gameManager.currentStartedRoom.href;
-            } else if (window.location.href) {
-                roomUrl = window.location.href;
-            } else {
-                return;
-            }
-
-            const response = await fetch(
-                `${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}&context=bot`,
-                {
-                    headers: {
-                        Authorization: localUserStore.getAuthToken() || "",
-                    },
-                    credentials: "include",
-                }
-            );
-
-            if (response.ok) {
-                wokaData = await response.json();
-            }
-        } catch (err) {
-            console.warn("Could not load woka data:", err);
-        }
-    }
-
     function handleDelete() {
         if (!currentBot || !currentBot.botId) {
             onBack();
@@ -312,7 +280,7 @@
     }
 
     onMount(() => {
-        void loadWokaData();
+        void ensureBotWokaCatalog();
         void loadProviders();
     });
 
@@ -404,10 +372,10 @@
                         <div
                             class="w-32 h-32 bg-white/5 rounded-lg border border-white/20 flex items-center justify-center overflow-hidden"
                         >
-                            {#if currentBot.characterTexture && wokaData}
+                            {#if currentBot.characterTexture && $botWokaCatalogStore}
                                 <WokaImage
                                     selectedTextures={{ woka: currentBot.characterTexture }}
-                                    {wokaData}
+                                    wokaData={$botWokaCatalogStore}
                                     {getTextureUrl}
                                     canvasSize={96}
                                     direction={assetsDirection}
@@ -639,7 +607,7 @@
 </div>
 
 <!-- Texture Picker Modal -->
-{#if editingTexture && wokaData && currentBot}
+{#if editingTexture && $botWokaCatalogStore && currentBot}
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div
         role="presentation"

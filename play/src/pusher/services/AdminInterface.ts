@@ -10,6 +10,7 @@ import type {
 } from "@workadventure/messages";
 import type { AdminBannedData, FetchMemberDataByUuidResponse } from "./AdminApi";
 import type { ShortMapDescriptionList } from "./ShortMapDescription";
+import type { UniverseRoomsData } from "./UniverseRooms";
 import type { WorldChatMembersData } from "./WorldChatMembersData";
 
 export interface AdminInterface {
@@ -98,6 +99,11 @@ export interface AdminInterface {
         tags?: string[],
         bypassTagFilter?: boolean
     ): Promise<ShortMapDescriptionList>;
+
+    /**
+     * Every room the player may see in the universe of roomUrl, grouped by world, for the "Explore" list.
+     */
+    getRoomsFromSameUniverse(roomUrl: string, userUuid: string, locale?: string): Promise<UniverseRoomsData>;
 
     /**
      * @param accessToken

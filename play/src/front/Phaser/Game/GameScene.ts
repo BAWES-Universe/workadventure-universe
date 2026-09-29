@@ -133,6 +133,7 @@ import { chatVisibilityStore, forceRefreshChatStore } from "../../Stores/ChatSto
 import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
+import { exploreStore } from "../../Stores/ExploreStore";
 import { myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
 import type { GameStateEvent } from "../../Api/Events/GameStateEvent";
 import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
@@ -1791,6 +1792,7 @@ export class GameScene extends DirtyScene {
                     return;
                 }
                 this.connection = onConnect.connection;
+                exploreStore.load(this.connection);
 
                 // Initialize TURN credentials manager
                 iceServersManager.init(this.connection, this.abortController.signal);
@@ -2838,15 +2840,7 @@ ${escapedMessage}
 
         this.iframeSubscriptionList.push(
             iframeListener.loadPageStream.subscribe((url: string) => {
-                this.loadNextGameFromExitUrl(url)
-                    .then(() => {
-                        this.events.once(EVENT_TYPE.POST_UPDATE, () => {
-                            this.onMapExit(Room.getRoomPathFromExitUrl(url, window.location.toString())).catch((e) =>
-                                console.error(e)
-                            );
-                        });
-                    })
-                    .catch((e) => console.error(e));
+                this.goToRoom(url);
             })
         );
         let scriptedBubbleSprite: Sprite;
@@ -3523,6 +3517,21 @@ ${escapedMessage}
         }
 
         return script.split("\n").map((scriptSplit) => new URL(scriptSplit, this.mapUrlFile).toString());
+    }
+
+    /**
+     * Moves to another room without reloading the page (WA.nav.goToRoom, and the Explore list).
+     */
+    public goToRoom(url: string): void {
+        this.loadNextGameFromExitUrl(url)
+            .then(() => {
+                this.events.once(EVENT_TYPE.POST_UPDATE, () => {
+                    this.onMapExit(Room.getRoomPathFromExitUrl(url, window.location.toString())).catch((e) =>
+                        console.error(e)
+                    );
+                });
+            })
+            .catch((e) => console.error(e));
     }
 
     private loadNextGameFromExitUrl(exitUrl: string): Promise<void> {
