@@ -675,6 +675,7 @@ export class SocketManager {
                 case "embeddableWebsiteQuery":
                 case "roomTagsQuery":
                 case "roomsFromSameWorldQuery":
+                case "roomsFromSameUniverseQuery":
                 case "searchMemberQuery":
                 case "getMemberQuery":
                 case "searchTagsQuery":

@@ -2,7 +2,7 @@
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
-    import WorldIcon from "../../Icons/WorldIcon.svelte";
+    import OrbitIcon from "../../Icons/OrbitIcon.svelte";
 
     export let first: boolean | undefined = undefined;
     export let last: boolean | undefined = undefined;
@@ -23,6 +23,6 @@
         {last}
         classList={finalClassList}
     >
-        <WorldIcon />
+        <OrbitIcon />
     </ActionBarButton>
 {/if}

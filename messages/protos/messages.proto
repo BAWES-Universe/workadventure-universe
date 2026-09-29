@@ -455,6 +455,7 @@ message QueryMessage {
     JoinSpaceQuery joinSpaceQuery = 14;
     LeaveSpaceQuery leaveSpaceQuery = 15;
     MapStorageJwtQuery mapStorageJwtQuery = 16;
+    RoomsFromSameUniverseQuery roomsFromSameUniverseQuery = 21;
   }
 }
 
@@ -485,6 +486,9 @@ message EmbeddableWebsiteQuery {
 }
 
 message RoomsFromSameWorldQuery {
+}
+
+message RoomsFromSameUniverseQuery {
 }
 
 message SendEventQuery {
@@ -549,6 +553,7 @@ message AnswerMessage {
     JoinSpaceAnswer joinSpaceAnswer = 16;
     LeaveSpaceAnswer leaveSpaceAnswer = 17;
     MapStorageJwtAnswer mapStorageJwtAnswer = 18;
+    RoomsFromSameUniverseAnswer roomsFromSameUniverseAnswer = 19;
   }
 }
 
@@ -592,6 +597,30 @@ message RoomShortDescription {
 
 message RoomsFromSameWorldAnswer {
   repeated RoomShortDescription roomDescriptions = 1;
+}
+
+/* A room in the "Explore" list: visits and stars from the admin, peakHourUtc the busiest UTC hour (0-23) when visited. */
+message UniverseRoomDescription {
+  string name = 1;
+  string roomUrl = 2;
+  optional string description = 3;
+  int32 stars = 4;
+  int32 visits = 5;
+  optional int32 peakHourUtc = 6;
+  bool isCurrent = 7;
+}
+
+message UniverseWorldDescription {
+  string name = 1;
+  string slug = 2;
+  optional string thumbnailUrl = 3;
+  bool isCurrent = 4;
+  repeated UniverseRoomDescription rooms = 5;
+}
+
+message RoomsFromSameUniverseAnswer {
+  string universeName = 1;
+  repeated UniverseWorldDescription worlds = 2;
 }
 
 message SendEventAnswer {

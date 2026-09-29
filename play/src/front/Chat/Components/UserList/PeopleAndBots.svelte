@@ -2,6 +2,7 @@
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { peopleSectionsOpenStore } from "../../Stores/ChatStore";
+    import { fold } from "../../../Utils/foldTransition";
     import UserList from "./UserList.svelte";
     import type { PersonGroup } from "./PersonSessions";
     import { sessionCount, splitBots } from "./PersonSessions";
@@ -54,12 +55,16 @@
         <span class="grow" />
         <IconChevronDown
             font-size="16"
-            class="shrink-0 text-white/50 transition-transform {peopleOpen ? '' : '-rotate-90 rtl:rotate-90'}"
+            class="shrink-0 text-white/50 transition-transform duration-200 ease-out {peopleOpen
+                ? ''
+                : '-rotate-90 rtl:rotate-90'}"
         />
     </button>
 {/if}
 {#if peopleOpen}
-    <UserList people={rows.people} {isMatrixChatEnabled} />
+    <div class="flex flex-col" transition:fold>
+        <UserList people={rows.people} {isMatrixChatEnabled} />
+    </div>
 {/if}
 
 {#if hasBots && (!isSearching || rows.bots.length > 0)}
@@ -78,10 +83,14 @@
         <span class="grow" />
         <IconChevronDown
             font-size="16"
-            class="shrink-0 text-white/50 transition-transform {botsOpen ? '' : '-rotate-90 rtl:rotate-90'}"
+            class="shrink-0 text-white/50 transition-transform duration-200 ease-out {botsOpen
+                ? ''
+                : '-rotate-90 rtl:rotate-90'}"
         />
     </button>
     {#if botsOpen}
-        <UserList people={rows.bots} {isMatrixChatEnabled} />
+        <div class="flex flex-col" transition:fold>
+            <UserList people={rows.bots} {isMatrixChatEnabled} />
+        </div>
     {/if}
 {/if}

@@ -5,6 +5,7 @@ import type {
     AdminMessage,
     AdminPusherToBackMessage,
     AdminRoomMessage,
+    AnswerMessage,
     BanMessage,
     BanPlayerMessage,
     ChatMembersAnswer,
@@ -1218,6 +1219,39 @@ export class SocketManager implements ZoneEventListener {
                 Sentry.captureException(e);
                 console.warn("SocketManager => handleRoomsFromSameWorldQuery => error while sending error message", e);
             }
+        }
+    }
+
+    async handleRoomsFromSameUniverseQuery(client: Socket, queryMessage: QueryMessage) {
+        let answer: AnswerMessage["answer"];
+        try {
+            const { roomId, userUuid } = client.getUserData();
+            const universe = await adminService.getRoomsFromSameUniverse(roomId, userUuid);
+            answer = {
+                $case: "roomsFromSameUniverseAnswer",
+                roomsFromSameUniverseAnswer: universe,
+            };
+        } catch (e) {
+            console.warn("SocketManager => handleRoomsFromSameUniverseQuery => error while getting the rooms", e);
+            Sentry.captureException(e);
+            answer = {
+                $case: "error",
+                error: { message: e instanceof Error ? e.message : "Unknown error" },
+            };
+        }
+        try {
+            client.send(
+                ServerToClientMessage.encode({
+                    message: {
+                        $case: "answerMessage",
+                        answerMessage: { id: queryMessage.id, answer },
+                    },
+                }).finish(),
+                true
+            );
+        } catch (e) {
+            Sentry.captureException(e);
+            console.warn("SocketManager => handleRoomsFromSameUniverseQuery => error while sending the answer", e);
         }
     }
 
