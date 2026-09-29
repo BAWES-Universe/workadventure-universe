@@ -61,7 +61,8 @@
     function visit(room: UniverseRoomDescription) {
         close();
         if (room.isCurrent) return;
-        gameManager.getCurrentGameScene().goToRoom(room.roomUrl);
+        // Between scenes (a map exit already under way) there is none to move: that move wins.
+        gameManager.tryGetCurrentGameScene()?.goToRoom(room.roomUrl);
     }
 
     function onKeydown(event: KeyboardEvent) {

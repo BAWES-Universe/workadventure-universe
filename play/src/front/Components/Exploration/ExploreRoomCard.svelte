@@ -1,3 +1,8 @@
+<script context="module" lang="ts">
+    // Each card's SVG gradient needs its own id: ids are page-wide.
+    let nextCardId = 0;
+</script>
+
 <script lang="ts">
     import type { UniverseRoomDescription } from "@workadventure/messages";
     import { createEventDispatcher } from "svelte";
@@ -12,6 +17,8 @@
 
     const dispatch = createEventDispatcher<{ select: UniverseRoomDescription }>();
 
+    const moonId = `explore-moon-${nextCardId++}`;
+
     $: peak = room.peakHourUtc === undefined ? undefined : formatPeakHour(room.peakHourUtc);
 </script>
 
@@ -25,7 +32,7 @@
     {#if room.isCurrent}
         <svg class="orbit" viewBox="0 0 280 200" fill="none" aria-hidden="true" focusable="false">
             <defs>
-                <radialGradient id="explore-moon" cx="0.27" cy="0.22" r="0.8">
+                <radialGradient id={moonId} cx="0.27" cy="0.22" r="0.8">
                     <stop offset="0" stop-color="currentColor" stop-opacity="0.95" />
                     <stop offset="0.3" stop-color="currentColor" stop-opacity="0.55" />
                     <stop offset="0.7" stop-color="currentColor" stop-opacity="0.12" />
@@ -33,7 +40,7 @@
                 </radialGradient>
             </defs>
             <circle cx="147" cy="93" r="65" stroke="currentColor" stroke-opacity="0.16" stroke-width="0.7" />
-            <circle cx="147" cy="93" r="45" fill="url(#explore-moon)" stroke="currentColor" stroke-opacity="0.35" />
+            <circle cx="147" cy="93" r="45" fill="url(#{moonId})" stroke="currentColor" stroke-opacity="0.35" />
             <path
                 d="M116 60c30-12 58 15 59 45M108 80c26-9 43 7 44 33M131 53c9 18 13 44 4 73"
                 stroke="currentColor"
