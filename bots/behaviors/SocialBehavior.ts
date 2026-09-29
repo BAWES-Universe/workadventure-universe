@@ -601,6 +601,16 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
+        // A conversation the bot started defers its greeting to onMemoryReady, which BaseBehavior only
+        // calls for users with a uuid. Greet users without one here so the bot doesn't stay silent.
+        if (!user.uuid && this.activeConversations.has(playerId) && !this.leadingGreetedPlayers.has(playerId)) {
+            this.leadingGreetedPlayers.add(playerId);
+            this.generateAIGreeting(spaceName, playerId, this.bot.getBotId()).catch(error => {
+                console.error(`[SocialBehavior] Error generating AI greeting:`, error);
+            });
+            return;
+        }
+
         // Skip if already in conversation with this player
         if (this.activeConversations.has(playerId)) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {

@@ -241,6 +241,37 @@ describe('SocialBehavior greetings', () => {
         expect(prompt).not.toContain('just approached you');
     });
 
+    it('greets a player it walked up to even when they have no uuid', async () => {
+        const bot = createBot([player(1)], { aiProviderRef: 'provider-1' });
+        const ai = createAi();
+        const behavior = new SocialBehavior(createConfig());
+        behavior.setBot(bot as any);
+        behavior.setServices(ai as any, {} as any);
+        lookForPeople(behavior);
+
+        behavior.onSpaceJoined(SPACE);
+        // No uuid, so BaseBehavior never calls onMemoryReady
+        await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1' } as any);
+        await vi.waitFor(() => expect(ai.generateBotResponseStream).toHaveBeenCalledTimes(1));
+
+        expect(ai.generateBotResponseStream.mock.calls[0][2]).toContain('walked over to start a conversation');
+    });
+
+    it('greets a player it walked up to only once when they have a uuid', async () => {
+        const bot = createBot([player(1)], { aiProviderRef: 'provider-1' });
+        const ai = createAi();
+        const behavior = new SocialBehavior(createConfig());
+        behavior.setBot(bot as any);
+        behavior.setServices(ai as any, {} as any);
+        lookForPeople(behavior);
+
+        behavior.onSpaceJoined(SPACE);
+        await behavior.onSpaceUserJoined(SPACE, { id: 1, name: 'Player 1', spaceUserId: 'room_1', uuid: 'u-1' } as any);
+        await vi.waitFor(() => expect(ai.generateBotResponseStream).toHaveBeenCalled());
+
+        expect(ai.generateBotResponseStream).toHaveBeenCalledTimes(1);
+    });
+
     it('greets a player who walked up with the regular prompt', async () => {
         const bot = createBot([player(1)], { aiProviderRef: 'provider-1' });
         const ai = createAi();
