@@ -291,6 +291,11 @@ export class BotApiService {
         }
     }
 
+    /** A request to Orbit as the signed-in player, for other game features (the quest engine). Throws on refusal. */
+    requestOrbit(endpoint: string, options: RequestInit = {}): Promise<Response> {
+        return this.fetch(endpoint, options);
+    }
+
     /**
      * Make authenticated API request
      * Uses only an opaque Admin API session in the Authorization header.

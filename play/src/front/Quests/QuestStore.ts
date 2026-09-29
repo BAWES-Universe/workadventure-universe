@@ -8,6 +8,8 @@ import type { MeetProgress } from "./MeetExchange";
 import type { QuestEvent, QuestGiver, QuestPath, QuestState } from "./QuestModel";
 import { acceptedUntrackedCount, reduceQuest, revealPending } from "./QuestModel";
 import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
+import type { QuestEngineAction, QuestEngineClient } from "./QuestEngine";
+import { engineActionFor, mergeEngineProgress, questEngineStore, unsyncedActions } from "./QuestEngine";
 import type { QuestWorld } from "./QuestWorld";
 import { acceptanceOrigin, availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
 
@@ -34,8 +36,41 @@ function apply(next: (current: QuestState) => QuestState): void {
 }
 
 export function dispatchQuest(event: QuestEvent): void {
+    const before = get(state);
     apply((current) => reduceQuest(current, event));
+    if (get(state) === before) return;
+    const action = engineActionFor(event);
+    if (action) sendToEngine(action);
 }
+
+let engine: QuestEngineClient | null = null;
+
+function sendToEngine(action: QuestEngineAction): void {
+    const client = engine;
+    if (!client) return;
+    client.send(action).catch((error) => console.warn("Quests: the engine did not take", action.action, error));
+}
+
+/** Pulls the player's progress from the engine and reports back what only this browser knew. */
+async function syncWithEngine(client: QuestEngineClient): Promise<void> {
+    try {
+        const remote = await client.list();
+        // Signed out, or another account, while the engine answered: its list is not this player's.
+        if (!remote || engine !== client) return;
+        const pendingActions = unsyncedActions(get(state), remote);
+        apply((current) => mergeEngineProgress(current, remote));
+        for (const action of pendingActions) sendToEngine(action);
+    } catch (error) {
+        console.warn("Quests: could not read progress from the engine", error);
+    }
+}
+
+// Module-level, for the page's lifetime: a new engine (sign-in, another account) syncs once.
+//eslint-disable-next-line svelte/no-ignored-unsubscribe
+questEngineStore.subscribe((client) => {
+    engine = client;
+    if (client) syncWithEngine(client).catch(() => undefined);
+});
 
 /** Plays the next waiting completion unless `blocked` (see revealPending). */
 export function revealPendingQuest(blocked: boolean): void {
