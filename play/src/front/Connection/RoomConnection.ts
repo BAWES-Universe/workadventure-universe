@@ -37,6 +37,7 @@ import type {
     RefreshRoomMessage,
     RemoveSpaceFilterMessage,
     RoomShortDescription,
+    RoomsFromSameUniverseAnswer,
     TokenExpiredMessage,
     UpdateWAMSettingsMessage,
     UploadEntityMessage,
@@ -1614,6 +1615,17 @@ export class RoomConnection implements RoomConnection {
             throw new Error("Unexpected answer");
         }
         return answer.roomsFromSameWorldAnswer.roomDescriptions;
+    }
+
+    public async queryRoomsFromSameUniverse(): Promise<RoomsFromSameUniverseAnswer> {
+        const answer = await this.query({
+            $case: "roomsFromSameUniverseQuery",
+            roomsFromSameUniverseQuery: {},
+        });
+        if (answer.$case !== "roomsFromSameUniverseAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.roomsFromSameUniverseAnswer;
     }
 
     public async queryEmbeddableWebsite(url: string): Promise<EmbeddableWebsiteAnswer> {
