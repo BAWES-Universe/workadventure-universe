@@ -8,6 +8,7 @@ import {evaluateScript} from "../utils/scripting";
 import {map_storage_url} from "../utils/urls";
 import {getPage} from "../utils/auth";
 import {isMobile} from "../utils/isMobile";
+import {livekitAreaSpaceName} from "../utils/spaces";
 
 test.setTimeout(240_000); // Fix Webkit that can take more than 60s
 test.use({
@@ -88,7 +89,8 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
 
         // Delete space connection in the backend
         // This simulates a backend restart, as the space connection will be closed
-        const result = await request.post('http://api.workadventure.localhost/debug/close-space-connection?spaceName=localWorld.5w0szy-foobar&token=123');
+        const spaceName = livekitAreaSpaceName(Map.url("empty"), "foobar");
+        const result = await request.post(`http://api.workadventure.localhost/debug/close-space-connection?spaceName=${encodeURIComponent(spaceName)}&token=123`);
         expect(result.status()).toBe(200);
 
         // After a short disconnect, we should be reconnected and see the other user again
