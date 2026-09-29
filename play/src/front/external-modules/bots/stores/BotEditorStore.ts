@@ -300,6 +300,45 @@ export async function sendLiveUpdate(
     }
 }
 
+// Saves per bot, run one after another. The bots server reads the stored config, merges the update and writes it
+// back, so two saves in flight for the same bot can overwrite each other (a late AI save putting back the behavior
+// type a config save just changed, or a first drag's save landing after the second's)
+const botSaveQueues = new Map<string, Promise<unknown>>();
+
+/** Run a save for a bot once its earlier saves have finished */
+export function queueBotSave<T>(botId: string, run: () => Promise<T>): Promise<T> {
+    const save = (botSaveQueues.get(botId) ?? Promise.resolve()).then(run);
+    // The next save waits for this one whether it succeeds or fails
+    const settled = save.then(
+        () => undefined,
+        () => undefined
+    );
+    botSaveQueues.set(botId, settled);
+    void settled.then(() => {
+        if (botSaveQueues.get(botId) === settled) {
+            botSaveQueues.delete(botId);
+        }
+    });
+    return save;
+}
+
+function saveBotBehaviorConfig(bot: BotData): Promise<void> {
+    if (!botApiService.isInitialized()) {
+        return Promise.resolve();
+    }
+    return queueBotSave(bot.id, () =>
+        botApiService.updateBot(bot.id, {
+            behaviorType: bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle",
+            behaviorConfig: bot.behaviorConfig,
+        })
+    ).then(
+        () => undefined,
+        (error) => {
+            console.error("[BotEditorStore] Failed to save bot position:", error);
+        }
+    );
+}
+
 /**
  * Update a bot's position
  */
@@ -339,6 +378,10 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
 
             // Send live update to running bot (teleport it)
             void sendLiveUpdate(botId, { position: { x, y } });
+
+            // Save the new spot now: a drag ends once, and the editor's auto-save only covers the selected
+            // bot, so a bot dragged without being selected (or just before the editor closes) kept its old spot.
+            void saveBotBehaviorConfig(updatedBot);
 
             return newMap;
         }
