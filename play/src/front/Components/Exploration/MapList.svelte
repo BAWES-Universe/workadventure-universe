@@ -10,7 +10,7 @@
     import LL from "../../../i18n/i18n-svelte";
     import ExploreRoomCard from "./ExploreRoomCard.svelte";
     import { displayName } from "./exploreText";
-    import { IconChevronDown, IconPlanet, IconX } from "@wa-icons";
+    import { IconChevronDown, IconPlanet, IconSearch, IconX } from "@wa-icons";
 
     // "Explore {Universe}": every room the player may see in this universe, one row per world (theirs first), rooms
     // most visited first. Picking a room moves there in-game, like Orbit's Visit, without reloading the page.
@@ -120,15 +120,35 @@
         </header>
 
         <div class="px-4 sm:px-6 pt-3 pb-3">
-            <label for="explore-search" class="sr-only">{$LL.actionbar.explore.searchLabel()}</label>
-            <input
-                id="explore-search"
-                type="search"
-                autocomplete="off"
-                placeholder={$LL.actionbar.explore.searchPlaceholder()}
-                bind:value={search}
-                class="input-search input-search-lg w-full"
-            />
+            <!-- The chat's people and chats search (ChatHeader.svelte) -->
+            <div class="explore-search u-glass group relative h-11 flex items-center rounded-full transition-colors">
+                <IconSearch
+                    font-size="18"
+                    class="pointer-events-none absolute start-3.5 text-white/60 group-focus-within:text-white"
+                    aria-hidden="true"
+                />
+                <input
+                    id="explore-search"
+                    type="search"
+                    autocomplete="off"
+                    data-testid="explore-search"
+                    class="explore-search-input block w-full h-full m-0 border-none bg-transparent text-white text-sm placeholder:text-white/50 placeholder:text-sm ps-10 pe-11 py-0 rounded-full focus:outline-none"
+                    placeholder={$LL.actionbar.explore.searchPlaceholder()}
+                    aria-label={$LL.actionbar.explore.searchLabel()}
+                    bind:value={search}
+                />
+                {#if search !== ""}
+                    <button
+                        type="button"
+                        class="absolute end-1 m-0 p-0 h-9 w-9 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10"
+                        aria-label={$LL.chat.header.clearSearch()}
+                        title={$LL.chat.header.clearSearch()}
+                        on:click={() => (search = "")}
+                    >
+                        <IconX font-size="16" />
+                    </button>
+                {/if}
+            </div>
         </div>
 
         <div class="overflow-y-auto pb-3 min-h-40">
@@ -199,6 +219,19 @@
     .explore {
         background: hsl(218 44% 12% / 0.95);
         border: 1px solid hsl(216 28% 26%);
+    }
+    .explore-search {
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .explore-search:focus-within {
+        border-color: rgba(167, 139, 250, 0.6);
+        box-shadow: 0 0 0 3px rgba(134, 41, 252, 0.18);
+    }
+    /* The field has its own clear button; hide the browser's. */
+    .explore-search-input::-webkit-search-cancel-button,
+    .explore-search-input::-webkit-search-decoration {
+        -webkit-appearance: none;
+        appearance: none;
     }
     .muted {
         color: hsl(216 20% 72%);
