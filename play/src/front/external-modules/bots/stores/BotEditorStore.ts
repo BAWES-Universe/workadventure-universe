@@ -300,6 +300,20 @@ export async function sendLiveUpdate(
     }
 }
 
+async function saveBotBehaviorConfig(bot: BotData): Promise<void> {
+    if (!botApiService.isInitialized()) {
+        return;
+    }
+    try {
+        await botApiService.updateBot(bot.id, {
+            behaviorType: bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle",
+            behaviorConfig: bot.behaviorConfig,
+        });
+    } catch (error) {
+        console.error("[BotEditorStore] Failed to save bot position:", error);
+    }
+}
+
 /**
  * Update a bot's position
  */
@@ -339,6 +353,10 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
 
             // Send live update to running bot (teleport it)
             void sendLiveUpdate(botId, { position: { x, y } });
+
+            // Save the new spot now: a drag ends once, and the editor's auto-save only covers the selected
+            // bot, so a bot dragged without being selected (or just before the editor closes) kept its old spot.
+            void saveBotBehaviorConfig(updatedBot);
 
             return newMap;
         }
