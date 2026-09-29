@@ -2,6 +2,7 @@
     //import { fly } from "svelte/transition";
     import { onDestroy, onMount } from "svelte";
     import { UpdateMegaphoneSettingMessage } from "@workadventure/messages";
+    import * as Sentry from "@sentry/svelte";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { showModalGlobalComminucationVisibilityStore } from "../../Stores/ModalStore";
     import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
@@ -90,6 +91,10 @@
                     awaitingMegaphoneAccess = false;
                 }, 5000);
             }
+        } catch (error) {
+            // e.g. the game scene is not ready yet: leave the card as it is so the user can try again.
+            console.error("Could not turn on the megaphone", error);
+            Sentry.captureException(error);
         } finally {
             // eslint-disable-next-line require-atomic-updates
             turningOnMegaphone = false;
