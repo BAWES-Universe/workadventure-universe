@@ -125,12 +125,14 @@ export function createQuestEngineHttpClient(request: OrbitRequest, roomId: () =>
     }
 
     async function progressIdOf(path: QuestPath): Promise<string | null> {
-        return log?.progressIds.get(path) ?? (await readLog())?.progressIds.get(path) ?? null;
+        const current = log ?? (await readLog());
+        return current?.progressIds.get(path) ?? null;
     }
 
     async function putTracked(path: QuestPath): Promise<void> {
         const progressId = await progressIdOf(path);
-        if (!progressId) return;
+        // Not in the log we read: throw, so `track` reads the log again and retries once.
+        if (!progressId) throw new Error(`Quests: no progress for ${path} in the engine's log`);
         const revision = log?.tracked.revision ?? 0;
         const response = await request(`${QUEST_ENGINE_PATH}/tracked`, {
             method: "PUT",
@@ -155,12 +157,14 @@ export function createQuestEngineHttpClient(request: OrbitRequest, roomId: () =>
         if (!path) return;
         switch (action.action) {
             case "accept": {
-                await request(`${QUEST_ENGINE_PATH}/accept`, {
+                const response = await request(`${QUEST_ENGINE_PATH}/accept`, {
                     method: "POST",
                     body: JSON.stringify({ key: action.questId, roomId: room() }),
                 });
-                // The new row's id is only known from the log.
-                log = null;
+                // The engine answers with the accepted row: keep its id for the track or stop that follows.
+                const accepted = (await response.json().catch(() => null)) as { id?: unknown } | null;
+                if (log && typeof accepted?.id === "string") log.progressIds.set(path, accepted.id);
+                else log = null;
                 return;
             }
             case "track":

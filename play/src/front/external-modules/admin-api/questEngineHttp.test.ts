@@ -116,6 +116,34 @@ describe("createQuestEngineHttpClient", () => {
         expect(await client.send({ action: "observe", questId: "welcome.meet", observedAt: 1 })).toBe(true);
     });
 
+    it("tracks a quest just accepted by the id the accept answered with", async () => {
+        const { calls, request } = recorder({
+            "GET /api/me/quests": LOG,
+            "POST /api/me/quests/accept": { id: "p9", key: "welcome.build" },
+            "PUT /api/me/quests/tracked": { revision: 5 },
+        });
+        const client = createQuestEngineHttpClient(request, () => null);
+        await client.list();
+        await client.send({ action: "accept", questId: "welcome.build" });
+        expect(await client.send({ action: "track", questId: "welcome.build" })).toBe(true);
+        expect(calls.map((call) => `${call.method} ${call.endpoint}`)).toEqual([
+            "GET /api/me/quests",
+            "POST /api/me/quests/accept",
+            "PUT /api/me/quests/tracked",
+        ]);
+        expect(calls[2].body).toEqual({ progressId: "p9", revision: 4 });
+    });
+
+    it("reads the log again when a quest to track is not in it, and says false if it still is not", async () => {
+        const { calls, request } = recorder({ "GET /api/me/quests": LOG });
+        const client = createQuestEngineHttpClient(request, () => null);
+        expect(await client.send({ action: "track", questId: "welcome.build" })).toBe(false);
+        expect(calls.map((call) => `${call.method} ${call.endpoint}`)).toEqual([
+            "GET /api/me/quests",
+            "GET /api/me/quests",
+        ]);
+    });
+
     it("lists nothing when Orbit cannot answer", async () => {
         const client = createQuestEngineHttpClient(
             () => Promise.reject(new Error("offline")),

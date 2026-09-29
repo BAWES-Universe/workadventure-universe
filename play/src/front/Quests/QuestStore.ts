@@ -9,7 +9,7 @@ import type { QuestEvent, QuestGiver, QuestPath, QuestState } from "./QuestModel
 import { acceptedUntrackedCount, reduceQuest, revealPending } from "./QuestModel";
 import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
 import type { QuestEngineAction, QuestEngineClient } from "./QuestEngine";
-import { engineActionFor, mergeEngineProgress, questEngineStore, unsyncedActions } from "./QuestEngine";
+import { engineActionFor, mergeEngineProgress, questEngineId, questEngineStore, unsyncedActions } from "./QuestEngine";
 import type { QuestWorld } from "./QuestWorld";
 import { acceptanceOrigin, availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
 
@@ -38,9 +38,14 @@ function apply(next: (current: QuestState) => QuestState): void {
 export function dispatchQuest(event: QuestEvent): void {
     const before = get(state);
     apply((current) => reduceQuest(current, event));
-    if (get(state) === before) return;
+    const after = get(state);
+    if (after === before) return;
     const action = engineActionFor(event);
     if (action) sendToEngine(action);
+    // Accepting puts the quest on the map here: the engine hears it, so other devices show it too.
+    if (event.type !== "track" && after.tracked && after.tracked !== before.tracked) {
+        sendToEngine({ action: "track", questId: questEngineId(after.tracked) });
+    }
 }
 
 let engine: QuestEngineClient | null = null;
