@@ -47,6 +47,9 @@
     // Height while the user drags the handle; undefined when resting on a snap point.
     let dragHeight: number | undefined;
 
+    // Closing the panel mid-drag unmounts the handle before it can release; drop the drag so it reopens on a snap.
+    $: if (!panelVisible) dragHeight = undefined;
+
     $: sheetHeight = dragHeight ?? getSheetSnapHeights($windowSize.height)[$mapEditorSheetSnapStore];
 
     function onSheetDrag(height: number) {
