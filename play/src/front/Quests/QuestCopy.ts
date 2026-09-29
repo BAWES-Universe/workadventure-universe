@@ -132,6 +132,10 @@ export interface QuestLogEntry {
     giver: QuestGiver | null;
     /** "Guide · Lobby", or "Lobby". */
     origin: string;
+    /** Accepted in another room: the row says where it came from. */
+    elsewhere: boolean;
+    /** The objectives met, out of the quest's: one each for the Welcome chapter. */
+    objectives: { done: number; total: number };
     /** "First Hello badge". */
     reward: string;
     /** "Needs: edit rights in this room", when there is a requirement. */
@@ -141,13 +145,16 @@ export interface QuestLogEntry {
 }
 
 /**
- * Where an entry came from: frozen where it was accepted. An entry still on offer shows who is offering it now. An
- * accepted entry with no origin (saved before origins, or unreadable) names no giver rather than whoever hosts here.
+ * Where an entry came from: frozen where it was accepted. An entry still on offer is from whoever made the offer on
+ * screen, as long as the player is still in that room (the giver keeps its name and face out of view too), else from
+ * whoever hosts here now. An accepted entry with no origin (saved before origins, or unreadable) names no giver
+ * rather than whoever hosts here.
  */
 export function entryOrigin(state: QuestState, path: QuestPath, world: QuestWorld): QuestOrigin {
     const entry = state.quests[path];
     if (entry.origin) return entry.origin;
     if (entry.accepted || entry.done) return { room: world.roomName ?? "", giver: null };
+    if (state.offeredBy && state.offeredBy.room === (world.roomName ?? "")) return state.offeredBy;
     return questOrigin(world);
 }
 
@@ -176,6 +183,8 @@ export function logEntries(
             minutes: QUEST_MINUTES[path],
             giver,
             origin,
+            elsewhere: room !== "" && world.roomName !== undefined && room !== world.roomName,
+            objectives: { done: status === "done" ? 1 : 0, total: 1 },
             reward: t.quest.stamps.badge({ stamp: stampName(t, path) }),
             requirement: path === "build" && status !== "done" ? t.quest.paths.build.needs() : undefined,
             note: showsNobodyHere(state, world, path, status) ? t.quest.card.nobodyHere() : undefined,

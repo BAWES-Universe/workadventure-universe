@@ -191,7 +191,7 @@
                     </p>
 
                     <h3 class="quest-detail-label">{$LL.quest.detail.objective()}</h3>
-                    <!-- A line of the quest tracker, as in an RPG: a bullet, then 0/1 while it's on, a tick once done. Nothing
+                    <!-- A line of the quest tracker, as in an RPG: a bullet, then how many of its objectives are met while it's on, a tick once done. Nothing
                          here is a control, so nothing looks like one. -->
                     <div class="quest-objective" class:quest-objective-done={entry.status === "done"}>
                         <span class="quest-objective-dot" aria-hidden="true" />
@@ -209,7 +209,9 @@
                                 </svg>
                             </span>
                         {:else if entry.status !== "available"}
-                            <span class="quest-objective-count" data-testid="quest-objective-count">0/1</span>
+                            <span class="quest-objective-count" data-testid="quest-objective-count">
+                                {entry.objectives.done}/{entry.objectives.total}
+                            </span>
                         {/if}
                     </div>
                     <p class="quest-secondary m-0 mt-1" data-testid="quest-detail-body">{entry.note ?? entry.body}</p>
@@ -241,11 +243,12 @@
                     {/if}
 
                     <h3 class="quest-detail-label">{$LL.quest.detail.reward()}</h3>
-                    <div class="flex items-center gap-2">
+                    <div class="quest-reward">
                         <QuestStamp path={entry.path} size={40} tilted={false} />
                         <span class="min-w-0 flex-1">
-                            <span class="block text-sm font-semibold text-[#e9c74c]">{entry.reward}</span>
-                            {#if orbitLinkLabel}
+                            <span class="block text-sm font-semibold">{entry.reward}</span>
+                            <!-- Once earned, the badge is on You in Orbit: a link for a signed-in player. -->
+                            {#if entry.status === "done" && orbitLinkLabel}
                                 <button
                                     type="button"
                                     class="quest-link"
@@ -384,32 +387,24 @@
                                         data-testid="quest-row-{row.path}"
                                         on:click={(event) => show(row.path, event)}
                                     >
-                                        {#if row.status === "done"}
+                                        <!-- The badge this quest earns. -->
+                                        <span class="quest-row-stamp" aria-hidden="true">
                                             <QuestStamp path={row.path} size={36} tilted={false} />
-                                        {:else}
-                                            <QuestHostPortrait host={giverAsHost(row.giver, world)} size="sm" />
-                                        {/if}
+                                        </span>
                                         <span class="min-w-0 flex-1">
-                                            <span class="block font-bold">{row.title}</span>
-                                            <span class="quest-secondary block truncate">{row.note ?? row.line}</span>
-                                            {#if row.status !== "done"}
-                                                <span class="quest-meta block truncate">
-                                                    {row.origin} · {$LL.quest.minutes({ minutes: row.minutes })}
-                                                </span>
+                                            <span class="quest-row-title block">{row.title}</span>
+                                            <span class="quest-secondary block truncate">
+                                                {row.status === "done" ? row.reward : row.note ?? row.line}
+                                            </span>
+                                            {#if row.elsewhere}
+                                                <span class="quest-meta block truncate">{row.origin}</span>
                                             {/if}
                                         </span>
                                         {#if row.status === "tracked"}
-                                            <span class="quest-tag">{$LL.quest.log.onMap()}</span>
-                                        {:else if row.status !== "done"}
-                                            <!-- The badge this quest earns, as in the game's reward line. -->
-                                            <span
-                                                class="quest-stamp-mini"
-                                                data-testid="quest-row-reward-{row.path}"
-                                                aria-hidden="true"
-                                            >
-                                                <QuestStamp path={row.path} size={28} tilted={false} />
+                                            <span class="quest-tag" data-testid="quest-row-on-map">
+                                                {$LL.quest.log.onMap()}
                                             </span>
-                                        {:else}
+                                        {:else if row.status === "done"}
                                             <span class="quest-check" aria-hidden="true">
                                                 <svg
                                                     width="16"
@@ -427,24 +422,11 @@
                                                     />
                                                 </svg>
                                             </span>
+                                        {:else}
+                                            <span class="quest-row-time">
+                                                {$LL.quest.minutes({ minutes: row.minutes })}
+                                            </span>
                                         {/if}
-                                        <svg
-                                            class="quest-row-chevron"
-                                            width="16"
-                                            height="16"
-                                            viewBox="0 0 16 16"
-                                            fill="none"
-                                            aria-hidden="true"
-                                            focusable="false"
-                                        >
-                                            <path
-                                                d="m6 3.5 4.5 4.5L6 12.5"
-                                                stroke="currentColor"
-                                                stroke-width="1.75"
-                                                stroke-linecap="round"
-                                                stroke-linejoin="round"
-                                            />
-                                        </svg>
                                     </button>
                                 </li>
                             {/each}

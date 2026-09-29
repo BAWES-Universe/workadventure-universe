@@ -11,6 +11,8 @@ export interface QuestPresent {
     isBot: boolean;
     /** A snapshot of the Woka (a data URL), once the game has drawn it. */
     portrait?: string;
+    /** How far from the player (px), when the map can say: the nearest bot hosts. */
+    distance?: number;
 }
 
 export interface QuestArea {
@@ -101,8 +103,9 @@ export function pickExploreTarget(
 }
 
 /**
- * Who greets newcomers: the owner's choice from Orbit's Visit link (the hash) when it is here, else the first bot on
- * the map, else the first named area with the `area` simulation, else nobody. Bots are never picked by name.
+ * Who greets newcomers: the owner's choice from Orbit's Visit link (the hash) when it is here, else the bot nearest
+ * the player (never an arbitrary one somewhere else in the room), else the first named area with the `area`
+ * simulation, else nobody. Bots are never picked by name.
  */
 export function resolveQuestHost(
     sim: QuestSim,
@@ -111,7 +114,9 @@ export function resolveQuestHost(
     override?: QuestHostOverride
 ): QuestHost {
     if (sim === "empty") return { kind: "none" };
-    const bots = present.filter((person) => person.isBot);
+    const bots = present
+        .filter((person) => person.isBot)
+        .sort((a, b) => (a.distance ?? Number.POSITIVE_INFINITY) - (b.distance ?? Number.POSITIVE_INFINITY));
     const asBot = (bot: QuestPresent): QuestHost => ({
         kind: "bot",
         userId: bot.userId,
@@ -138,35 +143,6 @@ export function resolveQuestHost(
         if (area) return asArea(area);
     }
     return { kind: "none" };
-}
-
-/**
- * The host for the rest of this visit. The game only knows the people near the player's screen, so a host bot drops
- * out of `present` as soon as the player walks off, though it is still in the room. Once a bot has hosted here it
- * keeps hosting, out of view (`userId` null, its face kept) or back in view, unless the owner's choice says otherwise:
- * the quest giver doesn't change or lose its face because the player walked away.
- */
-export function keepQuestHost(
-    previous: QuestHost | undefined,
-    live: QuestHost,
-    present: readonly QuestPresent[],
-    override?: QuestHostOverride
-): QuestHost {
-    if (previous?.kind !== "bot") return live;
-    if (override?.kind === "none" || override?.kind === "area") return live;
-    if (override?.kind === "bot" && override.uuid !== previous.uuid) return live;
-    if (live.kind === "bot" && live.uuid === previous.uuid) {
-        return live.portrait || !previous.portrait ? live : { ...live, portrait: previous.portrait };
-    }
-    const here = present.find((person) => person.isBot && person.uuid === previous.uuid);
-    const portrait = here?.portrait ?? previous.portrait;
-    return {
-        kind: "bot",
-        userId: here?.userId ?? null,
-        uuid: previous.uuid,
-        name: here?.name ?? previous.name,
-        ...(portrait ? { portrait } : {}),
-    };
 }
 
 /** Whether a path can be completed in this room right now. For now every bot counts as conversational. */

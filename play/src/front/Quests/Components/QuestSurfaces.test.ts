@@ -199,6 +199,8 @@ describe("QuestPanel", () => {
         minutes: 1,
         giver: { kind: "bot", name: "Guide", portrait: "data:image/png;base64,AAAA" },
         origin: "Guide · Lobby",
+        elsewhere: false,
+        objectives: { done: status === "done" ? 1 : 0, total: 1 },
         reward: "badge",
     });
     const base = { id: "quest-panel", world: EMPTY_QUEST_WORLD, doneCount: 1, total: 3, tracked: "explore" };
@@ -216,7 +218,10 @@ describe("QuestPanel", () => {
         // Every row is a button that opens details; none starts anything by itself.
         expect(byTestId(target, "quest-row-meet")?.tagName).toBe("BUTTON");
         expect(byTestId(target, "quest-row-build")?.querySelector(".quest-check")).not.toBeNull();
-        expect(byTestId(target, "quest-row-reward-meet")).not.toBeNull();
+        // Every row leads with the badge it earns; the time sits at the end.
+        expect(byTestId(target, "quest-row-meet")?.querySelector("svg.quest-stamp")).not.toBeNull();
+        expect(byTestId(target, "quest-row-meet")?.querySelector(".quest-row-time")).not.toBeNull();
+        expect(byTestId(target, "quest-row-explore")?.querySelector("[data-testid='quest-row-on-map']")).not.toBeNull();
         expect(target.querySelectorAll(".quest-progress-seg.lit")).toHaveLength(1);
 
         click(byTestId(target, "quest-row-meet"));
@@ -231,14 +236,20 @@ describe("QuestPanel", () => {
         expect(byTestId(target, "quest-entry-explore")).not.toBeNull();
     });
 
-    it("the reward links to the quest in Orbit when Orbit is there, and not otherwise", async () => {
+    it("the reward links to the badge in Orbit once earned, when Orbit is there, and not otherwise", async () => {
         const { target, instance } = mount(QuestPanel, {
             ...base,
-            entries: [entry("meet", "done")],
+            entries: [entry("meet", "done"), entry("explore", "available")],
             orbitLinkLabel: "See it in Orbit",
         });
         const events: string[] = [];
         instance.$on("viewInOrbit", (event: CustomEvent<string>) => events.push(event.detail));
+        // Not earned yet: nothing to see in Orbit.
+        click(byTestId(target, "quest-row-explore"));
+        await tick();
+        expect(byTestId(target, "quest-detail-orbit")).toBeNull();
+        click(byTestId(target, "quest-detail-back"));
+        await tick();
         click(byTestId(target, "quest-row-meet"));
         await tick();
         expect(byTestId(target, "quest-detail-orbit")?.textContent?.trim()).toBe("See it in Orbit");

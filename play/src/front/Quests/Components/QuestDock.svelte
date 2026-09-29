@@ -598,6 +598,22 @@
         padding: 0.25rem 0.875rem;
         font-size: 0.8125rem;
     }
+    /* The game's headings are capitals; a quest log reads like a book, not a menu. */
+    :global(.quest-surface h2),
+    :global(.quest-surface h3) {
+        text-transform: none;
+        letter-spacing: 0;
+    }
+    :global(.quest-log-section) {
+        margin: 0.875rem 0 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        line-height: 1.3;
+        color: rgba(255, 255, 255, 0.55);
+    }
+    :global(.quest-log-section:first-child) {
+        margin-top: 0.25rem;
+    }
     :global(.quest-row) {
         display: flex;
         align-items: center;
@@ -606,19 +622,41 @@
         min-height: 3.5rem;
         margin: 0;
         padding: 0.5rem;
-        border-radius: 0.5rem;
+        border-radius: 0.625rem;
         color: #fff;
         background: transparent;
         text-align: start;
         font-size: 0.875rem;
         line-height: 1.3;
         cursor: pointer;
+        transition: background 120ms ease;
     }
     :global(button.quest-row:hover) {
         background: rgba(255, 255, 255, 0.08);
     }
-    :global(.quest-row-done) {
-        opacity: 0.8;
+    :global(.quest-row-stamp) {
+        flex: none;
+        display: flex;
+    }
+    :global(.quest-row-title) {
+        font-weight: 700;
+    }
+    :global(.quest-row-time) {
+        flex: none;
+        font-size: 0.75rem;
+        font-variant-numeric: tabular-nums;
+        color: rgba(255, 255, 255, 0.55);
+    }
+    :global(.quest-row-done .quest-row-title) {
+        color: rgba(255, 255, 255, 0.75);
+    }
+    :global(.quest-reward) {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.5rem 0.625rem;
+        border-radius: 0.625rem;
+        background: rgba(255, 255, 255, 0.05);
     }
     /* The panel: the pill's own width, above it, its list scrolling inside. */
     :global(.quest-panel) {
@@ -720,10 +758,6 @@
     :global(.quest-tag-quiet) {
         color: rgba(255, 255, 255, 0.7);
         background: rgba(255, 255, 255, 0.1);
-    }
-    :global(.quest-stamp-mini) {
-        flex: none;
-        display: flex;
     }
     :global(.quest-check) {
         flex: none;
