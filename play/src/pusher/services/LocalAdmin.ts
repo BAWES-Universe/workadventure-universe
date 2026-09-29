@@ -367,7 +367,9 @@ class LocalAdmin implements AdminInterface {
     async getRoomsFromSameUniverse(roomUrl: string, userUuid: string, locale?: string): Promise<UniverseRoomsData> {
         // Without an admin there are no universes: the rooms of this map storage make one unnamed world.
         const rooms = await this.getUrlRoomsFromSameWorld(roomUrl, locale);
-        const currentPath = new URL(roomUrl).pathname;
+        // Only "/~/<map path>" rooms get this far (see getUrlRoomsFromSameWorld), listed as "/~/" + their raw path, so
+        // the page's path matches once its percent-encoding (a space in a map's name) is undone.
+        const currentPath = decodeURI(new URL(roomUrl).pathname);
         return {
             universeName: "",
             worlds: [
