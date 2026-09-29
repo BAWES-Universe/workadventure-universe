@@ -20,6 +20,8 @@ const actionbar: BaseTranslation = {
     editCamMic: "Edit cam / mic",
     allSettings: "All settings",
     globalMessage: "Send global message",
+    broadcast: "Broadcast",
+    broadcastLive: "Broadcast (you're live)",
     mapEditor: "Map editor",
     botEditor: "Bot editor",
     botEditorModule: {

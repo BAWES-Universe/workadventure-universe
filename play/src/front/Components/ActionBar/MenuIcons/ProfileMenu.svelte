@@ -49,6 +49,7 @@
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
+    import BroadcastMenuItem from "./BroadcastMenuItem.svelte";
     import { IconBug, IconLogout } from "@wa-icons";
 
     // The ActionBarButton component is displayed differently in the profile menu.
@@ -291,6 +292,8 @@
             return () => ghostSubscriptionUnsubscribe();
         }
     );
+
+    $: toolsMenuInBurgerMenu = ($rightActionBarMenuItemsInBurgerMenu ?? []).some((item) => item.id === "maps");
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -364,6 +367,11 @@
             <div class="p-0 m-0 list-none overflow-y-auto max-h-[calc(100vh-96px)]">
                 <ExternalComponents zone="menuTop" />
                 <AvailabilityStatusList statusInformation={getStatusInformation(statusToShow)} />
+                {#if toolsMenuInBurgerMenu}
+                    <!-- When the Tools menu no longer fits in the action bar (phones), its "Send global message" ends up
+                         at the bottom of this list. Put Broadcast near the top, where admins look first. -->
+                    <BroadcastMenuItem />
+                {/if}
                 <HeaderMenuItem label={$LL.menu.sub.profile()} />
                 {#if showWokaNameMenuItem()}
                     <ActionBarButton
