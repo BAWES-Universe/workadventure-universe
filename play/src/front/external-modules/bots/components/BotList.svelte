@@ -13,6 +13,52 @@
     let loading = true;
     let error: string | null = null;
 
+    type Section = "active" | "inactive";
+    const COLLAPSED_STORAGE_KEY = "botEditor.collapsedSections";
+
+    // Which section each bot is shown in. It is fixed when the bot first appears in the list,
+    // so toggling a bot does not move it away from under the cursor. It settles into the
+    // right section the next time the list opens.
+    let placement = new Map<string, Section>();
+    let togglingIds = new Set<string>();
+    let collapsed: Record<Section, boolean> = readCollapsed();
+
+    function readCollapsed(): Record<Section, boolean> {
+        try {
+            const raw = localStorage.getItem(COLLAPSED_STORAGE_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw) as Partial<Record<Section, boolean>>;
+                return { active: parsed.active === true, inactive: parsed.inactive === true };
+            }
+        } catch {
+            // Storage unavailable; fall back to defaults
+        }
+        return { active: false, inactive: false };
+    }
+
+    function toggleSection(section: Section) {
+        collapsed = { ...collapsed, [section]: !collapsed[section] };
+        try {
+            localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(collapsed));
+        } catch {
+            // Storage unavailable; the choice lasts until the list closes
+        }
+    }
+
+    $: {
+        const next = new Map<string, Section>();
+        for (const bot of bots) {
+            next.set(bot.id, placement.get(bot.id) ?? (bot.enabled === false ? "inactive" : "active"));
+        }
+        placement = next;
+    }
+
+    $: sections = (["active", "inactive"] as const).map((key) => ({
+        key,
+        title: key === "active" ? "Active" : "Inactive",
+        bots: bots.filter((bot) => placement.get(bot.id) === key),
+    }));
+
     // Load bots from API
     function loadBots() {
         loading = true;
@@ -33,10 +79,12 @@
     }
 
     async function handleToggleBot(bot: BotData, enabled: boolean) {
+        if (togglingIds.has(bot.id)) return;
         const originalEnabled = bot.enabled;
 
-        // Don't do optimistic update - wait for API response to prevent duplicate updates
-        // The UI will update once when the store updates after API call
+        // Flip the switch right away and lock it until the API answers
+        togglingIds = new Set(togglingIds).add(bot.id);
+        upsertBot({ ...bot, enabled });
 
         try {
             // Update bot via Admin API
@@ -112,6 +160,10 @@
 
             // Revert on error
             upsertBot({ ...bot, enabled: originalEnabled });
+        } finally {
+            const next = new Set(togglingIds);
+            next.delete(bot.id);
+            togglingIds = next;
         }
     }
 
@@ -199,82 +251,57 @@
                 </button>
             </div>
         {:else}
-            {@const activeBots = bots.filter((bot) => bot.enabled !== false)}
-            {@const inactiveBots = bots.filter((bot) => bot.enabled === false)}
             <div class="space-y-6">
-                <!-- Active Bots Section -->
-                {#if activeBots.length > 0}
-                    <div>
-                        <h3 class="text-sm font-semibold text-white/80 mb-3 uppercase tracking-wide">
-                            Active ({activeBots.length})
-                        </h3>
-                        <div class="grid grid-cols-1 gap-3">
-                            {#each activeBots as bot (bot.id)}
-                                {#if process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true"}
-                                    {@const duplicateCheck = bots.filter((b) => b.id === bot.id).length}
-                                    {#if duplicateCheck > 1}
-                                        <!-- DEBUG: Duplicate detected -->
-                                    {/if}
-                                {/if}
-                                {@const botId = bot.id}
-                                <BotCard
-                                    {bot}
-                                    onSelect={() => {
-                                        // Look up bot by ID to ensure we get the latest data
-                                        const latestBot = bots.find((b) => b.id === botId);
-                                        if (latestBot) {
-                                            onSelectBot(latestBot);
-                                        } else {
-                                            // Fallback to the bot from the loop if not found
-                                            onSelectBot(bot);
-                                        }
-                                    }}
-                                    onToggle={handleToggleBot}
-                                    onHover={handleHoverBot}
-                                    onLocate={() => handleLocate(bot)}
-                                    showLocateButton={!!onLocateBot}
-                                />
-                            {/each}
+                {#each sections as section (section.key)}
+                    {#if section.bots.length > 0}
+                        <div>
+                            <button
+                                type="button"
+                                class="w-full flex items-center gap-2 mb-3 text-sm font-semibold uppercase tracking-wide text-left {section.key ===
+                                'active'
+                                    ? 'text-white/80'
+                                    : 'text-white/60'} hover:text-white"
+                                aria-expanded={!collapsed[section.key]}
+                                on:click={() => toggleSection(section.key)}
+                            >
+                                <svg
+                                    class="w-4 h-4 transition-transform {collapsed[section.key] ? '-rotate-90' : ''}"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                >
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M19 9l-7 7-7-7"
+                                    />
+                                </svg>
+                                {section.title} ({section.bots.length})
+                            </button>
+                            {#if !collapsed[section.key]}
+                                <div class="grid grid-cols-1 gap-3">
+                                    {#each section.bots as bot (bot.id)}
+                                        {@const botId = bot.id}
+                                        <BotCard
+                                            {bot}
+                                            onSelect={() => {
+                                                // Look up bot by ID to ensure we get the latest data
+                                                const latestBot = bots.find((b) => b.id === botId);
+                                                onSelectBot(latestBot ?? bot);
+                                            }}
+                                            onToggle={handleToggleBot}
+                                            toggling={togglingIds.has(bot.id)}
+                                            onHover={handleHoverBot}
+                                            onLocate={() => handleLocate(bot)}
+                                            showLocateButton={!!onLocateBot}
+                                        />
+                                    {/each}
+                                </div>
+                            {/if}
                         </div>
-                    </div>
-                {/if}
-
-                <!-- Inactive Bots Section -->
-                {#if inactiveBots.length > 0}
-                    <div>
-                        <h3 class="text-sm font-semibold text-white/60 mb-3 uppercase tracking-wide">
-                            Inactive ({inactiveBots.length})
-                        </h3>
-                        <div class="grid grid-cols-1 gap-3">
-                            {#each inactiveBots as bot (bot.id)}
-                                {#if process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true"}
-                                    {@const duplicateCheck = bots.filter((b) => b.id === bot.id).length}
-                                    {#if duplicateCheck > 1}
-                                        <!-- DEBUG: Duplicate detected -->
-                                    {/if}
-                                {/if}
-                                {@const botId = bot.id}
-                                <BotCard
-                                    {bot}
-                                    onSelect={() => {
-                                        // Look up bot by ID to ensure we get the latest data
-                                        const latestBot = bots.find((b) => b.id === botId);
-                                        if (latestBot) {
-                                            onSelectBot(latestBot);
-                                        } else {
-                                            // Fallback to the bot from the loop if not found
-                                            onSelectBot(bot);
-                                        }
-                                    }}
-                                    onToggle={handleToggleBot}
-                                    onHover={handleHoverBot}
-                                    onLocate={() => handleLocate(bot)}
-                                    showLocateButton={!!onLocateBot}
-                                />
-                            {/each}
-                        </div>
-                    </div>
-                {/if}
+                    {/if}
+                {/each}
             </div>
         {/if}
     </div>
