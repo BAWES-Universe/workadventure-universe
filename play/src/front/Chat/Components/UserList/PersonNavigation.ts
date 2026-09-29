@@ -6,11 +6,17 @@ import { scriptUtils } from "../../../Api/ScriptUtils";
 import { WOKA_SPEED } from "../../../Enum/EnvironmentVariable";
 import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
 import { rememberLocateRequest } from "../../../Phaser/Game/LocateRequest";
-import { canOpenOrbit, openOrbitPage } from "../../../external-modules/admin-api/index";
+import { canOpenOrbit, openOrbitPage, openOrbitProfile } from "../../../external-modules/admin-api/index";
+import { showReportScreenStore } from "../../../Stores/ShowReportScreenStore";
+import { blackListManager } from "../../../WebRtc/BlackListManager";
+import { analyticsClient } from "../../../Administration/AnalyticsClient";
+import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
+import { openDirectChatRoom } from "../../Utils";
 import type { PersonLocation } from "./PersonTarget";
 import { avatarIdOf, resolvePersonTarget } from "./PersonTarget";
 import type { Session } from "./PersonSessions";
 import { pickSessionToReach } from "./PersonSessions";
+import { IconDoorIn, IconMessage, IconPencil, IconUserCircle } from "@wa-icons";
 
 /**
  * Of a person's sessions (tabs, devices) on this map, the one closest to you; `fallback` when none of them is in view.
@@ -121,14 +127,101 @@ export function showMyself(userUuid: string | undefined): void {
         true
     );
     if (!canOpenOrbit()) return;
+    // Side by side: your profile as others see it (You, in Orbit), then the editor.
+    wokaMenuStore.addAction({
+        actionName: get(LL).chat.userList.viewProfile(),
+        style: "bg-white/10 hover:bg-white/30",
+        priority: 11,
+        testId: "view-my-profile",
+        actionIcon: IconUserCircle,
+        callback: () => {
+            wokaMenuStore.clear();
+            openOrbitProfile(userUuid);
+        },
+    });
     wokaMenuStore.addAction({
         actionName: get(LL).chat.userList.editMyVisitCard(),
         style: "is-primary",
         priority: 10,
         testId: "edit-my-visit-card",
+        actionIcon: IconPencil,
         callback: () => {
             wokaMenuStore.clear();
             openOrbitPage(EDIT_VISIT_CARD_PAGE);
+        },
+    });
+}
+
+/** Someone the People tab lists on another map: what their card needs. */
+export interface CardPerson extends PersonLocation {
+    uuid: string;
+    chatId?: string;
+    visitCardUrl?: string;
+}
+
+/**
+ * "Show card" for someone on another map: the same card their avatar opens (their profile, Message, View profile,
+ * Block or report under ⋯), with Go to room in place of Walk to. On this map, Locate opens it on their avatar.
+ */
+export function showPersonCard(person: CardPerson, name: string, canMessage: boolean): void {
+    // The card has no avatar to follow here (-1), so the camera stays where it is.
+    wokaMenuStore.initialize(name, -1, person.uuid, person.visitCardUrl);
+    peopleCardReturn.tappedPerson(person.uuid);
+    analyticsClient.openWokaMenu();
+
+    const blocked = blackListManager.isBlackListed(person.uuid);
+    if (!blocked && person.playUri) {
+        wokaMenuStore.addAction({
+            actionName: get(LL).chat.userList.goToRoom(),
+            priority: 2,
+            style: "bg-white/10 hover:bg-white/30",
+            testId: "wokamenu-go-to-room-button",
+            actionIcon: IconDoorIn,
+            callback: () => {
+                wokaMenuStore.clear();
+                analyticsClient.goToUser();
+                goToPersonRoom(person);
+            },
+        });
+    }
+    const chatId = person.chatId;
+    if (chatId && canMessage) {
+        wokaMenuStore.addAction({
+            actionName: get(LL).chat.userList.message(),
+            priority: 1,
+            style: "bg-white/10 hover:bg-white/30",
+            testId: "wokamenu-message-button",
+            actionIcon: IconMessage,
+            callback: () => {
+                wokaMenuStore.clear();
+                analyticsClient.openedChat();
+                openDirectChatRoom(chatId).catch((error) => console.error("Error opening direct chat room:", error));
+            },
+        });
+    }
+    if (chatId && canOpenOrbit()) {
+        wokaMenuStore.addAction({
+            actionName: get(LL).chat.userList.viewProfile(),
+            priority: 0,
+            style: "bg-white/10 hover:bg-white/30",
+            testId: "wokamenu-view-profile-button",
+            actionIcon: IconUserCircle,
+            callback: () => {
+                wokaMenuStore.clear();
+                openOrbitProfile(person.uuid);
+            },
+        });
+    }
+    wokaMenuStore.addAction({
+        actionName: blocked ? get(LL).report.block.unblock() : get(LL).report.block.blockOrReport(),
+        priority: -1,
+        overflow: true,
+        style: "text-red-500",
+        testId: "wokamenu-block-user-button",
+        callback: () => {
+            wokaMenuStore.clear();
+            analyticsClient.reportUser();
+            showReportScreenStore.set({ userUuid: person.uuid, userName: name });
         },
     });
 }

@@ -98,7 +98,8 @@ describe("getPersonActions", () => {
             message: "hidden",
             locate: false,
             locateButton: false,
-            businessCard: false,
+            showCard: false,
+            viewProfile: false,
             ban: false,
             hasMenu: false,
         });
@@ -142,13 +143,32 @@ describe("getPersonActions", () => {
         expect(getPersonActions(input({ roomCreationInProgress: true })).message).toBe("hidden");
     });
 
-    it("keeps Business card and Ban in the menu", () => {
-        const actions = getPersonActions(
-            input({ playUri: ELSEWHERE, visitCardUrl: "https://card.test", iAmAdmin: true })
-        );
-        expect(actions.businessCard).toBe(true);
+    it("keeps Show card and Ban in the menu for someone on another map", () => {
+        const actions = getPersonActions(input({ playUri: ELSEWHERE, iAmAdmin: true }));
+        expect(actions.showCard).toBe(true);
         expect(actions.ban).toBe(true);
         expect(actions.hasMenu).toBe(true);
+    });
+
+    it("leaves Show card to Locate on this map, which opens the same card", () => {
+        const actions = getPersonActions(input({ visitCardUrl: "https://card.test" }));
+        expect(actions.showCard).toBe(false);
+        expect(actions.locate).toBe(true);
+    });
+
+    it("offers View profile for a signed-in person when you can open Orbit", () => {
+        expect(getPersonActions(input({ canViewProfiles: true })).viewProfile).toBe(true);
+        expect(getPersonActions(input({ canViewProfiles: true, playUri: ELSEWHERE })).viewProfile).toBe(true);
+        expect(getPersonActions(input({ canViewProfiles: true, isMyAccount: true })).viewProfile).toBe(true);
+        expect(getPersonActions(input({ canViewProfiles: true })).hasMenu).toBe(true);
+    });
+
+    it("offers no View profile for guests, bots, yourself, or when you can't open Orbit", () => {
+        expect(getPersonActions(input()).viewProfile).toBe(false);
+        expect(getPersonActions(input({ canViewProfiles: true, chatId: undefined })).viewProfile).toBe(false);
+        expect(getPersonActions(input({ canViewProfiles: true, isBot: true })).viewProfile).toBe(false);
+        expect(getPersonActions(input({ canViewProfiles: true, isSelf: true })).viewProfile).toBe(false);
+        expect(getPersonActions(input({ canViewProfiles: true, uuid: undefined })).viewProfile).toBe(false);
     });
 
     it("shows Ban only to admins", () => {
@@ -156,8 +176,10 @@ describe("getPersonActions", () => {
         expect(getPersonActions(input({ iAmAdmin: true })).ban).toBe(true);
     });
 
-    it("has no menu for someone on another map without card when not admin", () => {
-        expect(getPersonActions(input({ playUri: ELSEWHERE })).hasMenu).toBe(false);
+    it("has no menu for someone on this map in several sessions when not admin", () => {
+        // Locate is the only entry, and the session list takes it over (see User.svelte).
+        const actions = getPersonActions(input());
+        expect(actions.showCard || actions.viewProfile || actions.ban).toBe(false);
     });
 
     it("gives a bot on this map Walk to and a Locate button, with no menu", () => {
@@ -168,7 +190,7 @@ describe("getPersonActions", () => {
         expect(actions.locateButton).toBe(true);
         expect(actions.message).toBe("hidden");
         expect(actions.locate).toBe(false);
-        expect(actions.businessCard).toBe(false);
+        expect(actions.showCard).toBe(false);
         expect(actions.ban).toBe(false);
         expect(actions.hasMenu).toBe(false);
     });

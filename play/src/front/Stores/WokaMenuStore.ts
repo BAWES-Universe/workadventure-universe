@@ -11,6 +11,8 @@ export type WokaMenuAction = {
     style?: "is-success" | "is-error" | "is-primary" | string;
     actionIcon?: string | ComponentType;
     testId?: string;
+    /** Listed under the card's "more" (⋯) button instead of beside the others: rarer or harsher actions, like Block. */
+    overflow?: boolean;
 };
 export interface WokaMenuData {
     wokaName: string;

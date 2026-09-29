@@ -2,25 +2,29 @@
     import { onDestroy, onMount } from "svelte";
     import { computePosition, flip, shift, offset, autoUpdate } from "@floating-ui/dom";
     import type { Readable } from "svelte/store";
-    import businessCard from "../../images/business-cards.svg";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
-    import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { showReportScreenStore } from "../../../Stores/ShowReportScreenStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
+    import { openOrbitProfile } from "../../../external-modules/admin-api/index";
     import PersonActionButton from "./PersonActionButton.svelte";
-    import { locatePerson } from "./PersonNavigation";
+    import { locatePerson, showPersonCard } from "./PersonNavigation";
     import { openPersonMenuStore } from "./PersonMenuStore";
-    import { IconForbid, IconDots, IconMapPin } from "@wa-icons";
+    import { IconForbid, IconDots, IconId, IconMapPin, IconUserCircle } from "@wa-icons";
 
     export let user: ChatUser;
     /** Locate (follow) the person, listed when they are on this map. */
     export let showLocate = false;
-    export let showBusinessCard = false;
+    /** Their player card, for someone on another map (on this map, Locate opens it on their avatar). */
+    export let showCard = false;
+    /** Their profile in Orbit. */
+    export let showViewProfile = false;
+    /** Whether their card may offer Message (the People tab's own rule for the Message button). */
+    export let canMessage = false;
     export let showBan = false;
 
     let popoversElement: HTMLDivElement;
@@ -117,24 +121,30 @@
         if ($openPersonMenuStore === menuId) openPersonMenuStore.set(undefined);
     });
 
-    const openBusinessCard = (visitCardUrl: string | undefined) => {
+    function openCard() {
+        if (!user.uuid) return;
         analyticsClient.showBusinessCard();
-
-        // If woka menu is open, close it
-        if ($wokaMenuStore) {
-            wokaMenuStore.clear();
-        }
-
-        if (visitCardUrl) {
-            if ($requestVisitCardsStore == visitCardUrl) {
-                requestVisitCardsStore.set(null);
-                closeChatUserMenu();
-                return;
-            }
-            requestVisitCardsStore.set(visitCardUrl);
-        }
+        // The old floating profile popup (the video tiles still open it) would sit over the card.
+        if ($requestVisitCardsStore != undefined) requestVisitCardsStore.set(null);
+        showPersonCard(
+            {
+                uuid: user.uuid,
+                playUri: user.playUri,
+                spaceUserId: user.spaceUserId,
+                chatId: user.chatId,
+                visitCardUrl: user.visitCardUrl,
+            },
+            user.username ?? "",
+            canMessage
+        );
         closeChatUserMenu();
-    };
+    }
+
+    function viewProfile() {
+        if (!user.uuid) return;
+        openOrbitProfile(user.uuid);
+        closeChatUserMenu();
+    }
 
     function banUser() {
         if (user.username && user.uuid) {
@@ -177,7 +187,7 @@
         <div
             bind:this={popoversElement}
             role="menu"
-            class="wa-dropdown-menu u-glass z-10 mr-1 fixed rounded-xl p-1 shadow-2xl"
+            class="wa-dropdown-menu z-10 mr-1 fixed rounded-xl p-1 shadow-2xl bg-contrast/95 border border-white/10 backdrop-blur"
         >
             {#if showLocate}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -200,21 +210,36 @@
                     {$LL.chat.userList.follow()}
                 </span>
             {/if}
-            {#if showBusinessCard}
+            {#if showCard}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
                 <span
                     role="menuitem"
                     tabindex="0"
-                    class="businessCard wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
-                    on:click|stopPropagation={() => openBusinessCard(user.visitCardUrl)}
+                    data-testid={`show-card-${user.username}`}
+                    class="show-card wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
+                    on:click|stopPropagation={openCard}
                     on:keydown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            openBusinessCard(user.visitCardUrl);
+                            openCard();
                         }
-                    }}
-                    ><img class="noselect" src={businessCard} alt="" height="13" width="13" draggable="false" />
-                    {$LL.chat.userList.businessCard()}</span
+                    }}><IconId font-size="13" /> {$LL.chat.userList.showCard()}</span
+                >
+            {/if}
+            {#if showViewProfile}
+                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                <span
+                    role="menuitem"
+                    tabindex="0"
+                    data-testid={`view-profile-${user.username}`}
+                    class="view-profile wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
+                    on:click|stopPropagation={viewProfile}
+                    on:keydown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            viewProfile();
+                        }
+                    }}><IconUserCircle font-size="13" /> {$LL.chat.userList.viewProfile()}</span
                 >
             {/if}
 

@@ -15,6 +15,7 @@
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
+    import { canOpenOrbit } from "../../../external-modules/admin-api/index";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -92,6 +93,7 @@
         isMatrixChatEnabled,
         roomCreationInProgress: showRoomCreationInProgress,
         iAmAdmin,
+        canViewProfiles: canOpenOrbit(),
     });
 
     $: displayName = username.match(/\[\d*]/) ? username.substring(0, username.search(/\[\d*]/)) : username;
@@ -99,7 +101,7 @@
     // Someone else with several sessions: Walk to, Go to room and Locate open the list, so you pick which one.
     $: choosesSession = !isMe && listedSessions.length > 0;
     $: showLocateInMenu = actions.locate && !choosesSession;
-    $: hasMenu = showLocateInMenu || actions.businessCard || actions.ban;
+    $: hasMenu = showLocateInMenu || actions.showCard || actions.viewProfile || actions.ban;
 
     function walkTo() {
         if (choosesSession) {
@@ -316,7 +318,9 @@
                     <UserActionButton
                         {user}
                         showLocate={showLocateInMenu}
-                        showBusinessCard={actions.businessCard}
+                        showCard={actions.showCard}
+                        showViewProfile={actions.viewProfile}
+                        canMessage={actions.message !== "hidden"}
                         showBan={actions.ban}
                     />
                 {/if}
