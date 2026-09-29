@@ -1,13 +1,13 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { cubicOut } from "svelte/easing";
-    import { slide } from "svelte/transition";
     import type { TransitionConfig } from "svelte/transition";
     import type { UniverseRoomDescription, UniverseWorldDescription } from "@workadventure/messages";
     import { roomListVisibilityStore } from "../../Stores/ModalStore";
     import { exploreFoldedWorldsStore, exploreStore, universeNameStore } from "../../Stores/ExploreStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import LL from "../../../i18n/i18n-svelte";
+    import { fold } from "../../Utils/foldTransition";
     import ExploreRoomCard from "./ExploreRoomCard.svelte";
     import { displayName } from "./exploreText";
     import { IconChevronDown, IconPlanet, IconSearch, IconX } from "@wa-icons";
@@ -70,8 +70,6 @@
             css: (t) => `opacity: ${t}; transform: translateY(${(1 - t) * 12}px) scale(${0.96 + 0.04 * t});`,
         };
     }
-
-    const fold = { duration: reducedMotion ? 0 : 220, easing: cubicOut };
 
     function close() {
         roomListVisibilityStore.set(false);
@@ -200,7 +198,7 @@
                             <div
                                 class="flex gap-3 overflow-x-auto snap-x snap-mandatory scroll-px-4 sm:scroll-px-6 px-4 sm:px-6 pt-1 pb-3"
                                 use:scrollToStartOn={query}
-                                transition:slide={fold}
+                                transition:fold
                             >
                                 {#each world.rooms as room, index (room.roomUrl)}
                                     <ExploreRoomCard {room} {index} on:select={() => visit(room)} />
