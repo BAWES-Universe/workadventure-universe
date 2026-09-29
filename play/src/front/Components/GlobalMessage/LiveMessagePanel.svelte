@@ -1,6 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy } from "svelte";
     import { UpdateMegaphoneSettingMessage } from "@workadventure/messages";
+    import * as Sentry from "@sentry/svelte";
     import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
     import {
         cameraListStore,
@@ -55,6 +56,8 @@
     // megaphoneCanBeUsedStore after every megaphone setting change, so re-read the setting whenever it changes.
     let megaphoneOnInRoom = false;
     $: megaphoneOnInRoom = $megaphoneCanBeUsedStore || (getMegaphoneSettings()?.enabled ?? false);
+    // Room settings live in the WAM file. A map without one (a plain TMJ map) has no megaphone setting to turn on.
+    $: canTurnOnMegaphone = $mapEditorActivated && gameManager.tryGetCurrentGameScene()?.wamFile !== undefined;
     // Who hears the live message. Re-read on the same trigger: the scope only changes together with the setting.
     let audience: MegaphoneAudience = "world";
     $: {
@@ -63,7 +66,7 @@
     }
 
     async function turnOnMegaphone() {
-        if (turningOnMegaphone) {
+        if (turningOnMegaphone || !canTurnOnMegaphone) {
             return;
         }
         const settings = getMegaphoneSettings();
@@ -90,6 +93,10 @@
                     awaitingMegaphoneAccess = false;
                 }, 5000);
             }
+        } catch (error) {
+            // e.g. the game scene is not ready yet: leave the card as it is so the user can try again.
+            console.error("Could not turn on the megaphone", error);
+            Sentry.captureException(error);
         } finally {
             // eslint-disable-next-line require-atomic-updates
             turningOnMegaphone = false;
@@ -284,7 +291,7 @@
         </p>
 
         {#if !$megaphoneCanBeUsedStore}
-            {#if (!megaphoneOnInRoom || awaitingMegaphoneAccess) && $mapEditorActivated}
+            {#if (!megaphoneOnInRoom || awaitingMegaphoneAccess) && canTurnOnMegaphone}
                 <div class="flex flex-row flex-wrap items-center gap-2">
                     <p class="help-text !mb-0">
                         <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
