@@ -2,6 +2,7 @@
     import type { ComponentType } from "svelte";
     import type { LocalizedString } from "typesafe-i18n";
     import { LL } from "../../../i18n/i18n-svelte";
+    import type { TranslationFunctions } from "../../../i18n/i18n-types";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorSelectedToolStore, mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
@@ -17,18 +18,19 @@
         [EditorToolName.TrashEditor]: IconTrash,
     };
 
-    function toolTooltip(toolName: EditorToolName): LocalizedString {
+    // Takes the translations as an argument so the reactive block below re-runs when the locale changes.
+    function toolTooltip(ll: TranslationFunctions, toolName: EditorToolName): LocalizedString {
         switch (toolName) {
             case EditorToolName.AreaEditor:
-                return $LL.mapEditor.sideBar.areaEditor();
+                return ll.mapEditor.sideBar.areaEditor();
             case EditorToolName.EntityEditor:
-                return $LL.mapEditor.sideBar.entityEditor();
+                return ll.mapEditor.sideBar.entityEditor();
             case EditorToolName.WAMSettingsEditor:
-                return $LL.mapEditor.sideBar.configureMyRoom();
+                return ll.mapEditor.sideBar.configureMyRoom();
             case EditorToolName.TrashEditor:
-                return $LL.mapEditor.sideBar.trashEditor();
+                return ll.mapEditor.sideBar.trashEditor();
             default:
-                return $LL.mapEditor.sideBar.exploreTheRoom();
+                return ll.mapEditor.sideBar.exploreTheRoom();
         }
     }
 
@@ -36,7 +38,7 @@
     $: availableTools = $mapEditorToolsStore.map((tool) => ({
         ...tool,
         iconComponent: toolIcons[tool.toolName],
-        tooltiptext: toolTooltip(tool.toolName),
+        tooltiptext: toolTooltip($LL, tool.toolName),
         showDesktopHint: tool.worksBestOnDesktop && $mapEditorIsMobileLayoutStore,
     }));
 
