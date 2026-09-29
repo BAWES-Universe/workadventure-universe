@@ -77,11 +77,6 @@ export interface PersonActions {
     locate: boolean;
     /** Visible "Locate" button beside Walk to, for bots on this map, in place of the menu entry. */
     locateButton: boolean;
-    /**
-     * "Show card": their player card, for someone on another map. On this map Locate opens the same card, on their
-     * avatar.
-     */
-    showCard: boolean;
     /** "View profile": their profile in Orbit, for a signed-in person (one with a chat id), never a bot. */
     viewProfile: boolean;
     ban: boolean;
@@ -106,7 +101,6 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
     const bot = !!input.isBot;
     const locateButton = bot && connected && sameMap;
     const locate = !bot && connected && sameMap;
-    const showCard = !bot && connected && hasPlayUri && !sameMap && !!input.uuid;
     const viewProfile = !bot && !input.isSelf && !!input.canViewProfiles && !!input.uuid && !!input.chatId;
     const ban = !bot && connected && input.iAmAdmin;
 
@@ -121,9 +115,8 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
         message,
         locate,
         locateButton,
-        showCard,
         viewProfile,
         ban,
-        hasMenu: locate || showCard || viewProfile || ban,
+        hasMenu: locate || viewProfile || ban,
     };
 }

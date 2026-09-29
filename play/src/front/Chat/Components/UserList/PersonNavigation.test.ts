@@ -8,8 +8,6 @@ let scene: unknown;
 const canOpenOrbit = vi.fn(() => true);
 const openOrbitPage = vi.fn();
 const openOrbitProfile = vi.fn();
-const openDirectChatRoom = vi.fn(() => Promise.resolve());
-const goToPage = vi.fn();
 
 vi.mock("../../../Phaser/Game/GameManager", () => ({
     gameManager: {
@@ -19,14 +17,7 @@ vi.mock("../../../Phaser/Game/GameManager", () => ({
     },
 }));
 vi.mock("../../../external-modules/admin-api/index", () => ({ canOpenOrbit, openOrbitPage, openOrbitProfile }));
-vi.mock("../../../Api/ScriptUtils", () => ({ scriptUtils: { goToPage } }));
-vi.mock("../../Utils", () => ({ openDirectChatRoom }));
-vi.mock("../../../WebRtc/BlackListManager", () => ({ blackListManager: { isBlackListed: () => false } }));
-vi.mock("../../../Stores/ShowReportScreenStore", () => ({ showReportScreenStore: { set: vi.fn() } }));
-vi.mock("../../Stores/PeopleCardReturnStore", () => ({ peopleCardReturn: { tappedPerson: vi.fn() } }));
-vi.mock("../../../Administration/AnalyticsClient", () => ({
-    analyticsClient: { openWokaMenu: vi.fn(), goToUser: vi.fn(), openedChat: vi.fn(), reportUser: vi.fn() },
-}));
+vi.mock("../../../Api/ScriptUtils", () => ({ scriptUtils: { goToPage: vi.fn() } }));
 vi.mock("../../../Enum/EnvironmentVariable", () => ({ WOKA_SPEED: 9 }));
 
 describe("showMyself", () => {
@@ -161,82 +152,5 @@ describe("toggleMyCard", () => {
         toggleMyCard("me-uuid");
 
         expect(get(wokaMenuStore)).toMatchObject({ isSelf: true, userUuid: "me-uuid", wokaName: "Khalid" });
-    });
-});
-
-describe("showPersonCard", () => {
-    const ELSEWHERE = "http://play.test/_/global/maps/elsewhere.json";
-    const ada = {
-        uuid: "ada-uuid",
-        playUri: ELSEWHERE,
-        chatId: "@ada:matrix.test",
-        visitCardUrl: "https://orbit.example/api/profile/ada-uuid?embed=true",
-    };
-
-    beforeEach(async () => {
-        canOpenOrbit.mockReturnValue(true);
-        openOrbitProfile.mockClear();
-        openDirectChatRoom.mockClear();
-        goToPage.mockClear();
-        scene = { getCameraManager: () => ({ returnToPlayer }), connection: { emitAskPosition, getUserId: () => 42 } };
-        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
-        wokaMenuStore.clear();
-    });
-
-    it("opens their card with their profile, and no avatar to follow", async () => {
-        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
-        const { showPersonCard } = await import("./PersonNavigation");
-
-        showPersonCard(ada, "Ada", true);
-
-        expect(get(wokaMenuStore)).toMatchObject({
-            wokaName: "Ada",
-            userId: -1,
-            userUuid: "ada-uuid",
-            visitCardUrl: ada.visitCardUrl,
-            isSelf: false,
-        });
-        expect(emitAskPosition).not.toHaveBeenCalled();
-    });
-
-    it("offers Go to room, Message and View profile, with Block or report under more", async () => {
-        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
-        const { showPersonCard } = await import("./PersonNavigation");
-
-        showPersonCard(ada, "Ada", true);
-
-        const actions = get(wokaMenuStore)?.actions ?? [];
-        expect(actions.filter((a) => !a.overflow).map((a) => a.testId)).toEqual([
-            "wokamenu-go-to-room-button",
-            "wokamenu-message-button",
-            "wokamenu-view-profile-button",
-        ]);
-        expect(actions.filter((a) => a.overflow).map((a) => a.testId)).toEqual(["wokamenu-block-user-button"]);
-
-        actions.find((a) => a.testId === "wokamenu-view-profile-button")?.callback();
-        expect(openOrbitProfile).toHaveBeenCalledWith("ada-uuid");
-    });
-
-    it("leaves out Message when you can't message them, and View profile when you can't open Orbit", async () => {
-        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
-        const { showPersonCard } = await import("./PersonNavigation");
-        canOpenOrbit.mockReturnValue(false);
-
-        showPersonCard(ada, "Ada", false);
-
-        const ids = (get(wokaMenuStore)?.actions ?? []).map((a) => a.testId);
-        expect(ids).not.toContain("wokamenu-message-button");
-        expect(ids).not.toContain("wokamenu-view-profile-button");
-        expect(ids).toContain("wokamenu-go-to-room-button");
-    });
-
-    it("gives a guest (no chat id) no Message or View profile", async () => {
-        const { wokaMenuStore } = await import("../../../Stores/WokaMenuStore");
-        const { showPersonCard } = await import("./PersonNavigation");
-
-        showPersonCard({ ...ada, chatId: undefined }, "Ada", true);
-
-        const ids = (get(wokaMenuStore)?.actions ?? []).map((a) => a.testId);
-        expect(ids).toEqual(["wokamenu-go-to-room-button", "wokamenu-block-user-button"]);
     });
 });

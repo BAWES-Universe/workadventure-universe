@@ -98,7 +98,6 @@ describe("getPersonActions", () => {
             message: "hidden",
             locate: false,
             locateButton: false,
-            showCard: false,
             viewProfile: false,
             ban: false,
             hasMenu: false,
@@ -143,17 +142,10 @@ describe("getPersonActions", () => {
         expect(getPersonActions(input({ roomCreationInProgress: true })).message).toBe("hidden");
     });
 
-    it("keeps Show card and Ban in the menu for someone on another map", () => {
+    it("keeps Ban in the menu for someone on another map", () => {
         const actions = getPersonActions(input({ playUri: ELSEWHERE, iAmAdmin: true }));
-        expect(actions.showCard).toBe(true);
         expect(actions.ban).toBe(true);
         expect(actions.hasMenu).toBe(true);
-    });
-
-    it("leaves Show card to Locate on this map, which opens the same card", () => {
-        const actions = getPersonActions(input({ visitCardUrl: "https://card.test" }));
-        expect(actions.showCard).toBe(false);
-        expect(actions.locate).toBe(true);
     });
 
     it("offers View profile for a signed-in person when you can open Orbit", () => {
@@ -179,7 +171,7 @@ describe("getPersonActions", () => {
     it("has no menu for someone on this map in several sessions when not admin", () => {
         // Locate is the only entry, and the session list takes it over (see User.svelte).
         const actions = getPersonActions(input());
-        expect(actions.showCard || actions.viewProfile || actions.ban).toBe(false);
+        expect(actions.viewProfile || actions.ban).toBe(false);
     });
 
     it("gives a bot on this map Walk to and a Locate button, with no menu", () => {
@@ -190,7 +182,6 @@ describe("getPersonActions", () => {
         expect(actions.locateButton).toBe(true);
         expect(actions.message).toBe("hidden");
         expect(actions.locate).toBe(false);
-        expect(actions.showCard).toBe(false);
         expect(actions.ban).toBe(false);
         expect(actions.hasMenu).toBe(false);
     });

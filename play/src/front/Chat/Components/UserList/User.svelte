@@ -101,7 +101,7 @@
     // Someone else with several sessions: Walk to, Go to room and Locate open the list, so you pick which one.
     $: choosesSession = !isMe && listedSessions.length > 0;
     $: showLocateInMenu = actions.locate && !choosesSession;
-    $: hasMenu = showLocateInMenu || actions.showCard || actions.viewProfile || actions.ban;
+    $: hasMenu = showLocateInMenu || actions.viewProfile || actions.ban;
 
     function walkTo() {
         if (choosesSession) {
@@ -318,9 +318,7 @@
                     <UserActionButton
                         {user}
                         showLocate={showLocateInMenu}
-                        showCard={actions.showCard}
                         showViewProfile={actions.viewProfile}
-                        canMessage={actions.message !== "hidden"}
                         showBan={actions.ban}
                     />
                 {/if}

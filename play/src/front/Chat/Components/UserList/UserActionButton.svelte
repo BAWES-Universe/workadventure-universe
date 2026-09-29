@@ -12,19 +12,15 @@
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import { openOrbitProfile } from "../../../external-modules/admin-api/index";
     import PersonActionButton from "./PersonActionButton.svelte";
-    import { locatePerson, showPersonCard } from "./PersonNavigation";
+    import { locatePerson } from "./PersonNavigation";
     import { openPersonMenuStore } from "./PersonMenuStore";
-    import { IconForbid, IconDots, IconId, IconMapPin, IconUserCircle } from "@wa-icons";
+    import { IconForbid, IconDots, IconMapPin, IconUserCircle } from "@wa-icons";
 
     export let user: ChatUser;
     /** Locate (follow) the person, listed when they are on this map. */
     export let showLocate = false;
-    /** Their player card, for someone on another map (on this map, Locate opens it on their avatar). */
-    export let showCard = false;
     /** Their profile in Orbit. */
     export let showViewProfile = false;
-    /** Whether their card may offer Message (the People tab's own rule for the Message button). */
-    export let canMessage = false;
     export let showBan = false;
 
     let popoversElement: HTMLDivElement;
@@ -121,25 +117,6 @@
         if ($openPersonMenuStore === menuId) openPersonMenuStore.set(undefined);
     });
 
-    function openCard() {
-        if (!user.uuid) return;
-        analyticsClient.showBusinessCard();
-        // The old floating profile popup (the video tiles still open it) would sit over the card.
-        if ($requestVisitCardsStore != undefined) requestVisitCardsStore.set(null);
-        showPersonCard(
-            {
-                uuid: user.uuid,
-                playUri: user.playUri,
-                spaceUserId: user.spaceUserId,
-                chatId: user.chatId,
-                visitCardUrl: user.visitCardUrl,
-            },
-            user.username ?? "",
-            canMessage
-        );
-        closeChatUserMenu();
-    }
-
     function viewProfile() {
         if (!user.uuid) return;
         openOrbitProfile(user.uuid);
@@ -209,22 +186,6 @@
                     <IconMapPin class="w-4" />
                     {$LL.chat.userList.follow()}
                 </span>
-            {/if}
-            {#if showCard}
-                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                <span
-                    role="menuitem"
-                    tabindex="0"
-                    data-testid={`show-card-${user.username}`}
-                    class="show-card wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
-                    on:click|stopPropagation={openCard}
-                    on:keydown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openCard();
-                        }
-                    }}><IconId font-size="13" /> {$LL.chat.userList.showCard()}</span
-                >
             {/if}
             {#if showViewProfile}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
