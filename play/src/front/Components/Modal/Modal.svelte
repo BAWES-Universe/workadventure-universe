@@ -54,6 +54,8 @@
 
     onDestroy(() => {
         modalFullScreenStore.set(false);
+        // A throw here would leave the closed panel over the whole game, catching every click.
+        if (!modalIframe) return;
         if (get(modalIframeWindowStore) === modalIframe.contentWindow) {
             modalIframeWindowStore.set(null);
         }
@@ -65,9 +67,12 @@
         //}
     });
 
-    $: modalUrl = $modalIframeStore
-        ? new URL($modalIframeStore.src, gameManager.currentStartedRoom.mapUrl).toString()
-        : undefined;
+    // What the panel shows, kept while it closes: whoever closes it may empty the store in the same turn (opening
+    // Explore or the menu does), and the frame and its place must stay put until the panel has gone.
+    let shown = $modalIframeStore;
+    $: if ($modalIframeStore) shown = $modalIframeStore;
+
+    $: modalUrl = shown ? new URL(shown.src, gameManager.currentStartedRoom.mapUrl).toString() : undefined;
 
     let isMobile = isMediaBreakpointUp("md");
     const resizeObserver = new ResizeObserver(() => {
@@ -75,7 +80,7 @@
     });
 
     // On mobile, only force fullscreen for center position, respect right/left positions
-    $: shouldForceMobileFullScreen = isMobile && $modalIframeStore?.position === "center";
+    $: shouldForceMobileFullScreen = isMobile && shown?.position === "center";
 </script>
 
 <svelte:window on:keydown={onKeyDown} />
@@ -83,7 +88,7 @@
 <div
     class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all motion-reduce:transition-none {shouldForceMobileFullScreen
         ? 'mobile'
-        : $modalIframeStore?.position} {isFullScreened ? 'fullscreened' : ''}"
+        : shown?.position} {isFullScreened ? 'fullscreened' : ''}"
     bind:this={mainModal}
 >
     <div
@@ -96,7 +101,7 @@
                     isFullScreened || shouldForceMobileFullScreen
                         ? "top-4 right-4"
                         : `${
-                              $modalIframeStore?.position == "center" || $modalIframeStore?.position == "left"
+                              shown?.position == "center" || shown?.position == "left"
                                   ? "flex-col gap-1 top-0 -right-20"
                                   : "flex-col gap-1 top-0 -left-20"
                           }`
@@ -104,7 +109,7 @@
             `}
         >
             {#if modalUrl != undefined}
-                {#if $modalIframeStore?.allowFullScreen}
+                {#if shown?.allowFullScreen}
                     <button
                         class="btn btn-light btn-ghost rounded hidden @lg/main-layout:block"
                         on:click={() => modalFullScreenStore.update((full) => !full)}
@@ -124,8 +129,8 @@
                 class="btn btn-danger rounded m-0"
                 style={isFullScreened == true ? "" : "margin: 0px;"}
                 data-testid="close-modal-button"
-                aria-label={`Close ${$modalIframeStore?.title || "window"}`}
-                title={`Close ${$modalIframeStore?.title || "window"}`}
+                aria-label={`Close ${shown?.title || "window"}`}
+                title={`Close ${shown?.title || "window"}`}
             >
                 <IconX font-size="20" class="text-white" />
             </button>
@@ -136,8 +141,8 @@
                 bind:this={modalIframe}
                 height="100%"
                 width="100%"
-                allow={$modalIframeStore?.allow}
-                title={$modalIframeStore?.title}
+                allow={shown?.allow}
+                title={shown?.title}
                 src={modalUrl}
                 class="border-0 relative z-40"
                 allowtransparency
