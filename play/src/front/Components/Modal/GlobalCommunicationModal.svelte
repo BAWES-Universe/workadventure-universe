@@ -147,7 +147,9 @@
         }
     }
 
+    // Also runs when something else hides the modal, so reset the same state as close().
     onDestroy(() => {
+        streamingMegaphoneStore.set(false);
         displayedMegaphoneScreenStore.set(false);
     });
 </script>
