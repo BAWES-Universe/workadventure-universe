@@ -2193,8 +2193,13 @@ export class SocialBehavior extends BaseBehavior {
             
             // Always try pathfinding first if available and not already following a path
             if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
-                const success = await this.bot.moveToWithPathfinding(this.wanderTarget.x, this.wanderTarget.y);
-                this.wanderInProgress = false;
+                let success = false;
+                try {
+                    success = await this.bot.moveToWithPathfinding(this.wanderTarget.x, this.wanderTarget.y);
+                } finally {
+                    // Reset even if pathfinding throws, or the bot would never wander again
+                    this.wanderInProgress = false;
+                }
 
                 if (success && this.targetPlayerId !== null && this.bot.getIsFollowingPath()) {
                     // Someone to talk to was spotted while this path was being computed: go to them instead

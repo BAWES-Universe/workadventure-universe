@@ -198,6 +198,20 @@ describe('SocialBehavior approach', () => {
         expect(target(behavior)).toBeNull();
     });
 
+    it('keeps wandering after a wander path request throws', async () => {
+        const bot = createBot([]);
+        bot.moveToWithPathfinding.mockRejectedValueOnce(new Error('pathfinder crashed'));
+        const behavior = new SocialBehavior(createConfig());
+        behavior.setBot(bot as any);
+        const config = (behavior as any).config;
+
+        await expect((behavior as any).wander(config, 16)).rejects.toThrow('pathfinder crashed');
+        (behavior as any).wanderTarget = { x: 150, y: 0 };
+        await (behavior as any).wander(config, 16);
+
+        expect(bot.moveToWithPathfinding).toHaveBeenCalledTimes(2);
+    });
+
     it('notices people while walking a wander path', () => {
         const bot = createBot([player(1)]);
         const behavior = new SocialBehavior(createConfig());
