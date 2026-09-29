@@ -20,13 +20,16 @@
         uploadAudioActive = true;
     }
 
+    let sendFailed = false;
+
     async function send(): Promise<void> {
+        sendFailed = false;
         if (inputSendTextActive) {
-            handleSendText.sendTextMessage(broadcastToWorld);
+            sendFailed = !handleSendText.sendTextMessage(broadcastToWorld);
             return;
         }
         if (uploadAudioActive) {
-            await handleSendAudio.sendAudioMessage(broadcastToWorld);
+            sendFailed = !(await handleSendAudio.sendAudioMessage(broadcastToWorld));
         }
     }
 </script>
@@ -63,6 +66,9 @@
             <input type="checkbox" bind:checked={broadcastToWorld} />
             <span>{$LL.menu.globalMessage.warning()}</span>
         </label>
+        {#if sendFailed}
+            <p class="text-sm text-danger-400 m-0" role="alert">{$LL.megaphone.modal.composer.sendFailed()}</p>
+        {/if}
         <section class="centered-column">
             <button class="light" on:click|preventDefault={send}>{$LL.menu.globalMessage.send()}</button>
         </section>
