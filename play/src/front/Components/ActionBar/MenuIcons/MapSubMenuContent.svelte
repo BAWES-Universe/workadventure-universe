@@ -18,7 +18,7 @@
     import { isCalendarVisibleStore } from "../../../Stores/CalendarStore";
     import { chatVisibilityStore } from "../../../Stores/ChatStore";
     import ActionBarButton from "../ActionBarButton.svelte";
-    import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
+    import { enterExploreTheRoom } from "../../../Phaser/Game/MapEditor/ExploreTheRoom";
     import { botEditorAvailableStore, openBotEditorFromMenu } from "../../../external-modules/bots/index";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
     import { IconMapEditor, IconMapSearch, IconRobot, IconSpeakerPhone } from "@wa-icons";
@@ -67,9 +67,13 @@
         closeMapMenu();
     }
 
-    function toggleMapExplorerMode() {
-        toggleMapEditorMode();
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.ExploreTheRoom);
+    // Always enters explore, even when the map editor is already open (toggling here used to close it).
+    function openMapExplorer() {
+        if (!$mapEditorModeStore) analyticsClient.toggleMapEditor(true);
+        isTodoListVisibleStore.set(false);
+        isCalendarVisibleStore.set(false);
+        closeMapMenu();
+        enterExploreTheRoom();
     }
 
     function closeMapMenu() {
@@ -92,7 +96,7 @@
     </ActionBarButton>
 {/if}
 {#if $mapManagerActivated}
-    <ActionBarButton on:click={toggleMapExplorerMode} label={$LL.mapEditor.sideBar.exploreTheRoom()}>
+    <ActionBarButton on:click={openMapExplorer} label={$LL.mapEditor.sideBar.exploreTheRoom()}>
         <IconMapSearch font-size="20" />
     </ActionBarButton>
 {/if}
