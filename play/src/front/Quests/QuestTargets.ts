@@ -85,8 +85,8 @@ export function sceneQuestTarget(
     state: QuestState,
     world: QuestWorld
 ): QuestTarget | undefined {
-    return questTarget(path, state, world, playerFeet(scene), (userId) => {
-        const person = scene.MapPlayersByKey.get(userId);
-        return person ? { x: person.x, y: person.y } : undefined;
-    });
+    // Feet to feet: the same distance as the one the world carries (position to position), so the dock agrees.
+    return questTarget(path, state, world, playerFeet(scene), (userId) =>
+        targetPosition(scene, { kind: "player", userId, name: "" })
+    );
 }

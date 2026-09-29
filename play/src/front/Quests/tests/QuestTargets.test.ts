@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { initialQuestState, reduceQuest } from "../QuestModel";
-import { questTarget } from "../QuestTargets";
+import type { GameScene } from "../../Phaser/Game/GameScene";
+import { questTarget, sceneQuestTarget } from "../QuestTargets";
 import type { QuestWorld } from "../QuestWorld";
 import { EMPTY_QUEST_WORLD } from "../QuestWorld";
 
@@ -62,6 +63,27 @@ describe("questTarget", () => {
         // Nobody measured yet: still someone to walk to.
         const unmeasured: QuestWorld = { ...noHost, present: noHost.present.map(({ distance, ...person }) => person) };
         expect(questTarget("meet", initialQuestState(), unmeasured)).toMatchObject({ userId: 7 });
+    });
+
+    it("walks to the same person the dock points at, when two stand at nearly the same distance", () => {
+        // Ada 20 px below, Guide 18 px above: Guide is nearer, position to position and feet to feet alike.
+        const scene = {
+            CurrentPlayer: { x: 0, y: 0 },
+            MapPlayersByKey: new Map([
+                [7, { x: 0, y: 20 }],
+                [3, { x: 0, y: -18 }],
+            ]),
+        } as unknown as GameScene;
+        const noHost: QuestWorld = {
+            ...world,
+            host: { kind: "none" },
+            present: [
+                { ...world.present[0], distance: 20 },
+                { ...world.present[1], distance: 18 },
+            ],
+        };
+        expect(questTarget("meet", initialQuestState(), noHost)).toMatchObject({ userId: 3 });
+        expect(sceneQuestTarget(scene, "meet", initialQuestState(), noHost)).toMatchObject({ userId: 3 });
     });
 
     it("has no place for Build (it happens in the map editor)", () => {
