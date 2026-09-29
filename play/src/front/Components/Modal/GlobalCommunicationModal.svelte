@@ -63,9 +63,11 @@
     // megaphoneCanBeUsedStore after every megaphone setting change, so re-read the setting whenever it changes.
     let megaphoneOnInRoom = false;
     $: megaphoneOnInRoom = $megaphoneCanBeUsedStore || (getMegaphoneSettings()?.enabled ?? false);
+    // Room settings live in the WAM file. A map without one (a plain TMJ map) has no megaphone setting to turn on.
+    $: canTurnOnMegaphone = $mapEditorActivated && gameManager.tryGetCurrentGameScene()?.wamFile !== undefined;
 
     async function turnOnMegaphone() {
-        if (turningOnMegaphone) {
+        if (turningOnMegaphone || !canTurnOnMegaphone) {
             return;
         }
         const settings = getMegaphoneSettings();
@@ -314,7 +316,7 @@
                         </button>
 
                         {#if !$megaphoneCanBeUsedStore}
-                            {#if (!megaphoneOnInRoom || awaitingMegaphoneAccess) && $mapEditorActivated}
+                            {#if (!megaphoneOnInRoom || awaitingMegaphoneAccess) && canTurnOnMegaphone}
                                 <div class="flex flex-row flex-wrap items-center gap-2 mb-4">
                                     <p class="help-text !mb-0">
                                         <IconInfoCircle class="mr-2 mb-1 min-w-6" font-size="18" />
