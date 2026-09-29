@@ -9,6 +9,7 @@
         botEditorModeStore,
         selectedBotStore,
         botPreviewsStore,
+        botsLoadedForRoomIdStore,
         placingBotStore,
         roomChangeTriggerStore,
         upsertBot,
@@ -255,8 +256,10 @@
         // Activate the Phaser tool first
         botEditorTool.activate();
 
-        // Load bots from API (tool will create previews via store subscription)
-        await loadBots();
+        // Load bots from API (tool will create previews via store subscription).
+        // Reopening the editor in the same room keeps the current list on screen while it refreshes.
+        const loadedRoomId = get(botsLoadedForRoomIdStore);
+        await loadBots({ keepCurrent: loadedRoomId !== null && loadedRoomId === botApiService.getRoomId() });
 
         // Ensure tool is still active after loading (in case scene wasn't ready initially)
         if (!botEditorTool.getIsActive()) {
@@ -279,7 +282,7 @@
         });
     });
 
-    async function loadBots() {
+    async function loadBots({ keepCurrent = false }: { keepCurrent?: boolean } = {}) {
         if (!botApiService.isInitialized()) {
             console.warn("[BotEditor] API service not initialized");
             return;
@@ -288,19 +291,26 @@
         isLoading = true;
         error = null;
 
-        // Clear bot store immediately to prevent showing old bots from previous room
-        botPreviewsStore.set(new Map());
+        if (!keepCurrent) {
+            // Clear bot store immediately to prevent showing old bots from previous room
+            botPreviewsStore.set(new Map());
+            botsLoadedForRoomIdStore.set(null);
+        }
         selectedBotStore.set(undefined);
-        // Reset mode to list when clearing bots (e.g., when navigating to different map)
+        // Reset mode to list when (re)loading bots (e.g., when navigating to different map)
         botEditorModeStore.set("list");
 
+        const roomId = botApiService.getRoomId();
         try {
             const loadedBots = await botApiService.listBots();
             // Update store with loaded bots
             loadBotPreviews(loadedBots);
+            botsLoadedForRoomIdStore.set(roomId);
         } catch (e) {
             console.error("[BotEditor] Failed to load bots:", e);
             error = e instanceof Error ? e.message : "Failed to load bots";
+            // The list shown may be stale now, so the next open reloads it from scratch
+            botsLoadedForRoomIdStore.set(null);
         } finally {
             isLoading = false;
         }
@@ -556,7 +566,7 @@
             <p class="text-red-200 text-sm">{error}</p>
             <button
                 class="mt-2 px-3 py-1 bg-red-500/20 text-red-200 rounded hover:bg-red-500/30 text-xs"
-                on:click={loadBots}
+                on:click={() => loadBots()}
             >
                 Retry
             </button>

@@ -33,6 +33,12 @@ export const selectedBotStore = writable<BotData | undefined>(undefined);
 export const botPreviewsStore = writable<Map<string, BotData>>(new Map());
 
 /**
+ * Room whose bots are currently in botPreviewsStore. The store outlives the editor panel, so
+ * reopening the editor in the same room can show these bots straight away while it refreshes.
+ */
+export const botsLoadedForRoomIdStore = writable<string | null>(null);
+
+/**
  * Bot being placed (temporary state during placement)
  */
 export const placingBotStore = writable<BotData | undefined>(undefined);
@@ -716,6 +722,7 @@ export function resetBotEditorStores(): void {
     botEditorModeStore.set("list");
     selectedBotStore.set(undefined);
     botPreviewsStore.set(new Map());
+    botsLoadedForRoomIdStore.set(null);
     placingBotStore.set(undefined);
     placementCursorStore.set(undefined);
     editingWaypointIndexStore.set(undefined);
