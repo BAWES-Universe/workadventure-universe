@@ -45,9 +45,12 @@ export function questTarget(
         let nearest = world.present[0];
         let nearestDistance = Number.POSITIVE_INFINITY;
         for (const person of world.present) {
+            // Live positions when the scene gives them (the walk); else the distance the world was last measured at
+            // (the dock), so both pick the same person.
             const position = positionOf?.(person.userId);
-            if (!position || !player) continue;
-            const distance = Math.hypot(position.x - player.x, position.y - player.y);
+            const distance =
+                position && player ? Math.hypot(position.x - player.x, position.y - player.y) : person.distance;
+            if (distance === undefined) continue;
             if (distance < nearestDistance) {
                 nearest = person;
                 nearestDistance = distance;

@@ -48,6 +48,22 @@ describe("questTarget", () => {
         ).toMatchObject({ userId: 3 });
     });
 
+    it("picks the same nearest person for the dock, from the distances the world carries", () => {
+        const noHost: QuestWorld = {
+            ...world,
+            host: { kind: "none" },
+            present: [
+                { ...world.present[0], userId: 7, distance: 500 },
+                { ...world.present[0], userId: 3, distance: 12 },
+            ],
+        };
+        // No live positions (the dock): not simply the first in the list.
+        expect(questTarget("meet", initialQuestState(), noHost)).toMatchObject({ userId: 3 });
+        // Nobody measured yet: still someone to walk to.
+        const unmeasured: QuestWorld = { ...noHost, present: noHost.present.map(({ distance, ...person }) => person) };
+        expect(questTarget("meet", initialQuestState(), unmeasured)).toMatchObject({ userId: 7 });
+    });
+
     it("has no place for Build (it happens in the map editor)", () => {
         expect(questTarget("build", initialQuestState(), world)).toBeUndefined();
     });
