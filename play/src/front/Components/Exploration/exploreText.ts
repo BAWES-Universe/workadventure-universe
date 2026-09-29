@@ -8,3 +8,8 @@ export function formatPeakHour(utcHour: number, now: Date = new Date()): string 
     const hour = at.getHours();
     return `${hour % 12 || 12} ${hour < 12 ? "AM" : "PM"}`;
 }
+
+/** A universe, world or room name as the Explore list shows it: first letter capitalised, the rest as typed. */
+export function displayName(name: string): string {
+    return name.charAt(0).toLocaleUpperCase() + name.slice(1);
+}

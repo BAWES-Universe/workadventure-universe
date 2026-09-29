@@ -10,6 +10,7 @@
     import { universeNameStore } from "../../../Stores/ExploreStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import ActionBarButton from "../ActionBarButton.svelte";
+    import { displayName } from "../../Exploration/exploreText";
     import LL from "../../../../i18n/i18n-svelte";
     import { IconPlanet } from "@wa-icons";
 
@@ -32,7 +33,7 @@
     }
 
     $: label = $universeNameStore
-        ? $LL.actionbar.explore.button({ universe: $universeNameStore })
+        ? $LL.actionbar.explore.button({ universe: displayName($universeNameStore) })
         : $LL.actionbar.explore.buttonWithoutName();
 </script>
 

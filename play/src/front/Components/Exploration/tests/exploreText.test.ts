@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPeakHour } from "../peakHour";
+import { displayName, formatPeakHour } from "../exploreText";
 
 describe("formatPeakHour", () => {
     it("shows a UTC hour on the viewer's clock", () => {
@@ -22,5 +22,13 @@ describe("formatPeakHour", () => {
         const noon = utcHourFor(12);
         if (midnight !== undefined) expect(formatPeakHour(midnight, now)).toBe("12 AM");
         if (noon !== undefined) expect(formatPeakHour(noon, now)).toBe("12 PM");
+    });
+});
+
+describe("displayName", () => {
+    it("capitalises the first letter and keeps the rest as typed", () => {
+        expect(displayName("test")).toBe("Test");
+        expect(displayName("my Office")).toBe("My Office");
+        expect(displayName("")).toBe("");
     });
 });

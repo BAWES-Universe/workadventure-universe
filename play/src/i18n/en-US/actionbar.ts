@@ -217,7 +217,6 @@ const actionbar: BaseTranslation = {
         retry: "Try again",
         noRoomFound: "No room matches your search.",
         noRooms: "There are no other rooms to explore yet.",
-        yourWorld: "Your world",
         youAreHere: "You are here",
         stars: "{count:number} {{star|stars}}",
         visits: "Visits",

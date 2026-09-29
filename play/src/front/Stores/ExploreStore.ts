@@ -49,3 +49,6 @@ export const exploreStore = createExploreStore();
 
 /** The universe's name once known, for the button's label. */
 export const universeNameStore = derived(exploreStore, ($explore) => $explore.universe?.universeName ?? "");
+
+/** The worlds folded in the Explore list, by slug. Kept while the game is open, like the people sidebar's groups. */
+export const exploreFoldedWorldsStore = writable<ReadonlySet<string>>(new Set());
