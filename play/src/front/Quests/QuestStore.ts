@@ -6,7 +6,7 @@ import { consumeQuestReset, questBrowserStorage, readQuestSim } from "./QuestDev
 import type { QuestSim } from "./QuestDevSettings";
 import type { MeetProgress } from "./MeetExchange";
 import type { QuestEvent, QuestGiver, QuestPath, QuestState } from "./QuestModel";
-import { acceptedUntrackedCount, QUEST_PATHS, reduceQuest, revealPending } from "./QuestModel";
+import { acceptedUntrackedCount, reduceQuest, revealPending } from "./QuestModel";
 import { clearQuestStorage, restoreQuestState, saveQuestState } from "./QuestPersistence";
 import type { QuestWorld } from "./QuestWorld";
 import { acceptanceOrigin, availablePaths, EMPTY_QUEST_WORLD, questOrigin, simulatedWorld } from "./QuestWorld";
@@ -252,10 +252,4 @@ export function resetQuests(): void {
     clearQuestStorage(storage);
     dispatchQuest({ type: "reset" });
     questMeetProgressStore.set("idle");
-}
-
-/** The paths accepted and not done, tracked first. */
-export function openQuestPaths(value: QuestState): QuestPath[] {
-    const open = QUEST_PATHS.filter((path) => value.quests[path].accepted && !value.quests[path].done);
-    return value.tracked ? [value.tracked, ...open.filter((path) => path !== value.tracked)] : open;
 }

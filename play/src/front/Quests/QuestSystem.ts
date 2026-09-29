@@ -90,9 +90,9 @@ function start(): () => void {
         derived([questStateStore, blockedStore], (values) => values).subscribe(([$state, $blocked]) => {
             if (revealTimer) clearTimeout(revealTimer);
             revealTimer = undefined;
+            // Busy or covered: a completion stays recorded and waits for the dock to be free.
             if ($blocked) {
                 freeSince = undefined;
-                if ($state.pending.length > 0) revealPendingQuest(true);
                 return;
             }
             const now = Date.now();
