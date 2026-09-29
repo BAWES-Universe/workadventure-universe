@@ -285,6 +285,19 @@ describe('SocialBehavior greetings', () => {
         expect(ai.generateBotResponseStream).toHaveBeenCalledTimes(1);
     });
 
+    it('does not mark a greeting as bot-initiated when already talking to the target', () => {
+        const bot = createBot([player(1)], { aiProviderRef: 'provider-1' });
+        const behavior = new SocialBehavior(createConfig());
+        behavior.setBot(bot as any);
+        lookForPeople(behavior);
+        expect(target(behavior)).toBe(1);
+        (behavior as any).activeConversations.set(1, { playerId: 1, spaceName: SPACE });
+
+        behavior.onSpaceJoined(SPACE);
+
+        expect((behavior as any).botInitiatedPlayers.has(1)).toBe(false);
+    });
+
     it('greets a player who walked up with the regular prompt', async () => {
         const bot = createBot([player(1)], { aiProviderRef: 'provider-1' });
         const ai = createAi();

@@ -358,7 +358,11 @@ export class SocialBehavior extends BaseBehavior {
             }
             
             const targetPlayerId = this.targetPlayerId;
-            this.botInitiatedPlayers.add(targetPlayerId);
+            // Mark the greeting as bot-initiated only when this call will lead to one. With a conversation
+            // already running, no new greeting is sent, and the mark would wrongly frame a later one.
+            if (!this.activeConversations.has(targetPlayerId)) {
+                this.botInitiatedPlayers.add(targetPlayerId);
+            }
 
             // Clear target
             this.targetPlayerId = null;
