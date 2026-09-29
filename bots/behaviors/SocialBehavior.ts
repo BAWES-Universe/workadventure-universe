@@ -6,11 +6,18 @@ import { BaseBehavior, createConversationState, type BehaviorConfig } from './Ba
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { SpaceUser } from '@workadventure/messages';
-import { ConversationMemory, type BotPlayerMemory } from '../memory/ConversationMemory';
+import { ConversationMemory } from '../memory/ConversationMemory';
 import { movementLogger } from '../utils/MovementLogger';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
+import {
+    buildBotInitiatedGreetingPrompt,
+    isAvailableForApproach,
+    isInOtherBubble,
+    pickFallbackGreeting,
+    shouldAbandonApproach,
+} from './socialRules';
 
 export interface SocialBehaviorConfig extends BehaviorConfig {
     type: 'social';
@@ -25,11 +32,16 @@ export interface SocialBehaviorConfig extends BehaviorConfig {
     wanderCenter: { x: number; y: number };
     wanderSpeed: number; // Movement speed
     approachDistance: number; // How close to get before starting conversation
+    greetingMessages?: string[]; // Greetings to use when the bot has no AI provider
 }
 
 export class SocialBehavior extends BaseBehavior {
     private conversationHistory: Map<number, number> = new Map(); // playerId -> last conversation time
     private targetPlayerId: number | null = null;
+    private approachStartedAt: number = 0; // When the bot started walking to targetPlayerId
+    private approachInProgress: boolean = false; // Prevent concurrent pathfinding requests while approaching
+    // Players the bot walked up to itself; their greeting opens with a reason for coming over
+    private botInitiatedPlayers: Set<number> = new Set();
     private wanderTarget: PositionInterface | null = null;
     private lastWanderUpdate: number = 0;
     private lastConversationCheck: number = 0;
@@ -227,15 +239,35 @@ export class SocialBehavior extends BaseBehavior {
 
         // If following a path, let BotClient handle movement (only if not in a space)
         if (this.bot.getIsFollowingPath()) {
-            this.bot.updatePathFollowing(deltaTime);
-            this.onBotPositionUpdated();
-            return;
+            if (this.targetPlayerId !== null) {
+                // Walking to a player: give up if it takes too long or they are no longer reachable
+                if (!this.isTargetStillApproachable(this.targetPlayerId, config, currentTime)) {
+                    this.abandonApproach(currentTime);
+                }
+            } else if (currentTime - this.lastConversationCheck > 1000) {
+                // Keep looking for people while wandering, not only between wander legs
+                this.lastConversationCheck = currentTime;
+                this.checkForConversations(config);
+                if (this.targetPlayerId !== null) {
+                    // Someone to talk to: stop wandering so the next update walks over to them
+                    this.bot.cancelPathfinding();
+                }
+            }
+            if (this.bot.getIsFollowingPath()) {
+                this.bot.updatePathFollowing(deltaTime);
+                this.onBotPositionUpdated();
+                return;
+            }
         }
 
         // Check for conversation opportunities periodically
         if (currentTime - this.lastConversationCheck > 1000) {
             this.lastConversationCheck = currentTime;
             this.checkForConversations(config);
+        }
+
+        if (this.targetPlayerId !== null && !this.isTargetStillApproachable(this.targetPlayerId, config, currentTime)) {
+            this.abandonApproach(currentTime);
         }
 
         // Handle movement
@@ -326,29 +358,39 @@ export class SocialBehavior extends BaseBehavior {
                 console.log(`[SocialBehavior] Bot-initiated conversation with player ${this.targetPlayerId}`);
             }
             
-            // Start conversation in memory
-            this.conversationMemory?.startConversation(botId, this.targetPlayerId);
-
-            // Start conversation (greeting deferred to onMemoryReady)
-            this.activeConversations.set(this.targetPlayerId, createConversationState(this.targetPlayerId, spaceName));
+            const targetPlayerId = this.targetPlayerId;
+            this.botInitiatedPlayers.add(targetPlayerId);
 
             // Clear target
             this.targetPlayerId = null;
+
+            const targetAlreadyInSpace = this.engagedWithUsers.get(targetPlayerId)?.spaceName === spaceName;
+            if (targetAlreadyInSpace) {
+                // The player's space info arrived before we joined, so onMemoryReady has already
+                // run and won't greet them. Greet now.
+                this.startConversationWithPlayer(targetPlayerId, spaceName, config, botId);
+            } else {
+                // Start conversation in memory
+                this.conversationMemory?.startConversation(botId, targetPlayerId);
+
+                // Start conversation (greeting deferred to onMemoryReady)
+                this.activeConversations.set(targetPlayerId, createConversationState(targetPlayerId, spaceName));
+            }
         } else {
             // No target player - player-initiated conversation
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                 console.log(`[SocialBehavior] Player-initiated conversation - checking for nearby players and setting up delayed check`);
             }
             
-            // Immediately check for nearby players who might be in the space
-            // This handles the case where the player is nearby but addSpaceUserMessage hasn't arrived yet
-            const nearbyPlayers = this.bot.getNearbyPlayers(config.conversationRadius || 100);
-            for (const player of nearbyPlayers) {
-                if (!this.activeConversations.has(player.userId)) {
+            // Greet players whose space info already arrived. Only actual members of this space are
+            // greeted, not whoever happens to be nearby: in a busy area the closest player isn't
+            // necessarily in the bubble. Later arrivals are greeted by onSpaceUserJoined.
+            for (const [userId, userData] of this.engagedWithUsers.entries()) {
+                if (userData.spaceName === spaceName && !this.activeConversations.has(userId)) {
                     if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
-                        console.log(`[SocialBehavior] Found nearby player ${player.userId} - starting conversation immediately`);
+                        console.log(`[SocialBehavior] Player ${userId} already in space - starting conversation immediately`);
                     }
-                    this.startConversationWithPlayer(player.userId, spaceName, config, botId);
+                    this.startConversationWithPlayer(userId, spaceName, config, botId);
                     break; // Only start one conversation at a time
                 }
             }
@@ -499,7 +541,8 @@ export class SocialBehavior extends BaseBehavior {
         playerId: number,
         spaceName: string,
         config: SocialBehaviorConfig,
-        botId: string
+        botId: string,
+        greet: boolean = true
     ): void {
         if (!this.bot || this.activeConversations.has(playerId)) {
             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -523,6 +566,10 @@ export class SocialBehavior extends BaseBehavior {
         // Claim this slot — prevent onMemoryReady from also greeting this player
         // (e.g., when onSpaceJoined triggers this and onSpaceUserJoined fires next).
         this.leadingGreetedPlayers.add(playerId);
+
+        if (!greet) {
+            return;
+        }
         
         // Generate AI greeting instead of preset
         this.generateAIGreeting(spaceName, playerId, botId).catch(error => {
@@ -635,6 +682,7 @@ export class SocialBehavior extends BaseBehavior {
         
         // Clear any target
         this.targetPlayerId = null;
+        this.botInitiatedPlayers.clear();
     }
 
     async onChatMessage(spaceName: string, message: string, senderId: number, url?: string, mediaType?: string, mimeType?: string, galleryUrls?: string[]): Promise<void> {
@@ -668,7 +716,9 @@ export class SocialBehavior extends BaseBehavior {
                 console.log(`[SocialBehavior] No active conversation found for player ${senderId}, creating one...`);
             }
             const config = this.config as SocialBehaviorConfig;
-            this.startConversationWithPlayer(senderId, spaceName, config, botId);
+            // No greeting: the player is already talking to us (e.g. after the conversation
+            // duration cap), so we answer their message instead of greeting them again
+            this.startConversationWithPlayer(senderId, spaceName, config, botId, false);
             conversation = this.activeConversations.get(senderId);
             
             // If still no conversation (startConversationWithPlayer might have failed), return
@@ -1702,14 +1752,24 @@ export class SocialBehavior extends BaseBehavior {
         playerId: number,
         botId: string
     ): Promise<void> {
-        if (!this.bot || !this.aiService) {
+        if (!this.bot) {
             return;
         }
 
+        const config = this.config as SocialBehaviorConfig;
+        const topics = config.conversationTopics || [];
+        // Whether the bot walked over to this player itself (consumed: one greeting per approach)
+        const initiatedByBot = this.botInitiatedPlayers.delete(playerId);
+
         // Get bot configuration from client (stored at spawn, no HTTP request needed)
         const botConfig = this.bot.getFullConfig();
-        if (!botConfig?.aiProviderRef) {
-            // No AI provider configured - don't send greeting
+        if (!this.aiService || !botConfig?.aiProviderRef) {
+            // No AI provider configured: send a configured or topic-based greeting instead of staying silent
+            if (this.currentSpaceName === spaceName && this.activeConversations.has(playerId)) {
+                const greeting = pickFallbackGreeting(config.greetingMessages, topics);
+                this.bot.sendStreamMessage(spaceName, `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`, '', true, greeting);
+                this.conversationMemory?.addMessage(botId, playerId, greeting, 'bot', spaceName);
+            }
             return;
         }
 
@@ -1737,7 +1797,9 @@ export class SocialBehavior extends BaseBehavior {
                 }
             }
 
-            const playerMessage = hasContext
+            const playerMessage = initiatedByBot
+                ? buildBotInitiatedGreetingPrompt(playerName, hasContext, topics)
+                : hasContext
                 ? playerName
                     ? `${playerName} just approached you. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history. Past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
                     : `They just approached you again. ⚠️ CRITICAL: This is NOT your first meeting with them. You have history. Past conversations, shared experiences, and a relationship. DO NOT treat this like meeting a stranger or someone new. Greet them based on your shared memories and past interactions, naturally like greeting someone familiar.`
@@ -1909,6 +1971,7 @@ export class SocialBehavior extends BaseBehavior {
             // Check if we can start conversation with this player
             if (this.canStartConversation(player.userId, config, currentTime)) {
                 this.targetPlayerId = player.userId;
+                this.approachStartedAt = currentTime;
                 break;
             }
         }
@@ -1930,15 +1993,17 @@ export class SocialBehavior extends BaseBehavior {
             return false;
         }
 
-        // Check player status if enabled
+        // Check player status if enabled: only approach players who are plainly online
         if (config.respectPlayerStatus) {
             const player = this.bot?.getPlayerInfo(playerId);
-            if (player) {
-                // AvailabilityStatus: 0=ONLINE, 1=AWAY, 2=SPEAK, 3=LISTEN, 4=DO_NOT_DISTURB
-                if (player.availabilityStatus === 1 || player.availabilityStatus === 4) {
-                    return false; // AWAY or DO_NOT_DISTURB
-                }
+            if (player && !isAvailableForApproach(player.availabilityStatus)) {
+                return false;
             }
+        }
+
+        // Don't walk into a conversation the player is already having with someone else
+        if (this.bot && isInOtherBubble(this.bot.getBubbleUserIds(playerId), playerId, this.bot.getUserId())) {
+            return false;
         }
 
         // TODO: Check if other bots are targeting this player (via BotRegistry)
@@ -1947,11 +2012,54 @@ export class SocialBehavior extends BaseBehavior {
         return true;
     }
 
+    /**
+     * Whether the bot should keep walking to its target: the player is still on the map, still
+     * available, not in someone else's bubble, near the bot's area, and not taking too long to reach.
+     */
+    private isTargetStillApproachable(playerId: number, config: SocialBehaviorConfig, currentTime: number): boolean {
+        if (!this.bot) return false;
+        const player = this.bot.getPlayerInfo(playerId);
+        if (!player) return false;
+        if (config.respectPlayerStatus && !isAvailableForApproach(player.availabilityStatus)) return false;
+        if (isInOtherBubble(this.bot.getBubbleUserIds(playerId), playerId, this.bot.getUserId())) return false;
+        if (this.isSummoned) return true;
+        const area = this.config.assignedSpace ?? { center: config.wanderCenter, radius: config.wanderRadius };
+        return !shouldAbandonApproach({
+            now: currentTime,
+            approachStartedAt: this.approachStartedAt,
+            targetPosition: player.position,
+            area: area?.center ? area : undefined,
+            leashMargin: config.conversationRadius || 100,
+        });
+    }
+
+    /**
+     * Stop walking to the current target and put them on cooldown, so the bot goes back to
+     * wandering instead of chasing them or standing next to them.
+     */
+    private abandonApproach(currentTime: number): void {
+        if (this.targetPlayerId === null) return;
+        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+            console.log(`[SocialBehavior] Giving up approaching player ${this.targetPlayerId}`);
+        }
+        this.conversationHistory.set(this.targetPlayerId, currentTime);
+        this.cleanupHistory(this.config as SocialBehaviorConfig);
+        this.targetPlayerId = null;
+        if (this.bot?.getIsFollowingPath()) {
+            this.bot.cancelPathfinding();
+        }
+    }
+
     private async approachPlayer(playerId: number, config: SocialBehaviorConfig): Promise<void> {
         if (!this.bot) return;
 
         // Don't approach if already in a conversation space
         if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+            return;
+        }
+
+        // Prevent concurrent pathfinding requests (update runs every tick)
+        if (this.approachInProgress) {
             return;
         }
 
@@ -1977,13 +2085,22 @@ export class SocialBehavior extends BaseBehavior {
 
         // Always try pathfinding first if available and not already following a path - don't move through walls
         if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
-            const success = await this.bot.moveToWithPathfinding(player.position.x, player.position.y);
+            this.approachInProgress = true;
+            let success = false;
+            try {
+                success = await this.bot.moveToWithPathfinding(player.position.x, player.position.y);
+            } finally {
+                this.approachInProgress = false;
+            }
             if (success) {
                 // Pathfinding will handle movement via updatePathFollowing
                 return;
             }
-            // Pathfinding failed - don't move if we can't find a path (prevents walking through walls)
-            console.warn(`[SocialBehavior] Pathfinding failed for player approach, staying in place`);
+            // Pathfinding failed - the player can't be reached, so give up instead of freezing in place
+            console.warn(`[SocialBehavior] Pathfinding failed for player approach, giving up on player ${playerId}`);
+            if (this.targetPlayerId === playerId) {
+                this.abandonApproach(Date.now());
+            }
             return;
         }
 
@@ -2070,6 +2187,12 @@ export class SocialBehavior extends BaseBehavior {
             if (this.bot.hasPathfinding() && !this.bot.getIsFollowingPath()) {
                 const success = await this.bot.moveToWithPathfinding(this.wanderTarget.x, this.wanderTarget.y);
                 this.wanderInProgress = false;
+
+                if (success && this.targetPlayerId !== null && this.bot.getIsFollowingPath()) {
+                    // Someone to talk to was spotted while this path was being computed: go to them instead
+                    this.bot.cancelPathfinding();
+                    return;
+                }
                 
                 if (success) {
                     // Pathfinding will handle movement via updatePathFollowing
@@ -2176,92 +2299,4 @@ export class SocialBehavior extends BaseBehavior {
             }
         }
     }
-
-    private getConversationStarter(topics: string[]): string {
-        if (topics.length === 0) {
-            return "Hello! How are you doing today?";
-        }
-        const topic = topics[Math.floor(Math.random() * topics.length)];
-        return `Hi! I'd love to chat about ${topic}. What do you think?`;
-    }
-
-    /**
-     * Get personalized greeting based on conversation memory
-     */
-    private getPersonalizedGreeting(topics: string[], memory: BotPlayerMemory | null): string {
-        if (!memory) {
-            return this.getConversationStarter(topics);
-        }
-
-        const emotions = memory.emotions;
-        const personalInfo = memory.personalInfo;
-        const relationship = memory.relationship;
-
-        // Check if bot is angry at player
-        if (emotions.botEmotion.anger > 60) {
-            return `Oh, it's you again. What do you want?`;
-        }
-
-        // Check if player is angry at bot
-        if (emotions.personEmotion.anger > 60) {
-            return `I can see you're still upset. I'm sorry about that.`;
-        }
-
-        // Check if it's player's birthday (if we know it)
-        if (personalInfo.birthday) {
-            const today = new Date();
-            const birthdayDate = this.parseBirthday(personalInfo.birthday);
-            if (birthdayDate && this.isToday(birthdayDate)) {
-                return `Happy birthday, ${personalInfo.name || 'friend'}! 🎉`;
-            }
-        }
-
-        // Use player's name if we know it
-        if (personalInfo.name && relationship.totalConversations > 1) {
-            return `Hey ${personalInfo.name}! Good to see you again.`;
-        }
-
-        // First time meeting
-        if (relationship.totalConversations === 1) {
-            return `Hello! Nice to meet you. How are you doing today?`;
-        }
-
-        // Returning player
-        if (relationship.totalConversations > 1) {
-            const daysSinceLastMet = (Date.now() - relationship.lastMet) / (1000 * 60 * 60 * 24);
-            if (daysSinceLastMet > 1) {
-                return `Long time no see! How have you been?`;
-            }
-            return `Hey! We were just talking. What's up?`;
-        }
-
-        // Default
-        return this.getConversationStarter(topics);
-    }
-
-    /**
-     * Parse birthday string to Date (simple implementation)
-     */
-    private parseBirthday(birthdayStr: string): Date | null {
-        // Simple parsing - can be enhanced
-        try {
-            // Try "January 15" format
-            const date = new Date(birthdayStr);
-            if (!isNaN(date.getTime())) {
-                return date;
-            }
-        } catch (e) {
-            // Ignore
-        }
-        return null;
-    }
-
-    /**
-     * Check if date is today (ignoring year)
-     */
-    private isToday(date: Date): boolean {
-        const today = new Date();
-        return date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
-    }
 }
-
