@@ -43,14 +43,15 @@ const botIdMap = new WeakMap<BotClient, string>();
 
 /**
  * Where a bot switched to idle by a live update should stand: the center of its square, taken from the
- * update when it carries one, else from the bot's config. Undefined when the update doesn't switch to
- * idle, already moves the bot, or there is no square.
+ * update when it carries one, else from the bot's config. Undefined when the update doesn't switch the bot
+ * from another behavior to idle (saves repeat the current type), already moves the bot, or there is no square.
  */
 export function idleHomeAfterSwitch(
     updates: Partial<BotConfiguration>,
-    config: Pick<BotConfiguration, 'assignedSpace'>
+    config: Pick<BotConfiguration, 'assignedSpace'>,
+    previousBehaviorType: BotConfiguration['behaviorType'] | undefined
 ): { x: number; y: number } | undefined {
-    if (updates.behaviorType !== 'idle' || updates.position) {
+    if (updates.behaviorType !== 'idle' || previousBehaviorType === 'idle' || updates.position) {
         return undefined;
     }
     const fromUpdate: { x: number; y: number } | undefined = updates.behaviorConfig?.assignedSpace?.center;
@@ -679,6 +680,7 @@ export class BotManager {
         }
 
         const changes: string[] = [];
+        const previousBehaviorType = instance.config.behaviorType;
 
         // Handle position update (teleport)
         if (updates.position) {
@@ -828,7 +830,7 @@ export class BotManager {
 
             // An idle bot stands on its square: put it back there when it's switched to idle,
             // wherever its previous behavior had walked it.
-            const home = idleHomeAfterSwitch(updates, instance.config);
+            const home = idleHomeAfterSwitch(updates, instance.config, previousBehaviorType);
             if (home) {
                 instance.client.teleportTo(home.x, home.y);
                 changes.push('position');
