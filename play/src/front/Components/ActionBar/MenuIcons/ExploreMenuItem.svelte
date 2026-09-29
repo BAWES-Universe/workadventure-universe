@@ -41,6 +41,7 @@
     <ActionBarButton
         on:click={toggle}
         {label}
+        boldLabel={true}
         classList="group/btn-explore"
         tooltipTitle={label}
         desc={$LL.actionbar.explore.desc()}
