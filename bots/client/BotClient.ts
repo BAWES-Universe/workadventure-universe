@@ -267,8 +267,32 @@ export class BotClient {
      * Set behavior for this bot
      */
     setBehavior(behavior: BaseBehavior): void {
+        if (this.behavior && this.behavior !== behavior) {
+            // Switching behaviors (e.g. from the bot editor). The old behavior may have left the bot
+            // mid-walk: idle never moves, so it never calls stop(), and players would keep seeing it
+            // walking in place. Drop the old path and stand still, facing down, before the new one starts.
+            this.cancelPathfinding();
+            this.state.setDirection(PositionMessage_Direction.DOWN);
+            this.sendStoppedPosition();
+        }
         this.behavior = behavior;
         behavior.setBot(this);
+    }
+
+    /**
+     * Stop moving and tell players right away, recording what was sent so the update loop
+     * doesn't follow up with a stale "moving" update for the same spot.
+     */
+    private sendStoppedPosition(): void {
+        this.state.setMoving(false);
+        const position = this.state.getPosition();
+        const direction = this.state.getDirection();
+        this.sendPosition(position, direction, false);
+        this.config.position = { ...position };
+        this.lastSentPosition = { ...position };
+        this.lastSentDirection = direction;
+        this.lastSentMoving = false;
+        this.lastSentTime = Date.now();
     }
 
     /**
@@ -1988,9 +2012,11 @@ export class BotClient {
      * Teleport bot to a new position instantly
      */
     teleportTo(x: number, y: number): void {
+        // A path from the old spot no longer applies, and a bot still marked as moving makes players'
+        // clients extrapolate past the new spot (the bot overshoots where it was dropped).
+        this.cancelPathfinding();
         this.state.setPosition({ x, y });
-        this.config.position = { x, y };
-        this.sendPosition(this.state.getPosition(), this.state.getDirection(), false);
+        this.sendStoppedPosition();
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
             console.log(`[Bot ${this.config.botId}] Teleported to (${x}, ${y})`);
         }
