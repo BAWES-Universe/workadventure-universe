@@ -1,16 +1,12 @@
 <script lang="ts">
     import { getContext, setContext } from "svelte";
     import { clickOutside } from "svelte-outside";
-    import { openedMenuStore, roomListActivated } from "../../../Stores/MenuStore";
+    import { openedMenuStore } from "../../../Stores/MenuStore";
     import AppsIcon from "../../Icons/AppsIcon.svelte";
     import ActionBarButton from "../ActionBarButton.svelte";
     import LL from "../../../../i18n/i18n-svelte";
-    import { isActivatedStore as isCalendarActivatedStore } from "../../../Stores/CalendarStore";
-    import { isActivatedStore as isTodoListActivatedStore } from "../../../Stores/TodoListStore";
-    import { roomListVisibilityStore } from "../../../Stores/ModalStore";
-    import { externalSvelteComponentService } from "../../../Stores/Utils/externalSvelteComponentService";
+    import { appsMenuHasItemsStore } from "../../../Stores/AppsMenuStore";
     import { createFloatingUiActions } from "../../../Utils/svelte-floatingui";
-    import { getAdditionalMenuItemStore } from "../../../Stores/AdditionalItemsMenuStore";
     import AppsMenuContent from "./AppsMenuContent.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
 
@@ -19,9 +15,6 @@
     setContext("inMenu", true);
 
     const inProfileMenu = getContext("profileMenu");
-
-    const externalActionBarSvelteComponent = externalSvelteComponentService.getComponentsByZone("actionBarAppsMenu");
-    const additionalMenuItemsStore = getAdditionalMenuItemStore("appsMenu");
 
     const [floatingUiRef, floatingUiContent, arrowAction] = createFloatingUiActions(
         {
@@ -32,31 +25,31 @@
     );
 </script>
 
-{#if !inProfileMenu}
+<!-- Only when the menu has something in it (see AppsMenuStore and docs/developer/apps-menu.md). -->
+{#if $appsMenuHasItemsStore && !inProfileMenu}
     <ActionBarButton
         on:click={() => {
-            if ($roomListVisibilityStore) return roomListVisibilityStore.set(false);
             openedMenuStore.toggle("appMenu");
         }}
         classList="group/btn-apps"
         context="actionBar"
         tooltipTitle={$LL.actionbar.help.apps.title()}
-        disabledHelp={$openedMenuStore === "appMenu" || $roomListVisibilityStore}
-        state={$openedMenuStore === "appMenu" || $roomListVisibilityStore ? "active" : "normal"}
+        disabledHelp={$openedMenuStore === "appMenu"}
+        state={$openedMenuStore === "appMenu" ? "active" : "normal"}
         dataTestId="apps-button"
         action={floatingUiRef}
         media="./static/images/tooltip-exemple.gif"
         desc={$LL.actionbar.help.apps.desc()}
     >
         <AppsIcon
-            strokeColor={$openedMenuStore === "appMenu" || $roomListVisibilityStore
+            strokeColor={$openedMenuStore === "appMenu"
                 ? "stroke-white fill-white"
                 : "stroke-white fill-transparent group-hover/btn-apps:fill-white"}
             hover="group-hover/btn-apps:fill-white"
         />
     </ActionBarButton>
 
-    {#if $openedMenuStore === "appMenu" && ($roomListActivated || $isCalendarActivatedStore || $isTodoListActivatedStore || $externalActionBarSvelteComponent.size > 0 || $additionalMenuItemsStore.size > 0)}
+    {#if $openedMenuStore === "appMenu"}
         <nav
             class="absolute"
             use:floatingUiContent
@@ -76,7 +69,7 @@
             </div>
         </nav>
     {/if}
-{:else}
+{:else if $appsMenuHasItemsStore}
     <HeaderMenuItem label={$LL.actionbar.help.apps.title()} />
     <AppsMenuContent />
 {/if}

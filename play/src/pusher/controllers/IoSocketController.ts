@@ -845,6 +845,13 @@ export class IoSocketController {
                                             );
                                             break;
                                         }
+                                        case "roomsFromSameUniverseQuery": {
+                                            await socketManager.handleRoomsFromSameUniverseQuery(
+                                                socket,
+                                                message.message.queryMessage
+                                            );
+                                            break;
+                                        }
                                         case "searchMemberQuery": {
                                             const searchMemberAnswer = await socketManager.handleSearchMemberQuery(
                                                 socket,
