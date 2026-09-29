@@ -148,4 +148,15 @@ describe("CameraManager zoom resistance zone (explore the room)", () => {
         expect(scene.removeWhiteMask).toHaveBeenCalled();
         expect(onEnter).not.toHaveBeenCalled();
     });
+
+    it("puts the wall back up when the zone is swapped", async () => {
+        const { manager, player } = await makeCameraManager();
+        manager.setResistanceZone(0.3, 0.6, 1, vi.fn(), false, undefined, player as never);
+        const state = manager as unknown as { wallDownDate: number };
+        state.wallDownDate = Date.now();
+
+        manager.setResistanceZone(0.6, 0.3, 1, vi.fn(), true, undefined, player as never);
+
+        expect(state.wallDownDate).toBe(0);
+    });
 });

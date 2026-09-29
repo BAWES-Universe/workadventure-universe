@@ -955,6 +955,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
             this.resistZoomCallback = undefined;
         }
         this.resistanceZoneEnterDate = 0;
+        // A wall broken in the previous zone must not let the user skip the next one.
+        this.wallDownDate = 0;
     }
 
     get resistanceStartZoomLevel(): number {
