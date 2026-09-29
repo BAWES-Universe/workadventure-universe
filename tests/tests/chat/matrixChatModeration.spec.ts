@@ -103,7 +103,8 @@ test.describe("chat moderation @matrix @nowebkit", () => {
     await page.getByTestId("@admin:matrix.workadventure.localhost-inviteButton").click();
 
     let roomId = await page.getByTestId("roomID").textContent();
-    roomId = roomId.replace("Room ID : ", "");
+    // The label reads "<label> : !id:server": keep the Matrix room ID, whatever the label text is.
+    roomId = roomId.slice(roomId.indexOf("!"));
 
     await matrixApi.acceptRoomInvitations(roomId);
    
