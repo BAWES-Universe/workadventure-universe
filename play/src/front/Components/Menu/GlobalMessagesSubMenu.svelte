@@ -3,8 +3,8 @@
     import TextGlobalMessage from "./TextGlobalMessage.svelte";
     import AudioGlobalMessage from "./AudioGlobalMessage.svelte";
 
-    let handleSendText: { sendTextMessage(broadcast: boolean): void };
-    let handleSendAudio: { sendAudioMessage(broadcast: boolean): Promise<void> };
+    let handleSendText: { sendTextMessage(broadcast: boolean): boolean };
+    let handleSendAudio: { sendAudioMessage(broadcast: boolean): Promise<boolean> };
 
     let inputSendTextActive = true;
     let uploadAudioActive = !inputSendTextActive;
@@ -22,10 +22,11 @@
 
     async function send(): Promise<void> {
         if (inputSendTextActive) {
-            return handleSendText.sendTextMessage(broadcastToWorld);
+            handleSendText.sendTextMessage(broadcastToWorld);
+            return;
         }
         if (uploadAudioActive) {
-            return handleSendAudio.sendAudioMessage(broadcastToWorld);
+            await handleSendAudio.sendAudioMessage(broadcastToWorld);
         }
     }
 </script>
