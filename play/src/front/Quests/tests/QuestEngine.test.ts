@@ -108,6 +108,13 @@ describe("mergeEngineProgress", () => {
 });
 
 describe("unsyncedActions", () => {
+    it("reports no track for a quest finished elsewhere, once merged", () => {
+        let state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1 });
+        state = reduceQuest(state, { type: "track", path: "meet" });
+        const engine = [remote("welcome.meet", "done")];
+        expect(unsyncedActions(mergeEngineProgress(state, engine), engine)).toEqual([]);
+    });
+
     it("reports what only this browser knew", () => {
         let state = reduceQuest(initialQuestState(), { type: "accept", path: "meet", now: 1 });
         state = reduceQuest(state, { type: "complete", path: "meet", now: 3 });

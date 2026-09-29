@@ -62,9 +62,9 @@ async function syncWithEngine(client: QuestEngineClient): Promise<void> {
         const remote = await client.list();
         // Signed out, or another account, while the engine answered: its list is not this player's.
         if (!remote || engine !== client) return;
-        const pendingActions = unsyncedActions(get(state), remote);
         apply((current) => mergeEngineProgress(current, remote));
-        for (const action of pendingActions) sendToEngine(action);
+        // From the merged state: a quest finished elsewhere is no longer reported as tracked here.
+        for (const action of unsyncedActions(get(state), remote)) sendToEngine(action);
     } catch (error) {
         console.warn("Quests: could not read progress from the engine", error);
     }
