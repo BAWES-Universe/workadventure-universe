@@ -5,7 +5,7 @@ import { gameSceneStore } from "../Stores/GameSceneStore";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { armQuestScene } from "./QuestDetectors";
 import type { QuestVisibleSurface } from "./QuestModel";
-import { questsOnOffer, visibleSurface } from "./QuestModel";
+import { celebrationWaiting, questsOnOffer, visibleSurface } from "./QuestModel";
 import {
     dispatchQuest,
     questAvailablePathsStore,
@@ -97,7 +97,7 @@ function start(): () => void {
             }
             const now = Date.now();
             freeSince ??= now;
-            if ($state.pending.length === 0) return;
+            if (!celebrationWaiting($state)) return;
             const wait = Math.max(0, PAYOFF_SETTLE_MS - (now - freeSince));
             revealTimer = setTimeout(() => {
                 revealTimer = undefined;

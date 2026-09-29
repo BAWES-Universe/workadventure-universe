@@ -331,6 +331,12 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
     return previous;
 }
 
+/** Whether a celebration is waiting for the dock to be free: a finished quest's, or the chapter's own. */
+export function celebrationWaiting(state: QuestState): boolean {
+    if (state.surface === "celebration") return false;
+    return state.pending.length > 0 || (allDone(state) && !state.chapterCelebrated);
+}
+
 /**
  * Plays the next waiting completion if the dock is free. `blocked` is true while surfaces are suppressed or the
  * person is busy (a call, Do not disturb, typing): the completion stays recorded and waits. An open quest panel
@@ -338,12 +344,9 @@ export function reduceQuest(previous: QuestState, event: QuestEvent): QuestState
  */
 export function revealPending(previous: QuestState, blocked: boolean): QuestState {
     const state = previous;
-    if (blocked || state.surface === "celebration") return state;
-    if (state.pending.length === 0) {
-        // The chapter's own celebration, if it never played to its end (a reload between the last quest's and it).
-        if (!allDone(state) || state.chapterCelebrated) return state;
-        return { ...state, celebrating: null, surface: "celebration" };
-    }
+    if (blocked || !celebrationWaiting(state)) return state;
+    // Nothing pending but still waiting: the chapter's own, which never played to its end (a reload cut it short).
+    if (state.pending.length === 0) return { ...state, celebrating: null, surface: "celebration" };
     const [celebrating, ...pending] = state.pending;
     return {
         ...state,

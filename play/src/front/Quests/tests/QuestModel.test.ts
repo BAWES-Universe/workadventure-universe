@@ -3,6 +3,7 @@ import type { QuestEvent, QuestState } from "../QuestModel";
 import {
     acceptedUntrackedCount,
     canOfferInvitation,
+    celebrationWaiting,
     initialQuestState,
     markedQuestPath,
     questsOnOffer,
@@ -224,6 +225,29 @@ describe("reduceQuest", () => {
 describe("revealPending", () => {
     const completed = () =>
         run({ type: "accept", path: "explore", now: 1 }, { type: "complete", path: "explore", now: 2 });
+
+    it("counts the chapter's celebration as waiting until it has played to its end", () => {
+        let state = run(
+            { type: "accept", path: "meet", now: 1 },
+            { type: "complete", path: "meet", now: 2 },
+            { type: "accept", path: "explore", now: 3 },
+            { type: "complete", path: "explore", now: 4 },
+            { type: "accept", path: "build", now: 5 },
+            { type: "complete", path: "build", now: 6 }
+        );
+        expect(celebrationWaiting(state)).toBe(true);
+        for (let i = 0; i < 3; i++) state = reduceQuest(revealPending(state, false), { type: "celebration-settled" });
+        // On screen: nothing more waits while it plays.
+        expect(state.celebrating).toBeNull();
+        expect(celebrationWaiting(state)).toBe(false);
+        // Cut short (the page closed with it on screen): still waiting, nothing pending, so the scheduler must look.
+        const cut = { ...state, surface: "log" as const };
+        expect(cut.pending).toEqual([]);
+        expect(celebrationWaiting(cut)).toBe(true);
+        expect(celebrationWaiting(reduceQuest(state, { type: "celebration-settled" }))).toBe(false);
+        expect(celebrationWaiting(completed())).toBe(true);
+        expect(celebrationWaiting(initialQuestState())).toBe(false);
+    });
 
     it("waits while blocked, then plays and releases the tracked slot", () => {
         const state = completed();
