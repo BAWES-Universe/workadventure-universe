@@ -19,6 +19,10 @@ vi.mock("../../Stores/MenuStore", async () => {
     const { writable } = await import("svelte/store");
     return { mapEditorMenuVisibleStore: writable(false) };
 });
+vi.mock("../../Stores/EmoteStore", async () => {
+    const { writable } = await import("svelte/store");
+    return { emotePlayedStore: writable(undefined) };
+});
 
 import type { GameScene } from "../../Phaser/Game/GameScene";
 import { armQuestScene, CHAT_ROOM_RETRY_MS } from "../QuestDetectors";

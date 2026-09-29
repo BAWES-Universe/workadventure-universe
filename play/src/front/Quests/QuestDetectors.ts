@@ -9,7 +9,10 @@ import { saySent$ } from "../Phaser/Game/Say/sendSay";
 import type { GameScene } from "../Phaser/Game/GameScene";
 import { gameManager } from "../Phaser/Game/GameManager";
 import { mapEditorMenuVisibleStore } from "../Stores/MenuStore";
+import { emotePlayedStore } from "../Stores/EmoteStore";
 import { classifyMeetMessage, MeetExchange } from "./MeetExchange";
+import { questGuidanceStore } from "./QuestGuidance";
+import { armQuestGuidance } from "./QuestGuidanceDetectors";
 import type { MeetMessage } from "./MeetExchange";
 import { arrivalRule, consumeQuestHashSnapshot, questHashSnapshot, questTargetsForArrival } from "./QuestHash";
 import type { QuestArea, QuestPresent, QuestWorld } from "./QuestWorld";
@@ -277,6 +280,7 @@ export function armQuestScene(scene: GameScene): () => void {
     // Meet: a message each way within one bubble session. -----------------------------------------------------------
     const setMeetProgress = () => questMeetProgressStore.set(exchange.progress);
     const onExchangeSide = (side: "mine" | "theirs", sessionId: string | undefined) => {
+        if (side === "mine") questGuidanceStore.recordUse("chat");
         if (exchange.record(side, sessionId)) completeQuest("meet");
         setMeetProgress();
     };
@@ -362,6 +366,15 @@ export function armQuestScene(scene: GameScene): () => void {
         if (command instanceof CreateEntityFrontCommand) deferred(() => completeQuest("build"));
     });
     cleanups.push(() => buildSubscription.unsubscribe());
+
+    // Teach once: the player's own Express and building uses, wherever they happen. ------------------------------------
+    cleanups.push(
+        armQuestGuidance(
+            { emotePlayed: emotePlayedStore, saySent: saySent$, entityPlaced: mapEditorCommandExecuted$ },
+            (key) => deferred(() => questGuidanceStore.recordUse(key)),
+            (command) => command instanceof CreateEntityFrontCommand
+        )
+    );
 
     // Orbit's Visit link on the room already open only teleports (no new scene): pick up its area and host here.
     const onHashChange = () => {
