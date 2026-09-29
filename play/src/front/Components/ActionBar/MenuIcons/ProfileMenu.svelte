@@ -30,6 +30,7 @@
     import XIcon from "../../Icons/XIcon.svelte";
     import MenuBurgerIcon from "../../Icons/MenuBurgerIcon.svelte";
     import DeskIcon from "../../Icons/DeskIcon.svelte";
+    import AchievementIcon from "../../Icons/AchievementIcon.svelte";
     import { connectionManager } from "../../../Connection/ConnectionManager";
     import { getColorHexOfStatus, getStatusInformation, getStatusLabel } from "../../../Utils/AvailabilityStatus";
     import ExternalComponents from "../../ExternalModules/ExternalComponents.svelte";
@@ -46,6 +47,7 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { questsProofEnabled, questProofController } from "../../../Quests/Proof/QuestProofGate";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
@@ -295,7 +297,7 @@
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div data-testid="action-user" class="flex items-center transition-all pointer-events-auto">
+<div data-testid="action-user" tabindex="-1" class="flex items-center transition-all pointer-events-auto">
     <div
         class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
         use:floatingUiRef
@@ -416,16 +418,17 @@
                         <DeskIcon height="22" width="22" />
                     </ActionBarButton>
                 {/if}
-                <!--                                <button-->
-                <!--                                    class="group flex p-2 gap-2 items-center hover:bg-white/10 transition-all cursor-pointer font-bold text-sm w-full pointer-events-auto text-left rounded"-->
-                <!--                                >-->
-                <!--                                    <div-->
-                <!--                                        class="transition-all w-6 h-6 aspect-square text-center flex items-center justify-center"-->
-                <!--                                    >-->
-                <!--                                        <AchievementIcon />-->
-                <!--                                    </div>-->
-                <!--                                    <div class="text-left flex items-center">{$LL.actionbar.quest()}</div>-->
-                <!--                                </button>-->
+                {#if import.meta.env.DEV && questsProofEnabled}
+                    <ActionBarButton
+                        label={$LL.questsProof.title()}
+                        on:click={() => {
+                            openedMenuStore.close("profileMenu");
+                            questProofController.openLog();
+                        }}
+                    >
+                        <AchievementIcon />
+                    </ActionBarButton>
+                {/if}
                 <HeaderMenuItem label={$LL.menu.sub.settings()} />
                 <ActionBarButton label={$LL.actionbar.editCamMic()} on:click={openEnableCameraScene}>
                     <CamSettingsIcon />

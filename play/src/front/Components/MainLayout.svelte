@@ -32,6 +32,7 @@
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
+    import { questsProofEnabled } from "../Quests/Proof/QuestProofGate";
     import { mapEditorSideBarWidthStore } from "./MapEditor/MapEditorSideBarWidthStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
@@ -133,6 +134,11 @@
 
     <div class="flex min-h-full flex-col-reverse mobile:flex-col">
         <section id="main-layout-main" class="pb-0 flex-1 pointer-events-none h-full w-full relative">
+            {#if import.meta.env.DEV && questsProofEnabled}
+                {#await import("../Quests/Proof/QuestProofMount.svelte") then proof}
+                    <svelte:component this={proof.default} />
+                {/await}
+            {/if}
             <div class="fixed z-[1000] bottom-0 start-0 right-0 m-auto w-max mobile:w-[98vw] md:max-w-[80%]">
                 <div class="popups flex items-end relative w-full justify-center mobile:mb-24 mb-4 h-[calc(100%-96px)]">
                     {#each $popupStore.slice().reverse() as popup, index (popup.uuid)}
@@ -254,6 +260,7 @@
             <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
                  directly above the menu button. -->
             <div
+                data-quest-proof-obstacle
                 class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
             >
                 <ExplorerMenu />
