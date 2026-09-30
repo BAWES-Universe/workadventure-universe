@@ -18,6 +18,12 @@ const warning: BaseTranslation = {
     reconnectingDetails: "Getting you back in",
     offlineTitle: "You're offline",
     offlineDetails: "We'll reconnect as soon as you're back online",
+    newVersion: {
+        title: "Universe just got an update",
+        countdown: "Refreshing in {seconds:number}s to load the latest version",
+        manual: "Refresh to load the latest version",
+        refreshNow: "Refresh now",
+    },
     waitingConnectionTitle: "Waiting for connection",
     waitingConnectionSubtitle: "Connecting",
     megaphoneNeeds: "To use the megaphone, you must activate your camera or your microphone or share your screen.",
