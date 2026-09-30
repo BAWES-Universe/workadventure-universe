@@ -5,6 +5,10 @@ on:
     workflows: ["Build Universe Images for Coolify"]
     types:
       - completed
+    # Only full release builds. Builds of other branches (universe-develop, dev-server builds of
+    # PR branches) can be partial (workflow_dispatch with one service), so the tag under test
+    # would not exist for every image.
+    branches: [universe]
   workflow_dispatch:
     inputs:
       docker_tag:
@@ -84,7 +88,8 @@ jobs:
               # Fallback to 'universe' if branch name not available
               BRANCH_NAME="universe"
             fi
-            echo "tag=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+            # Same sanitising as docker/metadata-action's branch tag: feature/x is tagged feature-x.
+            echo "tag=${BRANCH_NAME//\//-}" >> $GITHUB_OUTPUT
           else
             echo "tag=latest" >> $GITHUB_OUTPUT
           fi

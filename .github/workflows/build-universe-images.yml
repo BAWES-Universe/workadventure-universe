@@ -2,7 +2,10 @@ name: Build Universe Images for Coolify
 
 on:
   push:
-    branches: [universe]
+    # universe-develop builds feed the dev server (images tagged universe-develop and
+    # universe-develop-<sha>). Release and deploy below stay gated on refs/heads/universe, and
+    # `latest` is only tagged on the default branch, so a universe-develop build never reaches prod.
+    branches: [universe, universe-develop]
     paths:
       - 'play/**'
       - 'back/**'
