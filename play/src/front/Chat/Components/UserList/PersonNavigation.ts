@@ -6,11 +6,12 @@ import { scriptUtils } from "../../../Api/ScriptUtils";
 import { WOKA_SPEED } from "../../../Enum/EnvironmentVariable";
 import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
 import { rememberLocateRequest } from "../../../Phaser/Game/LocateRequest";
-import { canOpenOrbit, openOrbitPage } from "../../../external-modules/admin-api/index";
+import { canOpenOrbit, openOrbitPage, openOrbitProfile } from "../../../external-modules/admin-api/index";
 import type { PersonLocation } from "./PersonTarget";
 import { avatarIdOf, resolvePersonTarget } from "./PersonTarget";
 import type { Session } from "./PersonSessions";
 import { pickSessionToReach } from "./PersonSessions";
+import { IconPencil, IconUserCircle } from "@wa-icons";
 
 /**
  * Of a person's sessions (tabs, devices) on this map, the one closest to you; `fallback` when none of them is in view.
@@ -121,11 +122,24 @@ export function showMyself(userUuid: string | undefined): void {
         true
     );
     if (!canOpenOrbit()) return;
+    // Side by side: your profile as others see it (You, in Orbit), then the editor.
+    wokaMenuStore.addAction({
+        actionName: get(LL).chat.userList.viewProfile(),
+        style: "bg-white/10 hover:bg-white/30",
+        priority: 11,
+        testId: "view-my-profile",
+        actionIcon: IconUserCircle,
+        callback: () => {
+            wokaMenuStore.clear();
+            openOrbitProfile(userUuid);
+        },
+    });
     wokaMenuStore.addAction({
         actionName: get(LL).chat.userList.editMyVisitCard(),
         style: "is-primary",
         priority: 10,
         testId: "edit-my-visit-card",
+        actionIcon: IconPencil,
         callback: () => {
             wokaMenuStore.clear();
             openOrbitPage(EDIT_VISIT_CARD_PAGE);

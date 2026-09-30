@@ -262,6 +262,8 @@ test.describe('Meeting actions test @nomobile @nowebkit', () => {
           });
 
 
+          // Block or report sits under the card's "more" (⋯) button.
+          await page.getByTestId('wokamenu-more-button').click();
           await page.getByTestId('wokamenu-block-user-button').click();
           await page.getByTestId('blockmenu-block-user-button').click();
   

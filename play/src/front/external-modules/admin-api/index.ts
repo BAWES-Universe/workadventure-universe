@@ -258,6 +258,14 @@ export function requestOrbitPage(intent: OrbitNavigateIntent, params?: Record<st
     return true;
 }
 
+/**
+ * Opens a player's profile in Orbit, by the id they play with: yours is You, anyone else's is their page. Orbit sends
+ * guests and players it does not know to its home.
+ */
+export function openOrbitProfile(userUuid: string): boolean {
+    return requestOrbitPage("user-profile", { userUuid });
+}
+
 /** Tells an open Orbit that something it shows changed (a hint to fetch again; it trusts nothing in it). */
 export function notifyOrbitChanged(topic: OrbitEventTopic) {
     if (!adminModalOpen || !bridge) return;

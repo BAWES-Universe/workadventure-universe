@@ -89,7 +89,6 @@ const behavior = new SocialBehavior({
     conversationHistorySize: 50,
     respectPlayerStatus: true,
     maxConcurrentConversations: 3,
-    conversationTopics: ['technology', 'gaming', 'AI'],
     wanderRadius: 500,
     wanderCenter: { x: 500, y: 500 },
     wanderSpeed: 100,

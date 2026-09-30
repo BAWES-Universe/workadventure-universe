@@ -183,39 +183,39 @@ interface SocialBehaviorConfig extends BehaviorConfig {
     radius: number;  // How far the bot can wander from center
   };
   conversationRadius: number;  // Distance to detect players (default: 100px)
-  minTimeBetweenConversations: number;  // Cooldown (milliseconds, default: 60000)
+  minTimeBetweenConversations: number;  // Cooldown (milliseconds, server default: 300000)
   maxConversationDuration: number;  // Max chat time
   conversationHistorySize: number;  // Remember last N players
   respectPlayerStatus: boolean;  // Check player availability
   maxConcurrentConversations: number;  // Limit active chats
-  conversationTopics: string[];  // Topics to discuss
   wanderRadius: number;  // Area to wander in
   wanderCenter: { x: number; y: number };
   wanderSpeed: number;  // Movement speed
   approachDistance: number;  // How close to get before starting conversation
-  greetingMessages?: string[];  // Random greetings (optional, has default fallback)
 }
 ```
 
 **Behavior:**
 - Spawns at assignedSpace.center
 - Wander within `assignedSpace.radius` (random targets within this area)
-- Detect players within `conversationRadius`
-- Check if player is available (not busy, not in conversation)
-- Check conversation history (avoid recent players)
-- Approach player and initiate conversation
-- Maintain conversation for reasonable duration
-- Leave gracefully when done
-- Return to assigned space if it strays outside the radius
+- Look for players within `conversationRadius`, both while standing and while walking
+- Skip players who are not available (see below), on cooldown, or already in a bubble with someone else
+- Walk over to the player; a bubble forms when they are close enough
+- Give up after 20 seconds, when the player moves more than `conversationRadius` beyond the bot's area, or when they can't be reached. The player then goes on cooldown and the bot resumes wandering
+- Return to assigned space after the conversation
+
+**Availability (`respectPlayerStatus`, default true):**
+- Only players whose status is ONLINE, or not known yet, are approached
+- Away, busy, do not disturb, back in a moment, "no proximity meetings", silent zones and players in a meeting are left alone
+- Status changes are tracked from `playerDetailsUpdatedMessage`
+- Statuses follow the `AvailabilityStatus` enum in `messages/protos/messages.proto`; the rules live in `behaviors/socialRules.ts`
 
 **Engagement Logic:**
 - **Always accepts spaces** (uses default `shouldJoinProximitySpace = true`)
-- **In `onSpaceJoined`**: Only engages if `targetPlayerId` is set OR `isSummoned`
-  - If no target and not summoned → bot walked into idle player → return early, keep wandering
-  - If target set or summoned → player was actively being approached or bot was summoned → engage normally
-- **Wandering**: Picks random targets, never stops on top of players
-- **Ghost Mode**: Walks through idle players without engaging
-- **Sends greeting** when space is joined (if `targetPlayerId` is set OR `isSummoned`)
+- **Bot-initiated** (`targetPlayerId` set when the space is joined): the greeting says the bot walked over and opens with a reason to talk that fits the bot's chat instructions
+- **Player-initiated** (no target): the bot greets the players who are actually in the space (from `addSpaceUserMessage`/`initSpaceUsersMessage`), never a bystander who is merely nearby
+- **No AI provider**: the bot stays silent (social bots are meant to run with an AI provider)
+- A message from a player whose conversation was reset (e.g. by `maxConversationDuration`) gets an answer, not a second greeting
 
 **Summon Behavior:**
 - When summoned, bot uses pathfinding to reach player (3x speed)
@@ -225,70 +225,6 @@ interface SocialBehaviorConfig extends BehaviorConfig {
 - Returns to original position after player leaves (2x speed, uses pathfinding)
 - Resumes normal wandering behavior after returning
 - Cannot be summoned if engaged with another player
-
-**Key Implementation Details:**
-```typescript
-onSpaceJoined(spaceName: string): void {
-  // Like patrol bot: if no target, do nothing - just return
-  if (!this.bot || !this.targetPlayerId) return;
-  
-  // Player was being actively approached - engage
-  // ... start conversation, send greeting, etc.
-}
-
-private checkForConversations(config: SocialBehaviorConfig): void {
-  // Only look for conversations if within assigned space
-  if (!this.isWithinAssignedSpace()) return;
-  
-  const nearbyPlayers = this.bot.getNearbyPlayers(config.conversationRadius);
-  for (const player of nearbyPlayers) {
-    if (this.canStartConversation(player.userId, config, currentTime)) {
-      this.targetPlayerId = player.userId;  // Set target
-      break;
-    }
-  }
-}
-```
-
-**Smart Conversation Management:**
-```typescript
-class SocialBehavior extends BaseBehavior {
-  private conversationHistory: Map<number, number> = new Map();
-  private activeConversations: Map<number, ConversationState> = new Map();
-  private targetPlayerId: number | null = null;
-  
-  canStartConversation(playerId: number, config: SocialBehaviorConfig, currentTime: number): boolean {
-    // Check cooldown
-    const lastChat = this.conversationHistory.get(playerId);
-    if (lastChat && currentTime - lastChat < config.minTimeBetweenConversations) {
-      return false;
-    }
-    
-    // Check if already talking
-    if (this.activeConversations.has(playerId)) {
-      return false;
-    }
-    
-    // Check player status if enabled
-    if (config.respectPlayerStatus) {
-      const player = this.bot?.getPlayerInfo(playerId);
-      if (player) {
-        // AvailabilityStatus: 0=ONLINE, 1=AWAY, 2=SPEAK, 3=LISTEN, 4=DO_NOT_DISTURB
-        if (player.availabilityStatus === 1 || player.availabilityStatus === 4) {
-          return false;  // AWAY or DO_NOT_DISTURB
-        }
-      }
-    }
-    
-    // Check max conversations
-    if (this.activeConversations.size >= config.maxConcurrentConversations) {
-      return false;
-    }
-    
-    return true;
-  }
-}
-```
 
 **Conversation Memory:**
 - Per-bot, per-player memory system

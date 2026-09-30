@@ -7,6 +7,7 @@ const report: DeepPartial<Translation["report"]> = {
         content: "{userName}님과의 모든 통신을 차단합니다. 이 작업은 되돌릴 수 있습니다.",
         unblock: "이 사용자 차단 해제",
         block: "이 사용자 차단",
+        blockOrReport: "차단 또는 신고…",
     },
     title: "신고",
     content: "이 방의 관리자에게 신고 메시지를 보냅니다. 나중에 이 사용자를 금지할 수 있습니다.",

@@ -2,25 +2,25 @@
     import { onDestroy, onMount } from "svelte";
     import { computePosition, flip, shift, offset, autoUpdate } from "@floating-ui/dom";
     import type { Readable } from "svelte/store";
-    import businessCard from "../../images/business-cards.svg";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
-    import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { showReportScreenStore } from "../../../Stores/ShowReportScreenStore";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
+    import { openOrbitProfile } from "../../../external-modules/admin-api/index";
     import PersonActionButton from "./PersonActionButton.svelte";
     import { locatePerson } from "./PersonNavigation";
     import { openPersonMenuStore } from "./PersonMenuStore";
-    import { IconForbid, IconDots, IconMapPin } from "@wa-icons";
+    import { IconForbid, IconDots, IconMapPin, IconUserCircle } from "@wa-icons";
 
     export let user: ChatUser;
     /** Locate (follow) the person, listed when they are on this map. */
     export let showLocate = false;
-    export let showBusinessCard = false;
+    /** Their profile in Orbit. */
+    export let showViewProfile = false;
     export let showBan = false;
 
     let popoversElement: HTMLDivElement;
@@ -117,24 +117,11 @@
         if ($openPersonMenuStore === menuId) openPersonMenuStore.set(undefined);
     });
 
-    const openBusinessCard = (visitCardUrl: string | undefined) => {
-        analyticsClient.showBusinessCard();
-
-        // If woka menu is open, close it
-        if ($wokaMenuStore) {
-            wokaMenuStore.clear();
-        }
-
-        if (visitCardUrl) {
-            if ($requestVisitCardsStore == visitCardUrl) {
-                requestVisitCardsStore.set(null);
-                closeChatUserMenu();
-                return;
-            }
-            requestVisitCardsStore.set(visitCardUrl);
-        }
+    function viewProfile() {
+        if (!user.uuid) return;
+        openOrbitProfile(user.uuid);
         closeChatUserMenu();
-    };
+    }
 
     function banUser() {
         if (user.username && user.uuid) {
@@ -177,7 +164,7 @@
         <div
             bind:this={popoversElement}
             role="menu"
-            class="wa-dropdown-menu u-glass z-10 mr-1 fixed rounded-xl p-1 shadow-2xl"
+            class="wa-dropdown-menu z-10 mr-1 fixed rounded-xl p-1 shadow-2xl bg-contrast/95 border border-white/10 backdrop-blur"
         >
             {#if showLocate}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
@@ -200,21 +187,20 @@
                     {$LL.chat.userList.follow()}
                 </span>
             {/if}
-            {#if showBusinessCard}
+            {#if showViewProfile}
                 <!-- svelte-ignore a11y-click-events-have-key-events -->
                 <span
                     role="menuitem"
                     tabindex="0"
-                    class="businessCard wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
-                    on:click|stopPropagation={() => openBusinessCard(user.visitCardUrl)}
+                    data-testid={`view-profile-${user.username}`}
+                    class="view-profile wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 px-3 min-h-10 w-full text-sm rounded cursor-pointer"
+                    on:click|stopPropagation={viewProfile}
                     on:keydown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            openBusinessCard(user.visitCardUrl);
+                            viewProfile();
                         }
-                    }}
-                    ><img class="noselect" src={businessCard} alt="" height="13" width="13" draggable="false" />
-                    {$LL.chat.userList.businessCard()}</span
+                    }}><IconUserCircle font-size="13" /> {$LL.chat.userList.viewProfile()}</span
                 >
             {/if}
 

@@ -7,6 +7,7 @@ const report: DeepPartial<Translation["report"]> = {
         content: "Bloquejar qualsevol comunicació des de i cap a {userName}. Aquest cambi es pot desfer.",
         unblock: "Desbloquejar aquest usuari",
         block: "Bloquejar aquest usuari",
+        blockOrReport: "Bloquejar o denunciar…",
     },
     title: "Denunciar",
     content:

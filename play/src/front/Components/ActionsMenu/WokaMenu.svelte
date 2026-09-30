@@ -7,14 +7,17 @@
     import WokaFromUserId from "../Woka/WokaFromUserId.svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import LL from "../../../i18n/i18n-svelte";
-    import { gameManager } from "../../Phaser/Game/GameManager";
     import { peopleCardReturn } from "../../Chat/Stores/PeopleCardReturnStore";
-
     import type { WokaMenuAction, WokaMenuData } from "../../Stores/WokaMenuStore";
+    import { IconDots } from "@wa-icons";
 
     let wokaMenuData: WokaMenuData | undefined;
     let sortedActions: WokaMenuAction[] | undefined;
-    let remotePlayer: { chatID?: string } | undefined;
+    let mainActions: WokaMenuAction[] = [];
+    let overflowActions: WokaMenuAction[] = [];
+    /** The "more" (⋯) list is open. It closes whenever the card turns to someone else. */
+    let moreOpen = false;
+    let moreOpenFor: string | undefined;
 
     let wokaMenuStoreUnsubscriber: Unsubscriber | null;
 
@@ -42,12 +45,6 @@
     wokaMenuStoreUnsubscriber = wokaMenuStore.subscribe((value) => {
         wokaMenuData = value;
         if (wokaMenuData) {
-            // No map while a reconnect or a map change swaps it: a throw here would stop every store in the app.
-            remotePlayer = gameManager
-                .tryGetCurrentGameScene()
-                ?.getRemotePlayersRepository()
-                .getPlayers()
-                .get(wokaMenuData.userId);
             sortedActions = [...wokaMenuData.actions.values()].sort((a, b) => {
                 const ap = a.priority ?? 0;
                 const bp = b.priority ?? 0;
@@ -60,7 +57,15 @@
                     return 0;
                 }
             });
-            const nbButtons = sortedActions.length + (wokaMenuData.wokaName ? 0 : 1) + (remotePlayer?.chatID ? 1 : 0);
+            mainActions = sortedActions.filter((action) => !action.overflow);
+            overflowActions = sortedActions.filter((action) => action.overflow);
+            const cardFor = `${wokaMenuData.userUuid}#${wokaMenuData.userId}#${wokaMenuData.isSelf ? "me" : ""}`;
+            if (cardFor !== moreOpenFor) {
+                moreOpen = false;
+                moreOpenFor = cardFor;
+            }
+            const nbButtons =
+                mainActions.length + (overflowActions.length > 0 ? 1 : 0) + (wokaMenuData.wokaName ? 0 : 1);
             if (nbButtons < 4) {
                 buttonsLayout = "row";
             } else {
@@ -141,7 +146,7 @@
                 class:flex-row={buttonsLayout === "row"}
                 class:flex-wrap={buttonsLayout === "wrap"}
             >
-                {#each sortedActions ?? [] as action (action.uuid)}
+                {#each mainActions as action (action.uuid)}
                     <button
                         type="button"
                         data-testid={action.testId}
@@ -167,6 +172,20 @@
                     </button>
                 {/each}
 
+                {#if overflowActions.length > 0}
+                    <button
+                        type="button"
+                        data-testid="wokamenu-more-button"
+                        class="btn btn-light btn-ghost justify-center my-2 mx-1 min-w-0 bg-white/10 hover:bg-white/30 aspect-square px-2"
+                        aria-label={$LL.chat.userList.moreActions({ userName: displayName(wokaMenuData.wokaName) })}
+                        title={$LL.chat.userList.moreActions({ userName: displayName(wokaMenuData.wokaName) })}
+                        aria-expanded={moreOpen}
+                        on:click|preventDefault={() => (moreOpen = !moreOpen)}
+                    >
+                        <IconDots class="w-6 h-6" />
+                    </button>
+                {/if}
+
                 {#if !wokaMenuData.wokaName}
                     <button
                         type="button"
@@ -177,6 +196,32 @@
                     </button>
                 {/if}
             </div>
+            {#if moreOpen && overflowActions.length > 0}
+                <!-- Inside the card (which clips what overflows it), on the same solid panel as the buttons. -->
+                <div class="flex flex-col bg-contrast border-t border-white/10 p-1" role="menu">
+                    {#each overflowActions as action (action.uuid)}
+                        <button
+                            type="button"
+                            role="menuitem"
+                            data-testid={action.testId}
+                            class="flex gap-2 items-center w-full min-h-10 px-3 rounded text-sm text-start text-white hover:bg-white/10 {action.style ??
+                                ''}"
+                            on:click={() => analyticsClient.clickPropertyMapEditor(action.actionName, action.style)}
+                            on:click|preventDefault={() => {
+                                closeActionsMenu();
+                                action.callback();
+                            }}
+                        >
+                            {#if action.actionIcon && typeof action.actionIcon === "string"}
+                                <img src={action.actionIcon} class="w-5 h-5" alt="" />
+                            {:else if action.actionIcon && typeof action.actionIcon === "function"}
+                                <svelte:component this={action.actionIcon} class="w-5 h-5" />
+                            {/if}
+                            {action.actionName}
+                        </button>
+                    {/each}
+                </div>
+            {/if}
         {/if}
     </div>
 {/if}

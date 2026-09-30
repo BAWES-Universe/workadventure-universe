@@ -76,6 +76,8 @@ export class BotClient {
     private static readonly MAX_PENDING_MESSAGES = 100;
     private spaces: Map<string, SpaceUser['spaceUserId']> = new Map();
     private players: Map<number, PlayerInfo> = new Map();
+    // Conversation bubbles the bot can see: groupId -> user ids in that bubble
+    private bubbles: Map<number, number[]> = new Map();
     private queryId: number = 0;
     private pendingQueries: Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }> = new Map();
     private lastSentDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
@@ -1958,6 +1960,18 @@ export class BotClient {
     }
 
     /**
+     * User ids of the conversation bubble a player is in, if the bot can see one
+     */
+    getBubbleUserIds(playerId: number): number[] | undefined {
+        for (const userIds of this.bubbles.values()) {
+            if (userIds.includes(playerId)) {
+                return userIds;
+            }
+        }
+        return undefined;
+    }
+
+    /**
      * Get all nearby players
      */
     getNearbyPlayers(radius: number): PlayerInfo[] {
@@ -2459,8 +2473,25 @@ export class BotClient {
                 break;
 
             case 'groupUpdateMessage':
+                this.bubbles.set(message.groupUpdateMessage.groupId, message.groupUpdateMessage.userIds);
                 if (this.behavior) {
                     this.behavior.onGroupJoined(message.groupUpdateMessage.groupId, message.groupUpdateMessage.userIds);
+                }
+                break;
+
+            case 'groupDeleteMessage':
+                this.bubbles.delete(message.groupDeleteMessage.groupId);
+                break;
+
+            case 'playerDetailsUpdatedMessage':
+                {
+                    // Keep availability current (away, busy, do not disturb...) so behaviors can respect it.
+                    // UNCHANGED (0) means this update didn't touch the status.
+                    const status = message.playerDetailsUpdatedMessage.details?.availabilityStatus;
+                    const player = this.players.get(message.playerDetailsUpdatedMessage.userId);
+                    if (player && status) {
+                        player.availabilityStatus = status;
+                    }
                 }
                 break;
 
