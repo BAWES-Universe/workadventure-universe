@@ -7,6 +7,7 @@
  *  - PDF documents: extract text via pdf-parse
  *  - Word documents: extract text via mammoth
  *  - Spreadsheets: parse cells via xlsx
+ *  - Presentations: slide text via yauzl + linkedom, with zip-bomb bounds
  *  - Web pages: extract markdown via Readability + Turndown
  *  - Unknown/binary files: note filename and type
  *  - Error handling: fetch failures return graceful fallback
@@ -65,7 +66,101 @@ vi.mock('dns/promises', () => ({
    resolve6: mockResolve6,
 }));
 
+import { deflateRawSync } from 'zlib';
 import { FileParser } from '../services/FileParser';
+
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+const PPT_MIME = 'application/vnd.ms-powerpoint';
+
+function crc32(data: Buffer): number {
+    let crc = 0xffffffff;
+    for (const byte of data) {
+        crc ^= byte;
+        for (let k = 0; k < 8; k++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * Build a deflate zip in memory. `declaredSize` overrides an entry's
+ * uncompressed size in its headers, to simulate a lying zip bomb.
+ */
+function makeZip(entries: Array<{ name: string; data: string | Buffer; declaredSize?: number }>): Uint8Array {
+    const locals: Buffer[] = [];
+    const centrals: Buffer[] = [];
+    let offset = 0;
+    for (const entry of entries) {
+        const raw = typeof entry.data === 'string' ? Buffer.from(entry.data, 'utf8') : entry.data;
+        const compressed = deflateRawSync(raw);
+        const name = Buffer.from(entry.name, 'utf8');
+        const size = entry.declaredSize ?? raw.length;
+        const crc = crc32(raw);
+
+        const local = Buffer.alloc(30);
+        local.writeUInt32LE(0x04034b50, 0);
+        local.writeUInt16LE(20, 4);
+        local.writeUInt16LE(8, 8);
+        local.writeUInt32LE(crc, 14);
+        local.writeUInt32LE(compressed.length, 18);
+        local.writeUInt32LE(size, 22);
+        local.writeUInt16LE(name.length, 26);
+        locals.push(local, name, compressed);
+
+        const central = Buffer.alloc(46);
+        central.writeUInt32LE(0x02014b50, 0);
+        central.writeUInt16LE(20, 4);
+        central.writeUInt16LE(20, 6);
+        central.writeUInt16LE(8, 10);
+        central.writeUInt32LE(crc, 16);
+        central.writeUInt32LE(compressed.length, 20);
+        central.writeUInt32LE(size, 24);
+        central.writeUInt16LE(name.length, 28);
+        central.writeUInt32LE(offset, 42);
+        centrals.push(central, name);
+
+        offset += local.length + name.length + compressed.length;
+    }
+    const centralDir = Buffer.concat(centrals);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(centralDir.length, 12);
+    end.writeUInt32LE(offset, 16);
+    return new Uint8Array(Buffer.concat([...locals, centralDir, end]));
+}
+
+const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+
+function slideXml(shapes: string): string {
+    return `<?xml version="1.0" encoding="UTF-8"?><p:sld ${NS}><p:cSld><p:spTree>${shapes}</p:spTree></p:cSld></p:sld>`;
+}
+
+function textShape(paragraphs: Array<string | [string, number]>, placeholder?: string): string {
+    const ph = placeholder ? `<p:nvSpPr><p:nvPr><p:ph type="${placeholder}"/></p:nvPr></p:nvSpPr>` : '';
+    const body = paragraphs
+        .map((p) => {
+            const [text, level] = typeof p === 'string' ? [p, 0] : p;
+            return `<a:p>${level ? `<a:pPr lvl="${level}"/>` : ''}<a:r><a:t>${text}</a:t></a:r></a:p>`;
+        })
+        .join('');
+    return `<p:sp>${ph}<p:txBody>${body}</p:txBody></p:sp>`;
+}
+
+/** A deck whose presentation.xml lists slides in the given (rId) order. */
+function makeDeck(slides: string[], extra: Array<{ name: string; data: string }> = []): Uint8Array {
+    const ids = slides.map((_, i) => `<p:sldId id="${256 + i}" r:id="rId${i + 1}"/>`).join('');
+    const rels = slides
+        .map((_, i) => `<Relationship Id="rId${i + 1}" Type="slide" Target="slides/slide${i + 1}.xml"/>`)
+        .join('');
+    return makeZip([
+        { name: '[Content_Types].xml', data: '<Types/>' },
+        { name: 'ppt/presentation.xml', data: `<p:presentation ${NS}><p:sldIdLst>${ids}</p:sldIdLst></p:presentation>` },
+        { name: 'ppt/_rels/presentation.xml.rels', data: `<Relationships>${rels}</Relationships>` },
+        ...slides.map((xml, i) => ({ name: `ppt/slides/slide${i + 1}.xml`, data: xml })),
+        ...extra,
+    ]);
+}
 
 /**
  * Helper to mock global fetch with a single-chunk body stream.
@@ -349,6 +444,177 @@ describe('FileParser', () => {
             const result = await FileParser.parseFile(url, 'text/html');
 
             expect(result.type).toBe('webpage');
+            expect(result.text).toContain('private');
+            expect(globalThis.fetch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('PowerPoint presentations', () => {
+        const url = 'https://cdn.example.com/deck.pptx';
+
+        it('extracts titles, nested bullets, tables and speaker notes in slide order', async () => {
+            const table =
+                '<p:graphicFrame><a:graphic><a:graphicData><a:tbl>' +
+                '<a:tr><a:tc><a:txBody><a:p><a:r><a:t>DAU</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>1200</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+                '</a:tbl></a:graphicData></a:graphic></p:graphicFrame>';
+            mockFetchOnce(
+                makeDeck(
+                    [
+                        slideXml(
+                            textShape(['Quarterly Plan'], 'title') +
+                                textShape(['Grow users &amp; revenue', ['Ship quests', 1]]) +
+                                textShape(['7'], 'sldNum')
+                        ),
+                        slideXml(textShape(['Metrics'], 'title') + `<p:grpSp>${table}</p:grpSp>`),
+                    ],
+                    [
+                        {
+                            name: 'ppt/slides/_rels/slide1.xml.rels',
+                            data: '<Relationships><Relationship Id="rId2" Type="notesSlide" Target="../notesSlides/notesSlide1.xml"/></Relationships>',
+                        },
+                        {
+                            name: 'ppt/notesSlides/notesSlide1.xml',
+                            data: `<p:notes ${NS}><p:cSld><p:spTree>${textShape(['1'], 'sldImg')}${textShape(['Mention the budget'], 'body')}</p:spTree></p:cSld></p:notes>`,
+                        },
+                    ]
+                )
+            );
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.type).toBe('document');
+            expect(result.text).toBe(
+                'Slide 1: Quarterly Plan\n- Grow users & revenue\n  - Ship quests\nNotes: Mention the budget\n\n' +
+                    'Slide 2: Metrics\n| DAU | 1200 |'
+            );
+            expect(result.summary).toMatch(/^PowerPoint presentation \(2 slides, \d+ chars\)$/);
+            expect(result.truncated).toBe(false);
+            expect(result.metadata?.slideCount).toBe(2);
+        });
+
+        it('truncates long decks at MAX_FILE_CHARS and says so in the summary', async () => {
+            const body = 'x'.repeat(400);
+            mockFetchOnce(makeDeck(Array.from({ length: 60 }, (_, i) => slideXml(textShape([`Title ${i}`], 'title') + textShape([body])))));
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.type).toBe('document');
+            expect(result.truncated).toBe(true);
+            expect(result.text!.length).toBeLessThanOrEqual(FileParser.MAX_FILE_CHARS);
+            expect(result.summary).toContain('60 slides');
+            expect(result.summary).toContain('truncated');
+        });
+
+        it('rejects a file over the download cap before extraction', async () => {
+            const chunk = new Uint8Array(1024 * 1024);
+            let reads = 0;
+            const reader = {
+                read: async () => (reads++ < 30 ? { done: false, value: chunk } : { done: true, value: undefined }),
+                cancel: vi.fn(async () => {}),
+            };
+            (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                body: { getReader: () => reader },
+                headers: new Map(),
+            });
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.type).toBe('document');
+            expect(result.text).toContain("Couldn't read this PowerPoint file");
+            expect(result.text).toContain('too large');
+            expect(reader.cancel).toHaveBeenCalled();
+        });
+
+        it('refuses a slide that declares a huge uncompressed size (zip bomb)', async () => {
+            mockFetchOnce(
+                makeZip([{ name: 'ppt/slides/slide1.xml', data: 'tiny', declaredSize: 200 * 1024 * 1024 }])
+            );
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.text).toContain('too large');
+        });
+
+        it('stops a slide that inflates past its declared size (lying zip bomb)', async () => {
+            const huge = Buffer.alloc(8 * 1024 * 1024, 0x41);
+            mockFetchOnce(makeZip([{ name: 'ppt/slides/slide1.xml', data: huge, declaredSize: 1000 }]));
+
+            const started = Date.now();
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.type).toBe('document');
+            expect(result.text).toContain("Couldn't read this PowerPoint file");
+            expect(Date.now() - started).toBeLessThan(2000);
+        });
+
+        it('returns a graceful error for a corrupt deck', async () => {
+            mockFetchOnce(makeDeck([slideXml(textShape(['Hello']))]).slice(0, 200));
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.type).toBe('document');
+            expect(result.summary).toBe('Failed to parse PowerPoint presentation');
+            expect(result.text).toContain("Couldn't read this PowerPoint file");
+        });
+
+        it('returns a graceful error for an empty file', async () => {
+            mockFetchOnce(new Uint8Array(0));
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.text).toContain('empty');
+        });
+
+        it('reports a deck with no slides as unreadable', async () => {
+            mockFetchOnce(makeZip([{ name: '[Content_Types].xml', data: '<Types/>' }]));
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.text).toContain('no slides');
+        });
+
+        it('reports a deck with only picture slides as having no text', async () => {
+            mockFetchOnce(makeDeck([slideXml('<p:pic/>')]));
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.text).toContain('no extractable text');
+            expect(result.metadata?.slideCount).toBe(1);
+        });
+
+        it('explains that a password-protected .pptx cannot be read', async () => {
+            mockFetchOnce(new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]));
+
+            const result = await FileParser.parseFile(url, PPTX_MIME);
+
+            expect(result.summary).toBe('Password-protected PowerPoint — not readable');
+            expect(result.text).toContain('password-protected');
+        });
+
+        it('declines legacy binary .ppt with a clear message', async () => {
+            mockFetchOnce(new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]));
+
+            const result = await FileParser.parseFile('https://cdn.example.com/old.ppt', PPT_MIME);
+
+            expect(result.type).toBe('document');
+            expect(result.summary).toBe('Legacy PowerPoint (.ppt) — not supported');
+            expect(result.text).toContain('.pptx or PDF');
+        });
+
+        it('reads a .pptx that was labelled as .ppt', async () => {
+            mockFetchOnce(makeDeck([slideXml(textShape(['Renamed deck'], 'title'))]));
+
+            const result = await FileParser.parseFile('https://cdn.example.com/renamed.ppt', PPT_MIME);
+
+            expect(result.text).toBe('Slide 1: Renamed deck');
+        });
+
+        it('rejects private URLs before fetching', async () => {
+            const result = await FileParser.parseFile('http://10.0.0.1/deck.pptx', PPTX_MIME);
+
+            expect(result.type).toBe('document');
             expect(result.text).toContain('private');
             expect(globalThis.fetch).not.toHaveBeenCalled();
         });
