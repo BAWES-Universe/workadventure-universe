@@ -25,6 +25,7 @@
     import { botApiService } from "./services/BotApiService";
 
     let showCreateModal = false;
+    let detailView: BotDetailView | undefined;
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
     let error: string | null = null;
@@ -335,7 +336,10 @@
             roomChangeUnsubscribe = null;
         }
 
-        // Run pending saves now rather than dropping them: closing the editor right after an edit lost it
+        // Run pending saves now rather than dropping them: closing the editor right after an edit lost it. The
+        // detail view's own debounced edits go first, while this component still listens for them (a parent's
+        // onDestroy runs before its children's).
+        detailView?.flushPendingSaves();
         for (const { timeout, save } of pendingSaves.values()) {
             clearTimeout(timeout);
             save();
@@ -631,6 +635,7 @@
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView
+                bind:this={detailView}
                 bot={selectedBot}
                 onBack={handleBackToList}
                 onSave={handleSave}

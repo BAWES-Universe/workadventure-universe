@@ -59,13 +59,14 @@
 
     onDestroy(() => {
         unsubscribe();
-        // Closing the editor right after an edit would otherwise lose it. This runs before BotEditor's own
-        // onDestroy, which flushes the API save this schedules.
+        // Leaving the view right after an edit would otherwise lose it. When the whole editor closes, BotEditor
+        // calls flushPendingSaves() itself first: Svelte runs a parent's onDestroy before its children's, so by now
+        // BotEditor would no longer be listening for the store update this makes.
         flushPendingSaves();
     });
 
     /** Run pending debounced saves now rather than dropping them */
-    function flushPendingSaves() {
+    export function flushPendingSaves() {
         if (autoSaveTimeout) {
             clearTimeout(autoSaveTimeout);
             autoSaveTimeout = null;
