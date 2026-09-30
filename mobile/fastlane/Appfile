@@ -1,0 +1,4 @@
+# frozen_string_literal: true
+
+package_name("net.bawes.universe")
+json_key_file("fastlane/google-play-key.json")

@@ -1,0 +1,29 @@
+# frozen_string_literal: true
+
+platform :android do
+  desc "Build a signed release AAB"
+  lane :build do
+    gradle(
+      project_dir: "android",
+      task: "bundle",
+      build_type: "Release",
+      properties: {
+        "android.injected.signing.store.file" => ENV.fetch("KEYSTORE_PATH"),
+        "android.injected.signing.store.password" => ENV.fetch("STORE_PASSWORD"),
+        "android.injected.signing.key.alias" => ENV.fetch("KEY_ALIAS"),
+        "android.injected.signing.key.password" => ENV.fetch("KEY_PASSWORD"),
+      },
+    )
+  end
+
+  desc "Deploy to the Play Store internal track"
+  lane :deploy do
+    build
+    upload_to_play_store(track: "internal")
+  end
+
+  desc "Run Android unit tests"
+  lane :test do
+    gradle(project_dir: "android", task: "test")
+  end
+end
