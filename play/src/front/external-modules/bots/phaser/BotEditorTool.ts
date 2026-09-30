@@ -24,6 +24,7 @@ import {
     type BotEditorMode,
 } from "../stores/BotEditorStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
+import type { GameScene } from "../../../Phaser/Game/GameScene";
 import { WaypointPath, WaypointPathEvent } from "./WaypointPath";
 import { BotPreview, BotPreviewEvent } from "./BotPreview";
 
@@ -38,7 +39,7 @@ import { BotPreview, BotPreviewEvent } from "./BotPreview";
  * - Placement mode for new bots
  */
 export class BotEditorTool {
-    private scene: Phaser.Scene | undefined;
+    private scene: GameScene | undefined;
     private botPreviews: Map<string, BotPreview> = new Map();
     private waypointPaths: Map<string, WaypointPath> = new Map();
     private placementPreview: BotPreview | undefined;
@@ -63,12 +64,20 @@ export class BotEditorTool {
     /**
      * Get the current game scene
      */
-    private getScene(): Phaser.Scene | undefined {
+    private getScene(): GameScene | undefined {
         try {
             return gameManager.getCurrentGameScene();
         } catch {
             return undefined;
         }
+    }
+
+    /**
+     * The game only redraws the map when a scene is marked dirty (see Game.ts), so every
+     * visible change to the previews must ask for a redraw or it shows up late.
+     */
+    private markDirty(): void {
+        this.scene?.markDirty();
     }
 
     /**
@@ -125,6 +134,7 @@ export class BotEditorTool {
 
         // Destroy all previews
         this.destroyAllPreviews();
+        this.markDirty();
 
         // Clean up keyboard
         this.shiftKey = undefined;
@@ -156,18 +166,21 @@ export class BotEditorTool {
         // Subscribe to bots store to create/update/remove previews
         const botsUnsub = botPreviewsStore.subscribe((bots) => {
             this.syncPreviews(bots);
+            this.markDirty();
         });
         this.unsubscribers.push(botsUnsub);
 
         // Subscribe to selected bot changes
         const selectedUnsub = selectedBotStore.subscribe((bot) => {
             this.updateSelection(bot);
+            this.markDirty();
         });
         this.unsubscribers.push(selectedUnsub);
 
         // Subscribe to hovered bot changes
         const hoveredUnsub = hoveredBotIdStore.subscribe((botId) => {
             this.updateHover(botId);
+            this.markDirty();
         });
         this.unsubscribers.push(hoveredUnsub);
 
@@ -180,6 +193,7 @@ export class BotEditorTool {
         // Subscribe to placement cursor
         const cursorUnsub = placementCursorStore.subscribe((cursor) => {
             this.updatePlacementPreview(cursor);
+            this.markDirty();
         });
         this.unsubscribers.push(cursorUnsub);
 
@@ -190,6 +204,7 @@ export class BotEditorTool {
             } else if (!bot && this.placementPreview) {
                 this.destroyPlacementPreview();
             }
+            this.markDirty();
         });
         this.unsubscribers.push(placingUnsub);
     }
@@ -202,16 +217,21 @@ export class BotEditorTool {
             return;
         }
 
+        // Dragging a bot, a radius handle or a waypoint moves objects on every pointer event,
+        // so each one asks for a redraw.
         this.pointerDownHandler = (pointer: Phaser.Input.Pointer) => {
             this.handlePointerDown(pointer);
+            this.markDirty();
         };
 
         this.pointerMoveHandler = (pointer: Phaser.Input.Pointer) => {
             this.handlePointerMove(pointer);
+            this.markDirty();
         };
 
         this.pointerUpHandler = (pointer: Phaser.Input.Pointer) => {
             this.handlePointerUp(pointer);
+            this.markDirty();
         };
 
         this.scene.input.on(Phaser.Input.Events.POINTER_DOWN, this.pointerDownHandler);
@@ -408,6 +428,7 @@ export class BotEditorTool {
             } else if (selectedBot) {
                 // Delete the selected bot
                 this.deleteBotPreview(selectedBot.id);
+                this.markDirty();
             }
         }
     }

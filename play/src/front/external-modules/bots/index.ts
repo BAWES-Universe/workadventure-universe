@@ -50,10 +50,10 @@ export function openBotEditorFromMenu(): void {
         mapEditorModeStore.switchMode(true);
     }
 
-    const sidebarReady = () => {
-        const sidebar = document.querySelector(".side-bar-container");
-        return sidebar !== null && get(mapEditorActivated);
-    };
+    // openBotEditor() selects the bot editor tool straight away and injectBotEditorComponent() waits for the
+    // sidebar itself, so only the permission needs to be in place. Opening before the sidebar renders means
+    // it renders with the bot editor selected, instead of flashing the entity editor for a poll interval.
+    const sidebarReady = () => get(mapEditorActivated);
 
     if (sidebarReady()) {
         openBotEditor();
@@ -76,7 +76,7 @@ export function openBotEditorFromMenu(): void {
         } else if (Date.now() < deadline) {
             setTimeout(tryOpen, 300);
         } else {
-            console.warn("[Bot Extension] Bot editor: sidebar did not appear after map editor activation");
+            console.warn("[Bot Extension] Bot editor: map editing never became available for this room");
         }
     };
     tryOpen();
@@ -85,9 +85,22 @@ export function openBotEditorFromMenu(): void {
 let _extensionOptions: ExtensionModuleOptions | null = null;
 let toolButtonElement: HTMLElement | null = null;
 let sidebarContentElement: HTMLElement | null = null;
-// Svelte component instance - cleanup is handled by removing DOM element
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let botEditorComponentInstance: any | null = null;
+// Svelte component instance. Removing its DOM element does not destroy it: its store subscriptions (and the auto-save
+// they trigger) keep running until $destroy() is called, so every path that drops the instance goes through
+// destroyBotEditorComponentInstance()
+let botEditorComponentInstance: SvelteComponent | null = null;
+
+function destroyBotEditorComponentInstance() {
+    if (!botEditorComponentInstance) {
+        return;
+    }
+    try {
+        botEditorComponentInstance.$destroy();
+    } catch (e) {
+        console.warn("Error destroying bot editor component:", e);
+    }
+    botEditorComponentInstance = null;
+}
 let buttonClickHandler: ((e: Event) => void) | null = null;
 
 // Function to open the bot editor in sidebar
@@ -178,9 +191,9 @@ function injectBotEditorComponent() {
         }
     }
 
-    // If instance exists but container doesn't, clear the instance (component was destroyed)
+    // If instance exists but container doesn't (e.g. the map editor sidebar was unmounted), destroy the instance
     if (botEditorComponentInstance && !existingContainer) {
-        botEditorComponentInstance = null;
+        destroyBotEditorComponentInstance();
     }
 
     // Check if BotEditor tool is selected
@@ -248,9 +261,12 @@ function injectBotEditorComponent() {
     // Mount Svelte component directly using dynamic import
     void import("./BotEditor.svelte")
         .then((module) => {
-            const BotEditorComponent = module.default;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            botEditorComponentInstance = new (BotEditorComponent as any)({
+            // The container may have been removed while the module loaded (editor closed, or a newer injection
+            // replaced it). Mounting into it would leave an instance nothing can reach to destroy.
+            if (!botEditorContainer.isConnected || botEditorComponentInstance) {
+                return;
+            }
+            botEditorComponentInstance = new module.default({
                 target: botEditorContainer,
                 props: {},
             });
@@ -308,9 +324,8 @@ function removeBotEditorComponent() {
         });
     }
 
-    // Clear component instance reference after DOM removal
-    // Svelte will handle cleanup via onDestroy when DOM element is removed
-    botEditorComponentInstance = null;
+    // Removing the DOM element doesn't run the component's onDestroy, so destroy it explicitly
+    destroyBotEditorComponentInstance();
 
     // Show conditional content again - ensure all content is visible
     if (sidebarContentElement) {

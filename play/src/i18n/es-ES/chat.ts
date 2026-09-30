@@ -11,6 +11,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     typing: "està escrivint...",
     userList: {
         editMyVisitCard: "Editar mi tarjeta de visita",
+        viewProfile: "Ver perfil",
         follow: "Localizar",
     },
 };

@@ -7,6 +7,7 @@ const report: DeepPartial<Translation["report"]> = {
         content: "Blokěruj kuždu komunikaciju z wužywarjom {userName}. Ta opcija móžo se kuždy cas zasej anulěrowaś.",
         unblock: "Blokěrowanje togo wužywarja zasej anulěrowaś",
         block: "Blokěruj togo wužywarja",
+        blockOrReport: "Blokěrowaś abo wózjawiś…",
     },
     title: "Mjeldowanje",
     content: "Napiš powěsć administratoram teje śpy. Wóni mógu togo wužywarja blokěrowaś.",

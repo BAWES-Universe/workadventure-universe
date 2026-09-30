@@ -1,11 +1,9 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { gameManager } from "../../../Phaser/Game/GameManager";
-    import { localUserStore } from "../../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import type { BotData } from "../types";
-    import type { WokaData } from "../../../Components/Woka/WokaTypes";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
+    import { botWokaCatalogStore, ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
 
     export let bot: BotData;
     export let onSelect: () => void;
@@ -13,8 +11,8 @@
     export let onHover: ((botId: string | undefined) => void) | undefined = undefined;
     export let onLocate: (() => void) | undefined = undefined;
     export let showLocateButton: boolean = false;
+    export let toggling: boolean = false;
 
-    let wokaData: WokaData | null = null;
     let assetsDirection: number = 0;
 
     function handleMouseEnter() {
@@ -43,38 +41,8 @@
         return `${ABSOLUTE_PUSHER_URL}${relativeUrl}`;
     }
 
-    async function loadWokaData() {
-        try {
-            let roomUrl: string;
-            if (gameManager?.currentStartedRoom?.href) {
-                roomUrl = gameManager.currentStartedRoom.href;
-            } else if (window.location.href) {
-                roomUrl = window.location.href;
-            } else {
-                return;
-            }
-
-            const response = await fetch(
-                `${ABSOLUTE_PUSHER_URL}woka/list?roomUrl=${encodeURIComponent(roomUrl)}&context=bot`,
-                {
-                    headers: {
-                        Authorization: localUserStore.getAuthToken() || "",
-                    },
-                    credentials: "include",
-                }
-            );
-
-            if (response.ok) {
-                wokaData = await response.json();
-            }
-        } catch (err) {
-            // Silently fail - woka preview is optional
-            console.warn("Could not load woka data for preview:", err);
-        }
-    }
-
     onMount(() => {
-        void loadWokaData();
+        void ensureBotWokaCatalog();
     });
 
     function getBehaviorLabel(type?: string): string {
@@ -124,14 +92,14 @@
 >
     <div class="flex items-start justify-between gap-4">
         <!-- Left: Woka Preview -->
-        {#if bot.characterTexture && wokaData}
+        {#if bot.characterTexture && $botWokaCatalogStore}
             <div class="flex-shrink-0">
                 <div
                     class="w-12 h-12 bg-white/5 rounded border border-white/10 flex items-center justify-center overflow-hidden"
                 >
                     <WokaImage
                         selectedTextures={{ woka: bot.characterTexture }}
-                        {wokaData}
+                        wokaData={$botWokaCatalogStore}
                         {getTextureUrl}
                         canvasSize={48}
                         direction={assetsDirection}
@@ -216,11 +184,15 @@
             {/if}
 
             <!-- Toggle Switch -->
-            <label class="relative inline-flex items-center cursor-pointer">
+            <label
+                class="relative inline-flex items-center {toggling ? 'cursor-wait opacity-60' : 'cursor-pointer'}"
+                title={bot.enabled ? "Deactivate bot" : "Activate bot"}
+            >
                 <input
                     type="checkbox"
                     class="sr-only peer"
                     checked={bot.enabled ?? false}
+                    disabled={toggling}
                     on:change={(e) => {
                         const target = e.currentTarget;
                         if (target instanceof HTMLInputElement) {

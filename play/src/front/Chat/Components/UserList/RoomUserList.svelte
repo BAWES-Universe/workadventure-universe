@@ -16,6 +16,7 @@
     import ChatHeader from "../ChatHeader.svelte";
     import InviteFooter from "../InviteFooter.svelte";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
+    import { fold } from "../../../Utils/foldTransition";
     import UserList from "./UserList.svelte";
     import PeopleAndBots from "./PeopleAndBots.svelte";
     import type { SelfIdentity } from "./PersonActions";
@@ -206,26 +207,28 @@
                     <span class="grow" />
                     <IconChevronDown
                         font-size="18"
-                        class="shrink-0 text-white/60 transition-transform {elsewhereOpen
+                        class="shrink-0 text-white/60 transition-transform duration-200 ease-out {elsewhereOpen
                             ? ''
                             : '-rotate-90 rtl:rotate-90'}"
                     />
                 </button>
                 {#if elsewhereOpen}
-                    {#each elsewhereShown as group (group.key)}
-                        <div class="flex items-center gap-2 px-4 pt-1.5 pb-0.5 text-xs font-semibold text-white/60">
-                            <IconMapPin font-size="13" class="shrink-0 text-white/40" aria-hidden="true" />
-                            <span class="truncate">{group.name}</span>
-                        </div>
-                        <PeopleAndBots
-                            all={group.all}
-                            shown={group.people}
-                            {isMatrixChatEnabled}
-                            {isSearching}
-                            peopleHeader={false}
-                            testId="peopleElsewhere"
-                        />
-                    {/each}
+                    <div class="flex flex-col" transition:fold>
+                        {#each elsewhereShown as group (group.key)}
+                            <div class="flex items-center gap-2 px-4 pt-1.5 pb-0.5 text-xs font-semibold text-white/60">
+                                <IconMapPin font-size="13" class="shrink-0 text-white/40" aria-hidden="true" />
+                                <span class="truncate">{group.name}</span>
+                            </div>
+                            <PeopleAndBots
+                                all={group.all}
+                                shown={group.people}
+                                {isMatrixChatEnabled}
+                                {isSearching}
+                                peopleHeader={false}
+                                testId="peopleElsewhere"
+                            />
+                        {/each}
+                    </div>
                 {/if}
             </section>
         {/if}
@@ -247,14 +250,16 @@
                     <span class="grow" />
                     <IconChevronDown
                         font-size="18"
-                        class="shrink-0 text-white/60 transition-transform {offlineOpen
+                        class="shrink-0 text-white/60 transition-transform duration-200 ease-out {offlineOpen
                             ? ''
                             : '-rotate-90 rtl:rotate-90'}"
                     />
                 </button>
                 {#if offlineOpen}
-                    <p class="m-0 px-4 pb-2 text-xs text-white/50">{$LL.chat.peopleTab.offlineHint()}</p>
-                    <UserList people={offlineShown} {isMatrixChatEnabled} />
+                    <div class="flex flex-col" transition:fold>
+                        <p class="m-0 px-4 pb-2 text-xs text-white/50">{$LL.chat.peopleTab.offlineHint()}</p>
+                        <UserList people={offlineShown} {isMatrixChatEnabled} />
+                    </div>
                 {/if}
             </section>
         {/if}

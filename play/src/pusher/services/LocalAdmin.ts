@@ -50,6 +50,7 @@ import { localWokaService } from "./LocalWokaService";
 import { MetaTagsDefaultValue } from "./MetaTagsBuilder";
 import { localCompanionService } from "./LocalCompanionSevice";
 import type { ShortMapDescription, ShortMapDescriptionList } from "./ShortMapDescription";
+import type { UniverseRoomsData } from "./UniverseRooms";
 import type { WorldChatMembersData } from "./WorldChatMembersData";
 import { iceServersService } from "./IceServersService";
 
@@ -361,6 +362,32 @@ class LocalAdmin implements AdminInterface {
         }
 
         return Promise.reject(new Error("No admin backoffice set!"));
+    }
+
+    async getRoomsFromSameUniverse(roomUrl: string, userUuid: string, locale?: string): Promise<UniverseRoomsData> {
+        // Without an admin there are no universes: the rooms of this map storage make one unnamed world.
+        const rooms = await this.getUrlRoomsFromSameWorld(roomUrl, locale);
+        // Only "/~/<map path>" rooms get this far (see getUrlRoomsFromSameWorld), listed as "/~/" + their raw path, so
+        // the page's path matches once its percent-encoding (a space in a map's name) is undone.
+        const currentPath = decodeURI(new URL(roomUrl).pathname);
+        return {
+            universeName: "",
+            worlds: [
+                {
+                    name: "",
+                    slug: "",
+                    isCurrent: true,
+                    rooms: rooms.map((room) => ({
+                        name: room.name ?? room.roomUrl,
+                        roomUrl: room.roomUrl,
+                        description: room.description ?? undefined,
+                        stars: 0,
+                        visits: 0,
+                        isCurrent: room.roomUrl === currentPath,
+                    })),
+                },
+            ],
+        };
     }
 
     getProfileUrl(accessToken: string, playUri: string): string {

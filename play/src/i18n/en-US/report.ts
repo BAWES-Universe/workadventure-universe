@@ -6,6 +6,7 @@ const report: BaseTranslation = {
         content: "Block any communication from and to {userName}. This can be reverted.",
         unblock: "Unblock this user",
         block: "Block this user",
+        blockOrReport: "Block or report…",
     },
     title: "Report",
     content: "Send a report message to the administrators of this room. They may later ban this user.",

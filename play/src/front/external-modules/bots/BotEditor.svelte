@@ -9,6 +9,7 @@
         botEditorModeStore,
         selectedBotStore,
         botPreviewsStore,
+        botsLoadedForRoomIdStore,
         placingBotStore,
         roomChangeTriggerStore,
         upsertBot,
@@ -17,12 +18,14 @@
         startPlacingBot,
         cancelPlacement,
         loadBotPreviews,
+        queueBotSave,
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
 
     let showCreateModal = false;
+    let detailView: BotDetailView | undefined;
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
     let error: string | null = null;
@@ -37,10 +40,25 @@
         currentMode = mode;
     });
 
-    // Debounced auto-save for position/radius changes
-    let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+    // Debounced auto-save. Behavior config (position, radius...) and AI config are saved separately, so a change to one
+    // doesn't cancel the other's pending save
+    type SaveKind = "config" | "ai";
+    const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
     let lastSavedAIConfig: string | null = null;
+
+    /** Debounce a save (wait 1 second after the last change), replacing the pending save of the same kind */
+    function scheduleSave(kind: SaveKind, save: () => void): void {
+        const pending = pendingSaves.get(kind);
+        if (pending) {
+            clearTimeout(pending.timeout);
+        }
+        const timeout = setTimeout(() => {
+            pendingSaves.delete(kind);
+            save();
+        }, 1000);
+        pendingSaves.set(kind, { timeout, save });
+    }
 
     const unsubscribeSelectedBot = selectedBotStore.subscribe((bot) => {
         if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -98,22 +116,18 @@
 
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
-                // Clear any pending save
-                if (saveTimeout) {
-                    clearTimeout(saveTimeout);
-                }
-
-                // Debounce saves (wait 1 second after last change)
-                saveTimeout = setTimeout(() => {
+                scheduleSave("config", () => {
                     void (async () => {
                         try {
                             // Extract behaviorType from behaviorConfig if present, or use top-level
                             const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
 
-                            await botApiService.updateBot(bot.id, {
-                                behaviorType, // Include behaviorType explicitly to ensure it's saved
-                                behaviorConfig: bot.behaviorConfig,
-                            });
+                            await queueBotSave(bot.id, () =>
+                                botApiService.updateBot(bot.id, {
+                                    behaviorType, // Include behaviorType explicitly to ensure it's saved
+                                    behaviorConfig: bot.behaviorConfig,
+                                })
+                            );
                             lastSavedBotConfig = currentConfig;
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
@@ -130,7 +144,7 @@
                             // For other errors, just log (don't show for auto-saves)
                         }
                     })();
-                }, 1000);
+                });
             }
 
             // Auto-save when AI config changes (provider, instructions) - debounced
@@ -141,13 +155,7 @@
                         aiProviderRef: bot.aiProviderRef,
                     });
                 }
-                // Clear any pending save
-                if (saveTimeout) {
-                    clearTimeout(saveTimeout);
-                }
-
-                // Debounce saves (wait 1 second after last change)
-                saveTimeout = setTimeout(() => {
+                scheduleSave("ai", () => {
                     void (async () => {
                         try {
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -156,13 +164,19 @@
                                     chatInstructions: bot.chatInstructions?.substring(0, 50),
                                 });
                             }
-                            // Include behaviorType to ensure it's saved when AI config changes
-                            const behaviorType = bot.behaviorType || bot.behaviorConfig?.behaviorType || "idle";
-
-                            await botApiService.updateBot(bot.id, {
-                                behaviorType, // Include behaviorType explicitly to ensure it's saved
-                                aiProviderRef: bot.aiProviderRef,
-                                chatInstructions: bot.chatInstructions,
+                            // Include behaviorType to ensure it's saved when AI config changes. The save is queued
+                            // behind this bot's other saves, and reads the type when it runs rather than from this
+                            // snapshot: the behavior may have been switched in the meantime, and a stale type would
+                            // switch it back.
+                            await queueBotSave(bot.id, () => {
+                                const currentBot = get(botPreviewsStore).get(bot.id) ?? bot;
+                                const behaviorType =
+                                    currentBot.behaviorType || currentBot.behaviorConfig?.behaviorType || "idle";
+                                return botApiService.updateBot(bot.id, {
+                                    behaviorType, // Include behaviorType explicitly to ensure it's saved
+                                    aiProviderRef: bot.aiProviderRef,
+                                    chatInstructions: bot.chatInstructions,
+                                });
                             });
                             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                                 console.log("[BotEditor] AI config update successful");
@@ -183,7 +197,7 @@
                             // For other errors, just log (don't show for auto-saves)
                         }
                     })();
-                }, 1000);
+                });
             }
         } else {
             // Reset when no bot selected
@@ -250,13 +264,22 @@
 
     // Subscribe to room changes and reload bots when room changes
     let roomChangeUnsubscribe: (() => void) | null = null;
+    // Svelte doesn't cancel onMount's continuation when the component is destroyed mid-load
+    let destroyed = false;
 
     onMount(async () => {
         // Activate the Phaser tool first
         botEditorTool.activate();
 
-        // Load bots from API (tool will create previews via store subscription)
-        await loadBots();
+        // Load bots from API (tool will create previews via store subscription).
+        // Reopening the editor in the same room keeps the current list on screen while it refreshes.
+        const loadedRoomId = get(botsLoadedForRoomIdStore);
+        await loadBots({ keepCurrent: loadedRoomId !== null && loadedRoomId === botApiService.getRoomId() });
+
+        // The editor was closed while loading: don't reactivate the tool or leave a subscription nothing removes
+        if (destroyed) {
+            return;
+        }
 
         // Ensure tool is still active after loading (in case scene wasn't ready initially)
         if (!botEditorTool.getIsActive()) {
@@ -279,7 +302,7 @@
         });
     });
 
-    async function loadBots() {
+    async function loadBots({ keepCurrent = false }: { keepCurrent?: boolean } = {}) {
         if (!botApiService.isInitialized()) {
             console.warn("[BotEditor] API service not initialized");
             return;
@@ -288,35 +311,49 @@
         isLoading = true;
         error = null;
 
-        // Clear bot store immediately to prevent showing old bots from previous room
-        botPreviewsStore.set(new Map());
+        if (!keepCurrent) {
+            // Clear bot store immediately to prevent showing old bots from previous room
+            botPreviewsStore.set(new Map());
+            botsLoadedForRoomIdStore.set(null);
+        }
         selectedBotStore.set(undefined);
-        // Reset mode to list when clearing bots (e.g., when navigating to different map)
+        // Reset mode to list when (re)loading bots (e.g., when navigating to different map)
         botEditorModeStore.set("list");
 
+        const roomId = botApiService.getRoomId();
         try {
             const loadedBots = await botApiService.listBots();
             // Update store with loaded bots
             loadBotPreviews(loadedBots);
+            botsLoadedForRoomIdStore.set(roomId);
         } catch (e) {
             console.error("[BotEditor] Failed to load bots:", e);
             error = e instanceof Error ? e.message : "Failed to load bots";
+            // The list shown may be stale now, so the next open reloads it from scratch
+            botsLoadedForRoomIdStore.set(null);
         } finally {
             isLoading = false;
         }
     }
 
     onDestroy(() => {
+        destroyed = true;
+
         // Unsubscribe from room changes
         if (roomChangeUnsubscribe) {
             roomChangeUnsubscribe();
             roomChangeUnsubscribe = null;
         }
 
-        // Clear any pending saves
-        if (saveTimeout) {
-            clearTimeout(saveTimeout);
+        // Run pending saves now rather than dropping them: closing the editor right after an edit lost it. The
+        // detail view's own debounced edits go first, while this component still listens for them (a parent's
+        // onDestroy runs before its children's).
+        detailView?.flushPendingSaves();
+        for (const { timeout, save } of pendingSaves.values()) {
+            clearTimeout(timeout);
+            save();
         }
+        pendingSaves.clear();
 
         // Deactivate the Phaser tool
         botEditorTool.deactivate();
@@ -455,7 +492,8 @@
                 chatInstructions: selectedBot.chatInstructions,
             };
 
-            const updatedBot = await botApiService.updateBot(selectedBot.id, updateData);
+            const botId = selectedBot.id;
+            const updatedBot = await queueBotSave(botId, () => botApiService.updateBot(botId, updateData));
 
             // Convert API response back to BotData format
             const textureId = typeof updatedBot.characterTextureId === "string" ? updatedBot.characterTextureId : "";
@@ -556,7 +594,7 @@
             <p class="text-red-200 text-sm">{error}</p>
             <button
                 class="mt-2 px-3 py-1 bg-red-500/20 text-red-200 rounded hover:bg-red-500/30 text-xs"
-                on:click={loadBots}
+                on:click={() => loadBots()}
             >
                 Retry
             </button>
@@ -606,6 +644,7 @@
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView
+                bind:this={detailView}
                 bot={selectedBot}
                 onBack={handleBackToList}
                 onSave={handleSave}

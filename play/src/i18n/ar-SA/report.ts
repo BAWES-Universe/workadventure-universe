@@ -7,6 +7,7 @@ const report: DeepPartial<Translation["report"]> = {
         content: "حظر أي تواصل مع {userName}. يمكن التراجع عنه في أي وقت.", // Block any communication with {userName}. Can be undone at any time.
         unblock: "رفع الحظر عن هذا المستخدم", // Unblock this user
         block: "حظر هذا المستخدم", // Block this user
+        blockOrReport: "حظر أو إبلاغ…", // Block or report…
     },
     title: "الإبلاغ", // Report
     content: "قم بكتابة تقرير إلى مديري هذه الغرفة. يمكنهم بعد ذلك حظر المستخدم.", // Write a report to the administrators of this room. They can then ban the user.
