@@ -204,6 +204,9 @@ describe('SocialBehavior approach', () => {
         const behavior = new SocialBehavior(createConfig());
         behavior.setBot(bot as any);
         const config = (behavior as any).config;
+        // Pin the target: a random one within 10px of the bot needs no path, so nothing would throw
+        (behavior as any).wanderTarget = { x: 150, y: 0 };
+        (behavior as any).lastWanderUpdate = Date.now();
 
         await expect((behavior as any).wander(config, 16)).rejects.toThrow('pathfinder crashed');
         (behavior as any).wanderTarget = { x: 150, y: 0 };

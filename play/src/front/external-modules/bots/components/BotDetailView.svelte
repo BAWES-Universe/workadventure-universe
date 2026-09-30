@@ -1,10 +1,11 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
+    import { get } from "svelte/store";
     import LL from "../../../../i18n/i18n-svelte";
     import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
     import type { BotData } from "../types";
     import WokaImage from "../../../Components/Woka/WokaImage.svelte";
-    import { selectedBotStore, upsertBot } from "../stores/BotEditorStore";
+    import { botPreviewsStore, selectedBotStore, upsertBot } from "../stores/BotEditorStore";
     import { botApiService } from "../services/BotApiService";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
     import BotTexturePicker from "./BotTexturePicker.svelte";
@@ -42,28 +43,47 @@
 
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
-        if (storeBot && currentBot && storeBot.id === currentBot.id) {
-            // Update position and radius from store (map changes)
-            if (storeBot.behaviorConfig?.assignedSpace) {
-                if (!currentBot.behaviorConfig) {
-                    currentBot.behaviorConfig = { assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } };
-                }
-                currentBot.behaviorConfig.assignedSpace = { ...storeBot.behaviorConfig.assignedSpace };
-                currentBot = currentBot; // Trigger reactivity
-            }
+        if (storeBot && currentBot && storeBot.id === currentBot.id && storeBot.behaviorConfig) {
+            // Take the whole behavior config from the store, not just the assigned space: the map also changes the
+            // detection range and waypoints, and autoSave() writes currentBot back to the store, so any field left
+            // stale here would undo the map change on the next edit (e.g. typing chat instructions)
+            currentBot.behaviorConfig = {
+                ...storeBot.behaviorConfig,
+                assignedSpace: storeBot.behaviorConfig.assignedSpace
+                    ? { ...storeBot.behaviorConfig.assignedSpace }
+                    : currentBot.behaviorConfig?.assignedSpace ?? { center: { x: 0, y: 0 }, radius: 0 },
+            };
+            currentBot = currentBot; // Trigger reactivity
         }
     });
 
     onDestroy(() => {
         unsubscribe();
-        // Clear any pending auto-save timeouts
+        // Leaving the view right after an edit would otherwise lose it. When the whole editor closes, BotEditor
+        // calls flushPendingSaves() itself first: Svelte runs a parent's onDestroy before its children's, so by now
+        // BotEditor would no longer be listening for the store update this makes.
+        flushPendingSaves();
+    });
+
+    /** Run pending debounced saves now rather than dropping them */
+    export function flushPendingSaves() {
         if (autoSaveTimeout) {
             clearTimeout(autoSaveTimeout);
+            autoSaveTimeout = null;
+            flushAutoSave();
         }
         if (nameSaveTimeout) {
             clearTimeout(nameSaveTimeout);
+            nameSaveTimeout = null;
+            flushNameSave();
         }
-    });
+    }
+
+    function handleBack() {
+        // Flush while the bot is still selected: BotEditor only saves changes to the selected bot
+        flushPendingSaves();
+        onBack();
+    }
 
     // Initialize from prop - handle both bot changes and bot becoming null
     $: if (bot) {
@@ -120,22 +140,27 @@
         // Debounce store update (wait 500ms after last change)
         // This prevents triggering the subscription in BotEditor.svelte on every keystroke
         autoSaveTimeout = setTimeout(() => {
-            if (!currentBot || !currentBot.id) {
-                return; // currentBot became null during debounce
-            }
-            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
-                console.log("[BotDetailView] autoSave debounced, updating store");
-                console.log(
-                    "[BotDetailView] currentBot.chatInstructions:",
-                    currentBot.chatInstructions?.substring(0, 50)
-                );
-                console.log("[BotDetailView] currentBot.aiProviderRef:", currentBot.aiProviderRef);
-            }
-            // Update the store to trigger subscription in BotEditor.svelte
-            upsertBot({ ...currentBot }); // Create a new object to ensure reactivity
-            // Don't call onSave() here - let the subscription in BotEditor handle the API call
-            // onSave() is for manual saves and might interfere with auto-save
+            autoSaveTimeout = null;
+            flushAutoSave();
         }, 500);
+    }
+
+    function flushAutoSave() {
+        if (!currentBot || !currentBot.id) {
+            return; // currentBot became null during debounce
+        }
+        if (!get(botPreviewsStore).has(currentBot.id)) {
+            return; // The bot was deleted: upserting it would bring it back
+        }
+        if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+            console.log("[BotDetailView] autoSave debounced, updating store");
+            console.log("[BotDetailView] currentBot.chatInstructions:", currentBot.chatInstructions?.substring(0, 50));
+            console.log("[BotDetailView] currentBot.aiProviderRef:", currentBot.aiProviderRef);
+        }
+        // Update the store to trigger subscription in BotEditor.svelte
+        upsertBot({ ...currentBot }); // Create a new object to ensure reactivity
+        // Don't call onSave() here - let the subscription in BotEditor handle the API call
+        // onSave() is for manual saves and might interfere with auto-save
     }
 
     // Handle name changes separately - direct API call with immediate respawn
@@ -156,33 +181,51 @@
 
         // Debounce name save (wait 1 second after last keystroke)
         nameSaveTimeout = setTimeout(() => {
-            void (async () => {
-                if (!currentBot || !currentBot.id || currentBot.name?.trim() !== newName) {
-                    return; // Name changed again during debounce
-                }
-
-                try {
-                    // Save name to API - this will trigger respawn on the server
-                    await botApiService.updateBot(currentBot.id, {
-                        name: newName,
-                    });
-
-                    // Update last saved name
-                    lastSavedName = newName;
-
-                    // Update store with the saved name (from API response)
-                    // The server will have respawned the bot with the new name
-                    upsertBot({ ...currentBot, name: newName });
-                } catch (error) {
-                    console.error("[BotDetailView] Failed to save bot name:", error);
-                    // Revert name on error
-                    if (currentBot) {
-                        currentBot.name = lastSavedName || "";
-                        currentBot = currentBot; // Trigger reactivity
-                    }
-                }
-            })();
+            nameSaveTimeout = null;
+            flushNameSave();
         }, 1000);
+    }
+
+    function flushNameSave() {
+        const botId = currentBot?.id;
+        const newName = currentBot?.name?.trim() || "";
+        if (
+            !currentBot ||
+            !botId ||
+            !botApiService.isInitialized() ||
+            newName === lastSavedName ||
+            !get(botPreviewsStore).has(botId)
+        ) {
+            return;
+        }
+        void (async () => {
+            try {
+                // Save name to API - this will trigger respawn on the server
+                await botApiService.updateBot(botId, {
+                    name: newName,
+                });
+
+                // The bot may have been deleted while the request was pending (the view can be gone by now):
+                // upserting it would bring it back
+                const latestPreview = get(botPreviewsStore).get(botId);
+                if (!latestPreview) {
+                    return;
+                }
+
+                // Update last saved name
+                lastSavedName = newName;
+
+                // Update store with the saved name. The server will have respawned the bot with the new name
+                upsertBot({ ...latestPreview, name: newName });
+            } catch (error) {
+                console.error("[BotDetailView] Failed to save bot name:", error);
+                // Revert name on error
+                if (currentBot && currentBot.id === botId) {
+                    currentBot.name = lastSavedName || "";
+                    currentBot = currentBot; // Trigger reactivity
+                }
+            }
+        })();
     }
 
     function getTextureUrl(relativeUrl: string): string {
@@ -325,7 +368,7 @@
 <div class="bot-detail-view flex flex-col h-full min-h-0">
     <!-- Header -->
     <div class="flex items-center gap-3 mb-4 pb-4 border-b border-white/20 flex-shrink-0">
-        <button class="p-2 hover:bg-white/10 rounded transition-colors" on:click={onBack} title="Back to list">
+        <button class="p-2 hover:bg-white/10 rounded transition-colors" on:click={handleBack} title="Back to list">
             <IconChevronLeft font-size="20" />
         </button>
         <div class="flex-1">

@@ -25,6 +25,7 @@
     import { botApiService } from "./services/BotApiService";
 
     let showCreateModal = false;
+    let detailView: BotDetailView | undefined;
     let botEditorTool = getBotEditorTool();
     let isLoading = false;
     let error: string | null = null;
@@ -263,6 +264,8 @@
 
     // Subscribe to room changes and reload bots when room changes
     let roomChangeUnsubscribe: (() => void) | null = null;
+    // Svelte doesn't cancel onMount's continuation when the component is destroyed mid-load
+    let destroyed = false;
 
     onMount(async () => {
         // Activate the Phaser tool first
@@ -272,6 +275,11 @@
         // Reopening the editor in the same room keeps the current list on screen while it refreshes.
         const loadedRoomId = get(botsLoadedForRoomIdStore);
         await loadBots({ keepCurrent: loadedRoomId !== null && loadedRoomId === botApiService.getRoomId() });
+
+        // The editor was closed while loading: don't reactivate the tool or leave a subscription nothing removes
+        if (destroyed) {
+            return;
+        }
 
         // Ensure tool is still active after loading (in case scene wasn't ready initially)
         if (!botEditorTool.getIsActive()) {
@@ -329,13 +337,18 @@
     }
 
     onDestroy(() => {
+        destroyed = true;
+
         // Unsubscribe from room changes
         if (roomChangeUnsubscribe) {
             roomChangeUnsubscribe();
             roomChangeUnsubscribe = null;
         }
 
-        // Run pending saves now rather than dropping them: closing the editor right after an edit lost it
+        // Run pending saves now rather than dropping them: closing the editor right after an edit lost it. The
+        // detail view's own debounced edits go first, while this component still listens for them (a parent's
+        // onDestroy runs before its children's).
+        detailView?.flushPendingSaves();
         for (const { timeout, save } of pendingSaves.values()) {
             clearTimeout(timeout);
             save();
@@ -631,6 +644,7 @@
     {:else if currentMode === "detail" || currentMode === "waypoint-edit"}
         {#if selectedBot}
             <BotDetailView
+                bind:this={detailView}
                 bot={selectedBot}
                 onBack={handleBackToList}
                 onSave={handleSave}
