@@ -43,15 +43,17 @@
 
     // Subscribe to store for real-time updates from map
     const unsubscribe = selectedBotStore.subscribe((storeBot) => {
-        if (storeBot && currentBot && storeBot.id === currentBot.id) {
-            // Update position and radius from store (map changes)
-            if (storeBot.behaviorConfig?.assignedSpace) {
-                if (!currentBot.behaviorConfig) {
-                    currentBot.behaviorConfig = { assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } };
-                }
-                currentBot.behaviorConfig.assignedSpace = { ...storeBot.behaviorConfig.assignedSpace };
-                currentBot = currentBot; // Trigger reactivity
-            }
+        if (storeBot && currentBot && storeBot.id === currentBot.id && storeBot.behaviorConfig) {
+            // Take the whole behavior config from the store, not just the assigned space: the map also changes the
+            // detection range and waypoints, and autoSave() writes currentBot back to the store, so any field left
+            // stale here would undo the map change on the next edit (e.g. typing chat instructions)
+            currentBot.behaviorConfig = {
+                ...storeBot.behaviorConfig,
+                assignedSpace: storeBot.behaviorConfig.assignedSpace
+                    ? { ...storeBot.behaviorConfig.assignedSpace }
+                    : currentBot.behaviorConfig?.assignedSpace ?? { center: { x: 0, y: 0 }, radius: 0 },
+            };
+            currentBot = currentBot; // Trigger reactivity
         }
     });
 
