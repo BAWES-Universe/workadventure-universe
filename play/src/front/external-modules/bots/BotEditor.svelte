@@ -264,6 +264,8 @@
 
     // Subscribe to room changes and reload bots when room changes
     let roomChangeUnsubscribe: (() => void) | null = null;
+    // Svelte doesn't cancel onMount's continuation when the component is destroyed mid-load
+    let destroyed = false;
 
     onMount(async () => {
         // Activate the Phaser tool first
@@ -273,6 +275,11 @@
         // Reopening the editor in the same room keeps the current list on screen while it refreshes.
         const loadedRoomId = get(botsLoadedForRoomIdStore);
         await loadBots({ keepCurrent: loadedRoomId !== null && loadedRoomId === botApiService.getRoomId() });
+
+        // The editor was closed while loading: don't reactivate the tool or leave a subscription nothing removes
+        if (destroyed) {
+            return;
+        }
 
         // Ensure tool is still active after loading (in case scene wasn't ready initially)
         if (!botEditorTool.getIsActive()) {
@@ -330,6 +337,8 @@
     }
 
     onDestroy(() => {
+        destroyed = true;
+
         // Unsubscribe from room changes
         if (roomChangeUnsubscribe) {
             roomChangeUnsubscribe();

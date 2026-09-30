@@ -187,37 +187,40 @@
     }
 
     function flushNameSave() {
+        const botId = currentBot?.id;
         const newName = currentBot?.name?.trim() || "";
         if (
             !currentBot ||
-            !currentBot.id ||
+            !botId ||
             !botApiService.isInitialized() ||
             newName === lastSavedName ||
-            !get(botPreviewsStore).has(currentBot.id)
+            !get(botPreviewsStore).has(botId)
         ) {
             return;
         }
         void (async () => {
-            if (!currentBot || !currentBot.id || currentBot.name?.trim() !== newName) {
-                return; // currentBot became null
-            }
-
             try {
                 // Save name to API - this will trigger respawn on the server
-                await botApiService.updateBot(currentBot.id, {
+                await botApiService.updateBot(botId, {
                     name: newName,
                 });
+
+                // The bot may have been deleted while the request was pending (the view can be gone by now):
+                // upserting it would bring it back
+                const latestPreview = get(botPreviewsStore).get(botId);
+                if (!latestPreview) {
+                    return;
+                }
 
                 // Update last saved name
                 lastSavedName = newName;
 
-                // Update store with the saved name (from API response)
-                // The server will have respawned the bot with the new name
-                upsertBot({ ...currentBot, name: newName });
+                // Update store with the saved name. The server will have respawned the bot with the new name
+                upsertBot({ ...latestPreview, name: newName });
             } catch (error) {
                 console.error("[BotDetailView] Failed to save bot name:", error);
                 // Revert name on error
-                if (currentBot) {
+                if (currentBot && currentBot.id === botId) {
                     currentBot.name = lastSavedName || "";
                     currentBot = currentBot; // Trigger reactivity
                 }
