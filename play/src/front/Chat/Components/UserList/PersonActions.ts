@@ -55,6 +55,8 @@ export interface PersonActionsInput {
     isMatrixChatEnabled: boolean;
     roomCreationInProgress: boolean;
     iAmAdmin: boolean;
+    /** You are signed in and can open Orbit, where people's profiles are. */
+    canViewProfiles?: boolean;
 }
 
 export type MessageAction = "hidden" | "enabled";
@@ -75,7 +77,8 @@ export interface PersonActions {
     locate: boolean;
     /** Visible "Locate" button beside Walk to, for bots on this map, in place of the menu entry. */
     locateButton: boolean;
-    businessCard: boolean;
+    /** "View profile": their profile in Orbit, for a signed-in person (one with a chat id), never a bot. */
+    viewProfile: boolean;
     ban: boolean;
     /** Whether the "more" menu has anything to show. */
     hasMenu: boolean;
@@ -98,7 +101,7 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
     const bot = !!input.isBot;
     const locateButton = bot && connected && sameMap;
     const locate = !bot && connected && sameMap;
-    const businessCard = !bot && connected && !!input.visitCardUrl;
+    const viewProfile = !bot && !input.isSelf && !!input.canViewProfiles && !!input.uuid && !!input.chatId;
     const ban = !bot && connected && input.iAmAdmin;
 
     let message: MessageAction = "hidden";
@@ -112,8 +115,8 @@ export function getPersonActions(input: PersonActionsInput): PersonActions {
         message,
         locate,
         locateButton,
-        businessCard,
+        viewProfile,
         ban,
-        hasMenu: locate || businessCard || ban,
+        hasMenu: locate || viewProfile || ban,
     };
 }

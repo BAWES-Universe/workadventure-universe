@@ -12,6 +12,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     users: "wužiwar",
     userList: {
         editMyVisitCard: "Moju wizitku wobdźěłać",
+        viewProfile: "Profil pokazać",
         disconnected: "dźěleny",
         isHere: "Na tutej karće",
         inAnotherMap: "W druhej karće",

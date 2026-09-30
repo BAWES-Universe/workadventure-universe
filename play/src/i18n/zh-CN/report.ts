@@ -7,6 +7,7 @@ const report: DeepPartial<Translation["report"]> = {
         content: "屏蔽任何来自 {userName} 的通信。该操作是可逆的。",
         unblock: "解除屏蔽该用户",
         block: "屏蔽该用户",
+        blockOrReport: "屏蔽或举报…",
     },
     title: "举报",
     content: "发送举报信息给这个房间的管理员，他们后续可能禁用该用户。",

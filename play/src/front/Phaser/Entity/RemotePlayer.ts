@@ -16,7 +16,8 @@ import { openDirectChatRoom } from "../../Chat/Utils";
 import { userIsConnected } from "../../Stores/MenuStore";
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
-import { IconMessage, IconWalk } from "@wa-icons";
+import { canOpenOrbit, openOrbitProfile } from "../../external-modules/admin-api/index";
+import { IconMessage, IconUserCircle, IconWalk } from "@wa-icons";
 
 export enum RemotePlayerEvent {
     Clicked = "Clicked",
@@ -161,13 +162,16 @@ export class RemotePlayer extends Character implements ActivatableInterface {
 
     private getDefaultWokaMenuActions(): WokaMenuAction[] {
         const actions: WokaMenuAction[] = [];
+        // Under the card's "more" (⋯) button: it opens the Moderate screen, which says what blocking does and asks
+        // before doing it (Block, or Report to the room's admins).
         actions.push({
             actionName: blackListManager.isBlackListed(this.userUuid)
                 ? get(LL).report.block.unblock()
-                : get(LL).report.block.block(),
+                : get(LL).report.block.blockOrReport(),
             protected: true,
             priority: -1,
-            style: "is-error bg-white/10 hover:bg-white/30 text-red-500",
+            overflow: true,
+            style: "text-red-500",
             testId: "wokamenu-block-user-button",
             callback: () => {
                 // Track the report user action
@@ -224,6 +228,20 @@ export class RemotePlayer extends Character implements ActivatableInterface {
                     });
                 },
                 actionIcon: IconMessage,
+            });
+        }
+        // Their profile in Orbit, when you are both signed in (only signed-in players have a chat id): after Message.
+        if (chatID !== undefined && canOpenOrbit()) {
+            actions.push({
+                actionName: get(LL).chat.userList.viewProfile(),
+                protected: false,
+                priority: 0,
+                style: "bg-white/10 hover:bg-white/30",
+                testId: "wokamenu-view-profile-button",
+                callback: () => {
+                    openOrbitProfile(this.userUuid);
+                },
+                actionIcon: IconUserCircle,
             });
         }
 

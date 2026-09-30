@@ -24,6 +24,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     chat: "채팅",
     userList: {
         editMyVisitCard: "내 명함 편집",
+        viewProfile: "프로필 보기",
         disconnected: "오프라인",
         isHere: "이 지도",
         inAnotherMap: "다른 지도에 있음",

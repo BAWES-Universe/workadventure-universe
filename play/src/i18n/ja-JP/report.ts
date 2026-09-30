@@ -7,6 +7,7 @@ const report: DeepPartial<Translation["report"]> = {
         content: "{userName} とのコミュニケーションをブロックします。これは元に戻すことができます。",
         unblock: "このユーザーのブロックを解除",
         block: "このユーザーをブロック",
+        blockOrReport: "ブロックまたは報告…",
     },
     title: "報告",
     content: "このルームの管理者に報告メッセージを送信します。今後、このユーザーは BAN されるかもしれません。",

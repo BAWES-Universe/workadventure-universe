@@ -15,6 +15,8 @@
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
+    import { canOpenOrbit } from "../../../external-modules/admin-api/index";
+    import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -79,6 +81,9 @@
 
     const roomCreationInProgress = gameManager.chatConnection.roomCreationInProgress;
 
+    // Orbit is set up a moment after the map loads (it turns its action bar button on then): re-checked when it is.
+    $: canViewProfiles = $adminDashboardActivatedStore && canOpenOrbit();
+
     $: actions = getPersonActions({
         isSelf: isMe,
         isMyAccount: isMine,
@@ -92,6 +97,7 @@
         isMatrixChatEnabled,
         roomCreationInProgress: showRoomCreationInProgress,
         iAmAdmin,
+        canViewProfiles,
     });
 
     $: displayName = username.match(/\[\d*]/) ? username.substring(0, username.search(/\[\d*]/)) : username;
@@ -99,7 +105,7 @@
     // Someone else with several sessions: Walk to, Go to room and Locate open the list, so you pick which one.
     $: choosesSession = !isMe && listedSessions.length > 0;
     $: showLocateInMenu = actions.locate && !choosesSession;
-    $: hasMenu = showLocateInMenu || actions.businessCard || actions.ban;
+    $: hasMenu = showLocateInMenu || actions.viewProfile || actions.ban;
 
     function walkTo() {
         if (choosesSession) {
@@ -316,7 +322,7 @@
                     <UserActionButton
                         {user}
                         showLocate={showLocateInMenu}
-                        showBusinessCard={actions.businessCard}
+                        showViewProfile={actions.viewProfile}
                         showBan={actions.ban}
                     />
                 {/if}
