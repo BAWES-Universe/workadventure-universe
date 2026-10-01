@@ -84,6 +84,8 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     private updateMessageContentOnDecryptedEvent() {
+        // Until it is decrypted, the event's type is m.room.encrypted: an image or file only shows as one now.
+        this.type = this.mapMatrixMessageTypeToChatMessage();
         this.content.set(this.getMessageContent());
         this.loadMediaUrl();
     }
