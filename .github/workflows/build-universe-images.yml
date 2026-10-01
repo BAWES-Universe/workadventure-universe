@@ -337,7 +337,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=discord-bot
 
   build-bot-server:
-    needs: get-version
+    # Must build after play: bots connect to play, and their versions have to match.
+    needs: [get-version, build-play]
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
