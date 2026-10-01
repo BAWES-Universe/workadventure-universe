@@ -3,6 +3,8 @@ import type { MatrixClient } from "matrix-js-sdk";
 // One download per file per session: the same image in a reply, a thread or after a decryption isn't fetched again.
 const resolvedUrls = new Map<string, Promise<string | undefined>>();
 
+const ENDPOINT_UNKNOWN_STATUSES = [400, 404, 405];
+
 /**
  * Returns a URL the browser can show for a Matrix file (mxc://…).
  *
@@ -32,7 +34,11 @@ async function fetchMatrixMedia(client: MatrixClient, mxcUrl: string): Promise<s
     try {
         const response = await fetch(authenticatedUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!response.ok) {
-            // Older servers don't know the authenticated endpoint; the legacy one is all they have.
+            // Older servers don't know the authenticated endpoint (404/405/400); the legacy one is all they have.
+            // Anything else (server error, rate limit, expired token) may pass next time the file is shown.
+            if (!ENDPOINT_UNKNOWN_STATUSES.includes(response.status)) {
+                resolvedUrls.delete(mxcUrl);
+            }
             return legacyUrl;
         }
         return URL.createObjectURL(await response.blob());

@@ -74,6 +74,29 @@ describe("resolveMatrixMediaUrl", () => {
         expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/blip")).toBe("blob:https://play.test/1234");
     });
 
+    it("retries after a server error", async () => {
+        fetchMock.mockResolvedValueOnce(new Response("", { status: 502 }));
+        fetchMock.mockResolvedValueOnce(new Response(new Blob(["png"]), { status: 200 }));
+        const client = fakeClient();
+
+        expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/serverError")).toBe(
+            "https://matrix.test/_matrix/media/v3/download/matrix.test/serverError"
+        );
+        expect(await resolveMatrixMediaUrl(client, "mxc://matrix.test/serverError")).toBe(
+            "blob:https://play.test/1234"
+        );
+    });
+
+    it("asks a server without authenticated media only once", async () => {
+        fetchMock.mockResolvedValue(new Response("", { status: 404 }));
+        const client = fakeClient();
+
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/oldServerOnce");
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/oldServerOnce");
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("ignores anything that isn't an mxc URL", async () => {
         expect(await resolveMatrixMediaUrl(fakeClient(), undefined)).toBeUndefined();
         expect(await resolveMatrixMediaUrl(fakeClient(), "https://example.com/a.png")).toBeUndefined();
