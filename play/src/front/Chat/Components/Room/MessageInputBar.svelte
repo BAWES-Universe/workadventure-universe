@@ -747,6 +747,17 @@
         applicationPropertyInProcessing = false;
     }
 
+    // A closed form has nothing left resolving: never leave the Send button disabled.
+    $: if (applicationProperty === undefined) applicationPropertyInProcessing = false;
+
+    function onSubmitApplicationProperty() {
+        if (applicationPropertyInProcessing || isUploading) return;
+        if (!applicationProperty || applicationProperty.link.length === 0) return;
+        sendMessage(message.replace(/<br>/g, "\n"))
+            .then(() => messageInput?.focus())
+            .catch((error) => console.error(error));
+    }
+
     $: quotedMessageContent = $selectedChatMessageToReply?.content;
 </script>
 
@@ -1026,6 +1037,7 @@
             on:update={onUpdatApplicationProperty}
             on:processing={onProcessingApplicationProperty}
             on:processed={onProcessedApplicationProperty}
+            on:submit={onSubmitApplicationProperty}
         />
     </div>
 {/if}
