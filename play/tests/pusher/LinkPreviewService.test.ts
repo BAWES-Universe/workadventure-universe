@@ -3,6 +3,7 @@ import dns from "node:dns";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+    fetchOnce,
     isBlockedAddress,
     LinkPreviewService,
     linkPreviewService,
@@ -151,6 +152,37 @@ describe("LinkPreviewService", () => {
                 );
             } finally {
                 lookup.mockRestore();
+            }
+        });
+
+        it("gives up on a server that drips its page slower than the time limit", async () => {
+            const drip = http.createServer((req, res) => {
+                res.setHeader("Content-Type", "text/html");
+                res.write("<html>");
+                // A byte every 50ms: never idle long enough for a socket timeout.
+                const timer = setInterval(() => res.write(" "), 50);
+                const stop = () => {
+                    clearInterval(timer);
+                    res.off("close", stop);
+                };
+                res.on("close", stop);
+            });
+            await new Promise<void>((resolve) => {
+                drip.listen(0, "127.0.0.1", resolve);
+            });
+            const dripPort = (drip.address() as AddressInfo).port;
+            const started = Date.now();
+            try {
+                // An IP address skips the DNS lookup, so this reaches the local server.
+                await expect(fetchOnce(new URL(`http://127.0.0.1:${dripPort}/`), { timeoutMs: 300 })).rejects.toThrow(
+                    /Timed out/
+                );
+                expect(Date.now() - started).toBeLessThan(2000);
+            } finally {
+                drip.closeAllConnections();
+                await new Promise<void>((resolve) => {
+                    drip.close(() => resolve());
+                });
             }
         });
 

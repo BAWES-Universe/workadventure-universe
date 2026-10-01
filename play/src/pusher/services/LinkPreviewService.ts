@@ -15,6 +15,8 @@ export interface LinkPreview {
 }
 
 const FETCH_TIMEOUT_MS = 5000;
+// All hops of one preview, redirects included.
+const PREVIEW_TIMEOUT_MS = 8000;
 const MAX_REDIRECTS = 4;
 // Preview tags live in <head>: there's no need to read a whole page.
 const MAX_HTML_BYTES = 512 * 1024;
@@ -136,18 +138,36 @@ export function parsePreviewableUrl(raw: string): URL | undefined {
     return url;
 }
 
-type FetchResult = { kind: "redirect"; location: string } | { kind: "page"; html?: string };
+export type FetchResult = { kind: "redirect"; location: string } | { kind: "page"; html?: string };
 
-function fetchOnce(url: URL): Promise<FetchResult> {
+/**
+ * One request, no redirect following. `timeoutMs` bounds the whole request, not just idle time: a server dripping
+ * one byte at a time can't hold the connection open.
+ */
+export function fetchOnce(
+    url: URL,
+    { lookup = safeLookup, timeoutMs = FETCH_TIMEOUT_MS }: { lookup?: LookupFunction; timeoutMs?: number } = {}
+): Promise<FetchResult> {
     // The request and response live only for this call: their listeners go with them.
     /* eslint-disable listeners/no-missing-remove-event-listener, listeners/no-inline-function-event-listener */
-    return new Promise((resolve, reject) => {
+    return new Promise<FetchResult>((resolvePromise, rejectPromise) => {
+        // Whatever the outcome, the connection is closed with it: nothing keeps reading after the answer.
+        const resolve = (result: FetchResult) => {
+            clearTimeout(deadline);
+            resolvePromise(result);
+            request.destroy();
+        };
+        const reject = (error: Error) => {
+            clearTimeout(deadline);
+            rejectPromise(error);
+            request.destroy();
+        };
         const client = url.protocol === "https:" ? https : http;
         const request = client.get(
             url,
             {
-                lookup: safeLookup,
-                timeout: FETCH_TIMEOUT_MS,
+                lookup,
+                timeout: timeoutMs,
                 headers: {
                     "User-Agent": USER_AGENT,
                     Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
@@ -157,19 +177,16 @@ function fetchOnce(url: URL): Promise<FetchResult> {
             (response) => {
                 const status = response.statusCode ?? 0;
                 if (status >= 300 && status < 400 && response.headers.location) {
-                    response.resume();
                     resolve({ kind: "redirect", location: response.headers.location });
                     return;
                 }
                 if (status < 200 || status >= 300) {
-                    response.resume();
                     reject(new Error(`HTTP ${status}`));
                     return;
                 }
                 const contentType = String(response.headers["content-type"] ?? "");
                 if (!/text\/html|application\/xhtml\+xml/i.test(contentType)) {
                     // A file (image, PDF…): nothing to read, the link speaks for itself.
-                    response.destroy();
                     resolve({ kind: "page" });
                     return;
                 }
@@ -184,10 +201,7 @@ function fetchOnce(url: URL): Promise<FetchResult> {
                 response.on("data", (chunk: Buffer) => {
                     chunks.push(chunk);
                     size += chunk.length;
-                    if (size >= MAX_HTML_BYTES) {
-                        finish();
-                        response.destroy();
-                    }
+                    if (size >= MAX_HTML_BYTES) finish();
                 });
                 response.on("end", finish);
                 response.on("close", finish);
@@ -196,7 +210,9 @@ function fetchOnce(url: URL): Promise<FetchResult> {
                 });
             }
         );
-        request.on("timeout", () => request.destroy(new Error("Timed out")));
+        // Idle sockets and the whole request are both capped.
+        const deadline = setTimeout(() => reject(new Error("Timed out")), timeoutMs);
+        request.on("timeout", () => reject(new Error("Timed out")));
         request.on("error", reject);
     });
     /* eslint-enable listeners/no-missing-remove-event-listener, listeners/no-inline-function-event-listener */
@@ -245,10 +261,13 @@ export function parsePreviewTags(html: string, pageUrl: URL): Omit<LinkPreview, 
 
 async function loadPreview(url: URL): Promise<LinkPreview> {
     let current = url;
+    const giveUpAt = Date.now() + PREVIEW_TIMEOUT_MS;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const timeoutMs = Math.min(FETCH_TIMEOUT_MS, giveUpAt - Date.now());
+        if (timeoutMs <= 0) throw new Error("Timed out");
         // Each hop depends on the previous one's answer.
         // eslint-disable-next-line no-await-in-loop
-        const result = await fetchOnce(current);
+        const result = await fetchOnce(current, { timeoutMs });
         if (result.kind === "redirect") {
             const next = parsePreviewableUrl(new URL(result.location, current).toString());
             if (!next) throw new Error("Redirected to a URL that can't be previewed");
