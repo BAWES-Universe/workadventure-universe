@@ -864,6 +864,228 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Hook to resolve which follower should be targeted/used for context in arrival message.
+     * Default finds first follower nearby within 100px.
+     */
+    protected resolveArrivalFollower(
+        followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>
+    ): { userId: number; name?: string; position?: { x: number; y: number } } | undefined {
+        const nearbyPlayers = this.bot?.getNearbyPlayers(100) || [];
+        return nearbyPlayers.find((p) => followers.some((f) => f.userId === p.userId));
+    }
+
+    /**
+     * Send area arrival message to follower(s)
+     */
+    protected async sendAreaArrivalMessage(
+        areaName: string,
+        followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>
+    ): Promise<void> {
+        return this.sendArrivalMessage({ type: 'area', name: areaName }, followers);
+    }
+
+    /**
+     * Send person arrival message to follower(s)
+     */
+    protected async sendPersonArrivalMessage(
+        personName: string,
+        followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>
+    ): Promise<void> {
+        return this.sendArrivalMessage({ type: 'person', name: personName }, followers);
+    }
+
+    /**
+     * Shared arrival message streaming and dispatch
+     */
+    protected async sendArrivalMessage(
+        destination: { type: 'area' | 'person'; name: string },
+        followers: Array<{ userId: number; name?: string; position: { x: number; y: number } }>
+    ): Promise<void> {
+        if (!this.bot || !this.aiService || followers.length === 0) {
+            return;
+        }
+
+        const currentSpaces = this.bot.getCurrentSpaces();
+        const conversationSpaces = currentSpaces.filter(
+            (space) => !space.includes('allWorldUser') && space.includes('#')
+        );
+        const spaceName =
+            conversationSpaces.length > 0
+                ? conversationSpaces[0]
+                : currentSpaces.length > 0
+                ? currentSpaces[0]
+                : this.leadingSpaceName;
+        if (!spaceName) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.warn(
+                    `[${this.constructor.name}] Bot not in any space when trying to send arrival message`
+                );
+            }
+            return;
+        }
+
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            return;
+        }
+
+        const botId = this.bot.getBotId();
+        const follower = this.resolveArrivalFollower(followers);
+        if (!follower) {
+            return;
+        }
+
+        this.isSendingGoodbye = true;
+
+        let arrivalResponseId = '';
+        let fullMessage = '';
+        let emotionBlockStarted = false;
+        let pendingPrefix = '';
+
+        try {
+            const context =
+                this.conversationMemory?.getConversationContext(botId, follower.userId) || '';
+            const destinationDesc =
+                destination.type === 'area'
+                    ? `the ${destination.name} area. Let them know you've arrived at the destination`
+                    : `${destination.name}. Let them know you've arrived`;
+            const arrivalPrompt = `You just guided ${
+                followers.length > 1 ? 'a group of people' : 'someone'
+            } to ${destinationDesc}, it was nice talking to them, and you'll see them soon. Then say goodbye.`;
+
+            this.bot.startTyping(spaceName);
+
+            arrivalResponseId = `bot-${botId}-player-${follower.userId}-${crypto.randomUUID()}`;
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                follower.userId,
+                arrivalPrompt,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        const finalContent = pendingPrefix
+                            ? fullMessage.slice(0, -pendingPrefix.length)
+                            : fullMessage;
+                        this.bot.sendStreamMessage(spaceName, arrivalResponseId, '', true, finalContent);
+                    }
+                    arrivalResponseId = `bot-${botId}-player-${follower.userId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingPrefix = '';
+                    if (chunk.toolNames?.length) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                arrivalResponseId = `bot-${botId}-player-${follower.userId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot.sendStreamMessage(spaceName, arrivalResponseId, toolStatus, false);
+                                this.bot.sendStreamMessage(spaceName, arrivalResponseId, '', true, toolStatus);
+                            }
+                        }
+                        arrivalResponseId = `bot-${botId}-player-${follower.userId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                    }
+                    continue;
+                }
+                if (chunk.content) {
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingPrefix = '';
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot.sendStreamMessage(spaceName, arrivalResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
+                    if (deferredLen > 0) {
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
+                        if (contentToStream) {
+                            this.bot.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    const contentToStream = pendingPrefix + chunk.content;
+                    pendingPrefix = '';
+                    this.bot.sendStreamMessage(spaceName, arrivalResponseId, contentToStream, false);
+                }
+
+                if (chunk.done) {
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(
+                            botId,
+                            follower.userId,
+                            parsedResponse.emotions
+                        );
+                    }
+
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions =
+                            botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            follower.userId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+
+                    if (cleanedMessage.trim()) {
+                        this.bot.sendStreamMessage(
+                            spaceName,
+                            arrivalResponseId,
+                            '',
+                            true,
+                            cleanedMessage.trim()
+                        );
+                        this.conversationMemory?.addMessage(
+                            botId,
+                            follower.userId,
+                            cleanedMessage.trim(),
+                            'bot',
+                            spaceName
+                        );
+                    } else {
+                        this.bot.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[${this.constructor.name}] Error generating arrival message:`, error);
+            this.bot?.sendStreamMessage(spaceName, arrivalResponseId, '', true, '');
+        } finally {
+            this.bot?.stopTyping(spaceName);
+            this.isSendingGoodbye = false;
+            await this.bot?.leaveAllSpaces();
+        }
+    }
+
+    /**
      * End summon - return bot to original position
      */
     endSummon(): void {
