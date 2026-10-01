@@ -266,7 +266,7 @@
         -webkit-touch-callout: none;
         -webkit-user-select: none;
         user-select: none;
-        background: rgba(27, 42, 65, 0.8);
+        background: rgb(var(--u-ink) / 0.8);
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
         cursor: pointer;
@@ -277,7 +277,7 @@
     }
     .express-button:hover,
     .express-button.is-open {
-        background: rgba(27, 42, 65, 0.95);
+        background: rgb(var(--u-ink) / 0.95);
         box-shadow: 0 0 18px -2px rgba(134, 41, 252, 0.42);
     }
     .express-button:active {

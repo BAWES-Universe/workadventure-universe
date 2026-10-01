@@ -213,10 +213,10 @@
 </div>
 
 <style>
-    /* Orbit's dark theme (admin app/globals.css .dark). */
+    /* The raised surface Express uses (style.scss), with Orbit's dark theme (admin app/globals.css .dark) inside. */
     .explore {
-        background: hsl(218 44% 12% / 0.95);
-        border: 1px solid hsl(216 28% 26%);
+        background: var(--u-surface-bg);
+        box-shadow: var(--u-surface-shadow);
     }
     .explore-search {
         background: rgba(255, 255, 255, 0.06);
@@ -232,7 +232,7 @@
         appearance: none;
     }
     .muted {
-        color: hsl(216 20% 72%);
+        color: hsl(250 15% 74%);
     }
     .accent {
         color: #fbbf24;
