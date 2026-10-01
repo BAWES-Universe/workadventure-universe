@@ -875,6 +875,16 @@ div.emoji-picker {
 /* ─── Universe brand, chat panel ───
    The same language as bawes.net: glass surfaces, a purple → blue call to action that warms to gold on hover,
    purple → gold gradient titles, and a soft purple glow on what is special. */
+:root {
+    /* Universe ink, the colour of bawes.net. Orbit sends the same #14121e as the map's backgroundColor, which
+       becomes the design system's `contrast` (action bar, menus, sidebar, device list). */
+    --u-ink: 20 18 30;
+    /* The one raised surface: Express, Explore and the help popups. A lighter ink at the top fading into ink,
+       with a violet edge and a purple glow, so what is special stands out from the plain glass. */
+    --u-surface-bg: linear-gradient(160deg, rgb(31 28 47 / 0.92), rgb(var(--u-ink) / 0.94));
+    --u-surface-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 0 0 1px rgba(167, 139, 250, 0.18),
+        0 18px 48px -12px rgba(0, 0, 0, 0.55), 0 0 32px -12px rgba(134, 41, 252, 0.55);
+}
 .u-glass {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
