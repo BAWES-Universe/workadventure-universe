@@ -251,6 +251,9 @@ export const EnvironmentVariables = z.object({
         .describe("Enable debug mode with additional console logging. Defaults to false"),
     UPLOADER_URL: AbsoluteOrRelativeUrl.describe("URL of the file uploader service"),
     ICON_URL: AbsoluteOrRelativeUrl.describe("Base URL for icon resources"),
+    BOT_SERVER_URL: AbsoluteOrRelativeUrl.optional().describe(
+        "Public URL of the bot server. Defaults to the front's host with its first label replaced by bot-server (play.example.com -> bot-server.example.com)"
+    ),
     STUN_SERVER: z
         .string()
         .optional()

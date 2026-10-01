@@ -7,6 +7,7 @@ import { mapEditorModeStore, mapEditorVisibilityStore, mapEditorSelectedToolStor
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
+import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
 import { botApiService } from "./services/BotApiService";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
 import { IconMapPin } from "@wa-icons";
@@ -755,7 +756,9 @@ function setupBotEditor(options: ExtensionModuleOptions) {
 
 /**
  * Get bot-server URL from current environment
- * Derives from current window location by replacing the first subdomain with 'bot-server'
+ * BOT_SERVER_URL wins when set. Hosts that don't follow the play.<domain> pattern need it:
+ * dev.bawes.net would otherwise derive bot-server.bawes.net, which is production's bot server.
+ * Otherwise derives from current window location by replacing the first subdomain with 'bot-server'
  * Works for:
  * - play.workadventure.localhost -> bot-server.workadventure.localhost
  * - play.workadventu.re -> bot-server.workadventu.re
@@ -763,6 +766,9 @@ function setupBotEditor(options: ExtensionModuleOptions) {
  * - Any custom domain -> bot-server.{rest of domain}
  */
 function getBotServerUrl(): string {
+    if (BOT_SERVER_URL) {
+        return BOT_SERVER_URL.replace(/\/+$/, "");
+    }
     try {
         const { protocol, hostname, port } = window.location;
 

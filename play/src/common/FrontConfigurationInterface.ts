@@ -8,6 +8,7 @@ export interface FrontConfigurationInterface {
     ADMIN_URL: string | undefined;
     UPLOADER_URL: string;
     ICON_URL: string;
+    BOT_SERVER_URL: string | undefined;
     SKIP_RENDER_OPTIMIZATIONS: boolean;
     DISABLE_NOTIFICATIONS: boolean;
     JITSI_URL: string | undefined;

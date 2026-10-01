@@ -14,6 +14,7 @@ export const WS_URL = env.WS_URL;
 export const ADMIN_URL = env.ADMIN_URL;
 export const UPLOADER_URL = env.UPLOADER_URL;
 export const ICON_URL = env.ICON_URL;
+export const BOT_SERVER_URL = env.BOT_SERVER_URL;
 export const SKIP_RENDER_OPTIMIZATIONS = env.SKIP_RENDER_OPTIMIZATIONS;
 export const DISABLE_NOTIFICATIONS = env.DISABLE_NOTIFICATIONS;
 export const JITSI_URL = env.JITSI_URL;
