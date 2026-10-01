@@ -40,6 +40,7 @@ const camera: BaseTranslation = {
         refresh: "Refresh",
         continue: "Continue",
         newDeviceDetected: "New device detected {device} 🎉 Switch? [SPACE]",
+        newDevicesDetected: "New device detected {device} (+{count:number} more) 🎉 Switch? [SPACE]",
     },
     my: {
         silentZone: "Silent zone",

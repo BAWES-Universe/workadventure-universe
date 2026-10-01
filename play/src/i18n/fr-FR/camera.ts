@@ -42,6 +42,7 @@ const camera: DeepPartial<Translation["camera"]> = {
         refresh: "Rafraîchir",
         continue: "Continuer",
         newDeviceDetected: "Nouveau périphérique détecté {device} 🎉 Changer ? [ESPACE]",
+        newDevicesDetected: "Nouveau périphérique détecté {device} (+{count} autres) 🎉 Changer ? [ESPACE]",
     },
     my: {
         silentZone: "Zone silencieuse",
