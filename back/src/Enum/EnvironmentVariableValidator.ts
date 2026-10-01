@@ -24,6 +24,31 @@ export const EnvironmentVariables = z.object({
         .optional()
         .transform(emptyStringToUndefined)
         .describe("Authentication token for the admin API"),
+    PUSH_SERVICE_TOKEN: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Authentication token for push notification send operations"),
+    PUSH_VAPID_PUBLIC_KEY: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Public VAPID key exposed to web clients for Web Push subscriptions"),
+    PUSH_VAPID_PRIVATE_KEY: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe("Private VAPID key used by the push notification delivery worker"),
+    PUSH_VAPID_SUBJECT: z
+        .string()
+        .optional()
+        .transform(emptyStringToUndefined)
+        .describe('VAPID subject, for example "mailto:admin@example.com"'),
+    PUSH_NOTIFICATIONS_DRY_RUN: BoolAsString.optional()
+        .transform((val) => toBool(val, true))
+        .describe(
+            "If true, the push send endpoint validates and matches registrations without delivering notifications"
+        ),
     CPU_OVERHEAT_THRESHOLD: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 80))
         .describe(
