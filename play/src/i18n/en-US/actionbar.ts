@@ -46,8 +46,8 @@ const actionbar: BaseTranslation = {
     mapEditorLocked: "Map editor is locked 🔐",
     app: "Third applications",
     camera: {
-        disabled: "Your camera is disabled",
-        activate: "Activate your camera",
+        disabled: "Your camera is off",
+        activate: "Turn on camera",
         noDevices: "No camera device found",
         setBackground: "Set background",
         blurEffects: "Blur effects",
@@ -55,8 +55,8 @@ const actionbar: BaseTranslation = {
         close: "Close",
     },
     microphone: {
-        disabled: "Your microphone is disabled",
-        activate: "Activate your microphone",
+        disabled: "Your microphone is off",
+        activate: "Turn on microphone",
         noDevices: "No microphone device found",
     },
     speaker: {
