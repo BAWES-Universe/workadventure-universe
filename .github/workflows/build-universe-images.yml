@@ -337,7 +337,10 @@ jobs:
           cache-to: type=gha,mode=max,scope=discord-bot
 
   build-bot-server:
-    # Must build after play: bots connect to play, and their versions have to match.
+    # Waits for play so that if play's build fails, bot-server is skipped too. Bots only connect
+    # to a play with the same API version, so a new bot image must not ship without its play.
+    # (Both images compute that version from the same source, so the order itself isn't what
+    # makes them match.)
     needs: [get-version, build-play]
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
