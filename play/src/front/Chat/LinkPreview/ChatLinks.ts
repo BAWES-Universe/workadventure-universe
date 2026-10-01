@@ -37,6 +37,22 @@ const BARE_SUFFIXES = [
     "cloud",
     "blog",
     "news",
+    "live",
+    "world",
+    "space",
+    "club",
+    "link",
+    "design",
+    "media",
+    "agency",
+    "digital",
+    "network",
+    "social",
+    "games",
+    "chat",
+    "wiki",
+    "pro",
+    "cc",
     "edu",
     "gov",
     "uk",
@@ -91,4 +107,49 @@ export function extractChatLinks(text: string, max: number): string[] {
 
     const urls = found.sort((a, b) => a.index - b.index).map(({ url }) => url);
     return urls.filter((url, index) => urls.indexOf(url) === index).slice(0, max);
+}
+
+// Inside these, a site name stays as typed.
+const NO_LINKS_INSIDE = "a, code, pre";
+
+/**
+ * Turns the bare site names in rendered message HTML (bawes.net, example.com/pricing) into links, as other chat
+ * apps do. Full URLs are already links (Markdown autolinks them); links and code are left alone.
+ */
+export function linkifyBareDomains(html: string): string {
+    // matchAll() starts from the regex's lastIndex: a quick test() must leave it at 0.
+    const hasSiteName = BARE_DOMAIN.test(html);
+    BARE_DOMAIN.lastIndex = 0;
+    if (!hasSiteName) return html;
+
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.parentElement?.closest(NO_LINKS_INSIDE)) textNodes.push(node as Text);
+    }
+
+    for (const textNode of textNodes) {
+        const text = textNode.data;
+        const fragment = document.createDocumentFragment();
+        let last = 0;
+        for (const match of text.matchAll(BARE_DOMAIN)) {
+            const site = match[1].replace(TRAILING_PUNCTUATION, "");
+            const index = match.index ?? 0;
+            fragment.append(text.slice(last, index));
+            const link = document.createElement("a");
+            link.href = `https://${site}`;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.style.color = "white";
+            link.textContent = site;
+            fragment.append(link);
+            last = index + site.length;
+        }
+        if (last === 0) continue;
+        fragment.append(text.slice(last));
+        textNode.replaceWith(fragment);
+    }
+    return template.innerHTML;
 }

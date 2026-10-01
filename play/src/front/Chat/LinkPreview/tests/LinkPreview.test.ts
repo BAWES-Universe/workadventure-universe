@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractChatLinks } from "../ChatLinks";
+import { extractChatLinks, linkifyBareDomains } from "../ChatLinks";
 import type { LinkApps } from "../LinkKind";
 import { classifyLink, youtubeVideoOf } from "../LinkKind";
 
@@ -26,12 +26,38 @@ describe("extractChatLinks", () => {
         ]);
     });
 
+    it("knows the newer site endings", () => {
+        expect(extractChatLinks("try areyou.online or bawes.live", 5)).toEqual([
+            "https://areyou.online",
+            "https://bawes.live",
+        ]);
+    });
+
     it("leaves file names, code and e-mails alone", () => {
         expect(extractChatLinks("edit index.ts, run `curl https://x.com` or mail me@bawes.net", 5)).toEqual([]);
     });
 
     it("keeps the message's first link only when asked for one", () => {
         expect(extractChatLinks("www.a.com then www.b.com", 1)).toEqual(["https://www.a.com"]);
+    });
+});
+
+describe("linkifyBareDomains", () => {
+    it("makes bare site names clickable", () => {
+        const html = linkifyBareDomains("<p>check out bawes.net, or example.com/pricing!</p>");
+        const links = [...new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")];
+        expect(links.map((link) => [link.getAttribute("href"), link.textContent, link.target])).toEqual([
+            ["https://bawes.net", "bawes.net", "_blank"],
+            ["https://example.com/pricing", "example.com/pricing", "_blank"],
+        ]);
+        expect(html).toContain("</a>, or ");
+        expect(html).toContain("</a>!</p>");
+    });
+
+    it("leaves links, code, e-mails and file names alone", () => {
+        const html =
+            '<p><a href="https://www.bawes.net">www.bawes.net</a> <code>node.js bawes.net</code> me@bawes.net index.ts</p>';
+        expect(linkifyBareDomains(html)).toBe(html);
     });
 });
 
@@ -81,9 +107,9 @@ describe("classifyLink", () => {
     });
 
     it("treats an app the room turned off as a plain web link", () => {
-        expect(classifyLink("https://docs.google.com/document/d/abc/edit", { ...allApps, googleDocs: false }).kind).toBe(
-            "web"
-        );
+        expect(
+            classifyLink("https://docs.google.com/document/d/abc/edit", { ...allApps, googleDocs: false }).kind
+        ).toBe("web");
     });
 
     it("recognises whiteboards", () => {
