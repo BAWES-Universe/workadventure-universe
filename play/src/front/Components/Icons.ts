@@ -21,6 +21,7 @@ export { default as IconMoodSmile } from "~icons/tabler/mood-smile";
 export { default as IconPencil } from "~icons/tabler/pencil";
 export { default as IconTrash } from "~icons/tabler/trash";
 export { default as IconSend } from "~icons/tabler/send";
+export { default as IconPhoto } from "~icons/tabler/photo";
 export { default as IconPhotoOff } from "~icons/tabler/photo-off";
 export { default as IconEdit } from "~icons/tabler/edit";
 export { default as IconKey } from "~icons/tabler/key";
