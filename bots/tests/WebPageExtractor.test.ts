@@ -210,3 +210,45 @@ describe('WebPageExtractor', () => {
         });
     });
 });
+
+describe('WebPageExtractor preview tags', () => {
+    it('uses the page description when the body is script-rendered (YouTube, SPAs)', () => {
+        const html = `<!DOCTYPE html>
+<html><head>
+<title>Some video - YouTube</title>
+<meta property="og:title" content="Some video">
+<meta property="og:description" content="A walkthrough of building a virtual office with bots and quests.">
+</head><body><div id="app"></div><script>window.x=1</script></body></html>`;
+
+        const result = extractWebContent(html, 'https://www.youtube.com/watch?v=abc');
+
+        expect(result.title).toBe('Some video - YouTube');
+        expect(result.content).toContain('A walkthrough of building a virtual office');
+        expect(result.excerpt).toBe('A walkthrough of building a virtual office with bots and quests.');
+    });
+
+    it('falls back to the meta description and og:title', () => {
+        const html = `<!DOCTYPE html>
+<html><head>
+<meta property="og:title" content="BAWES">
+<meta name="description" content="We build Universe, a virtual world for teams.">
+</head><body><div id="root"></div></body></html>`;
+
+        const result = extractWebContent(html, 'https://bawes.net');
+
+        expect(result.title).toBe('BAWES');
+        expect(result.content).toBe('We build Universe, a virtual world for teams.');
+    });
+
+    it('leaves pages with real body text as they were', () => {
+        const paragraph = '<p>This paragraph is long enough to count as real content on the page for readers.</p>';
+        const html = `<!DOCTYPE html>
+<html><head><meta name="description" content="Short description."></head>
+<body><main>${paragraph.repeat(4)}</main></body></html>`;
+
+        const result = extractWebContent(html, 'https://example.com');
+
+        expect(result.content).toContain('This paragraph is long enough');
+        expect(result.content.startsWith('Short description.')).toBe(false);
+    });
+});
