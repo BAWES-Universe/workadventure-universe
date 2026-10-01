@@ -770,6 +770,185 @@ export abstract class BaseBehavior {
     }
 
     /**
+     * Determine whether the goodbye message should be delivered to the client.
+     * Overridden by child behaviors if they enforce additional space/conversation constraints.
+     */
+    protected shouldDeliverGoodbye(spaceName: string, playerId: number): boolean {
+        return true;
+    }
+
+    /**
+     * Send an AI goodbye message upon arriving at the destination and return to the start position.
+     * Shared across Social, Idle, and Patrol behaviors.
+     */
+    protected async sendGoodbyeAndReturn(spaceName: string, playerId: number, botId: string, destinationType: 'person' | 'area'): Promise<void> {
+        if (!this.bot || !this.aiService) {
+            this.returnAfterLeading();
+            return;
+        }
+
+        const botConfig = this.bot.getFullConfig();
+        if (!botConfig?.aiProviderRef) {
+            this.returnAfterLeading();
+            return;
+        }
+
+        const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
+        const destinationText = destinationType === 'person' ? 'this person' : 'the destination';
+        
+        let fullMessage = '';
+        let goodbyeResponseId: string | undefined;
+        try {
+            const goodbyePrompt = `You've arrived at ${destinationText}. It was nice talking to them. Say goodbye and that you'll see them soon.`;
+
+            goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+            let emotionBlockStarted = false;
+            // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
+            let pendingPrefix = '';
+            for await (const chunk of this.aiService.generateBotResponseStream(
+                botId,
+                playerId,
+                goodbyePrompt,
+                botConfig.chatInstructions || 'You are a helpful bot.',
+                botConfig.aiProviderRef,
+                spaceName,
+                context,
+                this.bot,
+                this.adminApiService
+            )) {
+                if (chunk.reset) {
+                    if (fullMessage) {
+                        const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
+                        this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, finalContent);
+                    }
+                    goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    fullMessage = '';
+                    emotionBlockStarted = false;
+                    pendingPrefix = '';
+                    if (chunk.toolNames?.length) {
+                        if (process.env.ENABLE_BOT_DEBUG === 'true') {
+                            for (let ti = 0; ti < chunk.toolNames.length; ti++) {
+                                const toolStatus = `🔍 ${chunk.toolNames[ti]}...`;
+                                goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                                fullMessage = toolStatus;
+                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, toolStatus, false);
+                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, toolStatus);
+                            }
+                        }
+                        goodbyeResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                        fullMessage = '';
+                    }
+                    continue;
+                }
+                if (chunk.content) {
+                    fullMessage = appendStreamedChunk(fullMessage, chunk.content);
+
+                    // Stop forwarding when emotion block starts
+                    if (emotionBlockStarted) {
+                        continue;
+                    }
+                    const emInChunk = chunk.content.includes('[EMOTION_UPDATE');
+                    const emInFull = fullMessage.includes('[EMOTION_UPDATE');
+                    if (emInChunk || emInFull) {
+                        emotionBlockStarted = true;
+                        pendingPrefix = ''; // discard — it's part of [EMOTION_UPDATE]
+                        if (emInChunk) {
+                            const emotionIdx = chunk.content.indexOf('[EMOTION_UPDATE');
+                            const beforeEmotion = chunk.content.substring(0, emotionIdx);
+                            if (beforeEmotion.trim()) {
+                                this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, beforeEmotion, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If this chunk ends with '[', defer the bracket — it may be the
+                    // start of [EMOTION_UPDATE] across chunk boundaries.
+                    const combinedContent = pendingPrefix + chunk.content;
+                    const deferredLen = detectEmotionPrefixAtEnd(combinedContent);
+                    if (deferredLen > 0) {
+                        pendingPrefix = combinedContent.slice(-deferredLen);
+                        const contentToStream = combinedContent.slice(0, -deferredLen);
+                        if (contentToStream) {
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
+                        }
+                        continue;
+                    }
+
+                    // Flush any previously deferred prefix — not the start of [EMOTION_UPDATE]
+                    const contentToStream = pendingPrefix + chunk.content;
+                    pendingPrefix = '';
+
+                    // Forward chunk to frontend
+                    this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, contentToStream, false);
+                }
+
+                if (chunk.done) {
+                    // Parse emotions and clean the message
+                    const parsedResponse = parseEmotionsFromResponse(fullMessage);
+                    let cleanedMessage = parsedResponse.cleanedResponse;
+                    
+                    // Update emotions from AI analysis
+                    if (parsedResponse.emotions && this.conversationMemory) {
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, parsedResponse.emotions);
+                    } else if (!parsedResponse.emotions && this.conversationMemory && cleanedMessage.trim()) {
+                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                            console.log(`[${this.constructor.name}] AI omitted emotion block, using neutral fallback`);
+                        }
+                        this.conversationMemory.updateEmotionsFromAI(botId, playerId, {
+                            personSentiment: 0,
+                            isInsult: false,
+                            insultSeverity: 0,
+                            context: 'neutral',
+                        });
+                    }
+                    
+                    // Clean with ResponseProcessor if available
+                    if (this.responseProcessor && cleanedMessage.trim()) {
+                        const chatInstructions = botConfig.chatInstructions || 'You are a helpful bot.';
+                        const processed = this.responseProcessor.processResponse(
+                            botId,
+                            playerId,
+                            cleanedMessage,
+                            chatInstructions
+                        );
+                        cleanedMessage = processed.cleaned;
+                    }
+                    
+                    if (cleanedMessage.trim()) {
+                        if (this.bot && this.shouldDeliverGoodbye(spaceName, playerId)) {
+                            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, cleanedMessage.trim());
+                            if (this.conversationMemory) {
+                                this.conversationMemory.addMessage(botId, playerId, cleanedMessage.trim(), 'bot', spaceName);
+                            }
+                            if (this.conversationStorage) {
+                                const userUuid = this.userIdToUuid.get(playerId);
+                                if (userUuid) {
+                                    this.conversationStorage.addMessage(botId, userUuid, cleanedMessage.trim(), 'bot').catch(error => {
+                                        if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                                            console.error(`[${this.constructor.name}] Error adding bot message to conversation storage:`, error);
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, '');
+                    }
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(`[${this.constructor.name}] Error generating goodbye message:`, error);
+            this.bot?.sendStreamMessage(spaceName, goodbyeResponseId, '', true, '');
+        }
+        
+        // Return to start position after sending message
+        this.returnAfterLeading();
+    }
+
+
+    /**
      * Start leading - bot is leading people to a destination
      * @param personUuid Person UUID (or 'group' for group leading)
      * @param target Target destination (person or area)
