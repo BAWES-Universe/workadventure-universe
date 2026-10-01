@@ -9,6 +9,8 @@
 
     function openLightbox(e: MouseEvent) {
         e.preventDefault();
+        // Still loading: there's no image to show yet.
+        if (!$content.url) return;
         showLightbox = true;
     }
 
