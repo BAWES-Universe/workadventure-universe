@@ -154,15 +154,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             NODE_OPTIONS=--max-old-space-size=16384
-            FAST_BUILD=
+            FAST_BUILD=${{ (github.event_name != 'push' || github.ref != 'refs/heads/universe') && 'true' || '' }}
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
             SENTRY_URL=
             SENTRY_AUTH_TOKEN=
             SENTRY_ORG=
             SENTRY_PROJECT=
             SENTRY_ENVIRONMENT=
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=play
+          cache-to: type=gha,mode=max,scope=play
 
   build-back:
     needs: get-version
@@ -204,8 +204,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=back
+          cache-to: type=gha,mode=max,scope=back
 
   build-map-storage:
     needs: get-version
@@ -247,8 +247,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=map-storage
+          cache-to: type=gha,mode=max,scope=map-storage
 
   build-uploader:
     needs: get-version
@@ -290,8 +290,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=uploader
+          cache-to: type=gha,mode=max,scope=uploader
 
   build-discord-bot:
     needs: get-version
@@ -333,10 +333,14 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=discord-bot
+          cache-to: type=gha,mode=max,scope=discord-bot
 
   build-bot-server:
+    # Waits for play so that if play's build fails, bot-server is skipped too. Bots only connect
+    # to a play with the same API version, so a new bot image must not ship without its play.
+    # (Both images compute that version from the same source, so the order itself isn't what
+    # makes them match.)
     needs: [get-version, build-play]
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
@@ -376,8 +380,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=bot-server
+          cache-to: type=gha,mode=max,scope=bot-server
 
 
   # ─────────────────────────────────────────────────
@@ -509,6 +513,7 @@ jobs:
           COOLIFY_UPLOADER_UUID: ${{ secrets.COOLIFY_UPLOADER_UUID }}
         run: |
           echo "Deploying v${{ needs.release.outputs.new_version }}..."
+          failed=""
           for UUID in \
             "${COOLIFY_PLAY_UUID}" \
             "${COOLIFY_BACK_UUID}" \
@@ -517,9 +522,17 @@ jobs:
             "${COOLIFY_DISCORD_BOT_UUID}" \
             "${COOLIFY_UPLOADER_UUID}"; do
             echo "Deploying $UUID..."
-            curl -sSf -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${UUID}" \
-              -H "Authorization: Bearer ${COOLIFY_TOKEN}" || echo "Failed: $UUID"
+            if ! curl -sSf -X POST "${COOLIFY_BASE}/api/v1/deploy?uuid=${UUID}" \
+              -H "Authorization: Bearer ${COOLIFY_TOKEN}"; then
+              echo "::error::Coolify did not accept the deploy for $UUID"
+              failed="$failed $UUID"
+            fi
           done
+          # Every service is still attempted; the job fails at the end if any deploy was refused.
+          if [ -n "$failed" ]; then
+            echo "::error::Not deployed:$failed"
+            exit 1
+          fi
           echo "All services deployed."
       - name: Record GitHub deployment
         env:
