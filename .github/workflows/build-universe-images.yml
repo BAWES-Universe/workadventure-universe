@@ -154,15 +154,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             NODE_OPTIONS=--max-old-space-size=16384
-            FAST_BUILD=
+            FAST_BUILD=${{ (github.event_name != 'push' || github.ref != 'refs/heads/universe') && 'true' || '' }}
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
             SENTRY_URL=
             SENTRY_AUTH_TOKEN=
             SENTRY_ORG=
             SENTRY_PROJECT=
             SENTRY_ENVIRONMENT=
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=play
+          cache-to: type=gha,mode=max,scope=play
 
   build-back:
     needs: get-version
@@ -204,8 +204,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=back
+          cache-to: type=gha,mode=max,scope=back
 
   build-map-storage:
     needs: get-version
@@ -247,8 +247,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=map-storage
+          cache-to: type=gha,mode=max,scope=map-storage
 
   build-uploader:
     needs: get-version
@@ -290,8 +290,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=uploader
+          cache-to: type=gha,mode=max,scope=uploader
 
   build-discord-bot:
     needs: get-version
@@ -333,11 +333,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=discord-bot
+          cache-to: type=gha,mode=max,scope=discord-bot
 
   build-bot-server:
-    needs: [get-version, build-play]
+    needs: get-version
     if: ${{ github.event.inputs.service == 'all' || github.event.inputs.service == 'bot-server' || github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
@@ -376,8 +376,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=bot-server
+          cache-to: type=gha,mode=max,scope=bot-server
 
 
   # ─────────────────────────────────────────────────
