@@ -479,7 +479,10 @@ jobs:
     uses: ./.github/workflows/dev-server-switch.yml
     with:
       tag: universe-develop
-    secrets: inherit
+      # Checked again inside the switch lock: a PR may take on-dev while this run waits.
+      mode: free
+    secrets:
+      DEV_COOLIFY_TOKEN: ${{ secrets.DEV_COOLIFY_TOKEN }}
 
   # ─────────────────────────────────────────────────
   # Deploy: trigger Coolify to pull new images
