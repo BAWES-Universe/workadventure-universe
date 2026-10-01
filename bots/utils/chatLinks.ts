@@ -14,7 +14,9 @@ const FULL_URL = /https?:\/\/[^\s)<>"']+/gi;
 const BARE_SUFFIXES = [
     'com', 'net', 'org', 'io', 'ai', 'dev', 'app', 'co', 'gg', 'tv', 'xyz', 'info', 'biz',
     'sh', 'fm', 'ly', 'page', 'site', 'online', 'store', 'shop', 'tech', 'studio',
-    'cloud', 'blog', 'news', 'edu', 'gov', 'uk', 'ca', 'de', 'fr', 'eu', 'au',
+    'cloud', 'blog', 'news', 'live', 'world', 'space', 'club', 'link', 'design', 'media',
+    'agency', 'digital', 'network', 'social', 'games', 'chat', 'wiki', 'pro', 'cc',
+    'edu', 'gov', 'uk', 'ca', 'de', 'fr', 'eu', 'au',
     'kw', 'sa', 'ae', 'qa', 'bh', 'om', 'eg', 'jo',
 ];
 

@@ -18,6 +18,10 @@ describe('extractChatLinks', () => {
             'https://www.example.com/pricing',
         ]);
         expect(extractChatLinks('try docs.bawes.kw', 10)).toEqual(['https://docs.bawes.kw']);
+        expect(extractChatLinks('try areyou.online or bawes.live', 10)).toEqual([
+            'https://areyou.online',
+            'https://bawes.live',
+        ]);
     });
 
     it('does not treat file names, code, e-mails or words as sites', () => {
