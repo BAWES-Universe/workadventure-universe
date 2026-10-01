@@ -2,7 +2,7 @@
  * BotState - Manages bot's internal state (position, direction, movement)
  */
 
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 import { PositionMessage_Direction } from '@workadventure/messages';
 
 export class BotState {

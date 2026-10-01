@@ -3,7 +3,7 @@
  */
 
 import { BotClient } from '../client/BotClient';
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 import type { SpaceUser } from '@workadventure/messages';
 import { PositionMessage_Direction } from '@workadventure/messages';
 import type { AIService, InterruptionAction } from '../ai/AIService';

@@ -2,7 +2,7 @@
  * MovementInterpolator - Provides smooth interpolation with easing functions
  */
 
-import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
+import type { PositionInterface } from '../types/Position';
 
 export type EasingFunction = (t: number) => number;
 
