@@ -56,6 +56,7 @@ Environment variables for the Play service (frontend and pusher).
 | `DEBUG_MODE` | No | Enable debug mode with additional console logging. Defaults to false |
 | `UPLOADER_URL` | Yes | URL of the file uploader service |
 | `ICON_URL` | Yes | Base URL for icon resources |
+| `BOT_SERVER_URL` | No | Public URL of the bot server. Defaults to the front's host with its first label replaced by bot-server (play.example.com -> bot-server.example.com) |
 | `STUN_SERVER` | No | Comma separated list of STUN server URLs for WebRTC NAT traversal (format: 'stun:hostname:port') |
 | `TURN_SERVER` | No | Comma separated list of TURN server URLs for WebRTC relay (format: 'turn:hostname:port') |
 | `SKIP_RENDER_OPTIMIZATIONS` | No | Skip rendering optimizations (useful for debugging). Defaults to false |
