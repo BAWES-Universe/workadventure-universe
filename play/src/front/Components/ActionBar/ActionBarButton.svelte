@@ -65,19 +65,19 @@
 
 {#if !isInMenu}
     <div
-        class="relative u-surface-flat u-segment py-[7px] ps-1 pe-1 pointer-events-auto {classList} group-[.invisible]/visibilitychecker:px-2"
+        class="relative u-surface-flat u-segment py-2 ps-1 pe-1 pointer-events-auto {classList} group-[.invisible]/visibilitychecker:px-2"
         class:first-of-type:rounded-s-xl={first === undefined}
         class:first-of-type:ps-2={first === undefined}
-        class:first-of-type:border-s={first === undefined}
+        class:u-seg-auto-start={first === undefined}
         class:last-of-type:rounded-e-xl={last === undefined}
         class:last-of-type:pe-2={last === undefined}
-        class:last-of-type:border-e={last === undefined}
+        class:u-seg-auto-end={last === undefined}
         class:rounded-s-xl={first === true}
         class:ps-2={first === true}
-        class:border-s={first === true}
+        class:u-seg-start={first === true}
         class:rounded-e-xl={last === true}
         class:pe-2={last === true}
-        class:border-e={last === true}
+        class:u-seg-end={last === true}
         use:action
         style={styleVars}
     >
