@@ -305,7 +305,7 @@ export class LinkPreviewService {
         promise.catch(() => {
             // Failures are remembered for less time: the page may come back.
             if (this.cache.get(key)?.promise === promise) {
-                this.cache.set(key, { promise, expiresAt: Date.now() + FAILURE_CACHE_TTL_MS });
+                this.remember(key, { promise, expiresAt: Date.now() + FAILURE_CACHE_TTL_MS });
             }
         });
         return promise;
