@@ -7,6 +7,7 @@
     import Avatar from "../Avatar.svelte";
     import { selectedChatMessageToEdit } from "../../Stores/ChatStore";
     import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
+    import LinkPreview from "../../LinkPreview/LinkPreview.svelte";
     import MessageOptions from "./MessageOptions.svelte";
     import MessageImage from "./Message/MessageImage.svelte";
     import MessageText from "./Message/MessageText.svelte";
@@ -121,6 +122,9 @@
 
                 {#if !notSent}
                     <svelte:component this={messageType[type]} on:updateMessageBody={updateMessageBody} {content} />
+                    {#if replyDepth === 0 && !isQuotedMessage && (type === "text" || type === "proximity")}
+                        <LinkPreview body={$content.body} mine={isMyMessage} />
+                    {/if}
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">
                         <svelte:component this={messageType[type]} {content} />

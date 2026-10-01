@@ -479,6 +479,12 @@ const chat: BaseTranslation = {
         Pin: "Pin",
         unknownLabel: "Unknown Label",
     },
+    linkPreview: {
+        openHere: "Open here",
+        newTab: "New tab",
+        openOn: "Open on {site}",
+        play: "Play {title}",
+    },
     fileAttachment: {
         title: "File attachment",
         description: "Upload and share a file",

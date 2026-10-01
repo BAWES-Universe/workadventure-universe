@@ -141,3 +141,5 @@ export { default as IconRoute } from "~icons/tabler/route";
 export { default as IconScript } from "~icons/tabler/script";
 export { default as IconDoor } from "~icons/tabler/door";
 export { default as IconPlanet } from "~icons/tabler/planet";
+export { default as IconLayoutSidebarRight } from "~icons/tabler/layout-sidebar-right";
+export { default as IconPlayerPlayFilled } from "~icons/tabler/player-play-filled";

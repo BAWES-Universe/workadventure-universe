@@ -85,7 +85,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
 
     await page.context().close();
   });
-  test("Send application messages and youtube link in public chat room", async ({ browser }) => {
+  test("A YouTube link shows a preview that plays in place", async ({ browser }) => {
     await using page = await getPage(browser, 'Alice', Map.url("empty"));
     await oidcMatrixUserLogin(page);
     await ChatUtils.openChat(page);
@@ -97,113 +97,20 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByTestId("createRoomButton").click();
     await page.getByText(publicChatRoomName).click();
 
-    // Add an application
-    await page.getByTestId("addApplicationButton").click();
+    // There is no app list any more: links are pasted like any text.
+    await expect(page.getByTestId("addApplicationButton")).not.toBeAttached();
 
-    // Check that all applications are displayed
-    await expect(page.getByTestId("youtubeApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("klaxoonApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleSheetsApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleSlidesApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleDocsApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleDriveApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("eraserApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("excalidrawApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("cardsApplicationButton")).toBeAttached();
-
-    // Add Youtube application
-    await page.getByTestId("youtubeApplicationButton").click();
-
-    // Enter the link
-    await page.getByTestId("applicationInputLink").click();
-    await page.getByTestId("applicationInputLink").fill("test");
-    await page.getByTestId("applicationInputLink").press("Enter");
-
-    // check that the error is displayed
-    await expect(page.getByTestId("applicationLinkError")).toBeAttached();
-
-    // Enter the true link
-    await page.getByTestId("applicationInputLink").click();
-    await page.getByTestId("applicationInputLink").fill("https://www.youtube.com/watch?v=6ZfuNTqbHE8");
-    await page.getByTestId("applicationInputLink").press("Enter");
-
-    // check that the error is not displayed
-    await expect(page.getByTestId("applicationLinkError")).not.toBeAttached();
-
-    const chatMessageContent = "This is a test message";
+    const chatMessageContent = "watch this https://www.youtube.com/watch?v=6ZfuNTqbHE8";
     await page.getByTestId("messageInput").click();
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
 
-    // check that the link build for message is correct and the message is displayed
-    await expect(page.getByText("https://www.youtube.com/embed/6ZfuNTqbHE8?feature=oembed")).toBeAttached();
-    // check that the message is displayed
-    await expect(page.getByText(chatMessageContent)).toBeAttached();
+    // The link is sent exactly as typed, and previews under the message.
+    await expect(page.getByText("https://www.youtube.com/watch?v=6ZfuNTqbHE8")).toBeAttached();
+    await expect(page.getByTestId("youtubeLinkPreview")).toBeVisible();
 
-    await page.context().close();
-  });
-  test("Send application messages and klaxoon link in public chat room", async ({ browser }) => {
-    test.skip(process.env.IS_FORK === "true", "Skip Klaxoon test on forked PR because the secret env variable is not set");
-
-    await using page = await getPage(browser, 'Alice', Map.url("empty"));
-    await oidcMatrixUserLogin(page);
-    await ChatUtils.openChat(page);
-    await ChatUtils.openCreateRoomDialog(page);
-    const publicChatRoomName = ChatUtils.getRandomName();
-    await page.getByTestId("createRoomName").fill(publicChatRoomName);
-    await page.getByPlaceholder('Users').click();
-    await page.getByPlaceholder('Users').press('Enter');
-    await page.getByTestId("createRoomButton").click();
-    await page.getByText(publicChatRoomName).click();
-
-    // Add an application
-    await page.getByTestId("addApplicationButton").click();
-
-    // Check that all applications are displayed
-    await expect(page.getByTestId("youtubeApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("klaxoonApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleSheetsApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleSlidesApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleDocsApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("googleDriveApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("eraserApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("excalidrawApplicationButton")).toBeAttached();
-    await expect(page.getByTestId("cardsApplicationButton")).toBeAttached();
-
-    // Add Youtube application
-    await page.getByTestId("klaxoonApplicationButton").click();
-
-    // check if the iframe activity picker is opened
-    const popupPromise = page.waitForEvent("popup");
-    await popupPromise;
-    await (await popupPromise).close();
-
-    // Enter the link
-    await page.getByTestId("applicationInputLink").click();
-    await page.getByTestId("applicationInputLink").fill("test");
-    await page.getByTestId("applicationInputLink").press("Enter");
-
-    // check that the error is displayed
-    await expect(page.getByTestId("applicationLinkError")).toBeAttached();
-
-    // Enter the true link
-    await page.getByTestId("applicationInputLink").click();
-    await page.getByTestId("applicationInputLink").fill("https://app.klaxoon.com/join/KXEWMSE3NF2M");
-    await page.getByTestId("applicationInputLink").press("Enter");
-
-    // check that the error is not displayed
-    await expect(page.getByTestId("applicationLinkError")).not.toBeAttached();
-
-    const chatMessageContent = "This is a test message";
-    await page.getByTestId("messageInput").click();
-    await page.getByTestId("messageInput").fill(chatMessageContent);
-    await page.getByTestId("sendMessageButton").click();
-
-    // check that the link build for message is correct and the message is displayed
-    await expect(page.getByRole('link', { name: 'https://app.klaxoon.com/join/KXEWMSE3NF2M' })).toBeVisible();
-    //await expect(page.getByText("https://app.klaxoon.com/join/KXEWMSE3NF2M?from=aG3stVtZnDmhrhqKc17to1OlfvyyEUeV")).toBeAttached();
-    // check that the message is displayed
-    await expect(page.getByText(chatMessageContent)).toBeAttached();
+    await page.getByTestId("youtubeLinkPreviewPlay").click();
+    await expect(page.getByTestId("youtubeLinkPreviewPlayer")).toBeAttached();
 
     await page.context().close();
   });
