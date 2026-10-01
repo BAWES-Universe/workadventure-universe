@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
     import type { KlaxoonEvent } from "@workadventure/shared-utils";
     import {
         ApplicationService,
@@ -23,7 +23,9 @@
         processed: void;
         close: void;
         input: string;
-        // Enter in the link field: the link is resolved and valid, send it
+        // Enter pressed in the link field: the link is being resolved before it is sent
+        submitstart: void;
+        // The link from that Enter is resolved and valid: send it
         submit: void;
     }>();
 
@@ -136,9 +138,13 @@
         if (submitting) return;
         submitting = true;
         if (timeOutToHtmlInpuElement) clearTimeout(timeOutToHtmlInpuElement);
+        dispatch("submitstart");
         try {
             if (await unFocus()) {
                 dispatch("submit");
+                // Sending closes the form: Chrome fires focusout when the focused input is removed,
+                // which must not resolve the link again.
+                await tick();
             }
         } finally {
             // eslint-disable-next-line require-atomic-updates
