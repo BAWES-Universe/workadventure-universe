@@ -50,16 +50,17 @@
         }
     }
 
-    $: info = getFileTypeInfo($content.url);
+    // Matrix files load from a blob: URL, so the type and name come from the file name when there is one.
+    $: info = getFileTypeInfo($content.filename ?? $content.url);
     $: displayName = $content.filename ?? getFilenameFromUrl($content.url);
-    $: hasCaption = $content.body && $content.body.trim();
+    $: hasCaption = $content.body && $content.body.trim() && $content.body !== $content.filename;
 </script>
 
 <a
     href={$content.url}
     target="_blank"
     rel="noopener noreferrer"
-    download
+    download={displayName}
     class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
 >
     <!-- File type icon badge -->
