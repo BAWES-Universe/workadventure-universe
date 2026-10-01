@@ -355,7 +355,7 @@
                     }
                     // Don't return — still send text message below
                 } finally {
-                    isUploading = false;
+                    onUploadEnded();
                 }
             } else {
                 const fileList: FileList = files.reduce((fileListAcc, currentFile) => {
@@ -375,7 +375,7 @@
                         showUploadError("Failed to send files.");
                     })
                     .finally(() => {
-                        isUploading = false;
+                        onUploadEnded();
                     });
             }
         }
@@ -756,10 +756,24 @@
         draftAtLinkSubmit = message;
     }
 
+    // Enter in the link field while files upload: the link goes out as soon as the upload ends.
+    let linkWaitingForUpload = false;
+    function onUploadEnded() {
+        isUploading = false;
+        if (!linkWaitingForUpload) return;
+        linkWaitingForUpload = false;
+        // After the send that started the upload has finished its own message.
+        queueMicrotask(onSubmitApplicationProperty);
+    }
+
     function onSubmitApplicationProperty() {
+        if (isUploading) {
+            linkWaitingForUpload = true;
+            return;
+        }
         const draft = draftAtLinkSubmit;
         draftAtLinkSubmit = undefined;
-        if (applicationPropertyInProcessing || isUploading) return;
+        if (applicationPropertyInProcessing) return;
         if (!applicationProperty || applicationProperty.link.length === 0) return;
         // The text goes with the link only if it is what was there at Enter: anything typed while the link
         // resolved stays in the box for its own send.
