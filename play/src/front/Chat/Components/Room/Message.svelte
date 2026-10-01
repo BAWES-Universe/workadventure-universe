@@ -1,7 +1,10 @@
 <script lang="ts">
     import type { ComponentType } from "svelte";
-    import { createEventDispatcher } from "svelte";
-    import { derived } from "svelte/store";
+    import { createEventDispatcher, getContext, hasContext } from "svelte";
+    import { derived, readable } from "svelte/store";
+    import type { Readable } from "svelte/store";
+    import type { PictureStore } from "../../../Stores/PictureStore";
+    import { WOKA_BY_CHAT_ID_CONTEXT } from "../../Stores/ChatUserWokaStore";
     import type { ChatMessage, ChatMessageType } from "../../Connection/ChatConnection";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import Avatar from "../Avatar.svelte";
@@ -25,6 +28,11 @@
 
     let messageRef: HTMLDivElement | undefined;
 
+    // Matrix users have no avatar of their own: show their woka, like the chat list does.
+    const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
+        ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
+        : readable(new Map<string, PictureStore>());
+
     const dispatch = createEventDispatcher<{
         updateMessageBody: { id: string };
     }>();
@@ -42,6 +50,10 @@
         isModified,
         reactions,
     } = message;
+
+    const ownPicture: PictureStore = sender?.pictureStore ?? readable(undefined);
+    $: senderPicture =
+        $ownPicture || !sender?.chatId ? sender?.pictureStore : $wokaByChatId.get(sender.chatId) ?? sender.pictureStore;
 
     const updateMessageBody = () => {
         dispatch("updateMessageBody", {
@@ -91,7 +103,7 @@
     >
         {#if (!isMyMessage || isQuotedMessage) && sender !== undefined && replyDepth === 0}
             <div class="avatar pt-1.5">
-                <Avatar pictureStore={sender?.pictureStore} fallbackName={sender?.username} />
+                <Avatar pictureStore={senderPicture} fallbackName={sender?.username} />
             </div>
         {/if}
 

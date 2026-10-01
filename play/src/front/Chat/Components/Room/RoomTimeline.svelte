@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { afterUpdate, beforeUpdate, onMount } from "svelte";
+    import { afterUpdate, beforeUpdate, hasContext, onMount, setContext } from "svelte";
     import { get, readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
@@ -22,6 +22,7 @@
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
+    import { WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore } from "../../Stores/ChatUserWokaStore";
     import Message from "./Message.svelte";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
@@ -32,6 +33,14 @@
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
+
+    // Messages show the sender's woka when their chat account has no picture (Matrix users).
+    if (!hasContext(WOKA_BY_CHAT_ID_CONTEXT)) {
+        setContext(
+            WOKA_BY_CHAT_ID_CONTEXT,
+            createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger)
+        );
+    }
 
     const chatConnection = gameManager.chatConnection;
     const shouldRetrySendingEvents = chatConnection.shouldRetrySendingEvents;
