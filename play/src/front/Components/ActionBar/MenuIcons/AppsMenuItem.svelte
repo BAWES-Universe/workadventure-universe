@@ -58,11 +58,9 @@
             }}
         >
             <div class="flex justify-center m-[unset]">
-                <div use:arrowAction />
+                <div class="u-surface-arrow" use:arrowAction />
                 <div class="bottom-action-bar">
-                    <div
-                        class="bottom-action-section flex flex-col animate bg-contrast/80 backdrop-blur rounded-md p-1"
-                    >
+                    <div class="bottom-action-section flex flex-col animate u-surface rounded-2xl p-1.5">
                         <AppsMenuContent />
                     </div>
                 </div>

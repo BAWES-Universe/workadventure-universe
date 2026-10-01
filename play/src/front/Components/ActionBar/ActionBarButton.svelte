@@ -3,6 +3,7 @@
     import type { Action } from "svelte/action";
     import HelpTooltip from "../Tooltip/HelpTooltip.svelte";
     import { helpTextDisabledStore } from "../../Stores/MenuStore";
+    import { IconChevronRight } from "@wa-icons";
 
     export let label: string | undefined = undefined;
     export let tooltipTitle = "";
@@ -23,6 +24,10 @@
     export let desc = "";
     export let tooltipShortcuts: string[] = [];
     export let boldLabel = false;
+    // In a menu: a trailing arrow, for rows that open a screen. Opt-in, so other menus are unaffected.
+    export let chevron = false;
+    // In a menu: the icon is a picture (the woka, the companion) shown whole in a 32px tile rather than a 16px icon.
+    export let imageTile = false;
 
     // By default, the button will have a rounded corner on the left if it is the first of a div.
     // This behaviour can be overridden by setting the "first" prop to true or false explicitly.
@@ -60,21 +65,25 @@
 
 {#if !isInMenu}
     <div
-        class="relative bg-contrast/80 backdrop-blur py-2 ps-1 pe-1 pointer-events-auto {classList} group-[.invisible]/visibilitychecker:px-2"
-        class:first-of-type:rounded-s-lg={first === undefined}
+        class="relative u-surface-flat u-segment py-[7px] ps-1 pe-1 pointer-events-auto {classList} group-[.invisible]/visibilitychecker:px-2"
+        class:first-of-type:rounded-s-xl={first === undefined}
         class:first-of-type:ps-2={first === undefined}
-        class:last-of-type:rounded-e-lg={last === undefined}
+        class:first-of-type:border-s={first === undefined}
+        class:last-of-type:rounded-e-xl={last === undefined}
         class:last-of-type:pe-2={last === undefined}
-        class:rounded-s-lg={first === true}
+        class:last-of-type:border-e={last === undefined}
+        class:rounded-s-xl={first === true}
         class:ps-2={first === true}
-        class:rounded-e-lg={last === true}
+        class:border-s={first === true}
+        class:rounded-e-xl={last === true}
         class:pe-2={last === true}
+        class:border-e={last === true}
         use:action
         style={styleVars}
     >
         <button
             type="button"
-            class="h-12 @sm/actions:h-10 @xl/actions:h-12 p-1 m-0 rounded relative
+            class="h-12 @sm/actions:h-10 @xl/actions:h-12 p-1 m-0 rounded-lg relative
                     {state === 'disabled' ? 'opacity-50 cursor-not-allowed' : ''}
                     {state === 'normal' && !isGradient ? 'hover:bg-white/10 cursor-pointer' : ''}
                     {state === 'active' ? 'bg-secondary hover:bg-secondary-600 cursor-pointer' : ''}
@@ -109,27 +118,31 @@
     </div>
 {:else}
     <button
-        class="group flex p-2 gap-2 mb-1 items-center hover:bg-white/10 transition-all cursor-pointer font-bold text-sm text-neutral-100 w-full pointer-events-auto text-start rounded select-none
+        type="button"
+        class="u-menu-row group pointer-events-auto select-none
                     {state === 'disabled' ? 'opacity-50 cursor-not-allowed' : ''}
                     {state === 'active' && !isGradient ? 'bg-secondary hover:bg-secondary-600 cursor-pointer' : ''}
                     {state === 'forbidden' ? 'bg-danger hover:bg-danger-600 cursor-pointer' : ''}
                     {isGradient ? 'gradient overflow-hidden' : ''}
                     {bgColor && !isGradient ? 'bg-[var(--bg-color)]' : ''}
-                    {textColor ? 'text-[var(--text-color)]' : 'text-neutral-100'}
+                    {textColor ? 'text-[var(--text-color)]' : ''}
                     {isGradient ? 'relative' : ''}"
         use:action
         on:click={() => handleClick()}
         style={styleVars}
     >
         {#if hasImage}
-            <div class="transition-all w-6 h-6 aspect-square text-center flex items-center justify-center">
+            <span class="u-menu-tile" class:u-menu-tile-image={imageTile}>
                 <slot />
-            </div>
+            </span>
         {/if}
-        <div class="text-start h-6 leading-4 flex items-center text-nowrap">
+        <span class="u-menu-label">
             {label ?? tooltipTitle ?? ""}
             <slot name="end" />
-        </div>
+        </span>
+        {#if chevron}
+            <IconChevronRight font-size="16" class="u-menu-go rtl:-scale-x-100" aria-hidden="true" />
+        {/if}
     </button>
 {/if}
 

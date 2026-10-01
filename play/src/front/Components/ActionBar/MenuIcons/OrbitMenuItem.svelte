@@ -17,6 +17,7 @@
         label="Orbit"
         tooltipTitle="Explore the universe and what's in orbit"
         boldLabel={true}
+        chevron
         hideIconInActionBar={false}
         on:click={openAdminModalFromMenu}
         {first}
