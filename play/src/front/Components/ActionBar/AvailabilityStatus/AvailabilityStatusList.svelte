@@ -70,9 +70,8 @@
                 <span class="u-menu-label" class:grow={align === "start"}>
                     {statusInformationValue.label}
                 </span>
-                {#if isCurrent}
-                    <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
-                {/if}
+                <!-- Always there, hidden on the other rows, so every row has the same layout. -->
+                <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd] {isCurrent ? '' : 'opacity-0'}" />
             </button>
         {/each}
     {/if}

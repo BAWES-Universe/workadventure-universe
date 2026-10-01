@@ -903,17 +903,32 @@ div.emoji-picker {
     backdrop-filter: blur(18px) saturate(140%);
     -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
-/* Buttons that touch (the camera and microphone) read as one piece: the edge is a border, drawn top and bottom on
-   every segment and on the sides only by the outer ones (`border-s` / `border-e`), so no line shows where two meet. */
+/* Buttons that touch (the camera and microphone) read as one piece: the edge is drawn top and bottom on every
+   segment and on the sides only by the outer ones, so no line shows where two meet. It is drawn with inset shadows,
+   which take no space: a segment keeps the same size whether it is first, last or hidden, because the action bar
+   measures its buttons to decide which fall into the menu, and a size that changed with that answer would flip it
+   back and forth. */
 .u-surface-flat.u-segment {
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 10px 24px -10px rgba(0, 0, 0, 0.5);
-    border-style: solid;
-    border-color: var(--u-surface-edge);
-    border-block-width: 1px;
+    --u-seg-start: 0 0 #0000;
+    --u-seg-end: 0 0 #0000;
+    box-shadow: inset 0 1px 0 var(--u-surface-edge), inset 0 -1px 0 var(--u-surface-edge), var(--u-seg-start),
+        var(--u-seg-end), inset 0 2px 0 rgba(255, 255, 255, 0.06), 0 10px 24px -10px rgba(0, 0, 0, 0.5);
 }
-/* No specificity, so a `border-s` / `border-e` utility on the outer segments wins. */
-:where(.u-segment) {
-    border-inline-width: 0;
+.u-segment.u-seg-start,
+.u-segment.u-seg-auto-start:first-of-type {
+    --u-seg-start: inset 1px 0 0 var(--u-surface-edge);
+}
+.u-segment.u-seg-end,
+.u-segment.u-seg-auto-end:last-of-type {
+    --u-seg-end: inset -1px 0 0 var(--u-surface-edge);
+}
+[dir="rtl"] .u-segment.u-seg-start,
+[dir="rtl"] .u-segment.u-seg-auto-start:first-of-type {
+    --u-seg-start: inset -1px 0 0 var(--u-surface-edge);
+}
+[dir="rtl"] .u-segment.u-seg-end,
+[dir="rtl"] .u-segment.u-seg-auto-end:last-of-type {
+    --u-seg-end: inset 1px 0 0 var(--u-surface-edge);
 }
 /* The little arrow under a surface's dropdown, in the surface's ink rather than the old see-through contrast. */
 .u-surface-arrow[data-arrow-placement="bottom"]::before {
