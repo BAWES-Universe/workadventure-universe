@@ -72,7 +72,12 @@ The WebView configuration is set to:
 - `androidScheme: https` — ensures WebRTC and cookies work correctly on Android
 - `contentInset: always` — iOS safe area respected so game UI is not obscured by notch
 
-Camera and microphone permission requests are handled natively by each platform. See platform READMEs in `android/` and `ios/` once those PRs land.
+Camera and microphone permission requests are handled natively by each platform. iframe allow policies continue to pass through from the web app (`allowPolicy` / `allow` attributes), so existing WA scripting API and embedded-site behavior stays in the server-rendered app.
+
+Known mobile limitation:
+- Screen sharing stays browser-only. Android WebView and WKWebView do not provide a reliable `getDisplayMedia` path for the Universe shell, so the front-end hides the screen-share control when running inside the Capacitor app instead of presenting a broken prompt.
+
+See platform READMEs in `android/` and `ios/` once those PRs land.
 
 ## Fastlane
 

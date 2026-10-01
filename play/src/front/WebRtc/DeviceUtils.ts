@@ -28,6 +28,41 @@ export function isAndroid(): boolean {
     return window.navigator.userAgent.includes("Android");
 }
 
+type CapacitorPlatform = "android" | "ios" | "web";
+
+type CapacitorGlobal = {
+    Capacitor?: {
+        getPlatform?: () => CapacitorPlatform;
+        isNativePlatform?: () => boolean;
+    };
+};
+
+function getCapacitorBridge() {
+    return (window as typeof window & CapacitorGlobal).Capacitor;
+}
+
+export function getNativeAppPlatform(): Exclude<CapacitorPlatform, "web"> | undefined {
+    const capacitor = getCapacitorBridge();
+    const platform = capacitor?.getPlatform?.();
+
+    if (!platform || platform === "web") {
+        return undefined;
+    }
+
+    return platform;
+}
+
+export function isNativeMobileApp(): boolean {
+    const capacitor = getCapacitorBridge();
+    const nativePlatform = getNativeAppPlatform();
+
+    if (nativePlatform) {
+        return capacitor?.isNativePlatform?.() ?? true;
+    }
+
+    return false;
+}
+
 export function isFirefox(): boolean {
     return window.navigator.userAgent.toLowerCase().indexOf("firefox") !== -1;
 }
