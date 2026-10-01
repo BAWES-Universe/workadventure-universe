@@ -233,7 +233,7 @@
 <style>
     /* Fades the list out under the footer, so the button sits on the panel rather than on a hard edge. */
     .invite-footer {
-        background: linear-gradient(to top, rgb(27 42 65 / 0.95) 55%, rgb(27 42 65 / 0));
+        background: linear-gradient(to top, rgb(var(--u-ink) / 0.95) 55%, rgb(var(--u-ink) / 0));
     }
 
     .invite-card {

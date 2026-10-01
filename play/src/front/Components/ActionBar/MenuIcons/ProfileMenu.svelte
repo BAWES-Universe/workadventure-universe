@@ -297,7 +297,7 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div data-testid="action-user" class="flex items-center transition-all pointer-events-auto">
     <div
-        class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
+        class="group u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
         use:floatingUiRef
         on:click|preventDefault={() => {
             openedMenuStore.toggle("profileMenu");
@@ -316,7 +316,7 @@
             {/if}
         </div>
         <div
-            class="hidden @md/actions:flex items-center h-full group-hover:bg-white/10 transition-all group-hover:rounded gap-2 pl-0 pr-3"
+            class="hidden @md/actions:flex items-center h-full group-hover:bg-white/10 transition-all group-hover:rounded-lg gap-2 pl-0 pr-3"
         >
             <div class="overflow-hidden p-2 flex items-center justify-center rounded h-full aspect-square relative">
                 <Woka userId={-1} placeholderSrc="" customWidth="30px" />
@@ -352,22 +352,25 @@
     </div>
     {#if $openedMenuStore === "profileMenu"}
         <!-- before:content-[''] before:absolute before:w-0 before:h-0 before:-top-[14px] before:right-6 before:border-solid before:border-8 before:border-transparent before:border-b-contrast/80 -->
+        <!-- The whole menu stays on screen on a phone, however many items fall into it (logged in, apps, map tools,
+             script items): the box is capped to the visible height minus the action bar, and scrolls inside. -->
         <div
-            class="absolute top-0 left-0 bg-contrast/80 backdrop-blur rounded-md p-1 w-56 text-white select-none"
+            class="profile-menu absolute top-0 left-0 z-10 flex flex-col u-surface rounded-2xl p-1.5 w-64 max-w-[calc(100vw-10px)] text-white select-none"
             data-testid="profile-menu"
             use:floatingUiContent
             use:clickOutside={() => {
                 openedMenuStore.close("profileMenu");
             }}
         >
-            <div use:arrowAction />
-            <div class="p-0 m-0 list-none overflow-y-auto max-h-[calc(100vh-96px)]">
+            <div class="u-surface-arrow" use:arrowAction />
+            <div class="profile-menu-scroll p-0 m-0 list-none overflow-y-auto overscroll-contain rounded-[10px]">
                 <ExternalComponents zone="menuTop" />
                 <AvailabilityStatusList statusInformation={getStatusInformation(statusToShow)} />
                 <HeaderMenuItem label={$LL.menu.sub.profile()} />
                 {#if showWokaNameMenuItem()}
                     <ActionBarButton
                         label={$LL.actionbar.profil()}
+                        chevron
                         on:click={() => {
                             openEditNameScene();
                             analyticsClient.editName();
@@ -378,15 +381,19 @@
                 {/if}
                 <ActionBarButton
                     label={$LL.actionbar.woka()}
+                    chevron
+                    imageTile
                     on:click={() => {
                         openEditSkinScene();
                         analyticsClient.editWoka();
                     }}
                 >
-                    <Woka userId={-1} placeholderSrc="" customWidth="26px" />
+                    <Woka userId={-1} placeholderSrc="" customWidth="32px" />
                 </ActionBarButton>
                 <ActionBarButton
                     label={$LL.actionbar.companion()}
+                    chevron
+                    imageTile
                     on:click={() => {
                         openEditCompanionScene();
                         analyticsClient.editCompanion();
@@ -395,8 +402,8 @@
                     <Companion
                         userId={-1}
                         placeholderSrc="../static/images/default-companion.png"
-                        width="26px"
-                        height="26px"
+                        width="32px"
+                        height="32px"
                     />
                 </ActionBarButton>
                 {#if hasPersonalDesk}
@@ -427,18 +434,23 @@
                 <!--                                    <div class="text-left flex items-center">{$LL.actionbar.quest()}</div>-->
                 <!--                                </button>-->
                 <HeaderMenuItem label={$LL.menu.sub.settings()} />
-                <ActionBarButton label={$LL.actionbar.editCamMic()} on:click={openEnableCameraScene}>
+                <ActionBarButton label={$LL.actionbar.editCamMic()} chevron on:click={openEnableCameraScene}>
                     <CamSettingsIcon />
                 </ActionBarButton>
 
                 {#if SENTRY_DSN_FRONT != undefined && connectionManager.currentRoom?.isIssueReportEnabled}
-                    <ActionBarButton label={$LL.actionbar.issueReport.menuAction()} on:click={openFeedbackScene}>
+                    <ActionBarButton
+                        label={$LL.actionbar.issueReport.menuAction()}
+                        chevron
+                        on:click={openFeedbackScene}
+                    >
                         <IconBug font-size="22" />
                     </ActionBarButton>
                 {/if}
 
                 <ActionBarButton
                     label={$LL.actionbar.allSettings()}
+                    chevron
                     on:click={() => {
                         showMenuItem(SubMenusInterface.settings);
                         analyticsClient.openedMenu();
@@ -449,6 +461,8 @@
                 </ActionBarButton>
 
                 <div class="@sm/actions:hidden items-center">
+                    <!-- Hidden by CSS when the contextual items render nothing (it is then the only child). -->
+                    <div class="u-menu-divider contextual-divider" />
                     <ContextualMenuItems />
                 </div>
 
@@ -459,20 +473,38 @@
                 {/each}
 
                 {#if ENABLE_OPENID && $userIsConnected}
+                    <div class="u-menu-divider" />
                     <button
+                        type="button"
                         on:click={() => analyticsClient.logout()}
                         on:click={() => connectionManager.logout()}
-                        class="group flex p-2 gap-2 items-center hover:bg-danger-600 transition-all cursor-pointer font-bold text-sm w-full pointer-events-auto text-start rounded"
+                        class="u-menu-row u-danger group pointer-events-auto mb-0"
                     >
-                        <div class="transition-all w-6 h-6 aspect-square text-center flex items-center justify-center">
-                            <IconLogout height="20" width="20" class="text-danger-800 group-hover:text-white" />
-                        </div>
-                        <div class="text-start leading-4 text-danger-800 group-hover:text-white flex items-center">
-                            {$LL.menu.profile.logout()}
-                        </div>
+                        <span class="u-menu-tile">
+                            <IconLogout height="20" width="20" />
+                        </span>
+                        <span class="u-menu-label">{$LL.menu.profile.logout()}</span>
                     </button>
                 {/if}
             </div>
         </div>
     {/if}
 </div>
+
+<style>
+    /* Never taller than what is visible above (phone) or below (desktop) the action bar: 6rem covers the bar at its
+       tallest (16px padding + 64px button), the 8px gap to it and an 8px margin at the far edge. dvh follows the
+       phone's browser bars; vh is the fallback for older browsers. */
+    .profile-menu {
+        max-height: calc(100vh - 6rem);
+        max-height: calc(100dvh - 6rem);
+    }
+    .profile-menu-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        -webkit-overflow-scrolling: touch;
+    }
+    .contextual-divider:last-child {
+        display: none;
+    }
+</style>

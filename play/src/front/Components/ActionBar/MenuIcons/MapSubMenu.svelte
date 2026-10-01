@@ -45,7 +45,7 @@
                 openedMenuStore.toggle("mapMenu");
             }}
         >
-            <div class="group bg-contrast/80 backdrop-blur rounded-lg h-16 @sm/actions:h-14 @xl/actions:h-16 p-2">
+            <div class="group u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2">
                 <div
                     class="flex items-center h-full group-hover:bg-white/10mr group-hover:rounded pl-4 pr-4 gap-2 hover:bg-white/10"
                 >
@@ -71,13 +71,13 @@
         </div>
         {#if $openedMenuStore === "mapMenu"}
             <div
-                class="absolute bg-contrast/80 backdrop-blur rounded-md w-auto max-w-full text-white"
+                class="absolute u-surface rounded-2xl w-auto max-w-full text-white"
                 data-testid="map-sub-menu"
                 use:floatingUiContent
                 use:clickOutside={closeMapMenu}
             >
-                <div use:arrowAction />
-                <div class="p-1 m-0">
+                <div class="u-surface-arrow" use:arrowAction />
+                <div class="p-1.5 m-0">
                     <MapSubMenuContent />
                 </div>
             </div>

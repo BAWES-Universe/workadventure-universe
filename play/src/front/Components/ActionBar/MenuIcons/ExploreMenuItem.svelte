@@ -42,6 +42,7 @@
         on:click={toggle}
         {label}
         boldLabel={true}
+        chevron
         classList="group/btn-explore"
         tooltipTitle={label}
         desc={$LL.actionbar.explore.desc()}
