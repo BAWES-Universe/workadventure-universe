@@ -107,12 +107,7 @@
                     ? $LL.actionbar.explore.title({ universe: displayName($universeNameStore) })
                     : $LL.actionbar.explore.titleWithoutName()}
             </h2>
-            <button
-                type="button"
-                class="ms-auto flex items-center justify-center w-10 h-10 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
-                aria-label={$LL.actionbar.explore.close()}
-                on:click={close}
-            >
+            <button type="button" class="u-close ms-auto" aria-label={$LL.actionbar.explore.close()} on:click={close}>
                 <IconX font-size="20" />
             </button>
         </header>

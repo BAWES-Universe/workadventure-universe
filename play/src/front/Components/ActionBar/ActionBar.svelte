@@ -14,9 +14,11 @@
     import type { RightMenuItem } from "../../Stores/MenuStore";
     import { rightActionBarMenuItems } from "../../Stores/MenuStore";
     import { IconChevronUp } from "../Icons";
+    import { LL } from "../../../i18n/i18n-svelte";
     import { hideActionBarStoreBecauseOfChatBar } from "../../Chat/ChatSidebarWidthStore";
     import { screenSharingAvailableStore } from "../../Stores/ScreenSharingStore";
     import { isInRemoteConversation } from "../../Stores/StreamableCollectionStore";
+    import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import MediaSettingsList from "./MediaSettingsList.svelte";
     import CameraMenuItem from "./MenuIcons/CameraMenuItem.svelte";
     import MicrophoneMenuItem from "./MenuIcons/MicrophoneMenuItem.svelte";
@@ -91,25 +93,29 @@
                         {/if}
 
                         {#if smallArrowVisible}
-                            <div
-                                class="absolute h-3 mobile:h-6 w-7 rounded-b-md mobile:rounded-md u-surface-flat start-[2.86rem] m-auto p-1 z-10 transition-all -bottom-3 hidden opacity-0 sm:block mobile:-top-12 mobile:block mobile:opacity-100
-                                {mediaSettingsDisplayed ? 'opacity-100' : 'group-hover/hardware:opacity-100'}"
-                            >
-                                <!-- svelte-ignore a11y-click-events-have-key-events -->
-                                <!-- svelte-ignore a11y-no-static-element-interactions -->
-                                <div
-                                    class="absolute bottom-1 start-0 end-0 m-auto hover:bg-white/10 h-5 w-5 flex items-center justify-center rounded-sm mobile:rotate-180"
+                            <!-- The device arrow sits on the seam between the microphone and the camera: this anchor
+                                 takes no width, so the tab is centred on the seam at every bar size. A span, not a
+                                 div, so the segments' first/last-of-type rounding ignores it. -->
+                            <span class="device-arrow-anchor relative self-stretch w-0 z-10">
+                                <button
+                                    type="button"
+                                    class="device-arrow group-hover/hardware:opacity-100 group-focus-within/hardware:opacity-100"
+                                    class:open={mediaSettingsDisplayed}
+                                    aria-label={$LL.actionbar.editCamMic()}
+                                    aria-expanded={mediaSettingsDisplayed}
                                     on:click|stopPropagation|preventDefault={() =>
                                         (mediaSettingsDisplayed = !mediaSettingsDisplayed)}
                                 >
-                                    <IconChevronUp
-                                        stroke={2}
-                                        class="aspect-square transition-all {mediaSettingsDisplayed
-                                            ? ''
-                                            : 'rotate-180'}"
-                                    />
-                                </div>
-                            </div>
+                                    <span class="device-arrow-tab u-surface-flat">
+                                        <IconChevronUp
+                                            stroke={2}
+                                            class="device-arrow-chevron aspect-square transition-transform {mediaSettingsDisplayed
+                                                ? ''
+                                                : 'rotate-180'}"
+                                        />
+                                    </span>
+                                </button>
+                            </span>
                         {/if}
                         {#if mediaSettingsDisplayed}
                             <MediaSettingsList on:close={() => (mediaSettingsDisplayed = false)} />
@@ -131,11 +137,18 @@
                     </div>
                 </div>
             </div>
-            <!-- NAV : SILENT BLOCK -->
-            {#if $silentStore}
-                <SilentBlock />
+            <!-- NAV : SILENT BLOCK (bar at the top: under the microphone and camera, as before) -->
+            {#if $silentStore && !$mobileLayoutStore}
+                <SilentBlock placement="below" />
             {/if}
         </div>
+
+        <!-- NAV : SILENT BLOCK (phones, bar at the bottom: above the whole bar, centred on the screen) -->
+        <svelte:fragment slot="overlay">
+            {#if $silentStore && $mobileLayoutStore}
+                <SilentBlock placement="above" />
+            {/if}
+        </svelte:fragment>
 
         <div slot="right" id="action-wrapper" class="flex flex-1 justify-end gap-1 @md/actions:gap-2 @xl/actions:gap-4">
             <div class="flex flex-row flex-0 gap-0">
@@ -164,3 +177,86 @@
         </div>
     </ResponsiveActionBar>
 {/if}
+
+<style lang="scss">
+    /* The device arrow: a small ink pill like the bar's own, centred on the microphone | camera seam. It hangs below
+       the bar on desktop (shown on hover, focus, or while the list is open) and sits above it on phones (always
+       shown). The brand gradient means "open", as it means "on" everywhere else in the bar. */
+    .device-arrow {
+        position: absolute;
+        left: 0;
+        top: calc(100% + 2px);
+        transform: translateX(-50%);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        /* The whole box takes the tap: 40x22 around a 32x18 tab. */
+        width: 40px;
+        height: 22px;
+        padding-top: 2px;
+        background: transparent;
+        border: 0;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 150ms ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .device-arrow.open,
+    .device-arrow:focus-visible {
+        opacity: 1;
+    }
+    @media (hover: none) {
+        .device-arrow {
+            opacity: 1;
+        }
+    }
+    .device-arrow:focus-visible {
+        outline: none;
+    }
+    .device-arrow-tab {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 18px;
+        border-radius: 9999px;
+        color: #fff;
+        transition: background 150ms ease;
+    }
+    .device-arrow:focus-visible .device-arrow-tab {
+        box-shadow: 0 0 0 2px #fff;
+    }
+    @media (hover: hover) {
+        .device-arrow:hover .device-arrow-tab {
+            background: linear-gradient(180deg, rgb(48 44 70 / 0.95), rgb(var(--u-ink) / 0.95));
+        }
+    }
+    .device-arrow.open .device-arrow-tab {
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+        box-shadow: 0 6px 18px -6px rgba(134, 41, 252, 0.9);
+    }
+    .device-arrow :global(.device-arrow-chevron) {
+        width: 14px;
+        height: 14px;
+    }
+    /* Phones (Tailwind's mobile: variant, written as a list the compiler can read): the bar is at the bottom, so the
+       tab sits above it, a little bigger, with a 44px tall tap zone. The chevron flips: closed points up (the list
+       opens upwards), open points down. */
+    @media (max-height: 960px) and (max-width: 480px) and (pointer: coarse),
+        (max-height: 480px) and (max-width: 960px) and (pointer: coarse) {
+        .device-arrow {
+            top: auto;
+            bottom: 100%;
+            align-items: flex-end;
+            width: 44px;
+            height: 44px;
+            padding-top: 0;
+            padding-bottom: 6px;
+            opacity: 1;
+        }
+        .device-arrow-tab {
+            width: 36px;
+            height: 22px;
+            transform: rotate(180deg);
+        }
+    }
+</style>

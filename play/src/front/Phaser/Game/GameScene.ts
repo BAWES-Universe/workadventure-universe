@@ -121,7 +121,12 @@ import { LL, locale } from "../../../i18n/i18n-svelte";
 import { GameSceneUserInputHandler } from "../UserInput/GameSceneUserInputHandler";
 import { followUsersColorStore, followUsersStore } from "../../Stores/FollowStore";
 import { axiosWithRetry, hideConnectionIssueMessage } from "../../Connection/AxiosUtils";
-import { RESUME_NETWORK_WAIT_MS, showReconnectingScreen, waitForNetwork } from "../../Connection/ReconnectScreen";
+import {
+    RESUME_NETWORK_WAIT_MS,
+    keepLogoInMemory,
+    showReconnectingScreen,
+    waitForNetwork,
+} from "../../Connection/ReconnectScreen";
 import { reconnectWatchdog } from "../../Connection/AppReconnectWatchdog";
 import { StringUtils } from "../../Utils/StringUtils";
 import { groupMediaDevicesByLabel } from "../../Utils/NewMediaDevices";
@@ -672,6 +677,8 @@ export class GameScene extends DirtyScene {
 
         this.outlineManager = new OutlineManager(this);
         gameManager.gameSceneIsCreated(this);
+        // While the network is up: the reconnecting screen will need the logo when it is not.
+        keepLogoInMemory(this._room.errorSceneLogo);
         urlManager.pushRoomIdToUrl(this._room);
         analyticsClient.enteredRoom(this._room.id, this._room.group);
         contactPageStore.set(this._room.contactPage);

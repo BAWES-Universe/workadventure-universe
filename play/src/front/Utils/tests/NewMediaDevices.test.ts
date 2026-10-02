@@ -3,6 +3,7 @@ import {
     MAX_KNOWN_MEDIA_DEVICES,
     findNewMediaDevices,
     groupMediaDevicesByLabel,
+    listLacksNamesFor,
     mediaDeviceKey,
     rememberMediaDevices,
 } from "../NewMediaDevices";
@@ -38,6 +39,19 @@ describe("findNewMediaDevices", () => {
         expect(findNewMediaDevices([device("audioinput", "")], new Set())).toEqual([]);
     });
 
+    it("does not offer cameras whose names were only hidden until the site was allowed to use the camera", () => {
+        const brio = device("videoinput", "MX Brio");
+        const before = [device("videoinput", "", ""), headsetMic];
+        expect(findNewMediaDevices([brio, headsetMic], new Set(rememberMediaDevices([], before)), before)).toEqual([]);
+    });
+
+    it("still offers a camera plugged in once the camera's names were showing", () => {
+        const brio = device("videoinput", "MX Brio");
+        const obs = device("videoinput", "OBS Virtual Camera");
+        const known = new Set(rememberMediaDevices([], [brio]));
+        expect(findNewMediaDevices([brio, obs], known, [brio])).toEqual([obs]);
+    });
+
     it("tells a microphone and a speaker with the same label apart", () => {
         const known = new Set(rememberMediaDevices([], [headsetSpeaker]));
         expect(findNewMediaDevices([headsetMic, headsetSpeaker], known)).toEqual([headsetMic]);
@@ -68,5 +82,24 @@ describe("groupMediaDevicesByLabel", () => {
             "SteelSeries Sonar - Game",
         ]);
         expect(groups.get("USB Headset")).toEqual([headsetMic, headsetSpeaker]);
+    });
+});
+
+describe("listLacksNamesFor", () => {
+    const blankCamera = device("videoinput", "", "");
+    const brio = device("videoinput", "MX Brio");
+
+    it("asks for a new reading when the camera starts and the list has no camera names", () => {
+        expect(listLacksNamesFor({ video: true, audio: true }, [blankCamera, headsetMic])).toBe(true);
+    });
+
+    it("asks for none when the list already names what the stream uses", () => {
+        expect(listLacksNamesFor({ video: true, audio: true }, [brio, headsetMic])).toBe(false);
+        // A microphone-only stream does not need the camera's names.
+        expect(listLacksNamesFor({ video: false, audio: true }, [blankCamera, headsetMic])).toBe(false);
+    });
+
+    it("asks for one when there is no list yet", () => {
+        expect(listLacksNamesFor({ video: false, audio: true }, undefined)).toBe(true);
     });
 });

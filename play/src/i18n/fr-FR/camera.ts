@@ -47,7 +47,7 @@ const camera: DeepPartial<Translation["camera"]> = {
     my: {
         silentZone: "Zone silencieuse",
         silentZoneDesc:
-            "Vous êtes dans une zone silencieuse, les autres utilisateurs ne peuvent pas vous parler, votre micro et caméra est désactivé. Bonne pause !",
+            "Pas d'appels ici. Votre caméra et votre micro sont coupés, et personne ne peut démarrer une conversation avec vous tant que vous êtes dans cette zone.",
         nameTag: "Vous",
         loading: "Chargement de votre webcam...",
     },

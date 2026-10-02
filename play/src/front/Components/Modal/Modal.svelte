@@ -12,6 +12,8 @@
     } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { chatVisibilityStore } from "../../Stores/ChatStore";
+    import { chatFloatInsetStore } from "../../Chat/ChatSidebarWidthStore";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
     /** The device asks for less motion: the panel appears and goes at once, without the blur. */
@@ -40,6 +42,23 @@
         }
     }
 
+    // A side panel takes its side of the screen the way the chat does: the camera keeps the player centred in what is
+    // left of the map (on phones too). A full-screen or centred panel covers the map, so it does not count.
+    $: takesSide =
+        !isFullScreened && !shouldForceMobileFullScreen && (shown?.position === "right" || shown?.position === "left");
+
+    function reposition() {
+        gameManager.tryGetCurrentGameScene()?.reposition();
+    }
+
+    // Opening the panel, or entering or leaving its full-screen view, changes what it covers. The width animates, so
+    // the end of that animation measures again (on:transitionend below).
+    let coveredSide: boolean | undefined;
+    $: if (mainModal && takesSide !== coveredSide) {
+        coveredSide = takesSide;
+        reposition();
+    }
+
     onMount(() => {
         resizeObserver.observe(mainModal);
         modalIframeWindowStore.set(modalIframe.contentWindow);
@@ -54,6 +73,8 @@
 
     onDestroy(() => {
         modalFullScreenStore.set(false);
+        // The scene measures on its next frame, after the panel has left the page: the player goes back to the middle.
+        reposition();
         // A throw here would leave the closed panel over the whole game, catching every click.
         if (!modalIframe) return;
         if (get(modalIframeWindowStore) === modalIframe.contentWindow) {
@@ -88,11 +109,12 @@
 <div
     class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all motion-reduce:transition-none {shouldForceMobileFullScreen
         ? 'mobile'
-        : shown?.position} {isFullScreened ? 'fullscreened' : ''}"
+        : shown?.position} {isFullScreened ? 'fullscreened' : ''} {takesSide ? 'screen-blocker' : ''}"
     bind:this={mainModal}
+    on:transitionend|self={reposition}
 >
     <div
-        class="w-full h-full bg-contrast/80 backdrop-blur rounded"
+        class="modal-panel w-full h-full bg-contrast/80 backdrop-blur rounded"
         transition:blur={{ amount: 10, duration: prefersReducedMotion() ? 0 : 250 }}
     >
         <div
@@ -110,8 +132,14 @@
         >
             {#if modalUrl != undefined}
                 {#if shown?.allowFullScreen}
+                    <!-- Shown from a large layout (1024px). A floating chat also takes its 16px inset from the
+                         layout's width, so the threshold drops by that much: the button shows at the same window
+                         widths as before the chat floated. -->
                     <button
-                        class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none hidden @lg/main-layout:flex items-center justify-center"
+                        class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none hidden items-center justify-center {$chatVisibilityStore &&
+                        $chatFloatInsetStore
+                            ? '@[1008px]/main-layout:flex'
+                            : '@lg/main-layout:flex'}"
                         on:click={() => modalFullScreenStore.update((full) => !full)}
                         aria-label={isFullScreened ? "Return to compact view" : "Open full-screen view"}
                         title={isFullScreened ? "Return to compact view" : "Open full-screen view"}
@@ -177,6 +205,47 @@
         }
         &.left {
             left: 0;
+        }
+        // Below the floating layout the panel meets the top of the screen, so the close button is held off it by the
+        // bar's own 4px gap. On a phone the strip beside the panel is narrow: the button then sits 4px from the screen
+        // edge, over the chat button below it, instead of running off the screen.
+        @media (max-width: 1023px) {
+            &.right:not(.fullscreened) .modal-tools {
+                top: 4px;
+                left: max(-80px, calc(4px - (100vw - 100%)));
+            }
+            &.left:not(.fullscreened) .modal-tools {
+                top: 4px;
+                right: max(-80px, calc(4px - (100vw - 100%)));
+            }
+        }
+        // On a desktop the side panel floats: a rounded card held off the edges, like the menu and the device list.
+        // Its width stays the same, because Orbit picks its own layout from the width of the frame. Phones keep the
+        // panel edge to edge, where every pixel counts and the close and expand buttons already sit beside it.
+        @media (min-width: 1024px) {
+            &.right:not(.fullscreened),
+            &.left:not(.fullscreened) {
+                top: 16px;
+                height: calc(100dvh - 32px);
+
+                .modal-panel {
+                    border-radius: 24px;
+                    box-shadow: var(--u-surface-shadow);
+                }
+
+                // The page inside paints its own square background, so the frame is rounded too. Safari only clips
+                // a frame's corners when it has its own layer.
+                #modalIframe {
+                    border-radius: 24px;
+                    isolation: isolate;
+                }
+            }
+            &.right:not(.fullscreened) {
+                right: 16px;
+            }
+            &.left:not(.fullscreened) {
+                left: 16px;
+            }
         }
         &.center:not(.fullscreened) {
             width: 75%;

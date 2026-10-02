@@ -2,13 +2,20 @@
     import { fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
     import { IconMute } from "@wa-icons";
+
+    /** Where the bar is: "above" it on phones (bar at the bottom), "below" it elsewhere (bar at the top). */
+    export let placement: "above" | "below";
 </script>
 
 <!-- The same dark surface as the other panels, so the text reads on any floor, with an amber tile so it is noticed.
-     Above the bar on phones (clear of the device tab), below it on desktop. The explanation shows everywhere:
-     nothing to tap. -->
+     The explanation shows everywhere: nothing to tap.
+     "above": phones, where the bar is at the bottom. Placed against the whole bar, centred and never wider than the
+     screen, above the device tab.
+     "below": everywhere else, where the bar is at the top. Under the microphone and camera, as before. -->
 <div
-    class="silent-block absolute bottom-full mb-2.5 mobile:mb-14 inset-x-0 mx-auto @sm/actions:bottom-auto @sm/actions:mb-0 @sm/actions:!top-20 @sm/actions:right-auto @sm/actions:mx-0 z-0 u-surface rounded-2xl text-white text-start transition-all pointer-events-auto flex items-start gap-3 px-3 py-2.5 w-max max-w-[min(22rem,calc(100vw-1rem))]"
+    class="silent-block {placement === 'above'
+        ? 'bottom-full left-0 right-[72px] mx-auto mb-10 max-w-[22rem]'
+        : 'top-20 start-0 w-max max-w-[min(22rem,calc(100vw-1rem))]'} flex absolute z-0 u-surface rounded-2xl text-white text-start transition-all pointer-events-auto items-start gap-3 px-3 py-2.5"
     role="status"
     aria-live="polite"
     transition:fly={{ y: 30, duration: 400 }}

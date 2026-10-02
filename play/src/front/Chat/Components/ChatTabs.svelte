@@ -55,6 +55,75 @@
     $: barWidth = innerWidth - sideBarWidth;
     $: compact = innerWidth > 0 && barWidth >= 640 && barWidth < 1280;
 
+    // The pill can be dragged or flicked to the other tab, like a switch: it follows the finger, then snaps to the
+    // tab it is nearer, or to the one it was flicked toward, and that tab opens. A movement under 6px is a tap and
+    // left to the tabs' own click. Only the track takes the gesture; the lists below keep scrolling as before.
+    const isRTL = document.documentElement.dir === "rtl";
+    let track: HTMLDivElement;
+    let pillX: number | undefined;
+    let drag:
+        | {
+              pointerId: number;
+              startX: number;
+              base: number;
+              travel: number;
+              moved: boolean;
+              samples: { x: number; t: number }[];
+          }
+        | undefined;
+    // A drag ends with a click on the tab under the finger: ignore that one.
+    let ignoreClicksUntil = 0;
+
+    function startDrag(event: PointerEvent) {
+        if (!hasChatsTab || !hasPeopleTab || activeTab === undefined) return;
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        // The pill is half the track less 6px, and moves its own width plus the 4px gap: half the track less 2px.
+        const travel = track.clientWidth / 2 - 2;
+        drag = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            base: activeTab === "people" ? travel : 0,
+            travel,
+            moved: false,
+            samples: [{ x: event.clientX, t: event.timeStamp }],
+        };
+    }
+
+    function moveDrag(event: PointerEvent) {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const dx = (event.clientX - drag.startX) * (isRTL ? -1 : 1);
+        if (!drag.moved) {
+            if (Math.abs(dx) < 6) return;
+            drag.moved = true;
+            track.setPointerCapture(event.pointerId);
+        }
+        pillX = Math.min(drag.travel, Math.max(0, drag.base + dx));
+        drag.samples = [...drag.samples, { x: event.clientX, t: event.timeStamp }].slice(-5);
+    }
+
+    function endDrag(event: PointerEvent) {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const ended = drag;
+        drag = undefined;
+        if (!ended.moved) return;
+        ignoreClicksUntil = event.timeStamp + 400;
+        const position = pillX ?? ended.base;
+        pillX = undefined;
+        if (event.type === "pointercancel") return;
+        const first = ended.samples[0];
+        const last = ended.samples[ended.samples.length - 1];
+        const velocity = last.t > first.t ? ((last.x - first.x) * (isRTL ? -1 : 1)) / (last.t - first.t) : 0;
+        const toPeople = Math.abs(velocity) > 0.4 ? velocity > 0 : position > ended.travel / 2;
+        if (toPeople && activeTab !== "people") navChat.switchToUserList();
+        else if (!toPeople && activeTab !== "chats") navChat.switchToChat();
+    }
+
+    function openTab(tab: "chats" | "people", event: MouseEvent) {
+        if (event.timeStamp < ignoreClicksUntil) return;
+        if (tab === "chats") navChat.switchToChat();
+        else navChat.switchToUserList();
+    }
+
     function onTabKeyDown(event: KeyboardEvent) {
         // Left and right move between the two tabs; the arrows never reach the game.
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -73,8 +142,15 @@
             <div
                 class="chat-tabs u-glass relative flex grow min-w-0 gap-1 rounded-full p-1"
                 class:compact
+                class:dragging={pillX !== undefined}
                 role="tablist"
                 data-active={activeTab}
+                style={pillX !== undefined ? `--pill-x: ${isRTL ? -pillX : pillX}px` : undefined}
+                bind:this={track}
+                on:pointerdown={startDrag}
+                on:pointermove={moveDrag}
+                on:pointerup={endDrag}
+                on:pointercancel={endDrag}
             >
                 <button
                     type="button"
@@ -83,7 +159,7 @@
                     aria-selected={activeTab === "chats"}
                     tabindex={activeTab === "chats" ? 0 : -1}
                     data-testid="chatTabChats"
-                    on:click={() => navChat.switchToChat()}
+                    on:click={(event) => openTab("chats", event)}
                     on:keydown={onTabKeyDown}
                 >
                     <span class="truncate">{$LL.chat.header.tabChats()}</span>
@@ -103,7 +179,7 @@
                     aria-selected={activeTab === "people"}
                     tabindex={activeTab === "people" ? 0 : -1}
                     data-testid="chatTabPeople"
-                    on:click={() => navChat.switchToUserList()}
+                    on:click={(event) => openTab("people", event)}
                     on:keydown={onTabKeyDown}
                 >
                     <span class="truncate">{$LL.chat.header.tabPeople()}</span>
@@ -170,6 +246,18 @@
     :global([dir="rtl"]) .chat-tabs[data-active="people"]::before {
         transform: translateX(calc(-100% - 4px));
     }
+    /* Dragged: the pill sits under the finger, with no easing to lag behind it. Let go, and the rules above take
+       over again with their transition, so it glides from where it was dropped. */
+    .chat-tabs {
+        touch-action: pan-y;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+    .chat-tabs.dragging.dragging::before {
+        opacity: 1;
+        transform: translateX(var(--pill-x));
+        transition: none;
+    }
     @media (prefers-reduced-motion: reduce) {
         .chat-tabs::before {
             transition: opacity 150ms ease;
@@ -199,6 +287,12 @@
     .chat-tab:hover {
         color: #fff;
         filter: none;
+    }
+
+    /* A tap focuses the tab, and the game's global focus rule then draws the system's blue ring around it at
+       once, ahead of the sliding pill. Only the keyboard gets a ring. */
+    .chat-tab:focus:not(:focus-visible) {
+        outline: none;
     }
 
     .chat-tab:focus-visible {

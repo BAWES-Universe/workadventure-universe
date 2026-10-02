@@ -327,7 +327,8 @@
                 <div
                     class="font-bold text-white leading-5 whitespace-nowrap select-none text-base @sm/actions:text-sm @xl/actions:text-base order-last @xl/actions:order-first flex items-center"
                 >
-                    {userName}
+                    <!-- Names can be 32 letters long: cut a long one, so the menu never pushes the bar apart. -->
+                    <span class="truncate max-w-[11rem]" title={userName}>{userName}</span>
                 </div>
                 <div class="text-xxs bold whitespace-nowrap select-none flex items-center">
                     <div

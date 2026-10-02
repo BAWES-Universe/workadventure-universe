@@ -7,7 +7,7 @@ import { localUserStore } from "../Connection/LocalUserStore";
 import { isIOS, isSafari } from "../WebRtc/DeviceUtils";
 import type { ObtainedMediaStreamConstraints } from "../WebRtc/P2PMessages/ConstraintMessage";
 import { SoundMeter } from "../Phaser/Components/SoundMeter";
-import { findNewMediaDevices, rememberMediaDevices } from "../Utils/NewMediaDevices";
+import { findNewMediaDevices, listLacksNamesFor, rememberMediaDevices } from "../Utils/NewMediaDevices";
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { statusChanger } from "../Components/ActionBar/AvailabilityStatus/statusChanger";
 import {
@@ -991,10 +991,11 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
                 // Only devices this browser has never seen count as new. Devices present on the first
                 // listing are remembered silently.
                 const knownMediaDevices = localUserStore.getKnownMediaDevices();
+                const previousDevices = get(deviceListStore);
                 const newDevices =
-                    get(deviceListStore) === undefined
+                    previousDevices === undefined
                         ? []
-                        : findNewMediaDevices(mediaDeviceInfos, new Set(knownMediaDevices));
+                        : findNewMediaDevices(mediaDeviceInfos, new Set(knownMediaDevices), previousDevices);
                 localUserStore.setKnownMediaDevices(rememberMediaDevices(knownMediaDevices, mediaDeviceInfos));
 
                 set(mediaDeviceInfos);
@@ -1012,7 +1013,13 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
 
     const unsubscribe = localStreamStore.subscribe((streamResult) => {
         if (streamResult.type === "success" && streamResult.stream !== undefined) {
-            if (deviceListCanBeQueried === false) {
+            // Read again when the stream brings a kind of device the list has no names for yet: the camera allowed
+            // after the microphone shows its names without a reload.
+            const tracks = {
+                video: streamResult.stream.getVideoTracks().length > 0,
+                audio: streamResult.stream.getAudioTracks().length > 0,
+            };
+            if (deviceListCanBeQueried === false || listLacksNamesFor(tracks, get(deviceListStore))) {
                 queryDeviceList();
                 deviceListCanBeQueried = true;
             }

@@ -83,7 +83,8 @@
         : ''}"
 >
     <div class="gap-1 @md/actions:gap-2 @xl/actions:gap-4 p-1 @md/actions:p-2 @xl/actions:p-4 screen-blocker">
-        <div class="w-full flex justify-between items-center" bind:offsetWidth={actionBarWidth}>
+        <!-- relative: what the overlay slot holds is placed against the whole bar, not one of its parts. -->
+        <div class="relative w-full flex justify-between items-center" bind:offsetWidth={actionBarWidth}>
             <!-- Left bar -->
             <div class="flex-1 flex">
                 <div class="flex-none" bind:offsetWidth={leftDivWidth}>
@@ -116,6 +117,7 @@
                     </div>
                 </div>
             </div>
+            <slot name="overlay" />
         </div>
     </div>
 </div>

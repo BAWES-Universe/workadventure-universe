@@ -9,7 +9,12 @@
     import { banMessageStore } from "../Stores/TypeMessageStore/BanMessageStore";
     import { textMessageStore } from "../Stores/TypeMessageStore/TextMessageStore";
     import { soundPlayingStore } from "../Stores/SoundPlayingStore";
-    import { modalVisibilityStore, roomListVisibilityStore, showLimitRoomModalStore } from "../Stores/ModalStore";
+    import {
+        modalIframeStore,
+        modalVisibilityStore,
+        roomListVisibilityStore,
+        showLimitRoomModalStore,
+    } from "../Stores/ModalStore";
     import { actionsMenuStore } from "../Stores/ActionsMenuStore";
     import { wokaMenuStore } from "../Stores/WokaMenuStore";
     import { showDesktopCapturerSourcePicker } from "../Stores/ScreenSharingStore";
@@ -28,7 +33,7 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
-    import { chatSidebarWidthStore } from "../Chat/ChatSidebarWidthStore";
+    import { chatFloatInsetStore, chatSidebarWidthStore } from "../Chat/ChatSidebarWidthStore";
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
@@ -103,7 +108,8 @@
         inputFormFocusStore.set(false);
     });
 
-    $: marginLeft = $chatVisibilityStore ? $chatSidebarWidthStore : 0;
+    // A floating chat (desktop) sits off the edge: what is beside it starts where the chat ends.
+    $: marginLeft = $chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
     $: marginRight =
         $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
             ? $mapEditorSideBarWidthStore
@@ -119,7 +125,8 @@
         : ''}"
     style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px "
 >
-    {#if $modalVisibilityStore}
+    <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->
+    {#if $modalVisibilityStore && $modalIframeStore?.position === "center"}
         <div class="bg-black/60 w-full h-full fixed start-0 end-0" />
     {/if}
 
