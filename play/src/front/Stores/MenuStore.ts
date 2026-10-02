@@ -15,12 +15,14 @@ import {
 import MapSubMenu from "../Components/ActionBar/MenuIcons/MapSubMenu.svelte";
 import LoginMenuItem from "../Components/ActionBar/MenuIcons/LoginMenuItem.svelte";
 import OrbitMenuItem from "../Components/ActionBar/MenuIcons/OrbitMenuItem.svelte";
+import ExploreMenuItem from "../Components/ActionBar/MenuIcons/ExploreMenuItem.svelte";
 import CustomActionBarButton from "../Components/ActionBar/MenuIcons/CustomActionBarButton.svelte";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { userIsAdminStore } from "./GameStore";
 import { megaphoneCanBeUsedStore } from "./MegaphoneStore";
 import { chatVisibilityStore, isMatrixChatEnabledStore } from "./ChatStore";
 import { gameSceneStore } from "./GameSceneStore";
+import { mobileLayoutStore } from "./MobileLayoutStore";
 import { modalIframeStore, modalVisibilityStore, showModalGlobalComminucationVisibilityStore } from "./ModalStore";
 import { getAdditionalMenuItemStore } from "./AdditionalItemsMenuStore";
 
@@ -331,9 +333,18 @@ const orbitMenuItem: RightMenuItem<OrbitMenuItem> = {
     props: {},
 };
 
+// "Explore {Universe}" in its own pill between Tools and Orbit. When the bar runs out of room it moves into the menu
+// like the other items here. Phones show it in the zoom column instead (ExplorerMenu.svelte).
+const exploreMenuItem: RightMenuItem<ExploreMenuItem> = {
+    id: "explore",
+    fallsInBurgerMenuStore: writable(false),
+    component: ExploreMenuItem,
+    props: {},
+};
+
 export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentTyped>[]> = derived(
-    [additionalRightButtonsMenu, userIsConnected, adminDashboardActivatedStore],
-    ([$additionalButtonsMenu, $userIsConnected, $adminDashboardActivated]) => {
+    [additionalRightButtonsMenu, userIsConnected, adminDashboardActivatedStore, roomListActivated, mobileLayoutStore],
+    ([$additionalButtonsMenu, $userIsConnected, $adminDashboardActivated, $roomListActivated, $mobileLayout]) => {
         const menuItems: RightMenuItem<SvelteComponentTyped>[] = [];
 
         // Add additional buttons from "top" location first
@@ -363,6 +374,10 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
 
         // Build menu (will move to burger menu on mobile if space is limited)
         menuItems.push(mapsMenuItem);
+
+        if ($roomListActivated && !$mobileLayout) {
+            menuItems.push(exploreMenuItem);
+        }
 
         // Add Orbit button LAST (highest priority - stays visible on mobile)
         // Since items are right-aligned, the last item in array stays visible when space is limited

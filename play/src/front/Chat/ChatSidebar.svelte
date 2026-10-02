@@ -6,11 +6,7 @@
     import { LL } from "../../i18n/i18n-svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
     import Chat from "./Components/Chat.svelte";
-    import {
-        chatFloatInsetStore,
-        chatSidebarWidthStore,
-        hideActionBarStoreBecauseOfChatBar,
-    } from "./ChatSidebarWidthStore";
+    import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import { IconX } from "@wa-icons";
 
     let container: HTMLElement;
@@ -31,7 +27,11 @@
 
     const isRTL: boolean = document.documentElement.dir === "rtl";
 
+    // While the chat is being resized, its handle shows it (violet, a little wider).
+    let resizing = false;
+
     const handleMousedown = (e: MouseEvent) => {
+        resizing = true;
         let dragX = e.clientX;
         const initialWidth = sideBarWidth;
 
@@ -47,12 +47,14 @@
             sideBarWidth = clampedWidth;
         };
         document.onmouseup = () => {
+            resizing = false;
             document.onmousemove = null;
             chatSidebarWidthStore.set(sideBarWidth);
             reposition();
         };
     };
     const handleTouchStart = (e: TouchEvent) => {
+        resizing = true;
         let dragX = e.targetTouches[0].pageX;
 
         function onTouchMove(e: TouchEvent) {
@@ -69,6 +71,7 @@
         }
 
         function onTouchEnd() {
+            resizing = false;
             document.removeEventListener("touchmove", onTouchMove);
             document.removeEventListener("touchend", onTouchEnd);
             chatSidebarWidthStore.set(sideBarWidth);
@@ -124,7 +127,7 @@
         style="width: {sideBarWidth}px; max-width: {sideBarWidth}px;"
         class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
     >
-        {#if $hideActionBarStoreBecauseOfChatBar && isInSpecificDiscussion}
+        {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
             <!-- The same plain close as the one beside the Chats and People tabs, in the same place. -->
             <div class="close-window absolute end-2 top-3 z-50">
                 <button
@@ -144,6 +147,7 @@
         <div
             class="!absolute !end-1 !top-0 !bottom-0 !m-auto !w-1 !h-32 !bg-white !rounded !cursor-col-resize user-select-none"
             id="resize-bar"
+            class:resizing
             on:mousedown={handleMousedown}
             on:dblclick={handleDbClick}
             on:touchstart={handleTouchStart}
@@ -158,5 +162,23 @@
         .chatWindow {
             width: 100% !important;
         }
+    }
+
+    /* The handle is 4px wide: a finger gets an invisible 200px tall area that runs from the handle out past the
+       chat's edge, which the page never scrolls or zooms from. It stays off the chat itself, so the buttons at the
+       end of each row keep their clicks. */
+    #resize-bar {
+        touch-action: none;
+    }
+    #resize-bar::before {
+        content: "";
+        position: absolute;
+        inset-block: -36px;
+        inset-inline-start: 0;
+        inset-inline-end: -28px;
+    }
+    #resize-bar.resizing {
+        width: 6px !important;
+        background-color: #a78bfa !important;
     }
 </style>

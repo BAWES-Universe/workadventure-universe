@@ -4,6 +4,7 @@ import { windowSize } from "../Stores/CoWebsiteStore";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { mapEditorSideBarWidthStore } from "../Components/MapEditor/MapEditorSideBarWidthStore";
 import { mapEditorModeStore } from "../Stores/MapEditorStore";
+import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
 
 export const chatSidebarWidthStore = writable(localUserStore.getChatSideBarWidth());
 
@@ -18,7 +19,7 @@ export const CHAT_FLOAT_INSET = 16;
 
 /** How far the chat sits from the start edge: what sits beside it adds this to its width. */
 export const chatFloatInsetStore = derived(windowSize, ($windowSize) =>
-    $windowSize.width >= 1024 ? CHAT_FLOAT_INSET : 0
+    $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH ? CHAT_FLOAT_INSET : 0
 );
 
 export const hideActionBarStoreBecauseOfChatBar = derived(
@@ -48,4 +49,14 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
             285
         );
     }
+);
+
+/**
+ * The chat shows its own close button: when the bar is hidden because the chat leaves no room for it, and on a
+ * desktop where the chat opens over the bar (the "Keep the bar in view" switch is off), covering the bar's close.
+ */
+export const chatCarriesItsCloseStore = derived(
+    [hideActionBarStoreBecauseOfChatBar, chatVisibilityStore, windowSize, barInViewStore],
+    ([$hideActionBar, $chatVisibilityStore, $windowSize, $barInView]) =>
+        $hideActionBar || ($chatVisibilityStore && $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH && !$barInView)
 );

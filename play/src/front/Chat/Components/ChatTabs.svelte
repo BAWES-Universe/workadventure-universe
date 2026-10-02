@@ -5,7 +5,7 @@
     import { navChat } from "../Stores/ChatStore";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { hideActionBarStoreBecauseOfChatBar } from "../ChatSidebarWidthStore";
+    import { chatCarriesItsCloseStore } from "../ChatSidebarWidthStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
     import { INITIAL_SIDEBAR_WIDTH } from "../../Stores/ChatStore";
     import ChatActionMenu from "./ChatActionMenu.svelte";
@@ -217,7 +217,7 @@
             </div>
         {/if}
         <div class="relative shrink-0">
-            <ChatActionMenu hasCloseChat={$hideActionBarStoreBecauseOfChatBar && !isInSpecificDiscussion} />
+            <ChatActionMenu hasCloseChat={$chatCarriesItsCloseStore && !isInSpecificDiscussion} />
         </div>
     </div>
 </div>

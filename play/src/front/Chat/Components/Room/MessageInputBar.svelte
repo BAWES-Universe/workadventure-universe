@@ -1030,7 +1030,7 @@
     </div>
 {/if}
 <div
-    class="flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
+    class="message-bar flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
     bind:this={messageBarRef}
 >
     {#if $selectedChatMessageToReply !== null}
@@ -1140,6 +1140,35 @@
 </div>
 
 <style>
+    /* The message field: a rounded field held off the chat's edges, its buttons round inside it. */
+    .message-bar {
+        width: auto;
+        min-height: 52px;
+        margin: 8px 16px 16px;
+        padding: 0 6px 0 4px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .message-bar > button {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 9999px;
+        display: grid;
+        place-items: center;
+        flex: none;
+    }
+    .message-bar :global(.message-input) {
+        padding: 14px 4px 14px 16px;
+    }
+    /* The hint stays on one line in a narrow chat, cut with an ellipsis rather than wrapped. */
+    .message-bar :global(.message-input:empty::before) {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
     .no-scroll-bar {
         max-width: calc(100% + 15px);
     }

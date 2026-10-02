@@ -126,8 +126,8 @@
                         {/if}
                         <!-- NAV : CAMERA END -->
 
-                        <!-- NAV : SCREENSHARING START -->
-                        {#if $screenSharingAvailableStore}
+                        <!-- NAV : SCREENSHARING START (phones have it in the menu, beside Follow and Lock) -->
+                        {#if $screenSharingAvailableStore && !$mobileLayoutStore}
                             <ScreenSharingMenuItem />
                             {#if $isInRemoteConversation}
                                 <PictureInPictureMenuItem />

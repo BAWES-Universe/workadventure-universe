@@ -35,7 +35,7 @@
         context="actionBar"
         tooltipTitle={$LL.actionbar.help.apps.title()}
         disabledHelp={$openedMenuStore === "appMenu"}
-        state={$openedMenuStore === "appMenu" ? "active" : "normal"}
+        state={$openedMenuStore === "appMenu" ? "open" : "normal"}
         dataTestId="apps-button"
         action={floatingUiRef}
         media="./static/images/tooltip-exemple.gif"

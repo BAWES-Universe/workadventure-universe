@@ -4,7 +4,13 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
     import LL from "../../../i18n/i18n-svelte";
-    import { IconFocusCentered, IconMapSearch, IconMinus, IconPlus } from "@wa-icons";
+    import { roomListActivated } from "../../Stores/MenuStore";
+    import { roomListVisibilityStore } from "../../Stores/ModalStore";
+    import { universeNameStore } from "../../Stores/ExploreStore";
+    import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
+    import { displayName } from "../Exploration/exploreText";
+    import { toggleExploreList } from "../Exploration/toggleExploreList";
+    import { IconFocusCentered, IconMinus, IconPlanet, IconPlus, IconZoomOutArea } from "@wa-icons";
 
     function zoomIn() {
         analyticsClient.clickToZoomIn();
@@ -35,67 +41,142 @@
     }
 </script>
 
-<div
-    class="relative bg-contrast/80 rounded pointer-events-auto p-1 backdrop-blur hover:bg-contrast/100"
-    data-testid="actions-explorer"
->
-    <div class="flex flex-col justify-center gap-2">
-        <div class="flex flex-col justify-center gap-1">
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <!-- svelte-ignore a11y-no-static-element-interactions -->
-            <div
-                class="group flex justify-center items-center p-1 rounded hover:bg-white/30 cursor-pointer"
-                on:click={zoomIn}
-            >
-                <IconPlus />
-                <div
-                    class="-right-60 opacity-0 group-hover:opacity-90 group-hover:right-11 absolute bg-contrast backdrop-blur text-sm px-2 py-1 rounded whitespace-nowrap transition-all text-white pointer-events-none select-none"
-                >
-                    {$LL.mapEditor.explorer.zoomIn()}
-                </div>
-            </div>
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <!-- svelte-ignore a11y-no-static-element-interactions -->
-            <div
-                class="group flex justify-center items-center p-1 rounded hover:bg-white/30 cursor-pointer"
-                on:click={zoomOut}
-            >
-                <IconMinus />
-                <div
-                    class="-right-60 opacity-0 group-hover:opacity-90 group-hover:right-11 absolute bg-contrast backdrop-blur text-sm px-2 py-1 rounded whitespace-nowrap transition-all text-white pointer-events-none select-none"
-                >
-                    {$LL.mapEditor.explorer.zoomOut()}
-                </div>
-            </div>
-        </div>
-        {#if $mapExplorationModeStore === false}
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <!-- svelte-ignore a11y-no-static-element-interactions -->
-            <div
-                class="group flex justify-center items-center p-1 rounded hover:bg-white/30 cursor-pointer"
-                on:click={openMapExplorer}
-            >
-                <IconMapSearch />
-                <div
-                    class="-right-60 opacity-0 group-hover:opacity-90 group-hover:right-11 absolute bg-contrast backdrop-blur text-sm px-2 py-1 rounded whitespace-nowrap transition-all text-white pointer-events-none select-none"
-                >
-                    {$LL.mapEditor.explorer.title()}
-                </div>
-            </div>
-        {:else}
-            <!-- svelte-ignore a11y-click-events-have-key-events -->
-            <!-- svelte-ignore a11y-no-static-element-interactions -->
-            <div
-                class="group flex justify-center items-center p-1 rounded hover:bg-white/30 cursor-pointer"
-                on:click={centerToUser}
-            >
-                <IconFocusCentered />
-                <div
-                    class="-right-60 opacity-0 group-hover:opacity-90 group-hover:right-11 absolute bg-contrast backdrop-blur text-sm px-2 py-1 rounded whitespace-nowrap transition-all text-white pointer-events-none select-none"
-                >
-                    {$LL.mapEditor.explorer.showMyLocation()}
-                </div>
-            </div>
-        {/if}
-    </div>
+<!-- The zoom column, in the bar's ink: + and − (desktops and tablets; phones pinch), then the map overview. On a phone
+     it also holds "Explore {Universe}", which has no room in the phone's bar. Tooltips show on hover and keyboard
+     focus, to the left. -->
+<div class="explorer-pill pointer-events-auto" data-testid="actions-explorer">
+    {#if !$mobileLayoutStore}
+        <button type="button" class="explorer-btn group" aria-label={$LL.mapEditor.explorer.zoomIn()} on:click={zoomIn}>
+            <IconPlus font-size="20" />
+            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.zoomIn()}</span>
+        </button>
+        <button
+            type="button"
+            class="explorer-btn group"
+            aria-label={$LL.mapEditor.explorer.zoomOut()}
+            on:click={zoomOut}
+        >
+            <IconMinus font-size="20" />
+            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.zoomOut()}</span>
+        </button>
+        <span class="explorer-divider" aria-hidden="true" />
+    {/if}
+    {#if $mapExplorationModeStore === false}
+        <button
+            type="button"
+            class="explorer-btn group"
+            aria-label={$LL.mapEditor.explorer.title()}
+            data-testid="map-overview-button"
+            on:click={openMapExplorer}
+        >
+            <IconZoomOutArea font-size="20" />
+            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.title()}</span>
+        </button>
+    {:else}
+        <button
+            type="button"
+            class="explorer-btn group"
+            aria-label={$LL.mapEditor.explorer.showMyLocation()}
+            on:click={centerToUser}
+        >
+            <IconFocusCentered font-size="20" />
+            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.showMyLocation()}</span>
+        </button>
+    {/if}
+    {#if $mobileLayoutStore && $roomListActivated}
+        <span class="explorer-divider" aria-hidden="true" />
+        <button
+            type="button"
+            class="explorer-btn group"
+            class:open={$roomListVisibilityStore}
+            aria-label={$universeNameStore
+                ? $LL.actionbar.explore.button({ universe: displayName($universeNameStore) })
+                : $LL.actionbar.explore.buttonWithoutName()}
+            aria-pressed={$roomListVisibilityStore}
+            data-testid="explore-tile"
+            on:click={toggleExploreList}
+        >
+            <IconPlanet font-size="20" />
+        </button>
+    {/if}
 </div>
+
+<style>
+    /* The bar's ink pill (u-surface-flat), round, with its violet edge. */
+    .explorer-pill {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 8px;
+        border-radius: 9999px;
+        background: linear-gradient(180deg, rgb(31 28 47 / 0.92), rgb(20 18 30 / 0.94));
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+    }
+    .explorer-btn {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        padding: 0;
+        border: 0;
+        border-radius: 9999px;
+        background: transparent;
+        color: #fff;
+        cursor: pointer;
+        transition: background-color 150ms ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+    @media (hover: hover) {
+        .explorer-btn:hover {
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+    }
+    .explorer-btn:active {
+        background-color: rgba(255, 255, 255, 0.12);
+    }
+    .explorer-btn.open {
+        background-color: rgba(255, 255, 255, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    .explorer-btn:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 2px #fff;
+    }
+    .explorer-divider {
+        width: 28px;
+        height: 1px;
+        margin: 4px 0;
+        background: rgba(255, 255, 255, 0.1);
+    }
+    /* The ink tooltip, to the left of the button. */
+    .explorer-tip {
+        position: absolute;
+        top: 50%;
+        right: 60px;
+        transform: translateY(-50%);
+        padding: 6px 10px;
+        border-radius: 10px;
+        background: linear-gradient(180deg, rgb(31 28 47 / 0.96), rgb(20 18 30 / 0.97));
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
+        color: #fff;
+        font-size: 0.875rem;
+        font-weight: 600;
+        white-space: nowrap;
+        pointer-events: none;
+        user-select: none;
+        opacity: 0;
+        transition: opacity 150ms ease;
+    }
+    @media (hover: hover) {
+        .explorer-btn:hover .explorer-tip {
+            opacity: 1;
+        }
+    }
+    .explorer-btn:focus-visible .explorer-tip {
+        opacity: 1;
+    }
+</style>

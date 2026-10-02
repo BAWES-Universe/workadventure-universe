@@ -10,7 +10,9 @@
     import { textMessageStore } from "../Stores/TypeMessageStore/TextMessageStore";
     import { soundPlayingStore } from "../Stores/SoundPlayingStore";
     import {
+        modalFullScreenStore,
         modalIframeStore,
+        modalPanelWidthStore,
         modalVisibilityStore,
         roomListVisibilityStore,
         showLimitRoomModalStore,
@@ -19,7 +21,8 @@
     import { wokaMenuStore } from "../Stores/WokaMenuStore";
     import { showDesktopCapturerSourcePicker } from "../Stores/ScreenSharingStore";
     import { uiWebsitesStore } from "../Stores/UIWebsiteStore";
-    import { coWebsites } from "../Stores/CoWebsiteStore";
+    import { coWebsites, windowSize } from "../Stores/CoWebsiteStore";
+    import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
     import { proximityMeetingStore } from "../Stores/MyMediaStore";
     import { notificationPlayingStore } from "../Stores/NotificationStore";
     import { popupStore } from "../Stores/PopupStore";
@@ -33,7 +36,7 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
-    import { chatFloatInsetStore, chatSidebarWidthStore } from "../Chat/ChatSidebarWidthStore";
+    import { CHAT_FLOAT_INSET, chatFloatInsetStore, chatSidebarWidthStore } from "../Chat/ChatSidebarWidthStore";
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
@@ -108,22 +111,46 @@
         inputFormFocusStore.set(false);
     });
 
-    // A floating chat (desktop) sits off the edge: what is beside it starts where the chat ends.
-    $: marginLeft = $chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
-    $: marginRight =
+    // On a desktop, windows (the chat, Orbit) open over the game and nothing moves: the bar, Express and the zoom
+    // buttons keep their place and size. With "Keep the bar in view" on, the chat and Orbit open under the bar
+    // instead, and what floats over the game (Express, the zoom buttons, video, popups) sits beside them, while the
+    // bar keeps the whole width. Phones and small windows keep their layout: what is beside the chat starts where it
+    // ends.
+    $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
+    $: marginLeft =
+        $chatVisibilityStore && (!desktop || $barInViewStore) ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
+    // A side window shows its close and full-screen buttons in a column 80px off its edge (Modal.svelte).
+    $: besideOrbit =
+        $barInViewStore &&
+        $modalVisibilityStore &&
+        $modalIframeStore?.position === "right" &&
+        !$modalFullScreenStore &&
+        $modalPanelWidthStore > 0
+            ? $modalPanelWidthStore + CHAT_FLOAT_INSET + 80
+            : 0;
+    $: mapEditorWidth =
         $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
             ? $mapEditorSideBarWidthStore
             : 0;
+    $: marginRight = Math.max(mapEditorWidth, besideOrbit);
+    // The bar spans the whole game, over what the chat and Orbit take (ResponsiveActionBar.svelte). It stops where the
+    // map editor starts, as it always has: the editor sits above the bar, and its menus would open under it.
+    $: barBleed = $barInViewStore
+        ? `--u-bar-bleed-start: ${marginLeft}px; --u-bar-bleed-end: ${marginRight - mapEditorWidth}px;`
+        : "";
+    // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
+    $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
 </script>
 
 <!-- Components ordered by z-index -->
 <div
     id="main-layout"
-    class="@container/main-layout absolute h-full w-full pointer-events-none z-10 {[...$coWebsites.values()].length ===
-    0
+    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised ? 'z-[2001]' : 'z-10'} {[
+        ...$coWebsites.values(),
+    ].length === 0
         ? 'not-cowebsite'
         : ''}"
-    style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px "
+    style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px; {barBleed}"
 >
     <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->
     {#if $modalVisibilityStore && $modalIframeStore?.position === "center"}

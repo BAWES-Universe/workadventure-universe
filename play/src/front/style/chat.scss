@@ -260,6 +260,14 @@
         border-radius: 24px;
     }
 }
+// With "Keep the bar in view" on (BarInViewStore.ts), the chat opens under the bar: 96px is the bar at its desktop
+// size (16px padding around a 64px pill). The 16px gap at the bottom stays.
+@media (min-width: 1024px) {
+    .u-bar-in-view .chatWindow {
+        top: 96px;
+        height: calc(100dvh - 112px);
+    }
+}
 
 .server-icon.sync:after {
     content: "";

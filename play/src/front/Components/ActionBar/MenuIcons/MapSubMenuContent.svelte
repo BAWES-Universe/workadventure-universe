@@ -21,7 +21,7 @@
     import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { botEditorAvailableStore, openBotEditorFromMenu } from "../../../external-modules/bots/index";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconMapEditor, IconMapSearch, IconRobot, IconSpeakerPhone } from "@wa-icons";
+    import { IconMapEditor, IconRobot, IconSpeakerPhone, IconZoomOutArea } from "@wa-icons";
 
     function openBotEditorMenu() {
         closeMapMenu();
@@ -93,7 +93,7 @@
 {/if}
 {#if $mapManagerActivated}
     <ActionBarButton on:click={toggleMapExplorerMode} label={$LL.mapEditor.sideBar.exploreTheRoom()}>
-        <IconMapSearch font-size="20" />
+        <IconZoomOutArea font-size="20" />
     </ActionBarButton>
 {/if}
 {#if $globalMessageVisibleStore}

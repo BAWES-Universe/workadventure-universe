@@ -114,7 +114,7 @@
 {#if $inviteUserActivated}
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div
-        class="invite-footer sticky bottom-0 z-30 shrink-0 px-2 pb-2 pt-3"
+        class="invite-footer sticky bottom-0 z-30 shrink-0 px-4 pb-4 pt-3"
         bind:this={container}
         on:keydown={onKeyDown}
         data-testid="chatInviteFooter"
@@ -234,6 +234,8 @@
     /* Fades the list out under the footer, so the button sits on the panel rather than on a hard edge. */
     .invite-footer {
         background: linear-gradient(to top, rgb(var(--u-ink) / 0.95) 55%, rgb(var(--u-ink) / 0));
+        /* Follows the floating chat's rounded bottom corners (chat.scss). */
+        border-radius: 0 0 24px 24px;
     }
 
     .invite-card {
