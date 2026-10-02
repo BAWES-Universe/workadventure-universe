@@ -54,8 +54,9 @@ test.describe('Availability Status', () => {
             await Menu.clickOnStatus(page,statusName); 
             //await Menu.closeNotificationPopUp(page);
 
-            await Menu.expectCameraOn(page);
-            await Menu.expectMicrophoneOn(page);
+            // Busy takes both devices away: the buttons read "disabled" until you move again
+            await Menu.expectCameraDisabled(page);
+            await Menu.expectMicrophoneDisabled(page);
 
             await page.context().close();
         })
