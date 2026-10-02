@@ -3,6 +3,7 @@
     import { chatVisibilityStore, INITIAL_SIDEBAR_WIDTH, INITIAL_SIDEBAR_WIDTH_MOBILE } from "../Stores/ChatStore";
     import { gameManager } from "../Phaser/Game/GameManager";
     import { isMediaBreakpointUp } from "../Utils/BreakpointsUtils";
+    import { LL } from "../../i18n/i18n-svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
     import Chat from "./Components/Chat.svelte";
     import {
@@ -124,10 +125,13 @@
         class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
     >
         {#if $hideActionBarStoreBecauseOfChatBar && isInSpecificDiscussion}
-            <div class="close-window absolute end-2 top-3 rounded-full p-1 u-surface-flat z-50">
+            <!-- The same plain close as the one beside the Chats and People tabs, in the same place. -->
+            <div class="close-window absolute end-2 top-3 z-50">
                 <button
-                    class="hover:bg-white/10 rounded-full aspect-square w-8 h-8 m-0 flex items-center justify-center !text-white"
+                    class="u-close"
                     data-testid="closeChatButton"
+                    aria-label={$LL.chat.closeChat()}
+                    title={$LL.chat.closeChat()}
                     on:click={closeChat}
                 >
                     <IconX font-size="20" />

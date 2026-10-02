@@ -1126,6 +1126,48 @@ div.emoji-picker {
     margin: 6px 8px;
     background: rgba(255, 255, 255, 0.08);
 }
+/* A close button inside a panel (Explore, the chat): a plain circle with a white X and a soft circle on hover and
+   press, as agreed in batch 1 round 2. A floating close (over the map) uses the bar's tile instead: a u-surface
+   capsule holding a u-ab-btn, like Orbit's window. Buttons get no colour of their own without Tailwind's preflight,
+   so iOS paints them blue unless the colour is set here, and a tap leaves the system's blue focus ring behind. */
+.u-close {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    margin: 0;
+    padding: 0;
+    border-radius: 9999px;
+    color: rgba(255, 255, 255, 0.85);
+    background: transparent;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 150ms ease, color 150ms ease;
+}
+@media (hover: hover) {
+    .u-close:hover {
+        color: #fff;
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+}
+.u-close:active {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.12);
+}
+body .u-close:focus {
+    outline: none;
+}
+.u-close:focus-visible {
+    box-shadow: inset 0 0 0 2px #fff;
+}
+@media (pointer: coarse) {
+    .u-close {
+        width: 3rem;
+        height: 3rem;
+    }
+}
 .u-glass {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);

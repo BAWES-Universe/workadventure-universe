@@ -18,6 +18,7 @@
     import { hideActionBarStoreBecauseOfChatBar } from "../../Chat/ChatSidebarWidthStore";
     import { screenSharingAvailableStore } from "../../Stores/ScreenSharingStore";
     import { isInRemoteConversation } from "../../Stores/StreamableCollectionStore";
+    import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import MediaSettingsList from "./MediaSettingsList.svelte";
     import CameraMenuItem from "./MenuIcons/CameraMenuItem.svelte";
     import MicrophoneMenuItem from "./MenuIcons/MicrophoneMenuItem.svelte";
@@ -136,11 +137,18 @@
                     </div>
                 </div>
             </div>
-            <!-- NAV : SILENT BLOCK -->
-            {#if $silentStore}
-                <SilentBlock />
+            <!-- NAV : SILENT BLOCK (bar at the top: under the microphone and camera, as before) -->
+            {#if $silentStore && !$mobileLayoutStore}
+                <SilentBlock placement="below" />
             {/if}
         </div>
+
+        <!-- NAV : SILENT BLOCK (phones, bar at the bottom: above the whole bar, centred on the screen) -->
+        <svelte:fragment slot="overlay">
+            {#if $silentStore && $mobileLayoutStore}
+                <SilentBlock placement="above" />
+            {/if}
+        </svelte:fragment>
 
         <div slot="right" id="action-wrapper" class="flex flex-1 justify-end gap-1 @md/actions:gap-2 @xl/actions:gap-4">
             <div class="flex flex-row flex-0 gap-0">
