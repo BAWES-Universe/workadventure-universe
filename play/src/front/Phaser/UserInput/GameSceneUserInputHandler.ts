@@ -348,7 +348,9 @@ function isFromFocusedControl(event: KeyboardEvent): boolean {
     const control = target.closest(
         "button, a[href], input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='button'], [role='tab'], [role='menuitem'], [role='link']"
     );
-    if (!control) return false;
+    // The Express button is Express's own: the tray hands the focus back to it when it closes, and Enter there still
+    // opens Express, Ctrl+Enter in Think mode, as everywhere on the map.
+    if (!control || control.hasAttribute("data-opens-express")) return false;
     try {
         return control.matches(":focus-visible");
     } catch {
