@@ -12,6 +12,8 @@
     } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { chatVisibilityStore } from "../../Stores/ChatStore";
+    import { chatFloatInsetStore } from "../../Chat/ChatSidebarWidthStore";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
     /** The device asks for less motion: the panel appears and goes at once, without the blur. */
@@ -130,8 +132,14 @@
         >
             {#if modalUrl != undefined}
                 {#if shown?.allowFullScreen}
+                    <!-- Shown from a large layout (1024px). A floating chat also takes its 16px inset from the
+                         layout's width, so the threshold drops by that much: the button shows at the same window
+                         widths as before the chat floated. -->
                     <button
-                        class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none hidden @lg/main-layout:flex items-center justify-center"
+                        class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none hidden items-center justify-center {$chatVisibilityStore &&
+                        $chatFloatInsetStore
+                            ? '@[1008px]/main-layout:flex'
+                            : '@lg/main-layout:flex'}"
                         on:click={() => modalFullScreenStore.update((full) => !full)}
                         aria-label={isFullScreened ? "Return to compact view" : "Open full-screen view"}
                         title={isFullScreened ? "Return to compact view" : "Open full-screen view"}
@@ -197,6 +205,19 @@
         }
         &.left {
             left: 0;
+        }
+        // Below the floating layout the panel meets the top of the screen, so the close button is held off it by the
+        // bar's own 4px gap. On a phone the strip beside the panel is narrow: the button then sits 4px from the screen
+        // edge, over the chat button below it, instead of running off the screen.
+        @media (max-width: 1023px) {
+            &.right:not(.fullscreened) .modal-tools {
+                top: 4px;
+                left: max(-80px, calc(4px - (100vw - 100%)));
+            }
+            &.left:not(.fullscreened) .modal-tools {
+                top: 4px;
+                right: max(-80px, calc(4px - (100vw - 100%)));
+            }
         }
         // On a desktop the side panel floats: a rounded card held off the edges, like the menu and the device list.
         // Its width stays the same, because Orbit picks its own layout from the width of the frame. Phones keep the

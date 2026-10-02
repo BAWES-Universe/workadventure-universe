@@ -13,6 +13,28 @@ vi.mock("../../Api/IframeListener", () => ({
 
 const { reposition } = vi.hoisted(() => ({ reposition: vi.fn() }));
 
+const { chatVisible, chatFloatInset } = vi.hoisted(() => {
+    // Plain stores: the real ones read the game's settings from the page.
+    const store = <T>(value: T) => {
+        const subscribers = new Set<(v: T) => void>();
+        return {
+            subscribe(run: (v: T) => void) {
+                subscribers.add(run);
+                run(value);
+                return () => subscribers.delete(run);
+            },
+            set(next: T) {
+                value = next;
+                subscribers.forEach((run) => run(value));
+            },
+        };
+    };
+    return { chatVisible: store(false), chatFloatInset: store(0) };
+});
+
+vi.mock("../../Stores/ChatStore", () => ({ chatVisibilityStore: chatVisible }));
+vi.mock("../../Chat/ChatSidebarWidthStore", () => ({ chatFloatInsetStore: chatFloatInset }));
+
 vi.mock("../../Phaser/Game/GameManager", () => ({
     gameManager: {
         currentStartedRoom: { mapUrl: "https://play.example.com/map.json" },
@@ -51,6 +73,8 @@ describe("Orbit's live modal frame", () => {
         modalIframeWindowStore.set(null);
         modalFullScreenStore.set(false);
         reposition.mockClear();
+        chatVisible.set(false);
+        chatFloatInset.set(0);
         vi.unstubAllGlobals();
     });
 
@@ -110,5 +134,24 @@ describe("Orbit's live modal frame", () => {
         await tick();
 
         expect(target.querySelector(".menu-container")?.classList.contains("screen-blocker")).toBe(false);
+    });
+
+    it("offers the full-screen view at the same window widths when the chat floats beside it", async () => {
+        const fullScreenButton = () => target.querySelector<HTMLButtonElement>('[aria-label="Open full-screen view"]');
+        modal = new Modal({ target });
+        await tick();
+        expect(fullScreenButton()?.className).toContain("@lg/main-layout:flex");
+
+        // The floating chat takes its 16px inset from the layout, so the threshold drops by as much.
+        chatVisible.set(true);
+        chatFloatInset.set(16);
+        await tick();
+        expect(fullScreenButton()?.className).toContain("@[1008px]/main-layout:flex");
+        expect(fullScreenButton()?.className).not.toContain("@lg/main-layout:flex");
+
+        // A chat that does not float (phones, small windows) keeps the usual threshold.
+        chatFloatInset.set(0);
+        await tick();
+        expect(fullScreenButton()?.className).toContain("@lg/main-layout:flex");
     });
 });
