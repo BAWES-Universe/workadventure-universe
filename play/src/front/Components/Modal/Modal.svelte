@@ -40,6 +40,23 @@
         }
     }
 
+    // A side panel takes its side of the screen the way the chat does: the camera keeps the player centred in what is
+    // left of the map (on phones too). A full-screen or centred panel covers the map, so it does not count.
+    $: takesSide =
+        !isFullScreened && !shouldForceMobileFullScreen && (shown?.position === "right" || shown?.position === "left");
+
+    function reposition() {
+        gameManager.tryGetCurrentGameScene()?.reposition();
+    }
+
+    // Opening the panel, or entering or leaving its full-screen view, changes what it covers. The width animates, so
+    // the end of that animation measures again (on:transitionend below).
+    let coveredSide: boolean | undefined;
+    $: if (mainModal && takesSide !== coveredSide) {
+        coveredSide = takesSide;
+        reposition();
+    }
+
     onMount(() => {
         resizeObserver.observe(mainModal);
         modalIframeWindowStore.set(modalIframe.contentWindow);
@@ -54,6 +71,8 @@
 
     onDestroy(() => {
         modalFullScreenStore.set(false);
+        // The scene measures on its next frame, after the panel has left the page: the player goes back to the middle.
+        reposition();
         // A throw here would leave the closed panel over the whole game, catching every click.
         if (!modalIframe) return;
         if (get(modalIframeWindowStore) === modalIframe.contentWindow) {
@@ -88,11 +107,12 @@
 <div
     class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all motion-reduce:transition-none {shouldForceMobileFullScreen
         ? 'mobile'
-        : shown?.position} {isFullScreened ? 'fullscreened' : ''}"
+        : shown?.position} {isFullScreened ? 'fullscreened' : ''} {takesSide ? 'screen-blocker' : ''}"
     bind:this={mainModal}
+    on:transitionend|self={reposition}
 >
     <div
-        class="w-full h-full bg-contrast/80 backdrop-blur rounded"
+        class="modal-panel w-full h-full bg-contrast/80 backdrop-blur rounded"
         transition:blur={{ amount: 10, duration: prefersReducedMotion() ? 0 : 250 }}
     >
         <div
@@ -177,6 +197,34 @@
         }
         &.left {
             left: 0;
+        }
+        // On a desktop the side panel floats: a rounded card held off the edges, like the menu and the device list.
+        // Its width stays the same, because Orbit picks its own layout from the width of the frame. Phones keep the
+        // panel edge to edge, where every pixel counts and the close and expand buttons already sit beside it.
+        @media (min-width: 1024px) {
+            &.right:not(.fullscreened),
+            &.left:not(.fullscreened) {
+                top: 16px;
+                height: calc(100dvh - 32px);
+
+                .modal-panel {
+                    border-radius: 24px;
+                    box-shadow: var(--u-surface-shadow);
+                }
+
+                // The page inside paints its own square background, so the frame is rounded too. Safari only clips
+                // a frame's corners when it has its own layer.
+                #modalIframe {
+                    border-radius: 24px;
+                    isolation: isolate;
+                }
+            }
+            &.right:not(.fullscreened) {
+                right: 16px;
+            }
+            &.left:not(.fullscreened) {
+                left: 16px;
+            }
         }
         &.center:not(.fullscreened) {
             width: 75%;

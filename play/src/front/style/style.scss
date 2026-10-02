@@ -1027,7 +1027,9 @@ div.emoji-picker {
     border-right-color: rgb(var(--u-ink) / 0.94);
 }
 /* Rows of the menus on a surface (profile menu, map tools, apps), in the device list's language: a 12px rounded row,
-   the icon in a small tile, a soft hover, and the current choice outlined in violet. */
+   the icon bare in a fixed 32px slot (no frame: a menu reads quieter without one, and every label still lines up),
+   a soft hover, and the current choice outlined in violet. The only framed tile left is the device list's gradient
+   one, where it means "in use". */
 .u-menu-row {
     display: flex;
     align-items: center;
@@ -1069,29 +1071,25 @@ div.emoji-picker {
     flex: none;
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-}
-.u-menu-tile svg {
-    width: 16px;
-    height: 16px;
-}
-.u-menu-tile img {
-    max-width: 20px;
-    max-height: 20px;
-    object-fit: contain;
-}
-/* A picture tile (the woka, the companion): 32px so the 32px sprite shows whole and pixel-sharp (1x, 2x and 3x
-   screens alike), pulled in by 2px on each side so the labels still line up with the 28px tiles. */
-.u-menu-tile.u-menu-tile-image {
     width: 32px;
     height: 32px;
     margin-inline: -2px;
-    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.85);
 }
+.u-menu-tile svg {
+    width: 20px;
+    height: 20px;
+}
+.u-menu-tile img {
+    max-width: 24px;
+    max-height: 24px;
+    object-fit: contain;
+}
+.u-menu-row:hover .u-menu-tile {
+    color: #fff;
+}
+/* A picture (the woka, the companion): the 32px sprite shown whole and pixel-sharp (1x, 2x and 3x screens alike),
+   in the same slot as the icons so the labels line up. */
 .u-menu-tile-image img {
     max-width: 32px;
     max-height: 32px;
@@ -1114,8 +1112,6 @@ div.emoji-picker {
     color: #f08a70;
 }
 .u-menu-row.u-danger .u-menu-tile {
-    background: rgba(233, 109, 81, 0.12);
-    box-shadow: inset 0 0 0 1px rgba(233, 109, 81, 0.25);
     color: #e96d51;
 }
 .u-menu-row.u-danger:hover {

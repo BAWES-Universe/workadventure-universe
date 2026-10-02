@@ -5,7 +5,11 @@
     import { isMediaBreakpointUp } from "../Utils/BreakpointsUtils";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
     import Chat from "./Components/Chat.svelte";
-    import { chatSidebarWidthStore, hideActionBarStoreBecauseOfChatBar } from "./ChatSidebarWidthStore";
+    import {
+        chatFloatInsetStore,
+        chatSidebarWidthStore,
+        hideActionBarStoreBecauseOfChatBar,
+    } from "./ChatSidebarWidthStore";
     import { IconX } from "@wa-icons";
 
     let container: HTMLElement;
@@ -110,7 +114,10 @@
         bind:this={container}
         id="chat"
         data-testid="chat"
-        transition:fly={{ duration: 200, x: isRTL ? sideBarWidth : -sideBarWidth }}
+        transition:fly={{
+            duration: 200,
+            x: isRTL ? sideBarWidth + $chatFloatInsetStore : -(sideBarWidth + $chatFloatInsetStore),
+        }}
         on:introend={reposition}
         on:outroend={reposition}
         style="width: {sideBarWidth}px; max-width: {sideBarWidth}px;"
