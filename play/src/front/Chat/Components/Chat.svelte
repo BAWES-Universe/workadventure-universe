@@ -18,15 +18,22 @@
     $: showTabs =
         $navChat.key === "users" ||
         ($navChat.key === "chat" && layout.showList && !($findGroupOpenStore && $chatConnectionStatus === "ONLINE"));
-    // Side by side with a thread, the list is a 335px column and the tabs stay over it.
-    $: tabsWidth = $navChat.key === "chat" && layout.twoColumns ? "width:335px" : "";
+    // Side by side with a thread, the list is a 335px column and the tabs stay over that column only: the thread
+    // beside them starts at the top of the panel, as it did when the tabs were part of the list.
+    $: tabsBesideThread = showTabs && $navChat.key === "chat" && layout.twoColumns;
+    let tabsHeight = 0;
 </script>
 
 <div class="flex flex-col h-full">
     <div id="chatModal" class="absolute to-50%" />
-    <div class="flex flex-col gap-2 !flex-1 min-h-0">
+    <div class="relative flex flex-col gap-2 !flex-1 min-h-0">
         {#if showTabs}
-            <div class="shrink-0" style={tabsWidth}>
+            <div
+                class="shrink-0 {tabsBesideThread
+                    ? 'absolute top-0 start-0 w-[335px] pb-2 border border-solid border-y-0 border-l-0 border-white/10'
+                    : ''}"
+                bind:offsetHeight={tabsHeight}
+            >
                 <ChatTabs {sideBarWidth} />
             </div>
         {/if}
@@ -40,7 +47,7 @@
             {:else if $navChat.key === "externalModule"}
                 <svelte:component this={$navChat.component} {...$$restProps} {...$navChat.props} />
             {:else}
-                <RoomList {sideBarWidth} />
+                <RoomList {sideBarWidth} listTopInset={tabsBesideThread ? tabsHeight : 0} />
             {/if}
         </div>
     </div>

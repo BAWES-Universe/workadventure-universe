@@ -38,6 +38,8 @@
     } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
+    // Side by side with a thread, the Chats / People tabs sit over the list column only: the column starts below them.
+    export let listTopInset = 0;
 
     const gameScene = gameManager.getCurrentGameScene();
     const proximityChatRoom = gameScene.proximityChatRoom;
@@ -116,7 +118,7 @@
     {#if layout.showList}
         <div
             class="w-full flex flex-col border border-solid border-y-0 border-l-0 border-white/10 relative overflow-y-auto overflow-x-none"
-            style={displayTwoColumnLayout ? `width:335px ;flex : 0 0 auto` : ``}
+            style={displayTwoColumnLayout ? `width:335px ;flex : 0 0 auto; margin-top: ${listTopInset}px` : ``}
         >
             {#if $findGroupOpenStore && $chatConnectionStatus === "ONLINE"}
                 <FindGroup />
