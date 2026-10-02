@@ -109,7 +109,7 @@
             </h2>
             <button
                 type="button"
-                class="ms-auto flex items-center justify-center w-10 h-10 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+                class="ms-auto flex items-center justify-center w-10 h-10 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
                 aria-label={$LL.actionbar.explore.close()}
                 on:click={close}
             >

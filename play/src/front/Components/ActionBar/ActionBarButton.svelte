@@ -81,20 +81,20 @@
         use:action
         style={styleVars}
     >
+        <!-- The button is a square (or a pill-wide rectangle) and takes the whole tap; what is drawn is the state
+             layer inside it, a circle (a pill with a label). States and hover are colours on that layer, never a
+             shape, and the tests read them from data-state. -->
         <button
             type="button"
-            class="h-12 @sm/actions:h-10 @xl/actions:h-12 p-1 m-0 rounded-lg relative
-                    {state === 'disabled' ? 'opacity-50 cursor-not-allowed' : ''}
-                    {state === 'normal' && !isGradient ? 'hover:bg-white/10 cursor-pointer' : ''}
-                    {state === 'active' ? 'bg-secondary hover:bg-secondary-600 cursor-pointer' : ''}
-                    {state === 'forbidden' ? 'bg-danger hover:bg-danger-600 cursor-pointer' : ''}
+            class="u-ab-btn h-12 @sm/actions:h-10 @xl/actions:h-12 p-1 m-0
                     {!label
-                ? 'w-12 @sm/actions:w-10 @xl/actions:w-12'
+                ? 'u-ab-icon w-12 @sm/actions:w-10 @xl/actions:w-12'
                 : 'px-4 text-base @sm/actions:text-sm @xl/actions:text-base whitespace-nowrap'}
-                {isGradient ? 'gradient overflow-hidden font-bold' : ''}
-                {bgColor && !isGradient ? 'bg-[var(--bg-color)]' : ''}
+                {isGradient ? 'gradient overflow-hidden font-bold rounded-full' : 'rounded-none'}
+                {bgColor && !isGradient ? 'u-ab-custom' : ''}
                 {textColor ? 'text-[var(--text-color)]' : 'text-neutral-100'}
                     flex items-center justify-center outline-none focus:outline-none gap-2 select-none"
+            data-state={state}
             disabled={state === "disabled"}
             on:click|preventDefault={() => handleClick()}
             on:mouseenter={() => {
@@ -107,6 +107,9 @@
             }}
             data-testid={dataTestId}
         >
+            {#if !isGradient}
+                <span class="u-ab-state" aria-hidden="true" />
+            {/if}
             {#if !hideIconInActionBar}
                 <slot />
             {/if}
@@ -121,12 +124,13 @@
         type="button"
         class="u-menu-row group pointer-events-auto select-none
                     {state === 'disabled' ? 'opacity-50 cursor-not-allowed' : ''}
-                    {state === 'active' && !isGradient ? 'bg-secondary hover:bg-secondary-600 cursor-pointer' : ''}
-                    {state === 'forbidden' ? 'bg-danger hover:bg-danger-600 cursor-pointer' : ''}
+                    {state === 'active' && !isGradient ? 'u-selected' : ''}
+                    {state === 'forbidden' ? 'u-danger' : ''}
                     {isGradient ? 'gradient overflow-hidden' : ''}
                     {bgColor && !isGradient ? 'bg-[var(--bg-color)]' : ''}
                     {textColor ? 'text-[var(--text-color)]' : ''}
                     {isGradient ? 'relative' : ''}"
+        data-state={state}
         use:action
         on:click={() => handleClick()}
         style={styleVars}

@@ -117,9 +117,9 @@
         class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
     >
         {#if $hideActionBarStoreBecauseOfChatBar && isInSpecificDiscussion}
-            <div class="close-window absolute end-2 top-3 rounded-lg p-1 u-surface-flat z-50">
+            <div class="close-window absolute end-2 top-3 rounded-full p-1 u-surface-flat z-50">
                 <button
-                    class="hover:bg-white/10 rounded aspect-square w-8 h-8 m-0 flex items-center justify-center !text-white"
+                    class="hover:bg-white/10 rounded-full aspect-square w-8 h-8 m-0 flex items-center justify-center !text-white"
                     data-testid="closeChatButton"
                     on:click={closeChat}
                 >

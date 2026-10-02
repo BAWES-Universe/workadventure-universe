@@ -101,8 +101,7 @@ class Menu {
         // If the camera is already on, do nothing
         const cameraButton = page.getByTestId('camera-button');
         await expect(cameraButton).toBeVisible();
-        const cameraButtonClass = await cameraButton.getAttribute("class");
-        if (!cameraButtonClass.includes("bg-danger")) return;
+        if (await cameraButton.getAttribute("data-state") !== "forbidden") return;
 
         await page.getByTestId('camera-button').click();
         await this.expectButtonState(page, "camera-button", "normal");
@@ -111,8 +110,7 @@ class Menu {
         // If the camera is already off, do nothing
         const cameraButton = page.getByTestId('camera-button');
         await expect(cameraButton).toBeVisible();
-        const cameraButtonClass = await cameraButton.getAttribute("class");
-        if (cameraButtonClass.includes("bg-danger")) return;
+        if (await cameraButton.getAttribute("data-state") === "forbidden") return;
 
         await page.getByTestId('camera-button').click();
         await this.expectButtonState(page, "camera-button", "forbidden");
@@ -121,22 +119,19 @@ class Menu {
         // If the microphone is already on, do nothing
         const microphoneButton = page.getByTestId('microphone-button');
         await expect(microphoneButton).toBeVisible();
-        const microphoneButtonClass = await microphoneButton.getAttribute("class");
-        if (!microphoneButtonClass.includes("bg-danger")) return;
-
+        if (await microphoneButton.getAttribute("data-state") !== "forbidden") return;
 
         await page.getByTestId('microphone-button').click();
-        await expect(page.getByTestId('microphone-button').locator('.bg-danger')).toBeVisible();
+        await this.expectButtonState(page, "microphone-button", "normal");
     }
     async turnOffMicrophone(page:Page){
         // If the microphone is already off, do nothing
         const microphoneButton = page.getByTestId('microphone-button');
         await expect(microphoneButton).toBeVisible();
-        const microphoneButtonClass = await microphoneButton.getAttribute("class");
-        if (microphoneButtonClass.includes("bg-danger")) return;
+        if (await microphoneButton.getAttribute("data-state") === "forbidden") return;
 
         await page.getByTestId('microphone-button').click();
-        await expect(page.getByTestId('microphone-button').locator('.bg-danger')).toBeHidden();
+        await this.expectButtonState(page, "microphone-button", "forbidden");
     }
 
     async expectCameraOn(page: Page) {
@@ -163,22 +158,15 @@ class Menu {
         await this.expectButtonState(page, 'microphone-button', 'disabled');
     }
 
+    // The action bar buttons carry their state in data-state (the look is a colour on a layer inside them).
     async expectButtonState(page: Page, buttonTestId: string, state: "normal" | "active" | "forbidden" | "disabled") {
         const button = page.getByTestId(buttonTestId);
         switch (state) {
             case "normal":
-                await expect(button).not.toHaveClass(/bg-danger/);
-                await expect(button).not.toHaveClass(/opacity-50/);
-                await expect(button).not.toHaveClass(/bg-secondary/);
-                break;
             case "active":
-                await expect(button).toHaveClass(/bg-secondary/);
-                break;
             case "forbidden":
-                await expect(button).toHaveClass(/bg-danger/);
-                break;
             case "disabled":
-                await expect(button).toHaveClass(/opacity-50/);
+                await expect(button).toHaveAttribute("data-state", state);
                 break;
             default: {
                 const _exhaustiveCheck: never = state;
@@ -190,6 +178,18 @@ class Menu {
         await expect(page.getByText(status).first()).toBeVisible();
     }
 
+    // The "Turn on notifications?" card shows the first time you go Busy without having answered the browser.
+    // Where the test browser already granted notifications it never shows, so this only acts when it is there.
+    async dismissNotificationAsk(page: Page) {
+        const notNow = page.getByRole('button', { name: 'Not now' });
+        try {
+            // Give the card a moment to appear: it opens right after the status changes.
+            await notNow.waitFor({ state: 'visible', timeout: 3000 });
+        } catch {
+            return;
+        }
+        await notNow.click();
+    }
     async closeNotificationPopUp(page:Page){
         if(await page.getByRole('button',{name:'Continue without notification'}).isHidden())return;
         await page.getByRole('button',{name:'Continue without notification'}).click();

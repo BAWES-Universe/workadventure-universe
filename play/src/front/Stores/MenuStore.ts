@@ -369,16 +369,15 @@ export const rightActionBarMenuItems: Readable<RightMenuItem<SvelteComponentType
         if ($adminDashboardActivated) {
             // Create a copy to avoid mutating the original
             const orbitItem = { ...orbitMenuItem };
-            // Orbit is the last item, so it should have last prop for proper styling (rounded right edge)
-            // Add rounded left corners, left padding, and left margin via classList
-            // Using !important utilities to override ActionBarButton defaults
+            // Orbit is the last item, so it should have last prop for proper styling (rounded end edge).
+            // Its own pill: round on the start side too (a full pill, not a half one), the edge drawn there, start
+            // padding, and a margin before it. The !important utilities override the ActionBarButton defaults.
             const existingClassList = orbitItem.props.classList || "";
+            const orbitPill = "!rounded-s-xl u-seg-start !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
             orbitItem.props = {
                 ...orbitItem.props,
                 last: true,
-                classList: existingClassList
-                    ? `${existingClassList} !rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4`
-                    : "!rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4",
+                classList: existingClassList ? `${existingClassList} ${orbitPill}` : orbitPill,
             };
             menuItems.push(orbitItem);
         } else {

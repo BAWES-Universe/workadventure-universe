@@ -297,14 +297,14 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div data-testid="action-user" class="flex items-center transition-all pointer-events-auto">
     <div
-        class="group u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
+        class="group profile-button u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
         use:floatingUiRef
         on:click|preventDefault={() => {
             openedMenuStore.toggle("profileMenu");
         }}
     >
         <div
-            class="h-12 w-12 @sm/actions:h-10 @sm/actions:w-10 @xl/actions:h-12 @xl/actions:w-12 p-1 m-0 items-center justify-center flex @md/actions:hidden"
+            class="profile-burger h-12 w-12 @sm/actions:h-10 @sm/actions:w-10 @xl/actions:h-12 @xl/actions:w-12 p-1 m-0 items-center justify-center flex @md/actions:hidden"
         >
             {#if $openedMenuStore !== "profileMenu"}
                 <!-- pointer-events-none is important for clickOutside to work. Otherwise, the
@@ -316,9 +316,11 @@
             {/if}
         </div>
         <div
-            class="hidden @md/actions:flex items-center h-full group-hover:bg-white/10 transition-all group-hover:rounded-lg gap-2 pl-0 pr-3"
+            class="profile-pill hidden @md/actions:flex items-center h-full rounded-full transition-colors gap-2 pl-0 pr-3"
         >
-            <div class="overflow-hidden p-2 flex items-center justify-center rounded h-full aspect-square relative">
+            <div
+                class="overflow-hidden p-2 flex items-center justify-center rounded-full h-full aspect-square relative"
+            >
                 <Woka userId={-1} placeholderSrc="" customWidth="30px" />
             </div>
             <div class="grow flex flex-row @xl/actions:flex-col justify-start text-start pr-2">
@@ -355,7 +357,7 @@
         <!-- The whole menu stays on screen on a phone, however many items fall into it (logged in, apps, map tools,
              script items): the box is capped to the visible height minus the action bar, and scrolls inside. -->
         <div
-            class="profile-menu absolute top-0 left-0 z-10 flex flex-col u-surface rounded-2xl p-1.5 w-64 max-w-[calc(100vw-10px)] text-white select-none"
+            class="profile-menu absolute top-0 left-0 z-10 flex flex-col u-surface rounded-2xl p-1 w-64 max-w-[calc(100vw-10px)] text-white select-none"
             data-testid="profile-menu"
             use:floatingUiContent
             use:clickOutside={() => {
@@ -363,7 +365,7 @@
             }}
         >
             <div class="u-surface-arrow" use:arrowAction />
-            <div class="profile-menu-scroll p-0 m-0 list-none overflow-y-auto overscroll-contain rounded-[10px]">
+            <div class="profile-menu-scroll p-0 m-0 list-none overflow-y-auto overscroll-contain rounded-[12px]">
                 <ExternalComponents zone="menuTop" />
                 <AvailabilityStatusList statusInformation={getStatusInformation(statusToShow)} />
                 <HeaderMenuItem label={$LL.menu.sub.profile()} />
@@ -506,5 +508,21 @@
     }
     .contextual-divider:last-child {
         display: none;
+    }
+    /* The name and status light up only where hovering exists; a tap on a phone leaves nothing behind. */
+    @media (hover: hover) {
+        .group:hover .profile-pill {
+            background-color: rgba(255, 255, 255, 0.08);
+        }
+    }
+    /* Touch: the same 64px pill as the other controls, whatever the width. */
+    @media (pointer: coarse) {
+        .profile-button.profile-button {
+            height: 4rem;
+        }
+        .profile-burger.profile-burger {
+            height: 3rem;
+            width: 3rem;
+        }
     }
 </style>
