@@ -141,6 +141,7 @@
                     {textColor ? 'text-[var(--text-color)]' : ''}
                     {isGradient ? 'relative' : ''}"
         data-state={state}
+        disabled={state === "disabled"}
         use:action
         on:click={() => handleClick()}
         style={styleVars}
