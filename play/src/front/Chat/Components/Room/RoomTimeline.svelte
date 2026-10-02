@@ -285,7 +285,7 @@
             <div class="p-2 flex items-center border border-solid border-x-0 border-b border-t-0 border-white/10">
                 {#if chatRoomsEnableInAdmin}
                     <button
-                        class="back-roomlist p-3 hover:bg-white/10 rounded-2xl aspect-square w-12"
+                        class="back-roomlist p-3 hover:bg-white/10 rounded-full aspect-square w-12"
                         data-testid="chatBackward"
                         on:click={goBackAndClearSelectedChatMessage}
                     >

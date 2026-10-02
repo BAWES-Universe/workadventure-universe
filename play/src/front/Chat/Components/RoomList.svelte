@@ -26,7 +26,7 @@
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
     import type { OneListEntry } from "./OneList/OneListStore";
-    import { resolveChatLayout } from "./ChatLayout";
+    import { CHAT_LAYOUT_LIMIT, resolveChatLayout } from "./ChatLayout";
     import {
         IconChevronRight,
         IconCloudLock,
@@ -48,7 +48,6 @@
     const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
 
     const chatConnectionStatus = chat.connectionStatus;
-    const CHAT_LAYOUT_LIMIT = INITIAL_SIDEBAR_WIDTH * 2;
 
     async function initChatConnectionEncryption() {
         try {

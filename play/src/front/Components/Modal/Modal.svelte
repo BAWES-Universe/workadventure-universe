@@ -96,14 +96,14 @@
         transition:blur={{ amount: 10, duration: prefersReducedMotion() ? 0 : 250 }}
     >
         <div
-            class={`flex justify-center items-center content-center bg-contrast/80 backdrop-blur p-2 space-x-0 @lg/main-layout:space-x-2 rounded-lg absolute z-50
+            class={`modal-tools flex justify-center items-center content-center u-surface p-2 gap-2 rounded-full absolute z-50
                 ${
                     isFullScreened || shouldForceMobileFullScreen
                         ? "top-4 right-4"
                         : `${
                               shown?.position == "center" || shown?.position == "left"
-                                  ? "flex-col gap-1 top-0 -right-20"
-                                  : "flex-col gap-1 top-0 -left-20"
+                                  ? "flex-col top-0 -right-20"
+                                  : "flex-col top-0 -left-20"
                           }`
                 }
             `}
@@ -111,11 +111,12 @@
             {#if modalUrl != undefined}
                 {#if shown?.allowFullScreen}
                     <button
-                        class="btn btn-light btn-ghost rounded hidden @lg/main-layout:block"
+                        class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none hidden @lg/main-layout:flex items-center justify-center"
                         on:click={() => modalFullScreenStore.update((full) => !full)}
                         aria-label={isFullScreened ? "Return to compact view" : "Open full-screen view"}
                         title={isFullScreened ? "Return to compact view" : "Open full-screen view"}
                     >
+                        <span class="u-ab-state" aria-hidden="true" />
                         {#if isFullScreened}
                             <IconArrowsMinimize font-size="20" class="text-white" />
                         {:else}
@@ -124,14 +125,15 @@
                     </button>
                 {/if}
             {/if}
+            <!-- Close is neutral: closing a window is not a destructive act, so it is not red. -->
             <button
                 on:click|preventDefault|stopPropagation={close}
-                class="btn btn-danger rounded m-0"
-                style={isFullScreened == true ? "" : "margin: 0px;"}
+                class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none flex items-center justify-center"
                 data-testid="close-modal-button"
                 aria-label={`Close ${shown?.title || "window"}`}
                 title={`Close ${shown?.title || "window"}`}
             >
+                <span class="u-ab-state" aria-hidden="true" />
                 <IconX font-size="20" class="text-white" />
             </button>
         </div>

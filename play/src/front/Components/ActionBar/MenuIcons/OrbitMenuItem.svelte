@@ -8,8 +8,11 @@
     export let last: boolean | undefined = undefined;
     export let classList: string | undefined = undefined;
 
-    // Ensure Orbit always has proper left margin and rounded corners
-    $: finalClassList = classList ? classList : "!rounded-s-lg !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
+    // Orbit stands apart from the other buttons: its own pill (round on both ends, with the edge drawn on the
+    // start side too, whether or not it is the first item on screen) and a margin before it.
+    $: finalClassList = classList
+        ? classList
+        : "!rounded-s-xl u-seg-start !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
 </script>
 
 {#if $adminDashboardActivatedStore}
