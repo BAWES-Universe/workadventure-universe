@@ -238,6 +238,13 @@
         width: 14px;
         height: 14px;
     }
+    /* Touch screens with the bar at the top (tablets): the tab looks the same, but a finger gets a 44x44 tap zone. */
+    @media (pointer: coarse) {
+        .device-arrow {
+            width: 44px;
+            height: 44px;
+        }
+    }
     /* Phones (Tailwind's mobile: variant, written as a list the compiler can read): the bar is at the bottom, so the
        tab sits above it, a little bigger, with a 44px tall tap zone. The chevron flips: closed points up (the list
        opens upwards), open points down. */
