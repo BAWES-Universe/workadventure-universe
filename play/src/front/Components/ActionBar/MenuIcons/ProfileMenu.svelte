@@ -57,6 +57,15 @@
     setContext("inMenu", true);
 
     let userName = gameManager.getPlayerName() || "";
+    let profileButton: HTMLButtonElement;
+
+    // Escape closes the open menu and puts the focus back on its button, so the keyboard picks up where it was.
+    function closeOnEscape(event: KeyboardEvent) {
+        if (event.key !== "Escape" || $openedMenuStore !== "profileMenu") return;
+        event.stopPropagation();
+        openedMenuStore.close("profileMenu");
+        profileButton?.focus();
+    }
     let hasPersonalDesk = false;
     let personalAreaData: AreaData | null = null;
     let isInsidePersonalDesk = false;
@@ -293,11 +302,17 @@
     );
 </script>
 
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
+<svelte:window on:keydown={closeOnEscape} />
+
 <div data-testid="action-user" class="flex items-center transition-all pointer-events-auto">
-    <div
-        class="group profile-button u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer"
+    <!-- A real button: Tab reaches it, Enter and Space open the menu, and screen readers announce it. -->
+    <button
+        type="button"
+        class="group profile-button u-surface-flat rounded-xl h-16 @sm/actions:h-14 @xl/actions:h-16 p-2 cursor-pointer text-start"
+        aria-label={$LL.menu.icon.open.menu()}
+        aria-haspopup="menu"
+        aria-expanded={$openedMenuStore === "profileMenu"}
+        bind:this={profileButton}
         use:floatingUiRef
         on:click|preventDefault={() => {
             openedMenuStore.toggle("profileMenu");
@@ -352,7 +367,7 @@
                 />
             </div>
         </div>
-    </div>
+    </button>
     {#if $openedMenuStore === "profileMenu"}
         <!-- before:content-[''] before:absolute before:w-0 before:h-0 before:-top-[14px] before:right-6 before:border-solid before:border-8 before:border-transparent before:border-b-contrast/80 -->
         <!-- The whole menu stays on screen on a phone, however many items fall into it (logged in, apps, map tools,
@@ -515,6 +530,15 @@
         .group:hover .profile-pill {
             background-color: rgba(255, 255, 255, 0.08);
         }
+    }
+    /* Reached with the keyboard: the same white ring as the bar's other buttons. */
+    .profile-button:focus-visible {
+        outline: none;
+    }
+    .profile-button:focus-visible .profile-pill,
+    .profile-button:focus-visible .profile-burger {
+        border-radius: 9999px;
+        box-shadow: inset 0 0 0 2px #fff;
     }
     /* Touch: the same 64px pill as the other controls, whatever the width. */
     @media (pointer: coarse) {

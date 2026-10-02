@@ -182,6 +182,7 @@
             aria-haspopup="dialog"
             title={open || finePointer ? undefined : $LL.say.express.button()}
             data-testid="express-button"
+            data-opens-express
             aria-describedby={hintVisible ? "express-shortcuts" : undefined}
             use:longpress={openEditing}
             on:click|stopPropagation={toggle}

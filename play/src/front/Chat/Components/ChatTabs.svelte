@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { tick } from "svelte";
     import { derived } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { navChat } from "../Stores/ChatStore";
@@ -124,13 +125,24 @@
         else navChat.switchToUserList();
     }
 
-    function onTabKeyDown(event: KeyboardEvent) {
-        // Left and right move between the two tabs; the arrows never reach the game.
+    let chatsTab: HTMLButtonElement;
+    let peopleTab: HTMLButtonElement;
+
+    async function onTabKeyDown(event: KeyboardEvent) {
+        // Left and right move between the two tabs, and the focus moves with them, as in any tab list; the arrows
+        // never reach the game.
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();
         event.stopPropagation();
-        if (activeTab === "chats" && hasPeopleTab) navChat.switchToUserList();
-        else if (activeTab === "people" && hasChatsTab) navChat.switchToChat();
+        if (activeTab === "chats" && hasPeopleTab) {
+            navChat.switchToUserList();
+            await tick();
+            peopleTab?.focus();
+        } else if (activeTab === "people" && hasChatsTab) {
+            navChat.switchToChat();
+            await tick();
+            chatsTab?.focus();
+        }
     }
 </script>
 
@@ -159,6 +171,7 @@
                     aria-selected={activeTab === "chats"}
                     tabindex={activeTab === "chats" ? 0 : -1}
                     data-testid="chatTabChats"
+                    bind:this={chatsTab}
                     on:click={(event) => openTab("chats", event)}
                     on:keydown={onTabKeyDown}
                 >
@@ -179,6 +192,7 @@
                     aria-selected={activeTab === "people"}
                     tabindex={activeTab === "people" ? 0 : -1}
                     data-testid="chatTabPeople"
+                    bind:this={peopleTab}
                     on:click={(event) => openTab("people", event)}
                     on:keydown={onTabKeyDown}
                 >
