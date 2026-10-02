@@ -14,7 +14,7 @@
      "below": everywhere else, where the bar is at the top. Under the microphone and camera, as before. -->
 <div
     class="silent-block {placement === 'above'
-        ? 'bottom-full inset-x-0 mx-auto mb-10 max-w-[22rem]'
+        ? 'bottom-full left-0 right-[72px] mx-auto mb-10 max-w-[22rem]'
         : 'top-20 start-0 w-max max-w-[min(22rem,calc(100vw-1rem))]'} flex absolute z-0 u-surface rounded-2xl text-white text-start transition-all pointer-events-auto items-start gap-3 px-3 py-2.5"
     role="status"
     aria-live="polite"
