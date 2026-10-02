@@ -46,12 +46,12 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import { windowSize } from "../../../Stores/CoWebsiteStore";
+    import { DESKTOP_LAYOUT_MIN_WIDTH, keepBarInViewStore } from "../../../Stores/BarInViewStore";
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
     import { IconBug, IconLayoutNavbar, IconLogout } from "@wa-icons";
-    import { windowSize } from "../../../Stores/CoWebsiteStore";
-    import { DESKTOP_LAYOUT_MIN_WIDTH, keepBarInViewStore } from "../../../Stores/BarInViewStore";
 
     // The ActionBarButton component is displayed differently in the profile menu.
     // We use the context to decide how to render it.

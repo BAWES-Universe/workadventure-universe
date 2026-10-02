@@ -164,7 +164,7 @@
                     </div>
                     {#if !liveCardVisible && !hasProximityHistory}
                         <!-- Nothing yet: say how it starts, and offer the People tab. -->
-                        <section class="u-glass-warm mx-2 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
+                        <section class="u-glass-warm mx-4 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
                             <div class="flex items-start gap-3">
                                 <div class="flex h-11 w-11 shrink-0 items-end justify-center" aria-hidden="true">
                                     <WokaFromUserId userId={-1} customWidth="40px" placeholderSrc="" />

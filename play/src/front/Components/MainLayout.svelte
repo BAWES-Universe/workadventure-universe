@@ -143,9 +143,11 @@
 <!-- Components ordered by z-index -->
 <div
     id="main-layout"
-    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised
-        ? 'z-[2001]'
-        : 'z-10'} {[...$coWebsites.values()].length === 0 ? 'not-cowebsite' : ''}"
+    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised ? 'z-[2001]' : 'z-10'} {[
+        ...$coWebsites.values(),
+    ].length === 0
+        ? 'not-cowebsite'
+        : ''}"
     style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px; {barBleed}"
 >
     <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->

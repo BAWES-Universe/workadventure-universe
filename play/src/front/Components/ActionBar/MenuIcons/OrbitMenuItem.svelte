@@ -1,5 +1,6 @@
 <script lang="ts">
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
     import OrbitIcon from "../../Icons/OrbitIcon.svelte";
@@ -13,6 +14,9 @@
     $: finalClassList = classList
         ? classList
         : "!rounded-s-xl u-seg-start !ps-2 !ml-1 @md/actions:!ml-2 @xl/actions:!ml-4";
+
+    // Orbit is the side window titled "Orbit" (external-modules/admin-api): while it shows, the button shows it is open.
+    $: orbitOpen = $modalVisibilityStore && $modalIframeStore?.title === "Orbit";
 </script>
 
 {#if $adminDashboardActivatedStore}
@@ -22,6 +26,7 @@
         boldLabel={true}
         chevron
         hideIconInActionBar={false}
+        state={orbitOpen ? "open" : "normal"}
         on:click={openAdminModalFromMenu}
         {first}
         {last}

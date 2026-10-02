@@ -17,7 +17,7 @@ class Menu {
 
     async openMapExplorer(page: Page) {
         await page.keyboard.press('e');
-        await expect(page.getByRole('button', { name: 'Explore the room' })).toBeHidden();
+        await expect(page.getByRole('button', { name: 'Map overview' })).toBeHidden();
     }
 
     async openMenu(page: Page) {

@@ -971,6 +971,17 @@ div.emoji-picker {
 .u-ab-btn:active > .u-ab-state {
     background-color: rgba(255, 255, 255, 0.12);
 }
+/* Open: the window or menu this button opened is showing. The pressed grey, held: open is not "on", so it never takes
+   the brand gradient, which reads as a call to action. */
+.u-ab-btn[data-state="open"] > .u-ab-state {
+    background-color: rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+@media (hover: hover) {
+    .u-ab-btn[data-state="open"]:hover > .u-ab-state {
+        background-color: rgba(255, 255, 255, 0.18);
+    }
+}
 .u-ab-btn[data-state="active"] > .u-ab-state {
     background: linear-gradient(135deg, #8629fc, #4156f6);
     box-shadow: 0 6px 18px -6px rgba(134, 41, 252, 0.9);
@@ -1331,4 +1342,11 @@ button[data-testid="actionBarLogin"] {
 button[data-testid="actionBarLogin"]:hover {
     background: linear-gradient(90deg, #9a4dfd, #5a6cf8);
     box-shadow: 0 8px 22px -8px rgba(134, 41, 252, 0.85);
+}
+
+/* A quick double tap never zooms the page (iPhones zoom on a double tap even with user-scalable=no; ViewportGuard
+   blocks the pinch). Taps also respond without the double-tap wait. Lowest specificity: anything that sets its own
+   touch-action (the game canvas, Express's tray, the chat's resize handle) keeps it. */
+:where(html, body, body *) {
+    touch-action: manipulation;
 }

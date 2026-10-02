@@ -9,7 +9,8 @@
     export let tooltipTitle = "";
     export let tooltipDesc = "";
     export let disabledHelp = false;
-    export let state: "normal" | "active" | "forbidden" | "disabled" = "normal";
+    // "active" is switched on (the brand gradient); "open" is a window or menu this button opened (the pressed grey).
+    export let state: "normal" | "active" | "open" | "forbidden" | "disabled" = "normal";
     // On and reaching someone (the microphone and camera in a bubble or a meeting): drawn as a violet ring.
     export let live = false;
     export let dataTestId: string | undefined = undefined;
@@ -28,6 +29,8 @@
     export let boldLabel = false;
     // In a menu: a trailing arrow, for rows that open a screen. Opt-in, so other menus are unaffected.
     export let chevron = false;
+    // In the action bar: a label shown beside the icon only where the bar is wide (2xl), an icon alone elsewhere.
+    export let wideLabel: string | undefined = undefined;
     // In a menu: the icon is a picture (the woka, the companion) shown whole in a 32px tile rather than a 16px icon.
     export let imageTile = false;
 
@@ -92,6 +95,9 @@
                     {!label
                 ? 'u-ab-icon w-12 @sm/actions:w-10 @xl/actions:w-12'
                 : 'px-4 text-base @sm/actions:text-sm @xl/actions:text-base whitespace-nowrap'}
+                {wideLabel && !label
+                ? '@2xl/actions:w-auto @2xl/actions:px-4 text-base @sm/actions:text-sm @xl/actions:text-base whitespace-nowrap'
+                : ''}
                 {isGradient ? 'gradient overflow-hidden font-bold rounded-full' : 'rounded-none'}
                 {bgColor && !isGradient ? 'u-ab-custom' : ''}
                 {textColor ? 'text-[var(--text-color)]' : 'text-neutral-100'}
@@ -117,6 +123,7 @@
                 <slot />
             {/if}
             {#if label}<span class={boldLabel ? "font-bold" : ""}>{label}</span>{/if}
+            {#if wideLabel && !label}<span class="hidden @2xl/actions:inline font-bold">{wideLabel}</span>{/if}
         </button>
         {#if helpActive && !$helpTextDisabledStore && !disabledHelp && (tooltipTitle != "" || tooltipDesc != "")}
             <HelpTooltip title={tooltipTitle} helpMedia={media} {desc} shortcuts={tooltipShortcuts} />

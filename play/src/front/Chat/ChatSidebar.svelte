@@ -6,11 +6,7 @@
     import { LL } from "../../i18n/i18n-svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
     import Chat from "./Components/Chat.svelte";
-    import {
-        chatFloatInsetStore,
-        chatSidebarWidthStore,
-        chatCarriesItsCloseStore,
-    } from "./ChatSidebarWidthStore";
+    import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import { IconX } from "@wa-icons";
 
     let container: HTMLElement;
@@ -31,7 +27,11 @@
 
     const isRTL: boolean = document.documentElement.dir === "rtl";
 
+    // While the chat is being resized, its handle shows it (violet, a little wider).
+    let resizing = false;
+
     const handleMousedown = (e: MouseEvent) => {
+        resizing = true;
         let dragX = e.clientX;
         const initialWidth = sideBarWidth;
 
@@ -47,12 +47,14 @@
             sideBarWidth = clampedWidth;
         };
         document.onmouseup = () => {
+            resizing = false;
             document.onmousemove = null;
             chatSidebarWidthStore.set(sideBarWidth);
             reposition();
         };
     };
     const handleTouchStart = (e: TouchEvent) => {
+        resizing = true;
         let dragX = e.targetTouches[0].pageX;
 
         function onTouchMove(e: TouchEvent) {
@@ -69,6 +71,7 @@
         }
 
         function onTouchEnd() {
+            resizing = false;
             document.removeEventListener("touchmove", onTouchMove);
             document.removeEventListener("touchend", onTouchEnd);
             chatSidebarWidthStore.set(sideBarWidth);
@@ -144,6 +147,7 @@
         <div
             class="!absolute !end-1 !top-0 !bottom-0 !m-auto !w-1 !h-32 !bg-white !rounded !cursor-col-resize user-select-none"
             id="resize-bar"
+            class:resizing
             on:mousedown={handleMousedown}
             on:dblclick={handleDbClick}
             on:touchstart={handleTouchStart}
@@ -158,5 +162,20 @@
         .chatWindow {
             width: 100% !important;
         }
+    }
+
+    /* The handle is 4px wide: a finger gets an invisible 44 by 200px area around it, which the page never scrolls or
+       zooms from. */
+    #resize-bar {
+        touch-action: none;
+    }
+    #resize-bar::before {
+        content: "";
+        position: absolute;
+        inset: -36px -20px;
+    }
+    #resize-bar.resizing {
+        width: 6px !important;
+        background-color: #a78bfa !important;
     }
 </style>
