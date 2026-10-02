@@ -70,4 +70,13 @@ describe("privacyShutdownStore (away mode)", () => {
         stores.peers.set([]);
         expect(get(store)).toBe(false);
     });
+
+    it("goes away when a live session ends in the background with nobody near", async () => {
+        const store = await load();
+        stores.live.set(true);
+        stores.visible.set(false);
+        expect(get(store)).toBe(false);
+        stores.live.set(false);
+        expect(get(store)).toBe(true);
+    });
 });

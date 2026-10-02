@@ -34,6 +34,16 @@ function createPrivacyShutdownStore() {
         }
     });
 
+    // It is ok to not unsubscribe to this store because it is a singleton.
+    // eslint-disable-next-line svelte/no-ignored-unsubscribe
+    isLiveStreamingStore.subscribe((isLive) => {
+        // Ending a live session in the background, with nobody near, goes away as leaving the game alone would.
+        if (!isLive && get(videoStreamElementsStore).length === 0 && get(visibilityStore) === false) {
+            privacyEnabled = true;
+            set(true);
+        }
+    });
+
     return {
         subscribe,
     };
