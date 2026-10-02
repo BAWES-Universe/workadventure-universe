@@ -10,6 +10,8 @@
     export let tooltipDesc = "";
     export let disabledHelp = false;
     export let state: "normal" | "active" | "forbidden" | "disabled" = "normal";
+    // On and reaching someone (the microphone and camera in a bubble or a meeting): drawn as a violet ring.
+    export let live = false;
     export let dataTestId: string | undefined = undefined;
     export let classList = "group";
     // Hide the icon in the action bar (displays only the label), and only displays the icon if we are in the responsive menu.
@@ -95,6 +97,7 @@
                 {textColor ? 'text-[var(--text-color)]' : 'text-neutral-100'}
                     flex items-center justify-center outline-none focus:outline-none gap-2 select-none"
             data-state={state}
+            data-live={live ? "true" : undefined}
             disabled={state === "disabled"}
             on:click|preventDefault={() => handleClick()}
             on:mouseenter={() => {
