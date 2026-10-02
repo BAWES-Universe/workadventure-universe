@@ -230,6 +230,10 @@ export class UserInputManager {
         try {
             this.scene.input.keyboard?.disableGlobalCapture();
             this.disableControlsReasons.add(reason);
+            // Whatever takes the keyboard (a text box, a menu) may keep a key's release from the game: a movement
+            // key held when it took over would then count as held for good, and the player would walk on once the
+            // controls come back. Nothing moves while they are off, so let go of everything now.
+            this.clearHeldMovement();
         } catch (e) {
             console.warn(e);
         }
