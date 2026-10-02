@@ -87,7 +87,7 @@
 
                 <div>
                     <!-- ACTION WRAPPER : CAM & MIC -->
-                    <div class="group/hardware flex items-center relative">
+                    <div class="hardware group/hardware flex items-center relative">
                         {#if !$inExternalServiceStore && $proximityMeetingStore && $myMicrophoneStore}
                             <MicrophoneMenuItem />
                         {/if}
@@ -99,7 +99,7 @@
                             <span class="device-arrow-anchor relative self-stretch w-0 z-10">
                                 <button
                                     type="button"
-                                    class="device-arrow group-hover/hardware:opacity-100 group-focus-within/hardware:opacity-100"
+                                    class="device-arrow"
                                     class:open={mediaSettingsDisplayed}
                                     aria-label={$LL.actionbar.editCamMic()}
                                     aria-expanded={mediaSettingsDisplayed}
@@ -201,6 +201,11 @@
         transition: opacity 150ms ease;
         -webkit-tap-highlight-color: transparent;
     }
+    /* Shown while the pointer is over the microphone or camera, while either has the keyboard focus, and while the
+       list is open. Written here, not as Tailwind group-hover classes: this component's own opacity: 0 outranks
+       those, which left the arrow invisible until clicked. */
+    .hardware:hover .device-arrow,
+    .hardware:focus-within .device-arrow,
     .device-arrow.open,
     .device-arrow:focus-visible {
         opacity: 1;

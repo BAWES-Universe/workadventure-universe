@@ -983,6 +983,15 @@ div.emoji-picker {
 .u-ab-btn[data-state="active"]:active > .u-ab-state {
     background: linear-gradient(135deg, #7a1fe8, #3a4de0);
 }
+/* Live: on, and someone can hear or see you (a bubble, a meeting room, on stage). The ink stays; a violet ring and
+   a glow say so. Each button sits on its own ink segment and the next one paints over anything that spills out, so
+   the glow stays inside the button's 4px of padding (and glows inward too): nothing is ever cut. */
+.u-ab-btn[data-live="true"][data-state="normal"] > .u-ab-state {
+    box-shadow: inset 0 0 0 2px #a78bfa, inset 0 0 12px -2px rgba(134, 41, 252, 0.75), 0 0 4px 0 rgba(134, 41, 252, 0.7);
+}
+.u-ab-btn[data-live="true"][data-state="normal"]:focus-visible > .u-ab-state {
+    box-shadow: inset 0 0 0 2px #fff, inset 0 0 12px -2px rgba(134, 41, 252, 0.75), 0 0 4px 0 rgba(134, 41, 252, 0.7);
+}
 /* Muted: coral, and darker (not lighter) on hover so the white icon keeps 3:1 on it. */
 .u-ab-btn[data-state="forbidden"] > .u-ab-state {
     background-color: #e96d51;
