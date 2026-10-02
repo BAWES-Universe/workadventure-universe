@@ -9,7 +9,7 @@
     import {
         chatFloatInsetStore,
         chatSidebarWidthStore,
-        hideActionBarStoreBecauseOfChatBar,
+        chatCarriesItsCloseStore,
     } from "./ChatSidebarWidthStore";
     import { IconX } from "@wa-icons";
 
@@ -124,7 +124,7 @@
         style="width: {sideBarWidth}px; max-width: {sideBarWidth}px;"
         class=" chatWindow !min-w-[150px] max-sm:!min-w-[150px] u-surface-flat p-0 screen-blocker"
     >
-        {#if $hideActionBarStoreBecauseOfChatBar && isInSpecificDiscussion}
+        {#if $chatCarriesItsCloseStore && isInSpecificDiscussion}
             <!-- The same plain close as the one beside the Chats and People tabs, in the same place. -->
             <div class="close-window absolute end-2 top-3 z-50">
                 <button

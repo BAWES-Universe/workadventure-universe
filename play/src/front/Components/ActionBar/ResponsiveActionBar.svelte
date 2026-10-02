@@ -121,3 +121,12 @@
         </div>
     </div>
 </div>
+
+<style>
+    /* With "Keep the bar in view" on, the main layout makes room beside the chat and Orbit for what floats over the
+       game, but the bar keeps the whole width, over them (MainLayout.svelte sets how far it reaches each way). */
+    .bp-menu {
+        margin-inline-start: calc(-1 * var(--u-bar-bleed-start, 0px));
+        width: calc(100% + var(--u-bar-bleed-start, 0px) + var(--u-bar-bleed-end, 0px));
+    }
+</style>

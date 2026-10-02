@@ -8,12 +8,13 @@
         modalFullScreenStore,
         modalIframeStore,
         modalIframeWindowStore,
+        modalPanelWidthStore,
         modalVisibilityStore,
     } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { chatVisibilityStore } from "../../Stores/ChatStore";
-    import { chatFloatInsetStore } from "../../Chat/ChatSidebarWidthStore";
+    import { canvasSize } from "../../Stores/CoWebsiteStore";
+    import { DESKTOP_LAYOUT_MIN_WIDTH } from "../../Stores/BarInViewStore";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
     /** The device asks for less motion: the panel appears and goes at once, without the blur. */
@@ -73,6 +74,7 @@
 
     onDestroy(() => {
         modalFullScreenStore.set(false);
+        modalPanelWidthStore.set(0);
         // The scene measures on its next frame, after the panel has left the page: the player goes back to the middle.
         reposition();
         // A throw here would leave the closed panel over the whole game, catching every click.
@@ -100,6 +102,13 @@
         isMobile = isMediaBreakpointUp("md");
     });
 
+    // What sits beside a side window (Express and the zoom buttons, with the bar kept in view) moves over by its width.
+    let panelWidth = 0;
+    $: modalPanelWidthStore.set(takesSide ? panelWidth : 0);
+
+    // The full-screen view is offered where the game is at least desktop wide, whatever the chat or the windows take.
+    $: offersFullScreen = $canvasSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
+
     // On mobile, only force fullscreen for center position, respect right/left positions
     $: shouldForceMobileFullScreen = isMobile && shown?.position === "center";
 </script>
@@ -111,6 +120,7 @@
         ? 'mobile'
         : shown?.position} {isFullScreened ? 'fullscreened' : ''} {takesSide ? 'screen-blocker' : ''}"
     bind:this={mainModal}
+    bind:offsetWidth={panelWidth}
     on:transitionend|self={reposition}
 >
     <div
@@ -132,14 +142,12 @@
         >
             {#if modalUrl != undefined}
                 {#if shown?.allowFullScreen}
-                    <!-- Shown from a large layout (1024px). A floating chat also takes its 16px inset from the
-                         layout's width, so the threshold drops by that much: the button shows at the same window
-                         widths as before the chat floated. -->
+                    <!-- Shown where the game is at least 1024px wide. Measured on the game, not on what the chat and
+                         the windows leave of it: the full-screen view covers them all. -->
                     <button
-                        class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none hidden items-center justify-center {$chatVisibilityStore &&
-                        $chatFloatInsetStore
-                            ? '@[1008px]/main-layout:flex'
-                            : '@lg/main-layout:flex'}"
+                        class="u-ab-btn u-ab-icon h-12 w-12 p-0 m-0 rounded-none items-center justify-center {offersFullScreen
+                            ? 'flex'
+                            : 'hidden'}"
                         on:click={() => modalFullScreenStore.update((full) => !full)}
                         aria-label={isFullScreened ? "Return to compact view" : "Open full-screen view"}
                         title={isFullScreened ? "Return to compact view" : "Open full-screen view"}
@@ -242,6 +250,13 @@
             }
             &.right:not(.fullscreened) {
                 right: 16px;
+            }
+            // With the bar kept in view, a side window opens under it: the bar is 96px tall (16px padding around a
+            // 64px pill), and the window keeps the 16px gap at the bottom. Full screen still takes the whole screen.
+            :global(.u-bar-in-view) &.right:not(.fullscreened),
+            :global(.u-bar-in-view) &.left:not(.fullscreened) {
+                top: 96px;
+                height: calc(100dvh - 112px);
             }
             &.left:not(.fullscreened) {
                 left: 16px;

@@ -19,6 +19,7 @@ const actionbar: BaseTranslation = {
     test: "Test my settings",
     editCamMic: "Edit cam / mic",
     allSettings: "All settings",
+    keepBarInView: "Keep the bar in view",
     globalMessage: "Send global message",
     mapEditor: "Map editor",
     botEditor: "Bot editor",

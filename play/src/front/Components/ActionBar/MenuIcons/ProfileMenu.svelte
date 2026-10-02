@@ -49,7 +49,9 @@
     import ContextualMenuItems from "./ContextualMenuItems.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
-    import { IconBug, IconLogout } from "@wa-icons";
+    import { IconBug, IconLayoutNavbar, IconLogout } from "@wa-icons";
+    import { windowSize } from "../../../Stores/CoWebsiteStore";
+    import { DESKTOP_LAYOUT_MIN_WIDTH, keepBarInViewStore } from "../../../Stores/BarInViewStore";
 
     // The ActionBarButton component is displayed differently in the profile menu.
     // We use the context to decide how to render it.
@@ -478,6 +480,24 @@
                     <SettingsIcon />
                 </ActionBarButton>
 
+                {#if $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH}
+                    <!-- Desktops only: where the chat and Orbit open, under the bar or over it. Kept on this device. -->
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={$keepBarInViewStore}
+                        class="u-menu-row group pointer-events-auto select-none"
+                        data-testid="keep-bar-in-view"
+                        on:click={() => keepBarInViewStore.update((keep) => !keep)}
+                    >
+                        <span class="u-menu-tile">
+                            <IconLayoutNavbar height="20" width="20" />
+                        </span>
+                        <span class="u-menu-label">{$LL.actionbar.keepBarInView()}</span>
+                        <span class="layout-switch" class:on={$keepBarInViewStore} aria-hidden="true" />
+                    </button>
+                {/if}
+
                 <div class="@sm/actions:hidden items-center">
                     <!-- Hidden by CSS when the contextual items render nothing (it is then the only child). -->
                     <div class="u-menu-divider contextual-divider" />
@@ -530,6 +550,49 @@
         .group:hover .profile-pill {
             background-color: rgba(255, 255, 255, 0.08);
         }
+    }
+    /* Pressed (a tap on a phone, a click), and open: the bar's pressed grey, on the round burger or the name pill.
+       Open is grey, not the gradient, which means switched on. */
+    .profile-burger {
+        border-radius: 9999px;
+        transition: background-color 150ms ease;
+    }
+    .profile-button:active .profile-burger,
+    .profile-button:active .profile-pill {
+        background-color: rgba(255, 255, 255, 0.12);
+    }
+    .profile-button[aria-expanded="true"] .profile-burger,
+    .profile-button[aria-expanded="true"] .profile-pill {
+        background-color: rgba(255, 255, 255, 0.14);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    }
+    /* The layout switch's track: the brand gradient when on, like every other "on". */
+    .layout-switch {
+        position: relative;
+        flex: none;
+        width: 36px;
+        height: 22px;
+        margin-inline-start: auto;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.16);
+        transition: background 150ms ease;
+    }
+    .layout-switch::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        inset-inline-start: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 9999px;
+        background: #fff;
+        transition: inset-inline-start 150ms ease;
+    }
+    .layout-switch.on {
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+    }
+    .layout-switch.on::after {
+        inset-inline-start: 17px;
     }
     /* Reached with the keyboard: the same white ring as the bar's other buttons. */
     .profile-button:focus-visible {

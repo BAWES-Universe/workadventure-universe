@@ -143,3 +143,5 @@ export { default as IconRoute } from "~icons/tabler/route";
 export { default as IconScript } from "~icons/tabler/script";
 export { default as IconDoor } from "~icons/tabler/door";
 export { default as IconPlanet } from "~icons/tabler/planet";
+export { default as IconLayoutNavbar } from "~icons/tabler/layout-navbar";
+export { default as IconZoomOutArea } from "~icons/tabler/zoom-out-area";
