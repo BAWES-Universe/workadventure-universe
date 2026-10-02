@@ -128,14 +128,16 @@
         $modalPanelWidthStore > 0
             ? $modalPanelWidthStore + CHAT_FLOAT_INSET + 80
             : 0;
-    $: marginRight = Math.max(
+    $: mapEditorWidth =
         $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
             ? $mapEditorSideBarWidthStore
-            : 0,
-        besideOrbit
-    );
-    // The bar spans the whole game, over what the chat and Orbit take (ResponsiveActionBar.svelte).
-    $: barBleed = $barInViewStore ? `--u-bar-bleed-start: ${marginLeft}px; --u-bar-bleed-end: ${marginRight}px;` : "";
+            : 0;
+    $: marginRight = Math.max(mapEditorWidth, besideOrbit);
+    // The bar spans the whole game, over what the chat and Orbit take (ResponsiveActionBar.svelte). It stops where the
+    // map editor starts, as it always has: the editor sits above the bar, and its menus would open under it.
+    $: barBleed = $barInViewStore
+        ? `--u-bar-bleed-start: ${marginLeft}px; --u-bar-bleed-end: ${marginRight - mapEditorWidth}px;`
+        : "";
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
     $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
 </script>

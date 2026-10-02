@@ -17,7 +17,7 @@ class Menu {
 
     async openMapExplorer(page: Page) {
         await page.keyboard.press('e');
-        await expect(page.getByRole('button', { name: 'Map overview' })).toBeHidden();
+        await expect(page.locator('section.side-bar-container')).toBeVisible();
     }
 
     async openMenu(page: Page) {

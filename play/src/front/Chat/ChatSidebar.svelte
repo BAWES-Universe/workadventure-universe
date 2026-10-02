@@ -164,15 +164,18 @@
         }
     }
 
-    /* The handle is 4px wide: a finger gets an invisible 44 by 200px area around it, which the page never scrolls or
-       zooms from. */
+    /* The handle is 4px wide: a finger gets an invisible 200px tall area that runs from the handle out past the
+       chat's edge, which the page never scrolls or zooms from. It stays off the chat itself, so the buttons at the
+       end of each row keep their clicks. */
     #resize-bar {
         touch-action: none;
     }
     #resize-bar::before {
         content: "";
         position: absolute;
-        inset: -36px -20px;
+        inset-block: -36px;
+        inset-inline-start: 0;
+        inset-inline-end: -28px;
     }
     #resize-bar.resizing {
         width: 6px !important;
