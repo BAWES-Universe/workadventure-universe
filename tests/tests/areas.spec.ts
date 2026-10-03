@@ -63,7 +63,9 @@ test.describe('Areas @nomobile', () => {
         // Enable audio area blocking
         await Menu.openMenu(page);
         await page.getByRole('button', { name: 'All settings' }).click();
-        await page.getByText('Block ambient sounds and music').click();
+        // Sound and video is a tab on phones and a row of the side list on computers
+        await page.locator('[data-testid="settings-tab-sound"]:visible, [data-testid="settings-nav-sound"]:visible').click();
+        await page.getByText('Mute map music and sounds').click();
         await page.locator('#closeMenu').click();
 
         // Verify audio area is working
