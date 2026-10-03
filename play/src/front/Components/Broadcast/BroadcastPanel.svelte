@@ -49,8 +49,10 @@
     }
 
     function choose(chosen: BroadcastKind) {
-        kind = chosen;
         const reaches = reachesFor(chosen);
+        // The reach list can empty between the row's render and the tap (the room's settings just changed).
+        if (reaches.length === 0) return;
+        kind = chosen;
         if (chosen === "live") analyticsClient.openMegaphone();
         else if (chosen === "message") analyticsClient.openGlobalMessage();
         else analyticsClient.openGlobalAudio();

@@ -84,7 +84,11 @@
         setAudio(blob, "voice-note.wav", waveShape(samples), samples.length / sampleRate);
     }
 
+    // A recording or a decoded file that lands after the card closed is dropped: its URL would never be revoked.
+    let destroyed = false;
+
     function setAudio(blob: Blob, name: string, levels: number[], duration: number) {
+        if (destroyed) return;
         if (audioUrl) URL.revokeObjectURL(audioUrl);
         audio = { blob, name, levels, duration };
         audioUrl = URL.createObjectURL(blob);
@@ -151,6 +155,7 @@
     });
 
     onDestroy(() => {
+        destroyed = true;
         menuInputFocusStore.set(false);
         if (ticker) clearInterval(ticker);
         recorder?.stop().catch(() => {});
