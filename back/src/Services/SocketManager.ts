@@ -126,6 +126,23 @@ export class SocketManager {
     ): Promise<{ room: GameRoom; user: User }> {
         //join new previous room
         const { room, user } = await this.joinRoom(socket, joinRoomMessage);
+        try {
+            return await this.sendRoomJoinedMessage(socket, joinRoomMessage, room, user);
+        } catch (e) {
+            // The user is already in the room (and possibly in a bubble), but the caller never gets it back when the
+            // join fails, so nothing would ever remove it: it would stay as an invisible "ghost" until back restarts.
+            // This happens when map-storage cannot be reached, for instance while it is being redeployed.
+            this.leaveRoom(room, user);
+            throw e;
+        }
+    }
+
+    private async sendRoomJoinedMessage(
+        socket: UserSocket,
+        joinRoomMessage: JoinRoomMessage,
+        room: GameRoom,
+        user: User
+    ): Promise<{ room: GameRoom; user: User }> {
         const lastCommandId = joinRoomMessage.lastCommandId;
         let commandsToApply: EditMapCommandMessage[] | undefined = undefined;
 
