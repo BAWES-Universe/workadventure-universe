@@ -4,7 +4,6 @@
     import { bottomActionBarVisibilityStore } from "../../../Stores/BottomActionBarStore";
     import { inLivekitStore } from "../../../Stores/MediaStore";
     import { followStateStore } from "../../../Stores/FollowStore";
-    import { requestedMegaphoneStore } from "../../../Stores/MegaphoneStore";
     import LL from "../../../../i18n/i18n-svelte";
     import { screenSharingAvailableStore } from "../../../Stores/ScreenSharingStore";
     import { isInRemoteConversation } from "../../../Stores/StreamableCollectionStore";
@@ -14,7 +13,6 @@
     import LockDiscussionMenuItem from "./LockDiscussionMenuItem.svelte";
     import MusicMenuItem from "./MusicMenuItem.svelte";
     import HeaderMenuItem from "./HeaderMenuItem.svelte";
-    import MegaphoneMenuItem from "./MegaphoneMenuItem.svelte";
     import ScreenSharingMenuItem from "./ScreenSharingMenuItem.svelte";
     import PictureInPictureMenuItem from "./PictureInPictureMenuItem.svelte";
 
@@ -55,10 +53,6 @@
     {#if $isInRemoteConversation}
         <PictureInPictureMenuItem />
     {/if}
-{/if}
-
-{#if $requestedMegaphoneStore}
-    <MegaphoneMenuItem />
 {/if}
 
 {#if inProfileMenu}

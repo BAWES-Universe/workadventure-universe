@@ -7,8 +7,6 @@
     import { menuVisiblilityStore, warningBannerStore } from "../Stores/MenuStore";
     import { showReportScreenStore, userReportEmpty } from "../Stores/ShowReportScreenStore";
     import { banMessageStore } from "../Stores/TypeMessageStore/BanMessageStore";
-    import { textMessageStore } from "../Stores/TypeMessageStore/TextMessageStore";
-    import { soundPlayingStore } from "../Stores/SoundPlayingStore";
     import {
         modalFullScreenStore,
         modalIframeStore,
@@ -52,8 +50,8 @@
     import VisitCard from "./VisitCard/VisitCard.svelte";
     import WarningBanner from "./WarningContainer/WarningBanner.svelte";
     import BanMessageContainer from "./TypeMessage/BanMessageContainer.svelte";
-    import TextMessageContainer from "./TypeMessage/TextMessageContainer.svelte";
-    import AudioPlaying from "./UI/AudioPlaying.svelte";
+    import BroadcastInbox from "./Broadcast/BroadcastInbox.svelte";
+    import BroadcastLivePill from "./Broadcast/BroadcastLivePill.svelte";
     import LimitRoomModal from "./Modal/LimitRoomModal.svelte";
     import ActionsMenu from "./ActionsMenu/ActionsMenu.svelte";
     import WokaMenu from "./ActionsMenu/WokaMenu.svelte";
@@ -182,9 +180,9 @@
 
             {#if $banMessageStore.length > 0}
                 <BanMessageContainer />
-            {:else if $textMessageStore.length > 0}
-                <TextMessageContainer />
             {/if}
+            <BroadcastLivePill />
+            <BroadcastInbox />
             {#if $notificationPlayingStore}
                 <div class="flex flex-col absolute w-auto end-0">
                     {#each [...$notificationPlayingStore.values()] as notification, index (`${index}-${notification.id}`)}
@@ -211,10 +209,6 @@
 
             {#if $helpSettingsPopupBlockedStore}
                 <HelpPopUpBlocked />
-            {/if}
-
-            {#if $soundPlayingStore}
-                <AudioPlaying url={$soundPlayingStore} />
             {/if}
 
             {#if $showLimitRoomModalStore}
