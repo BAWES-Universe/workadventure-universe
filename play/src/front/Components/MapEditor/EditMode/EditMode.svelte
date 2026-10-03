@@ -73,7 +73,8 @@
     {#if panelShown}
         <EditPanel />
     {/if}
-    {#if objectSelected && !placingObject}
+    {#if objectSelected && !placingObject && !($mobileLayoutStore && panelShown)}
+        <!-- On a phone the panel covers the map, so the actions pinned to the object wait until it is tucked away. -->
         <ObjectActions />
     {/if}
     {#if drawingArea}
