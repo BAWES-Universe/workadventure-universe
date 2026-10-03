@@ -131,7 +131,7 @@
         onBack={backFromSettings}
         backLabel={$LL.mapEditor.edit.areas.back()}
     />
-    <div class="em-scroll em-props">
+    <div class="em-scroll em-props" data-testid="object-settings-page">
         <EntityPropertiesEditor />
     </div>
 {:else if editingUpload && picked?.variant.defaultPrefab.type === CUSTOM}

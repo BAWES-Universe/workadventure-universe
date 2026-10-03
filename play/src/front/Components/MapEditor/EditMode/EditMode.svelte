@@ -57,11 +57,14 @@
 </script>
 
 {#if tool === EditorToolName.WAMSettingsEditor}
-    <ConfigureMyRoom />
+    <!-- The main layout takes no pointer events itself; the window must. -->
+    <div class="contents pointer-events-auto">
+        <ConfigureMyRoom />
+    </div>
 {/if}
 <div
     id="map-editor-container"
-    class="em-root absolute inset-0 z-[500] pointer-events-none text-white"
+    class="em-root absolute inset-0 z-[100] pointer-events-none text-white"
     class:em-phone={$mobileLayoutStore}
     data-testid="edit-mode"
 >
@@ -154,7 +157,7 @@
         bottom: calc(18px + env(safe-area-inset-bottom, 0px));
     }
     .em-hint-top {
-        top: 160px;
+        top: 64px;
         left: 50%;
         transform: translateX(-50%);
         width: max-content;

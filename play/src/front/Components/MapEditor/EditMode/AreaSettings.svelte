@@ -212,7 +212,7 @@
             onBack={back}
             backLabel={$LL.mapEditor.edit.areas.back()}
         />
-        <div class="em-scroll properties-container em-prop-page">
+        <div class="em-scroll properties-container em-prop-page" data-testid="area-property-page">
             {#if property.type === "focusable"}
                 <FocusablePropertyEditor
                     {property}
@@ -442,7 +442,7 @@
                     {/if}
                 {/each}
             {/each}
-            <button type="button" class="em-row" on:click={() => (showApps = !showApps)}>
+            <button type="button" class="em-row" data-testid="area-add-app" on:click={() => (showApps = !showApps)}>
                 <span class="em-tile"><IconLink font-size="18" /></span>
                 <span class="em-tx">
                     <span class="em-t">{$LL.mapEditor.edit.properties.app.title()}</span>

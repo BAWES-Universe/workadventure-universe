@@ -107,7 +107,7 @@
 <style>
     .em-rail {
         position: absolute;
-        top: 160px;
+        top: 64px;
         right: 14px;
         width: 62px;
         border-radius: 31px;

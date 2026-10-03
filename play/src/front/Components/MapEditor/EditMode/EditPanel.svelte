@@ -71,7 +71,7 @@
 <style>
     .em-panel {
         position: absolute;
-        top: 160px;
+        top: 64px;
         bottom: 14px;
         right: 92px;
         border-radius: 24px;

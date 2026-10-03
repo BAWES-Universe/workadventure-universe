@@ -42,6 +42,7 @@
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
+    import EditMode from "./MapEditor/EditMode/EditMode.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
     import HelpNotificationSettingsPopup from "./HelpSettings/HelpNotificationSettingPopup.svelte";
     import Menu from "./Menu/Menu.svelte";
@@ -235,6 +236,12 @@
             <!-- "Look around the map": the pill, hint, box and places, drawn over the game under the zoom column. -->
             {#if $mapExplorationModeStore}
                 <LookAround />
+            {/if}
+
+            <!-- "Editing a room" floats over the game under the bar, so the bar's menus open over it, and over the zoom
+                 column. "Look around the map" runs on the same engine but shows none of its toolbar. -->
+            {#if $mapEditorToolbarInUseStore}
+                <EditMode />
             {/if}
 
             {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}

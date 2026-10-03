@@ -264,11 +264,15 @@ export function createAreaProperty(
     subtype?: string
 ): AreaDataProperty {
     const id = uuid();
+    // The highlight goes to the area the setting was added to, even when another area is selected by the time
+    // the moment has passed (drawing the next area right away must not light that one up instead).
     const addHighlightLater = () => {
+        const target = get(mapEditorSelectedAreaPreviewStore);
+        if (!target) return;
         setTimeout(() => {
-            const preview = get(mapEditorSelectedAreaPreviewStore);
-            if (preview && !preview.getProperties().find((p) => p.type === "highlight")) {
-                preview.addProperty(createAreaProperty(LL, "highlight"));
+            if (!target.active) return;
+            if (!target.getProperties().find((p) => p.type === "highlight")) {
+                target.addProperty(createAreaProperty(LL, "highlight"));
             }
         }, 500);
     };

@@ -190,7 +190,7 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await page.getByTestId("name").fill(newEntityName);
         await EntityEditor.applyEntityModifications(page);
         // Clear entity selection
-        await page.getByTestId("clearEntitySelection").click();
+        await EntityEditor.clearEntitySelection(page);
 
         // Search uploaded entity on both pages
         const uploadedEntityLocator = await EntityEditor.searchEntity(page, newEntityName);

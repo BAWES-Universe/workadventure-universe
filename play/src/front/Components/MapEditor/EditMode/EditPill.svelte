@@ -59,7 +59,7 @@
 <style>
     .em-pill {
         position: absolute;
-        top: 92px;
+        top: 0;
         left: 50%;
         transform: translateX(-50%);
         width: min(430px, calc(100% - 24px));

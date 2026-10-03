@@ -19,6 +19,7 @@ class MapEditor {
       )
       .first()
       .click();
+    await expect(page.getByTestId("edit-panel")).toBeVisible();
   }
 
   async openEntityEditor(page: Page) {
@@ -29,6 +30,7 @@ class MapEditor {
       .first()
       .click(/*{force: true}*/);
     // note: set click force to true because sometimes a property tooltip is overlapping the button
+    await expect(page.getByTestId("edit-panel")).toBeVisible();
   }
 
   async openExploration(page: Page) {

@@ -299,6 +299,7 @@ await page.pause();
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y
     );
+    await EntityEditor.openSettings(page2);
     await expect(
       page2.getByTestId("openWebsite")
     ).toBeAttached();
