@@ -45,7 +45,7 @@
                 mapEditorSheetSnapStore.set("half");
             }
             analyticsClient.openMapEditorTool(newTool);
-            gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(newTool);
+            gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.equipTool(newTool);
             return;
         }
         // The map sidebar is opened when the user clicks on the explorer for the first time.
@@ -56,7 +56,7 @@
             mapEditorVisibilityStore.set(true);
         }
         analyticsClient.openMapEditorTool(newTool);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(newTool);
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.equipTool(newTool);
     }
 </script>
 

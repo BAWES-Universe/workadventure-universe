@@ -83,7 +83,7 @@
 
     function closeMapEditor() {
         mapEditorVisibilityStore.set(false);
-        gameManager.getCurrentGameScene().getMapEditorModeManager()?.equipTool(EditorToolName.CloseMapEditor);
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.equipTool(EditorToolName.CloseMapEditor);
     }
 
     onMount(() => {

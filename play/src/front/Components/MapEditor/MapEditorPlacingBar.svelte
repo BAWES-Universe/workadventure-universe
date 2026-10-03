@@ -78,7 +78,7 @@
                 stopWaypointEditing();
                 break;
             case "trash":
-                gameManager.getCurrentGameScene().getMapEditorModeManager()?.equipTool(EditorToolName.EntityEditor);
+                gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.equipTool(EditorToolName.EntityEditor);
                 break;
         }
     }
