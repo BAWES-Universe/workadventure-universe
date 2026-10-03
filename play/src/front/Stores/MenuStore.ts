@@ -255,9 +255,9 @@ export function handleMenuUnregisterEvent(key: string) {
 
 export function handleOpenMenuEvent(key: string) {
     // The "Global messages" menu page was removed in favour of the Tools > "Send global message" modal.
-    // Scripts that still open it by key get the modal instead.
+    // Scripts that still open it by key get the modal instead, for whoever sees the menu entry for it.
     if (key === "globalMessages") {
-        if (get(userIsAdminStore)) {
+        if (get(globalMessageVisibleStore)) {
             menuVisiblilityStore.set(false);
             showModalGlobalComminucationVisibilityStore.set(true);
             analyticsClient.globalMessage();
