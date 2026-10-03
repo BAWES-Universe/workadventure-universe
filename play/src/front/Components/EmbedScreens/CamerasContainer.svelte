@@ -50,6 +50,10 @@
     } from "../../Stores/OrderedStreamableCollectionStore";
     import { activePictureInPictureStore } from "../../Stores/PeerStore";
     import { oneLineStreamableCollectionStore } from "../../Stores/OneLineStreamableCollectionStore";
+    import { chatSheetHeightStore, chatSheetLayoutStore, chatSheetSnapStore } from "../../Chat/ChatSheetStore";
+    import { windowSize } from "../../Stores/CoWebsiteStore";
+    import { LL } from "../../../i18n/i18n-svelte";
+    import { phoneVideoLayout, type PhoneVideoLayout } from "./PhoneVideoLayout";
     import ResizeHandle from "./ResizeHandle.svelte";
 
     setContext("inCameraContainer", true);
@@ -72,6 +76,44 @@
 
     // The minimum width of a media box in pixels
     const minMediaBoxWidth = 160;
+
+    // ---- Phones held upright (PhoneVideoLayout.ts) ----
+    // The videos get the space above the chat sheet while the chat is open, or the height set with the white bar
+    // while it is closed, and follow the same rules for both. Walking with the chat closed keeps the single row.
+    $: phone = $chatSheetLayoutStore && oneLineMode === "horizontal";
+    $: sheetOpen = phone && $chatSheetHeightStore > 0;
+    $: phoneLayoutOn = phone && (!isOnOneLine || sheetOpen);
+    let cameraBlock: HTMLDivElement | undefined;
+    // Room above the sheet: from the top of the videos to the top of the sheet, less a gap.
+    $: spaceAboveSheet = sheetOpen
+        ? Math.max(0, $windowSize.height - $chatSheetHeightStore - (cameraBlock?.getBoundingClientRect().top ?? 0) - 8)
+        : 0;
+    // With someone shown big, the others get one row of faces above them.
+    $: phoneHeight = sheetOpen
+        ? $highlightedEmbedScreen && !$highlightFullScreen
+            ? Math.min(spaceAboveSheet, 64)
+            : spaceAboveSheet
+        : containerHeight;
+    // "+N" tapped: everyone, in a list that scrolls. Dragging the sheet or the white bar goes back to the layout.
+    let showEveryone = false;
+    let phoneLayout: PhoneVideoLayout | undefined;
+    $: phoneLayout = phoneLayoutOn
+        ? phoneVideoLayout($oneLineStreamableCollectionStore.length, containerWidth, phoneHeight, showEveryone)
+        : undefined;
+    $: shownCount = phoneLayout && phoneLayout.more > 0 ? phoneLayout.shown : Infinity;
+    // One line along the top (walking), or rows.
+    $: line = isOnOneLine && !phoneLayoutOn;
+
+    function showEveryoneNow() {
+        if (sheetOpen) {
+            // Lower the sheet first: its change of height would otherwise go back to the layout.
+            chatSheetSnapStore.set("peek");
+        } else {
+            containerHeight = Math.round(maxContainerHeight * 0.64);
+            if (camerasContainer) camerasContainer.style.height = `${containerHeight}px`;
+        }
+        showEveryone = true;
+    }
 
     // Whichever map is current when the layout changes: during a reconnect there is none (skip, don't throw).
     function reposition() {
@@ -104,10 +146,13 @@
             );
         });
 
+        const unsubscribeSheetSnap = chatSheetSnapStore.subscribe(() => (showEveryone = false));
+
         return () => {
             unsubscriber();
             unsubscribePictureInPictureMode();
             unsubscribeHighlightedEmbedScreen();
+            unsubscribeSheetSnap();
         };
     });
 
@@ -117,8 +162,14 @@
 
     $: maxMediaBoxWidth = (oneLineMaxHeight * 16) / 9;
 
+    $: if (sheetOpen && camerasContainer) {
+        camerasContainer.style.height = `${phoneHeight}px`;
+    }
+
     $: {
-        if (!isOnOneLine) {
+        if (sheetOpen) {
+            // The sheet sets the height (above).
+        } else if (!isOnOneLine) {
             containerHeight = maxContainerHeight * localUserStore.getCameraContainerHeight();
             if (camerasContainer) {
                 camerasContainer.style.height = `${containerHeight}px`;
@@ -131,7 +182,12 @@
     }
 
     $: {
-        if (isOnOneLine) {
+        if (phoneLayout) {
+            videoWidth = phoneLayout.width;
+            videoHeight = phoneLayout.height;
+            // The call puts the people it ranks first (whoever is talking) in the spots that show.
+            maxVisibleVideosStore.set(phoneLayout.shown);
+        } else if (isOnOneLine) {
             if (oneLineMode === "horizontal") {
                 videoWidth = Math.max(
                     Math.min(maxMediaBoxWidth, containerWidth / $oneLineStreamableCollectionStore.length),
@@ -312,6 +368,7 @@
     let resizeInProgress = false;
     function onResizeHandler(height: number) {
         resizeInProgress = true;
+        showEveryone = false;
         containerHeight = height;
         const coefCameraContainerHeight = containerHeight / maxContainerHeight;
         localUserStore.setCameraContainerHeight(coefCameraContainerHeight > 0.9 ? 0.9 : coefCameraContainerHeight);
@@ -329,6 +386,7 @@
 <div
     class="w-full"
     data-camera-block
+    bind:this={cameraBlock}
     bind:clientHeight={maxContainerHeight}
     class:h-full={!isOnOneLine || (isOnOneLine && oneLineMode === "vertical")}
 >
@@ -340,34 +398,62 @@
         class:pointer-events-auto={grabPointerEvents}
         class:hidden={$highlightFullScreen && $highlightedEmbedScreen && oneLineMode !== "vertical"}
         class:flex={true}
-        class:max-h-full={isOnOneLine && oneLineMode === "horizontal"}
-        class:max-w-full={!isOnOneLine || (isOnOneLine && oneLineMode === "horizontal")}
-        class:flex-col={isOnOneLine && oneLineMode === "vertical"}
-        class:flex-wrap={!isOnOneLine}
-        class:content-start={!isOnOneLine}
-        class:justify-start={isOnOneLine}
-        class:justify-center={!isOnOneLine}
-        class:whitespace-nowrap={isOnOneLine}
+        class:max-h-full={line && oneLineMode === "horizontal"}
+        class:max-w-full={!line || (line && oneLineMode === "horizontal")}
+        class:flex-col={line && oneLineMode === "vertical"}
+        class:flex-wrap={!line}
+        class:content-start={!line}
+        class:justify-start={line}
+        class:justify-center={!line}
+        class:whitespace-nowrap={line}
         class:relative={true}
-        class:overflow-x-auto={isOnOneLine && oneLineMode === "horizontal"}
-        class:overflow-x-hidden={!isOnOneLine}
-        class:overflow-y-auto={!isOnOneLine || (isOnOneLine && oneLineMode === "vertical")}
-        class:overflow-y-hidden={isOnOneLine && oneLineMode === "horizontal"}
-        class:pb-3={isOnOneLine && !$highlightedEmbedScreen}
-        class:m-0={isOnOneLine}
-        class:my-0={isOnOneLine}
-        class:w-full={!isOnOneLine && oneLineMode !== "horizontal"}
-        class:items-start={!isOnOneLine}
-        class:not-highlighted={!isOnOneLine}
-        class:mt-0={!isOnOneLine}
-        class:h-full={isOnOneLine && oneLineMode === "vertical"}
+        class:overflow-x-auto={line && oneLineMode === "horizontal"}
+        class:overflow-x-hidden={!line}
+        class:overflow-y-auto={(!line && !(phoneLayout && !phoneLayout.scrolls)) ||
+            (line && oneLineMode === "vertical")}
+        class:overflow-y-hidden={(line && oneLineMode === "horizontal") || (phoneLayout && !phoneLayout.scrolls)}
+        class:pointer-events-auto-scroll={phoneLayout?.scrolls}
+        class:pb-3={line && !$highlightedEmbedScreen}
+        class:m-0={line}
+        class:my-0={line}
+        class:w-full={!line && oneLineMode !== "horizontal"}
+        class:items-start={!line}
+        class:not-highlighted={!line}
+        class:mt-0={!line}
+        class:h-full={line && oneLineMode === "vertical"}
         class:m-2={$activePictureInPictureStore}
         id="cameras-container"
         data-testid="cameras-container"
+        data-phone-layout={phoneLayout ? phoneLayout.kind : undefined}
     >
         {#each $oneLineStreamableCollectionStore as videoBox (videoBox.uniqueId)}
-            <VideoBox {videoBox} {isOnOneLine} {oneLineMode} {videoWidth} {videoHeight} />
+            <VideoBox
+                {videoBox}
+                isOnOneLine={line}
+                {oneLineMode}
+                {videoWidth}
+                {videoHeight}
+                face={phoneLayout?.kind === "faces"}
+                {shownCount}
+            />
         {/each}
+        {#if phoneLayout && phoneLayout.more > 0}
+            <!-- The last spot: how many more people there are. Tapping it shows everyone. -->
+            <button
+                type="button"
+                class="more-people pointer-events-auto shrink-0 camera-box"
+                class:face={phoneLayout.kind === "faces"}
+                style="order: {phoneLayout.shown}; width: {phoneLayout.width}px; height: {phoneLayout.height}px;"
+                aria-label={$LL.video.showEveryone({ count: phoneLayout.more })}
+                data-testid="more-people"
+                on:click={showEveryoneNow}
+            >
+                <span class="more-people-count">+{phoneLayout.more}</span>
+                {#if phoneLayout.kind === "videos"}
+                    <span class="more-people-label">{$LL.video.more()}</span>
+                {/if}
+            </button>
+        {/if}
         <!-- in PictureInPicture, let's finish with our video feedback in small -->
         {#if isOnOneLine && oneLineMode === "vertical" && !($myCameraStreamable?.displayInPictureInPictureMode ?? false)}
             <div class="fixed bottom-20 right-0 z-50">
@@ -386,7 +472,8 @@
             </div>
         {/if}
     </div>
-    {#if !isOnOneLine}
+    <!-- With the chat sheet open, its handle sizes the videos instead. -->
+    {#if !isOnOneLine && !sheetOpen}
         <ResizeHandle
             minHeight={maxContainerHeight * 0.1}
             maxHeight={maxContainerHeight * 0.9}
@@ -394,6 +481,7 @@
             onResizeEnd={() => {
                 resizeInProgress = false;
                 analyticsClient.resizeCameraLayout();
+                if (phoneLayoutOn) return;
 
                 // We need to recalculate the layout to take into account the new container width
                 const layout = calculateOptimalLayout(containerWidth, containerHeight);
@@ -409,6 +497,48 @@
 <style lang="scss">
     .hidden {
         display: none !important;
+    }
+
+    /* "+N": an ink tile like a camera that's off, with the count. */
+    .more-people {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 16px;
+        color: #fff;
+        background: rgb(var(--u-ink) / 0.8);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        box-shadow: inset 0 0 0 1px var(--u-surface-edge);
+        cursor: pointer;
+    }
+    .more-people.face {
+        border-radius: 9999px;
+    }
+    .more-people-count {
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .more-people.face .more-people-count {
+        font-size: 13px;
+    }
+    .more-people-label {
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.7);
+    }
+    .more-people:focus-visible {
+        outline: 2px solid #fff;
+        outline-offset: 2px;
+    }
+    /* Everyone, in a list that scrolls: the list takes the finger, the map behind doesn't. */
+    .pointer-events-auto-scroll {
+        pointer-events: auto;
     }
 
     @container (min-width: 1024) and (max-width: 1279px) {

@@ -16,9 +16,19 @@
     export let position = "";
     export let grayscale = false;
     export let isBlocked = false;
+    /** A small round face (phones): the Woka alone when the camera is off, nothing over the video when it's on. */
+    export let pictureOnly = false;
 </script>
 
-{#if isCameraDisabled || isBlocked}
+{#if pictureOnly}
+    {#if isCameraDisabled || isBlocked}
+        <div class="absolute inset-0 z-30 flex items-center justify-center" style="image-rendering:pixelated">
+            <div class="w-2/3">
+                <Woka src={$picture ?? ""} customWidth="100%" {grayscale} />
+            </div>
+        </div>
+    {/if}
+{:else if isCameraDisabled || isBlocked}
     <div class="{position} z-30 responsive-dimension">
         <div class="flex justify-between rounded bg-transparent">
             <div class="relative px-2 py-1 text-white text-sm bold rounded text-nowrap flex flex-col items-center">

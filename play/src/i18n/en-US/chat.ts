@@ -50,6 +50,7 @@ const chat: BaseTranslation = {
     search: "Search",
     closeSearch: "Close search",
     closeChat: "Close chat",
+    sheetHandle: "Chat height: drag to resize, or drag down to close",
     connecting: "Connecting to server ...",
     waitingInit: "Waiting for server initialization ...",
     waitingData: "Waiting user data ...",
