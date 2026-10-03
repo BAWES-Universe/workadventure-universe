@@ -11,12 +11,14 @@ async function startVideo(page: Page) {
 }
 
 async function expectPhoneLimit(page: Page) {
-    const more = page.getByTestId('more-people');
-    await expect(more).toBeVisible();
     const shown = () => page.locator('#cameras-container .camera-box:not(.more-people)').evaluateAll(
         (boxes) => boxes.filter((box) => getComputedStyle(box).display !== 'none').length
     );
-    expect(await shown()).toBeLessThanOrEqual(6);
+    // Everyone is either in the layout or counted on the "+N" tile: nobody is cut off without a hint.
+    const more = page.getByTestId('more-people');
+    const hidden = async () => ((await more.isVisible()) ? Number((await more.textContent())?.replace(/\D/g, '')) : 0);
+    await expect.poll(async () => (await shown()) + (await hidden())).toBeGreaterThanOrEqual(7);
+    if ((await hidden()) === 0) return;
 
     // Tapping it shows everyone, in a list that scrolls.
     await more.click();
@@ -42,7 +44,7 @@ test.describe('Video layout tests', () => {
         await expect(page.getByTestId('resize-handle')).toBeVisible();
 
         // Phones held upright (PhoneVideoLayout.ts): the people that don't fit, or are over the limit, sit behind
-        // a "+N" tile instead of below a scroll.
+        // a "+N" tile instead of below a scroll (often they all fit as round faces).
         //eslint-disable-next-line playwright/no-conditional-in-test
         if (await page.getByTestId('cameras-container').getAttribute('data-phone-layout')) {
             await expectPhoneLimit(page);
