@@ -53,9 +53,18 @@
             reposition();
         };
     };
+    // Phones never send a double click from a double tap (the page turns double-tap zoom off), so the handle counts its
+    // own taps: two quick taps that do not drag toggle the full width, like a double click on a desktop.
+    const DOUBLE_TAP_MS = 300;
+    const TAP_SLOP_PX = 10;
+    let lastTapAt = 0;
+    let lastDoubleTapAt = 0;
+
     const handleTouchStart = (e: TouchEvent) => {
         resizing = true;
         let dragX = e.targetTouches[0].pageX;
+        const startX = dragX;
+        let moved = false;
 
         function onTouchMove(e: TouchEvent) {
             const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
@@ -68,6 +77,7 @@
             sideBarWidth = clampedWidth;
 
             dragX = e.targetTouches[0].pageX;
+            if (Math.abs(dragX - startX) > TAP_SLOP_PX) moved = true;
         }
 
         function onTouchEnd() {
@@ -76,6 +86,17 @@
             document.removeEventListener("touchend", onTouchEnd);
             chatSidebarWidthStore.set(sideBarWidth);
             reposition();
+
+            const now = Date.now();
+            if (moved) {
+                lastTapAt = 0;
+            } else if (now - lastTapAt < DOUBLE_TAP_MS) {
+                lastTapAt = 0;
+                lastDoubleTapAt = now;
+                toggleFullWidth();
+            } else {
+                lastTapAt = now;
+            }
         }
 
         document.addEventListener("touchmove", onTouchMove);
@@ -83,6 +104,12 @@
     };
 
     const handleDbClick = () => {
+        // A browser that also turns the double tap into a double click would toggle twice: the tap already counted.
+        if (Date.now() - lastDoubleTapAt < 600) return;
+        toggleFullWidth();
+    };
+
+    const toggleFullWidth = () => {
         if (isChatBarInFullScreen()) {
             const initialWidth = isMediaBreakpointUp("md") ? INITIAL_SIDEBAR_WIDTH_MOBILE : INITIAL_SIDEBAR_WIDTH;
             sideBarWidth = initialWidth;
@@ -166,16 +193,19 @@
 
     /* The handle is 4px wide: a finger gets an invisible 200px tall area that runs from the handle out past the
        chat's edge, which the page never scrolls or zooms from. It stays off the chat itself, so the buttons at the
-       end of each row keep their clicks. */
+       end of each row keep their clicks. A mouse is precise and keeps the 4px handle: the wider area would catch
+       clicks on the game beside the chat. */
     #resize-bar {
         touch-action: none;
     }
-    #resize-bar::before {
-        content: "";
-        position: absolute;
-        inset-block: -36px;
-        inset-inline-start: 0;
-        inset-inline-end: -28px;
+    @media (pointer: coarse) {
+        #resize-bar::before {
+            content: "";
+            position: absolute;
+            inset-block: -36px;
+            inset-inline-start: 0;
+            inset-inline-end: -28px;
+        }
     }
     #resize-bar.resizing {
         width: 6px !important;
