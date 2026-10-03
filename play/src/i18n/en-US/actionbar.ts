@@ -23,6 +23,8 @@ const actionbar: BaseTranslation = {
     lockConversation: "Lock",
     unlockConversation: "Unlock",
     globalMessage: "Send global message",
+    broadcast: "Broadcast",
+    broadcastLive: "Broadcast (you're live)",
     mapEditor: "Map editor",
     botEditor: "Bot editor",
     botEditorModule: {

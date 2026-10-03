@@ -71,12 +71,23 @@ class Menu {
     async toggleMegaphoneButton(page: Page) {
         await this.openMapMenu(page);
         await page.getByRole('button', { name: 'Send global message' }).click();
+        await this.selectLiveMessageTab(page);
         //await page.getByTestId('global-message').click({timeout: 30_000});
+    }
+
+    // Admins get Text / Audio / Live tabs in the global message composer; other users only get the live megaphone.
+    async selectLiveMessageTab(page: Page) {
+        await expect(page.getByTestId('global-message-composer')).toBeVisible();
+        const liveTab = page.getByTestId('global-message-tab-live');
+        if (await liveTab.isVisible()) {
+            await liveTab.click();
+        }
     }
 
     async isThereMegaphoneButton(page: Page) {
         await this.openMapMenu(page);
         await page.getByRole('button', { name: 'Send global message' }).click();
+        await this.selectLiveMessageTab(page);
         await expect(page.getByRole('button', { name: 'Start live message' })).toBeEnabled();
         await page.locator(".close-btn").first().click();
         //await this.closeMapMenu(page);
@@ -85,6 +96,7 @@ class Menu {
     async isNotThereMegaphoneButton(page: Page) {
         await this.openMapMenu(page);
         await page.getByRole('button', { name: 'Send global message' }).click();
+        await this.selectLiveMessageTab(page);
         await expect(page.getByRole('button', { name: 'Start live message' })).toBeDisabled();
         await page.locator(".close-btn").first().click();
         //await this.closeMapMenu(page);
