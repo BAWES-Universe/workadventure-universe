@@ -26,6 +26,47 @@ const menu: DeepPartial<Translation["menu"]> = {
         logout: "تسجيل الخروج", // Logout
     },
     settings: {
+        tabs: {
+            general: "عام",
+            soundAndVideo: "الصوت والفيديو",
+            keyboard: "لوحة المفاتيح",
+        },
+        sections: {
+            video: "الفيديو",
+            sound: "الصوت",
+            notifications: "الإشعارات",
+            away: "عند مغادرة التطبيق",
+            screen: "الشاشة",
+            help: "المساعدة",
+        },
+        quality: {
+            saveData: "توفير البيانات",
+            saveDataHint: "يستهلك إنترنت أقل",
+            normal: "عادية",
+            best: "الأفضل",
+            bestHint: "أوضح صورة",
+        },
+        cameraQuality: "جودة الكاميرا",
+        screenShareQuality: "جودة مشاركة الشاشة",
+        voicesNearby: "الأصوات القريبة",
+        joinSound: "صوت عند انضمام شخص",
+        joinSoundShort: "صوت الانضمام",
+        playJoinSound: "تشغيل الصوت",
+        lowerMusicWhileTalking: "خفض الموسيقى عندما أتحدث",
+        muteMapSounds: "كتم موسيقى الخريطة وأصواتها",
+        ignoreFollowRequests: "تجاهل طلبات المتابعة",
+        keepCameraOn: "إبقاء الكاميرا قيد التشغيل",
+        keepMicOn: "إبقاء الميكروفون قيد التشغيل",
+        keptOnWhenAway: "يبقى قيد التشغيل عند الانتقال إلى علامة تبويب أو تطبيق آخر",
+        turnedOffWhenAway: "يتوقف عند الانتقال إلى علامة تبويب أو تطبيق آخر",
+        askBeforeWebsites: "السؤال قبل فتح المواقع",
+        calmMap: "خريطة هادئة (بدون حركة)",
+        pictureInPicture: "صورة داخل صورة",
+        mapCredits: "حقوق الخريطة",
+        contact: "تواصل معنا",
+        report: "الإبلاغ عن مشكلة",
+        back: "رجوع",
+        close: "إغلاق",
         videoBandwidth: {
             title: "جودة الفيديو", // Video quality
             low: "منخفض", // Low
