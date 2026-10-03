@@ -234,8 +234,13 @@
     /* Fades the list out under the footer, so the button sits on the panel rather than on a hard edge. */
     .invite-footer {
         background: linear-gradient(to top, rgb(var(--u-ink) / 0.95) 55%, rgb(var(--u-ink) / 0));
-        /* Follows the floating chat's rounded bottom corners (chat.scss). */
-        border-radius: 0 0 24px 24px;
+    }
+    /* Follows the floating chat's rounded bottom corners on a desktop (chat.scss). Below that the chat is edge to edge
+       and square, and so is the footer. */
+    @media (min-width: 1024px) {
+        .invite-footer {
+            border-radius: 0 0 24px 24px;
+        }
     }
 
     .invite-card {

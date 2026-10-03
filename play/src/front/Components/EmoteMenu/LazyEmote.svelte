@@ -3,7 +3,7 @@
     import Lazy from "../Lazy.svelte";
 
     export let onEmojiClick: (event: EmojiClickEvent) => void = () => {};
-    export let onClose: () => void = () => {};
+    export let onClose: (event?: Event) => void = () => {};
     export let onLoad: () => void = () => {};
     export let onLoaded: () => void = () => {};
     export let onError: () => void = () => {};

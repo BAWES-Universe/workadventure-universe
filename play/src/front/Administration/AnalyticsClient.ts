@@ -1070,6 +1070,13 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    pageShiftReset(properties: { x: number; y: number; reason: string }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_page_shift_reset", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     showBusinessCard(): void {
         this.posthogPromise
             ?.then((posthog) => {

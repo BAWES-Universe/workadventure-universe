@@ -40,7 +40,8 @@
     import excalidrawSvg from "../../../Components/images/applications/icon_excalidraw.svg";
     import cardsPng from "../../../Components/images/applications/icon_cards.svg";
     import tldrawJpeg from "../../../Components/images/applications/icon_tldraw.jpeg";
-    import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
+    import { showHideableFloatingUi, type HideableFloatingUi } from "../../../Utils/svelte-floatingui-show";
+    import { emoteMenuStore } from "../../../Stores/EmoteStore";
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { composerDraftStore } from "../../Stores/ComposerDraftStore";
     import { draftMessageService } from "../../Services/DraftMessageService";
@@ -478,37 +479,63 @@
             });
         }
         if (setTimeOutProperty) clearTimeout(setTimeOutProperty);
-        closeEmojiPicker?.();
-        closeEmojiPicker = undefined;
+        if (emojiPickerOpen) emoteMenuStore.closeEmoteMenu();
+        emojiPicker?.destroy();
+        emojiPicker = undefined;
         selectedChatChatMessageToReplyUnsubscriber();
     });
 
-    let closeEmojiPicker: (() => void) | undefined = undefined;
+    // The picker is built once and then shown and hidden. Built again on each open, a new picker could find its
+    // emoji data closed under it by the one just removed (on iPhones it then stayed empty), and each build was slow.
+    let emojiPicker: HideableFloatingUi | undefined = undefined;
+    let emojiPickerOpen = false;
+    let emojiButton: HTMLButtonElement;
 
     function openCloseEmojiPicker() {
-        if (closeEmojiPicker) {
-            closeEmojiPicker();
-            closeEmojiPicker = undefined;
+        if (emojiPickerOpen) {
+            hideEmojiPicker();
         } else {
-            closeEmojiPicker = showFloatingUi(
-                messageBarRef,
-                LazyEmote,
-                {
-                    onEmojiClick: (event: EmojiClickEvent) => {
-                        message += event.detail.unicode ?? "";
-                    },
-                    onClose: () => {
-                        closeEmojiPicker?.();
-                        closeEmojiPicker = undefined;
-                    },
-                },
-                {
-                    placement: "top-end",
-                },
-                12,
-                true
-            );
+            showEmojiPicker();
         }
+    }
+
+    function showEmojiPicker() {
+        emojiPickerOpen = true;
+        if (emojiPicker) {
+            emojiPicker.show();
+            emoteMenuStore.openEmoteMenu();
+            return;
+        }
+        emojiPicker = showHideableFloatingUi(
+            messageBarRef,
+            LazyEmote,
+            {
+                onEmojiClick: (event: EmojiClickEvent) => {
+                    message += event.detail.unicode ?? "";
+                },
+                onClose: (event?: Event) => {
+                    // The emoji button opens and closes the picker itself: its click is not a click outside. The
+                    // picker has already marked itself closed for the game's keys, so an open picker says so again.
+                    if (event?.target instanceof Node && emojiButton?.contains(event.target)) {
+                        if (emojiPickerOpen) emoteMenuStore.openEmoteMenu();
+                        return;
+                    }
+                    hideEmojiPicker();
+                },
+            },
+            {
+                placement: "top-end",
+            },
+            12,
+            true
+        );
+    }
+
+    function hideEmojiPicker() {
+        if (!emojiPickerOpen) return;
+        emojiPickerOpen = false;
+        emojiPicker?.hide();
+        emoteMenuStore.closeEmoteMenu();
     }
 
     export function handleFiles(event: CustomEvent<FileList>) {
@@ -1101,7 +1128,7 @@
     {/if}
     <button
         data-testid="quickFileAttachmentButton"
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
         class:disabled:opacity-30={room instanceof ProximityChatRoom}
         disabled={room instanceof ProximityChatRoom ? !fileAttachementEnabled || isUploading : !fileAttachementEnabled}
         on:click={() => fileInputElement?.click()}
@@ -1111,7 +1138,7 @@
     </button>
     <button
         data-testid="addApplicationButton"
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none"
         class:bg-secondary-800={applicationComponentOpened}
         on:click={toggleApplicationComponent}
     >
@@ -1122,15 +1149,20 @@
         />
     </button>
     <button
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
+        data-testid="emojiPickerButton"
+        class="p-0 m-0 h-11 w-11 flex items-center justify-center text-white hover:bg-white/10 rounded-none {emojiPickerOpen
+            ? 'bg-white/10'
+            : ''}"
+        bind:this={emojiButton}
         on:click={openCloseEmojiPicker}
+        aria-pressed={emojiPickerOpen}
     >
         <IconMoodSmile font-size={18} />
     </button>
-    {#if message.trim().length !== 0 || files.length !== 0 || (applicationProperty && applicationProperty.link.length !== 0)}
+    {#if !isEmptyMessage(message) || files.length !== 0 || (applicationProperty && applicationProperty.link.length !== 0)}
         <button
             data-testid="sendMessageButton"
-            class="disabled:opacity-30 disabled:!cursor-none disabled:text-white py-0 px-3 m-0 bg-secondary h-full rounded-none"
+            class="send-button disabled:opacity-30 disabled:!cursor-none text-white py-0 px-3 m-0 h-full rounded-none"
             disabled={applicationPropertyInProcessing || isUploading}
             on:click={() => sendMessage(message).catch((error) => console.error(error))}
         >
@@ -1158,6 +1190,10 @@
         display: grid;
         place-items: center;
         flex: none;
+    }
+    /* Send is the one filled button: the brand gradient, its icon white. */
+    .message-bar > .send-button {
+        background: linear-gradient(135deg, #8629fc, #4156f6);
     }
     .message-bar :global(.message-input) {
         padding: 14px 4px 14px 16px;

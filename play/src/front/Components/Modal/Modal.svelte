@@ -8,7 +8,6 @@
         modalFullScreenStore,
         modalIframeStore,
         modalIframeWindowStore,
-        modalPanelWidthStore,
         modalVisibilityStore,
     } from "../../Stores/ModalStore";
     import { isMediaBreakpointUp } from "../../Utils/BreakpointsUtils";
@@ -74,7 +73,6 @@
 
     onDestroy(() => {
         modalFullScreenStore.set(false);
-        modalPanelWidthStore.set(0);
         // The scene measures on its next frame, after the panel has left the page: the player goes back to the middle.
         reposition();
         // A throw here would leave the closed panel over the whole game, catching every click.
@@ -102,10 +100,6 @@
         isMobile = isMediaBreakpointUp("md");
     });
 
-    // What sits beside a side window (Express and the zoom buttons, with the bar kept in view) moves over by its width.
-    let panelWidth = 0;
-    $: modalPanelWidthStore.set(takesSide ? panelWidth : 0);
-
     // The full-screen view is offered where the game is at least desktop wide, whatever the chat or the windows take.
     $: offersFullScreen = $canvasSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
 
@@ -120,7 +114,6 @@
         ? 'mobile'
         : shown?.position} {isFullScreened ? 'fullscreened' : ''} {takesSide ? 'screen-blocker' : ''}"
     bind:this={mainModal}
-    bind:offsetWidth={panelWidth}
     on:transitionend|self={reposition}
 >
     <div
@@ -218,6 +211,13 @@
         // bar's own 4px gap. On a phone the strip beside the panel is narrow: the button then sits 4px from the screen
         // edge, over the chat button below it, instead of running off the screen.
         @media (max-width: 1023px) {
+            // Edge to edge, the panel is square like the page inside it: rounded, its corners showed while the page
+            // loaded and then went square.
+            &.right .modal-panel,
+            &.left .modal-panel,
+            &.mobile .modal-panel {
+                border-radius: 0;
+            }
             &.right:not(.fullscreened) .modal-tools {
                 top: 4px;
                 left: max(-80px, calc(4px - (100vw - 100%)));
