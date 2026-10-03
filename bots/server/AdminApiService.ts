@@ -566,6 +566,47 @@ export class AdminApiService {
     }
 
     /**
+     * Ask the Admin API whether the person behind an Orbit session may manage a bot. The Admin API answers a bot's
+     * configuration only to people who can manage bots in that bot's room (or super admins), so a 200 means yes and
+     * anything else means no. Fails closed.
+     */
+    async canSessionManageBot(sessionToken: string, botId: string): Promise<boolean> {
+        if (!this.adminApiUrl || !/^orb_sess_v2_[0-9a-f]{64}$/.test(sessionToken) || !botId) {
+            return false;
+        }
+
+        let adminApiUrl: URL;
+        try {
+            adminApiUrl = new URL(this.adminApiUrl);
+        } catch {
+            return false;
+        }
+        if (!canSendSessionTo(adminApiUrl)) {
+            return false;
+        }
+
+        try {
+            const response: AxiosResponse = await axios.get(
+                resolveAdminApiEndpoint(adminApiUrl, `api/bots/configuration/${encodeURIComponent(botId)}`),
+                {
+                    headers: {
+                        Authorization: `Bearer ${sessionToken}`,
+                        'Cache-Control': 'no-store',
+                    },
+                    timeout: 5_000,
+                    validateStatus: () => true,
+                }
+            );
+            return response.status === 200;
+        } catch (error) {
+            if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                console.error('[AdminApiService] Bot permission check failed');
+            }
+            return false;
+        }
+    }
+
+    /**
      * Track AI usage
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      * Fire-and-forget (doesn't throw errors)

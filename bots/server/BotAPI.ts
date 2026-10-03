@@ -13,6 +13,7 @@ import { MCPConnector } from '../mcp/MCPConnector';
 export interface BotAPIRequest extends Request {
     userIdentifier?: string;
     isLogged?: boolean;
+    sessionToken?: string;
 }
 
 /**
@@ -51,6 +52,7 @@ async function authenticateToken(
         }
         req.userIdentifier = userInfo.email || userInfo.uuid;
         req.isLogged = true;
+        req.sessionToken = bearerToken;
         next();
     } catch (error) {
         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -58,6 +60,28 @@ async function authenticateToken(
         }
         res.status(401).json({ error: 'Orbit session validation failed' });
     }
+}
+
+/**
+ * Middleware for routes that change a running bot. Runs after authenticateToken and lets the request through only
+ * when the Admin API says the session's person may manage the bot named in the path or body.
+ */
+async function requireBotManager(
+    req: BotAPIRequest,
+    res: Response,
+    next: NextFunction,
+    adminApiService: AdminApiService
+): Promise<void> {
+    const botId = (req.params?.botId as string | undefined) || (req.body?.botId as string | undefined);
+    if (!botId || typeof botId !== 'string') {
+        res.status(400).json({ error: 'Missing botId' });
+        return;
+    }
+    if (!req.sessionToken || !(await adminApiService.canSessionManageBot(req.sessionToken, botId))) {
+        res.status(403).json({ error: 'You cannot manage this bot' });
+        return;
+    }
+    next();
 }
 
 export class BotAPI {
@@ -99,6 +123,11 @@ export class BotAPI {
     }
 
     private setupRoutes(): void {
+        const requireSession = (req: BotAPIRequest, res: Response, next: NextFunction) =>
+            authenticateToken(req, res, next, this.adminApiService);
+        const requireManager = (req: BotAPIRequest, res: Response, next: NextFunction) =>
+            requireBotManager(req, res, next, this.adminApiService);
+
         // Health check (no auth required)
         this.app.get('/health', (req, res) => {
             res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -164,9 +193,8 @@ export class BotAPI {
             }
         });
 
-        // Summon bot to player position (no auth required - public endpoint for any player/guest)
-        // This is safe because it only moves a bot to a player's position, doesn't modify configuration
-        this.app.post('/api/bots/:botId/summon', async (req: Request, res: Response) => {
+        // Summon bot to player position. Any signed-in player may summon; it only moves the bot to them.
+        this.app.post('/api/bots/:botId/summon', requireSession, async (req: Request, res: Response) => {
             try {
                 const { botId } = req.params;
                 const { playerUuid, playerX, playerY } = req.body;
@@ -282,7 +310,7 @@ export class BotAPI {
         });
 
         // Spawn a specific bot immediately (called when bot is created in editor)
-        this.app.post('/api/bots/spawn', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/spawn', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId, roomId } = req.body;
 
@@ -352,7 +380,7 @@ export class BotAPI {
         });
 
         // Despawn a specific bot immediately (called when bot is deleted in editor)
-        this.app.post('/api/bots/despawn', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/despawn', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId, roomId } = req.body;
 
@@ -394,7 +422,7 @@ export class BotAPI {
         });
 
         // Update a running bot's config (live update)
-        this.app.post('/api/bots/:botId/update', async (req: Request, res: Response) => {
+        this.app.post('/api/bots/:botId/update', requireSession, requireManager, async (req: Request, res: Response) => {
             try {
                 const { botId } = req.params;
                 const { position, behaviorConfig, behaviorType } = req.body;
@@ -432,8 +460,8 @@ export class BotAPI {
             }
         });
 
-        // Get available AI providers (for bot editor UI) - Public endpoint (only returns metadata, no credentials)
-        this.app.get('/api/bots/ai-providers', async (req: Request, res: Response) => {
+        // Get available AI providers (for bot editor UI). Signed-in only; returns metadata, no credentials
+        this.app.get('/api/bots/ai-providers', requireSession, async (req: Request, res: Response) => {
             try {
                 const enabled = req.query.enabled === 'true' || req.query.enabled === undefined;
                 const providers = await this.adminApiService.getAvailableAIProviders(enabled);
