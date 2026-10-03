@@ -479,6 +479,14 @@ export class GameScene extends DirtyScene {
             broadcastService
                 .joinSpace(spaceName, this.abortController.signal)
                 .then((space) => {
+                    // The scene went away while this join was in flight: the next scene must not pick the space up.
+                    if (this.broadcastSceneClosing) {
+                        spaceRegistry.leaveSpace(space).catch((e) => {
+                            console.error("Error while leaving a broadcast space joined after the scene closed", e);
+                            Sentry.captureException(e);
+                        });
+                        return;
+                    }
                     // The tiles of whoever goes live here get the live ring, and sit first in the strip.
                     space.setMetadata(
                         new Map<string, unknown>([
