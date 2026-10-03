@@ -27,7 +27,18 @@ function createPrivacyShutdownStore() {
     // It is ok to not unsubscribe to this store because it is a singleton.
     // eslint-disable-next-line svelte/no-ignored-unsubscribe
     videoStreamElementsStore.subscribe((peerElements) => {
-        if (peerElements.length === 0 && get(visibilityStore) === false) {
+        // Someone speaking live (on the megaphone, in a meeting) stays live when the last person near them leaves.
+        if (peerElements.length === 0 && get(visibilityStore) === false && !get(isLiveStreamingStore)) {
+            privacyEnabled = true;
+            set(true);
+        }
+    });
+
+    // It is ok to not unsubscribe to this store because it is a singleton.
+    // eslint-disable-next-line svelte/no-ignored-unsubscribe
+    isLiveStreamingStore.subscribe((isLive) => {
+        // Ending a live session in the background, with nobody near, goes away as leaving the game alone would.
+        if (!isLive && get(videoStreamElementsStore).length === 0 && get(visibilityStore) === false) {
             privacyEnabled = true;
             set(true);
         }
