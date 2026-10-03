@@ -156,10 +156,11 @@
     let wasVisible = false;
     $: onVisibilityChange($chatVisibilityStore);
     function onVisibilityChange(visible: boolean) {
-        if (visible && !wasVisible && getLastChatOpenSource() === "bubble") {
-            chatSheetSnapStore.set("peek");
+        if (visible && !wasVisible) {
+            // Reset on opening, not on closing: the sheet slides away at the height it was let go at.
+            sheetDragHeight = undefined;
+            if (getLastChatOpenSource() === "bubble") chatSheetSnapStore.set("peek");
         }
-        if (!visible) sheetDragHeight = undefined;
         wasVisible = visible;
     }
 
@@ -174,11 +175,12 @@
     }
 
     function onSheetRelease(height: number) {
-        sheetDragHeight = undefined;
         if (height < sheetSnapHeights.peek - CHAT_SHEET_CLOSE_DISTANCE) {
+            // Keeps the drag height, so it doesn't jump back up to a snap while sliding away.
             closeChat();
             return;
         }
+        sheetDragHeight = undefined;
         chatSheetSnapStore.set(nearestSnap(height, $windowSize.height, CHAT_SHEET_SIZES));
     }
 
