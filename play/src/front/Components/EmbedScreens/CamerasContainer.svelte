@@ -98,7 +98,13 @@
     let showEveryone = false;
     let phoneLayout: PhoneVideoLayout | undefined;
     $: phoneLayout = phoneLayoutOn
-        ? phoneVideoLayout($oneLineStreamableCollectionStore.length, containerWidth, phoneHeight, showEveryone)
+        ? phoneVideoLayout(
+              $oneLineStreamableCollectionStore.length,
+              containerWidth,
+              phoneHeight,
+              showEveryone,
+              maximumVideosPerPage
+          )
         : undefined;
     $: shownCount = phoneLayout && phoneLayout.more > 0 ? phoneLayout.shown : Infinity;
     // One line along the top (walking), or rows.

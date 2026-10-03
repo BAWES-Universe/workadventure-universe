@@ -54,6 +54,14 @@ describe("phoneVideoLayout", () => {
         expect(phoneVideoLayout(6, W, 220)).toMatchObject({ kind: "faces", shown: 6, more: 0 });
     });
 
+    it("never shows more people than the limit, the rest behind +N", () => {
+        expect(phoneVideoLayout(7, W, 600)).toMatchObject({ shown: 7, more: 0 });
+        const capped = phoneVideoLayout(7, W, 600, false, 6);
+        expect(capped.shown).toBeLessThanOrEqual(6);
+        expect(capped.shown + capped.more).toBe(7);
+        expect(phoneVideoLayout(7, W, 600, true, 6)).toMatchObject({ shown: 7, scrolls: true });
+    });
+
     it("is the same for the same space, whichever sets it", () => {
         expect(phoneVideoLayout(9, W, 330)).toEqual(phoneVideoLayout(9, W, 330));
     });

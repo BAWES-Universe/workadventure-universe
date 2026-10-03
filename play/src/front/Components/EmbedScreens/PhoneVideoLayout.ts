@@ -8,6 +8,7 @@
  *   first (whoever is talking, then whoever spoke last).
  * - When big videos would show fewer than a row of faces could, the videos become round faces, in rows.
  * - Below one row of videos, one row of small videos if everyone fits in it, or of faces if not.
+ * - Never more than `max` people at once (MAX_DISPLAYED_VIDEOS), the rest behind the "+N" tile.
  * - Asked for everyone ("+N" tapped), all the videos, in a list that scrolls.
  */
 
@@ -56,14 +57,20 @@ function biggestVideos(count: number, width: number, height: number): { width: n
     return { width: tileWidth, height: Math.floor((tileWidth * 9) / 16) };
 }
 
-function fill(kind: PhoneVideoLayout["kind"], width: number, height: number, fits: number, count: number) {
-    if (fits >= count) return { kind, width, height, shown: count, more: 0, scrolls: false };
+function fill(kind: PhoneVideoLayout["kind"], width: number, height: number, fits: number, count: number, max: number) {
+    if (fits >= count && count <= max) return { kind, width, height, shown: count, more: 0, scrolls: false };
     // The last spot holds the "+N" tile.
-    const shown = Math.max(0, fits - 1);
+    const shown = Math.max(0, Math.min(fits - 1, max));
     return { kind, width, height, shown, more: count - shown, scrolls: false };
 }
 
-export function phoneVideoLayout(count: number, width: number, height: number, everyone = false): PhoneVideoLayout {
+export function phoneVideoLayout(
+    count: number,
+    width: number,
+    height: number,
+    everyone = false,
+    max = Infinity
+): PhoneVideoLayout {
     if (count <= 0 || width <= 0) {
         return { kind: "videos", width: PHONE_VIDEO_MIN_WIDTH, height: 90, shown: 0, more: 0, scrolls: false };
     }
@@ -83,20 +90,22 @@ export function phoneVideoLayout(count: number, width: number, height: number, e
     }
 
     if (height >= ONE_ROW_HEIGHT) {
-        const videos = biggestVideos(count, width, height);
+        // Over the limit, the spots are the people shown and the "+N" tile.
+        const videos = biggestVideos(Math.min(count, max + 1), width, height);
         const fits = perRow(width, videos.width) * rowsIn(height, videos.height);
         if (fits >= Math.min(count, facesPerRow)) {
-            return fill("videos", videos.width, videos.height, fits, count);
+            return fill("videos", videos.width, videos.height, fits, count, max);
         }
-        return fill("faces", PHONE_FACE_SIZE, PHONE_FACE_SIZE, facesPerRow * rowsIn(height, PHONE_FACE_SIZE), count);
+        const faces = facesPerRow * rowsIn(height, PHONE_FACE_SIZE);
+        return fill("faces", PHONE_FACE_SIZE, PHONE_FACE_SIZE, faces, count, max);
     }
 
     // Under one row of videos: small videos if everyone fits in one row, faces if not.
     const rowHeight = Math.max(0, Math.floor(height));
     const smallWidth = Math.floor((rowHeight * 16) / 9);
     if (rowHeight >= SMALL_ROW_MIN_HEIGHT && perRow(width, smallWidth) >= count) {
-        return fill("videos", smallWidth, rowHeight, count, count);
+        return fill("videos", smallWidth, rowHeight, count, count, max);
     }
     const face = Math.max(PHONE_FACE_MIN_SIZE, Math.min(PHONE_FACE_SIZE, rowHeight));
-    return fill("faces", face, face, perRow(width, face), count);
+    return fill("faces", face, face, perRow(width, face), count, max);
 }

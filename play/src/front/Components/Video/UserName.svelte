@@ -21,6 +21,8 @@
 </script>
 
 {#if pictureOnly}
+    <!-- No name on a face, but screen readers still say who it is. -->
+    <span class="sr-only">{name}</span>
     {#if isCameraDisabled || isBlocked}
         <div class="absolute inset-0 z-30 flex items-center justify-center" style="image-rendering:pixelated">
             <div class="w-2/3">
