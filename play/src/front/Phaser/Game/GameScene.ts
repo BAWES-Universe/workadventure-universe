@@ -434,12 +434,17 @@ export class GameScene extends DirtyScene {
     }
 
     private _broadcastService: BroadcastService | undefined;
+    /** The broadcast channels last asked for, so a join that lands late settles on the latest ones. */
+    private latestBroadcastChannels: { scope: string; url: string }[] = [];
+    /** The scopes whose space join is still in flight (the registry joins a name twice if asked twice). */
+    private readonly pendingBroadcastJoins = new Set<string>();
 
     /**
      * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
      * leaves the ones that are gone, so a live broadcast on any reach that covers this room arrives here.
      */
     private syncBroadcastSpaces(channels: { scope: string; url: string }[], broadcastService: BroadcastService): void {
+        this.latestBroadcastChannels = channels;
         if (!this._spaceRegistry) {
             console.warn("No space registry available for megaphone space management");
             return;
@@ -461,9 +466,11 @@ export class GameScene extends DirtyScene {
         megaphoneSpacesStore.set(spaces);
 
         for (const [scope, spaceName] of wanted) {
-            if (spaces.has(scope)) {
+            // A join still in flight for this scope re-syncs when it lands, so it is never asked for twice.
+            if (spaces.has(scope) || this.pendingBroadcastJoins.has(scope)) {
                 continue;
             }
+            this.pendingBroadcastJoins.add(scope);
             broadcastService
                 .joinSpace(spaceName, this.abortController.signal)
                 .then((space) => {
@@ -494,6 +501,13 @@ export class GameScene extends DirtyScene {
                 .catch((e) => {
                     console.error(e);
                     Sentry.captureException(e);
+                })
+                .finally(() => {
+                    this.pendingBroadcastJoins.delete(scope);
+                    // The channels may have changed while this join was in flight: settle on the latest.
+                    if (this.latestBroadcastChannels !== channels && !this.abortController.signal.aborted) {
+                        this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
+                    }
                 });
         }
     }
