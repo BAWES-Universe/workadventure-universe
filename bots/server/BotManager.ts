@@ -583,6 +583,13 @@ export class BotManager {
     }
 
     /**
+     * Get the response processor (cleaning, repetition checks, response metrics)
+     */
+    getResponseProcessor(): ResponseProcessor | null {
+        return this.responseProcessor;
+    }
+
+    /**
      * Get metrics collector
      */
     getMetricsCollector(): BotMetricsCollector {

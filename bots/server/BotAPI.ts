@@ -108,12 +108,17 @@ export class BotAPI {
     private botRegistry: BotRegistry;
     private server: any = null;
 
-    constructor(botManager: BotManager, adminApiService: AdminApiService, botRegistry: BotRegistry) {
+    constructor(botManager: BotManager, adminApiService: AdminApiService, botRegistry: BotRegistry, preRouters: express.Router[] = []) {
         console.log('[BotAPI] Constructor called');
         this.app = express();
         this.botManager = botManager;
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
+
+        // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
+        for (const router of preRouters) {
+            this.app.use(router);
+        }
 
         // Keep constructor simple - no route registration here
         this.setupMiddleware();

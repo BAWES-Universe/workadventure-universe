@@ -113,6 +113,27 @@ export class BotRegistry {
     }
 
     /**
+     * Remember which bot a Matrix direct message room belongs to, so replies survive a restart.
+     * Without Redis this is a no-op and the caller keeps its own in-process copy.
+     */
+    async rememberDmRoom(roomId: string, botId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.hSet('bots:matrix:dm-rooms', roomId, botId);
+    }
+
+    /** The bot a Matrix direct message room belongs to, or null when unknown. */
+    async getDmRoomBot(roomId: string): Promise<string | null> {
+        if (!this.redis?.isOpen) return null;
+        return (await this.redis.hGet('bots:matrix:dm-rooms', roomId)) ?? null;
+    }
+
+    /** Forget a Matrix direct message room once its bot has left it. */
+    async forgetDmRoom(roomId: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        await this.redis.hDel('bots:matrix:dm-rooms', roomId);
+    }
+
+    /**
      * Register this bot server with its capacity
      */
     async registerServer(capacity: number): Promise<void> {

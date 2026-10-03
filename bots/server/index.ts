@@ -16,6 +16,13 @@ import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
 import { BotRegistry } from './BotRegistry';
 import { movementLogger } from '../utils/MovementLogger';
+import { DmReplyService } from './DmReplyService';
+import { readMatrixConfig } from '../matrix/MatrixConfig';
+import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
+import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import { createMatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
+import { uploadAttachment } from '../matrix/uploadAttachment';
+import type { Router } from 'express';
 import * as path from 'path';
 
 // Environment variables
@@ -39,7 +46,23 @@ const botRegistry = new BotRegistry(BOT_SERVER_ID, {
 });
 
 const botManager = new BotManager(adminApiService, botRegistry);
-const botAPI = new BotAPI(botManager, adminApiService, botRegistry);
+
+// Direct messages to bots over Matrix (off unless MATRIX_* is set). Synapse pushes events here; no socket per bot.
+const matrixConfig = readMatrixConfig();
+const preRouters: Router[] = [];
+if (matrixConfig) {
+    const dmReplyService = new DmReplyService(botManager);
+    const matrixBridge = new MatrixDmBridge(matrixConfig, new MatrixAppServiceClient(matrixConfig), {
+        getBotConfig: (botId) => dmReplyService.getBotConfig(botId),
+        checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
+        reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
+        rooms: botRegistry,
+        uploadAttachment,
+    });
+    preRouters.push(createMatrixAppServiceRouter(matrixConfig, matrixBridge));
+    console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
+}
+const botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters);
 
 // Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
 // This system runs tests every 30 seconds and creates improvement task files for AI analysis

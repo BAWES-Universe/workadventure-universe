@@ -461,6 +461,45 @@ export class AdminApiService {
     }
 
     /**
+     * Ask Orbit whether the person behind a Matrix ID may message this bot directly.
+     * Same rule as reaching the bot's room. Fails closed: any error means not allowed.
+     */
+    async checkDmAccess(botId: string, chatId: string): Promise<{
+        allowed: boolean;
+        reason: string | null;
+        user: { uuid: string; name: string | null; isGuest: boolean } | null;
+    }> {
+        const denied = (reason: string) => ({ allowed: false, reason, user: null });
+        const botServiceToken = process.env.BOT_SERVICE_TOKEN;
+        if (!this.isConfigured() || !botServiceToken) {
+            return denied('admin_api_not_configured');
+        }
+        try {
+            const response: AxiosResponse = await axios.get(
+                `${this.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/dm-access`,
+                {
+                    headers: { Authorization: `Bearer ${botServiceToken}` },
+                    params: { chatId },
+                    timeout: 5000,
+                    validateStatus: () => true,
+                }
+            );
+            if (response.status !== 200 || typeof response.data?.allowed !== 'boolean') {
+                return denied(`admin_api_status_${response.status}`);
+            }
+            return {
+                allowed: response.data.allowed === true,
+                reason: response.data.reason ?? null,
+                user: response.data.allowed === true ? response.data.user ?? null : null,
+            };
+        } catch (error) {
+            console.error('[AdminApiService] Error checking DM access:', error);
+            captureException(error);
+            return denied('admin_api_error');
+        }
+    }
+
+    /**
      * Get available AI providers
      * Uses BOT_SERVICE_TOKEN (separate from ADMIN_API_TOKEN)
      */

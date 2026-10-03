@@ -52,6 +52,35 @@ interface CachedCredentials {
     expiresAt: number;
 }
 
+/** Media rule for bots in a bubble on the map, where send_* tools show media inline. */
+const WORLD_MEDIA_RULE = '- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.';
+/** Media rule for direct messages: the bot server sends media from tools as attachments after the reply. */
+const DM_MEDIA_RULE = '- Images, audio, video and files that your tools return are attached to your reply automatically. Never paste their URLs into your answer.';
+
+/** Location and navigation rules for bots in a bubble on the map. */
+const WORLD_PLACE_RULES = `**LOCATION & SPACE QUESTIONS (Answer naturally, like a person would):**
+- **CRITICAL**: Only say the full location (universe/world/room) on the FIRST "where are we" question. After that, NEVER repeat it!
+- "where are we" (first time) → "[universe], [world], [room]. There's [areas] here."
+- "what areas"/"areas?"/"what other areas" → **DO NOT repeat location** - just say "There's a Social Area and Meeting Room here" or list the areas
+- "what's here" → If you already said location, just describe what's available without repeating location
+- "who's here"/"who's online" → Just list people naturally (e.g., "Khalid ABC is here") - no location prefix
+- "take me to X"/"yea"/"yes" (for navigation) → Just say "Follow me!" or "I'll take you there" - **NO location prefix**
+- Any follow-up question → Check "Recent conversation" - if location was said, don't repeat it
+
+**NAVIGATION (Be helpful naturally):**
+- "take me to [person/area]" → Call navigate_to tool FIRST, then respond with ONLY "Follow me!" or "I'll take you there" - **NO location prefix**
+- "yes"/"yea"/"ok" (after offering to go somewhere) → Just say "Follow me!" - **NO location prefix**
+- Only offer to lead when explicitly asked - don't say "Follow me!" when just describing what's available
+
+`;
+/** In a direct message the person is not next to the bot, so it cannot show them around. */
+const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting privately, not on the map):**
+- This person is messaging you directly. They may be anywhere, or not in the game at all.
+- You cannot see who is near you, walk anywhere, or lead them. If they ask you to take them somewhere, say they can find you in your room and you will show them around there.
+- Keep replies the length of a chat message.
+
+`;
+
 export class AIService {
     private adminApiService: AdminApiService;
     private conversationMemory: ConversationMemory;
@@ -249,7 +278,9 @@ export class AIService {
         botClient?: BotClient,
         adminApiService?: AdminApiService,
         abortSignal?: AbortSignal,
-        images?: string[]
+        images?: string[],
+        /** 'dm' when the person writes to the bot by direct message instead of in a bubble on the map. */
+        channel: 'world' | 'dm' = 'world'
     ): AsyncGenerator<AIStreamChunk> {
         const startTime = Date.now();
         // Buffer for content received before tool calls are detected
@@ -543,7 +574,7 @@ TOOLS & ACTIONS (Be seamless):
 - **CRITICAL**: NEVER mention tools, tool names, or technical details - just give the answer like a human would
 - **CRITICAL**: After calling a tool, respond naturally with the results (e.g., "Khalid ABC is here" not "I'll check who's here. (tool call: get_people_on_map)")
 - Just answer the question directly - don't explain that you're checking or looking something up
-- You have send_image, send_file, send_audio, and send_video tools available. When an MCP tool returns a media URL, use these tools to display it inline rather than sending a raw text URL.
+${channel === 'dm' ? DM_MEDIA_RULE : WORLD_MEDIA_RULE}
 
 **ACCURACY & TRUTHFULNESS (Be honest, like a real person):**
 - Only mention things you actually know - use location names exactly as shown in "Current Location Context"
@@ -552,21 +583,7 @@ TOOLS & ACTIONS (Be seamless):
 - Don't describe physical features you can't see - you only know room/area names
 - If you're not sure about something, be honest about it (within your personality)
 
-**LOCATION & SPACE QUESTIONS (Answer naturally, like a person would):**
-- **CRITICAL**: Only say the full location (universe/world/room) on the FIRST "where are we" question. After that, NEVER repeat it!
-- "where are we" (first time) → "[universe], [world], [room]. There's [areas] here."
-- "what areas"/"areas?"/"what other areas" → **DO NOT repeat location** - just say "There's a Social Area and Meeting Room here" or list the areas
-- "what's here" → If you already said location, just describe what's available without repeating location
-- "who's here"/"who's online" → Just list people naturally (e.g., "Khalid ABC is here") - no location prefix
-- "take me to X"/"yea"/"yes" (for navigation) → Just say "Follow me!" or "I'll take you there" - **NO location prefix**
-- Any follow-up question → Check "Recent conversation" - if location was said, don't repeat it
-
-**NAVIGATION (Be helpful naturally):**
-- "take me to [person/area]" → Call navigate_to tool FIRST, then respond with ONLY "Follow me!" or "I'll take you there" - **NO location prefix**
-- "yes"/"yea"/"ok" (after offering to go somewhere) → Just say "Follow me!" - **NO location prefix**
-- Only offer to lead when explicitly asked - don't say "Follow me!" when just describing what's available
-
-**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
+${channel === 'dm' ? DM_PLACE_RULES : WORLD_PLACE_RULES}**FOLLOW-UP QUESTIONS (Be natural, not repetitive):**
 - **CRITICAL**: For ANY follow-up question, do NOT repeat location if you already said it
 - "whats that"/"where" → Check "Recent conversation" to understand what they're referring to - answer directly
 - "yes"/"yea"/"ok" → Just acknowledge and act - don't repeat previous information
