@@ -172,7 +172,7 @@
     <div class="u-menu-row cursor-default hover:bg-transparent">
         <span class="u-menu-tile" aria-hidden="true"><IconDoor /></span>
         <span class="u-menu-label !whitespace-normal leading-tight">
-            <span class="block font-semibold">{reachTitle($LL, "ROOM")}</span>
+            <span class="block">{reachTitle($LL, "ROOM")}</span>
             <span class="block text-xs text-white/60">{$broadcastReachInfoStore.roomName}</span>
         </span>
         <button
@@ -189,7 +189,7 @@
         <div class="u-menu-row cursor-default hover:bg-transparent">
             <span class="u-menu-tile" aria-hidden="true"><IconWorld /></span>
             <span class="u-menu-label !whitespace-normal leading-tight">
-                <span class="block font-semibold">{reachTitle($LL, "WORLD")}</span>
+                <span class="block">{reachTitle($LL, "WORLD")}</span>
                 <span class="block text-xs text-white/60">{reachDetail($LL, "WORLD", $broadcastReachInfoStore)}</span>
             </span>
             <button
@@ -202,26 +202,38 @@
                 data-testid="broadcast-settings-reach-WORLD"
             />
         </div>
-        <button
-            type="button"
-            class="u-menu-row"
-            disabled={!orbitAvailable}
-            on:click={() => openAdminModalFromMenu()}
-            data-testid="broadcast-settings-reach-UNIVERSE"
-        >
-            <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
-            <span class="u-menu-label !whitespace-normal leading-tight">
-                <span class="block font-semibold">{reachTitle($LL, "UNIVERSE")}</span>
-                <span class="block text-xs text-white/60">
-                    {[reachDetail($LL, "UNIVERSE", $broadcastReachInfoStore), $LL.broadcast.config.setInOrbit()]
-                        .filter((part) => part)
-                        .join(" · ")}
+        <!-- Universe-wide reach is set in Orbit: the row opens it when Orbit is reachable, else it only says so. -->
+        {#if orbitAvailable}
+            <button
+                type="button"
+                class="u-menu-row"
+                on:click={() => openAdminModalFromMenu()}
+                data-testid="broadcast-settings-reach-UNIVERSE"
+            >
+                <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
+                <span class="u-menu-label !whitespace-normal leading-tight">
+                    <span class="block">{reachTitle($LL, "UNIVERSE")}</span>
+                    <span class="block text-xs text-white/60">
+                        {[reachDetail($LL, "UNIVERSE", $broadcastReachInfoStore), $LL.broadcast.config.setInOrbit()]
+                            .filter((part) => part)
+                            .join(" · ")}
+                    </span>
                 </span>
-            </span>
-            {#if orbitAvailable}
                 <IconChevronRight font-size="16" class="u-menu-go rtl:-scale-x-100" aria-hidden="true" />
-            {/if}
-        </button>
+            </button>
+        {:else}
+            <div class="u-menu-row cursor-default hover:bg-transparent" data-testid="broadcast-settings-reach-UNIVERSE">
+                <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
+                <span class="u-menu-label !whitespace-normal leading-tight">
+                    <span class="block">{reachTitle($LL, "UNIVERSE")}</span>
+                    <span class="block text-xs text-white/60">
+                        {[reachDetail($LL, "UNIVERSE", $broadcastReachInfoStore), $LL.broadcast.config.setInOrbit()]
+                            .filter((part) => part)
+                            .join(" · ")}
+                    </span>
+                </span>
+            </div>
+        {/if}
     {/if}
 </div>
 <p class="m-0 flex items-center gap-2 text-xs text-white/60">
