@@ -4,6 +4,7 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { openAdminModalFromMenu } from "../../../external-modules/admin-api/index";
     import OrbitIcon from "../../Icons/OrbitIcon.svelte";
+    import { iframeListener } from "../../../Api/IframeListener";
 
     export let first: boolean | undefined = undefined;
     export let last: boolean | undefined = undefined;
@@ -17,6 +18,18 @@
 
     // Orbit is the side window titled "Orbit" (external-modules/admin-api): while it shows, the button shows it is open.
     $: orbitOpen = $modalVisibilityStore && $modalIframeStore?.title === "Orbit";
+
+    // The button toggles, like Explore: pressed again while Orbit shows, it closes Orbit the way its close button does.
+    function toggleOrbit() {
+        if (!orbitOpen) {
+            openAdminModalFromMenu();
+            return;
+        }
+        modalVisibilityStore.set(false);
+        if ($modalIframeStore != undefined) {
+            iframeListener.sendModalCloseTriggered($modalIframeStore);
+        }
+    }
 </script>
 
 {#if $adminDashboardActivatedStore}
@@ -27,7 +40,7 @@
         chevron
         hideIconInActionBar={false}
         state={orbitOpen ? "open" : "normal"}
-        on:click={openAdminModalFromMenu}
+        on:click={toggleOrbit}
         {first}
         {last}
         classList={finalClassList}

@@ -20,9 +20,10 @@ html.touch-screen body {
     overscroll-behavior: none;
 }
 
-body button:focus,
-body img:focus,
-body input:focus {
+// The ring shows for the keyboard only: a click or a tap focuses a button too, and it must not ring.
+body button:focus-visible,
+body img:focus-visible,
+body input:focus-visible {
     outline: -webkit-focus-ring-color auto 0;
 }
 
@@ -1333,7 +1334,9 @@ body .u-close:focus {
 }
 
 /* The Login button, and only it: the same purple → blue gradient as the chat panel's primary buttons. */
+// Log in is a gradient pill, like the design system's primary buttons, not a square in the bar's oval.
 button[data-testid="actionBarLogin"] {
+    border-radius: 9999px;
     font-weight: 700;
     background: linear-gradient(90deg, #8629fc, #4156f6);
     box-shadow: 0 6px 18px -8px rgba(134, 41, 252, 0.7);

@@ -4,8 +4,18 @@
     import { videoStreamElementsStore } from "../../Stores/PeerStore";
 
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
+    import { barInViewStore } from "../../Stores/BarInViewStore";
+    import { modalFullScreenStore, modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
 
     const logger = debug("responsive-action-bar");
+
+    // With "Keep the bar in view" on, a side window (Orbit) opens under the bar: the bar, and the menus that open from
+    // it, stay above the window. Maximised, the window takes the whole screen, bar included.
+    $: aboveSideWindow =
+        $barInViewStore &&
+        $modalVisibilityStore &&
+        ($modalIframeStore?.position === "right" || $modalIframeStore?.position === "left") &&
+        !$modalFullScreenStore;
 
     let centerPlusRightDiv: HTMLDivElement;
     export let rightDiv: HTMLDivElement;
@@ -77,8 +87,10 @@
 </script>
 
 <div
-    class="@container/actions w-full z-[301] transition-all pointer-events-none bp-menu {$videoStreamElementsStore.length >
-        0 && $highlightFullScreen
+    class="@container/actions w-full {aboveSideWindow
+        ? 'z-[2001]'
+        : 'z-[301]'} transition-all pointer-events-none bp-menu {$videoStreamElementsStore.length > 0 &&
+    $highlightFullScreen
         ? 'hidden'
         : ''}"
 >
@@ -121,12 +133,3 @@
         </div>
     </div>
 </div>
-
-<style>
-    /* With "Keep the bar in view" on, the main layout makes room beside the chat and Orbit for what floats over the
-       game, but the bar keeps the whole width, over them (MainLayout.svelte sets how far it reaches each way). */
-    .bp-menu {
-        margin-inline-start: calc(-1 * var(--u-bar-bleed-start, 0px));
-        width: calc(100% + var(--u-bar-bleed-start, 0px) + var(--u-bar-bleed-end, 0px));
-    }
-</style>

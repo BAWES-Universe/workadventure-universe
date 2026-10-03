@@ -12,7 +12,6 @@
     import {
         modalFullScreenStore,
         modalIframeStore,
-        modalPanelWidthStore,
         modalVisibilityStore,
         roomListVisibilityStore,
         showLimitRoomModalStore,
@@ -22,7 +21,7 @@
     import { showDesktopCapturerSourcePicker } from "../Stores/ScreenSharingStore";
     import { uiWebsitesStore } from "../Stores/UIWebsiteStore";
     import { coWebsites, windowSize } from "../Stores/CoWebsiteStore";
-    import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
+    import { DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
     import { proximityMeetingStore } from "../Stores/MyMediaStore";
     import { notificationPlayingStore } from "../Stores/NotificationStore";
     import { popupStore } from "../Stores/PopupStore";
@@ -36,7 +35,11 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
-    import { CHAT_FLOAT_INSET, chatFloatInsetStore, chatSidebarWidthStore } from "../Chat/ChatSidebarWidthStore";
+    import {
+        chatFloatInsetStore,
+        chatSidebarWidthStore,
+        hideActionBarStoreBecauseOfChatBar,
+    } from "../Chat/ChatSidebarWidthStore";
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
@@ -112,32 +115,16 @@
     });
 
     // On a desktop, windows (the chat, Orbit) open over the game and nothing moves: the bar, Express and the zoom
-    // buttons keep their place and size. With "Keep the bar in view" on, the chat and Orbit open under the bar
-    // instead, and what floats over the game (Express, the zoom buttons, video, popups) sits beside them, while the
-    // bar keeps the whole width. Phones and small windows keep their layout: what is beside the chat starts where it
-    // ends.
+    // buttons keep their place and size, and a window simply covers what is behind it. "Keep the bar in view" only
+    // changes where the chat and Orbit start (under the bar), never where anything else sits. Phones and small windows
+    // keep their layout: what is beside the chat starts where it ends.
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
-    $: marginLeft =
-        $chatVisibilityStore && (!desktop || $barInViewStore) ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
-    // A side window shows its close and full-screen buttons in a column 80px off its edge (Modal.svelte).
-    $: besideOrbit =
-        $barInViewStore &&
-        $modalVisibilityStore &&
-        $modalIframeStore?.position === "right" &&
-        !$modalFullScreenStore &&
-        $modalPanelWidthStore > 0
-            ? $modalPanelWidthStore + CHAT_FLOAT_INSET + 80
-            : 0;
-    $: mapEditorWidth =
+    $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
+    // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
+    $: marginRight =
         $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
             ? $mapEditorSideBarWidthStore
             : 0;
-    $: marginRight = Math.max(mapEditorWidth, besideOrbit);
-    // The bar spans the whole game, over what the chat and Orbit take (ResponsiveActionBar.svelte). It stops where the
-    // map editor starts, as it always has: the editor sits above the bar, and its menus would open under it.
-    $: barBleed = $barInViewStore
-        ? `--u-bar-bleed-start: ${marginLeft}px; --u-bar-bleed-end: ${marginRight - mapEditorWidth}px;`
-        : "";
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
     $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
 </script>
@@ -150,7 +137,7 @@
     ].length === 0
         ? 'not-cowebsite'
         : ''}"
-    style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px; {barBleed}"
+    style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px;"
 >
     <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->
     {#if $modalVisibilityStore && $modalIframeStore?.position === "center"}
@@ -246,6 +233,24 @@
                 <AudioStreamWrapper {videoBox} />
             {/each}
 
+            <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
+                 directly above the menu button. It comes before the windows (room websites, Explore, the woka menu):
+                 a window opened over it covers it, and it stays in its place behind. When the chat leaves no room
+                 for the bar (a phone), the column goes with the bar: beside the chat is only a peek at the map, and
+                 everything comes back when the chat closes. -->
+            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar)}
+                <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
+                     it grows, instead of the column floating over the website. -->
+                <div class="absolute inset-0 overflow-hidden pointer-events-none">
+                    <div
+                        class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
+                    >
+                        <ExplorerMenu />
+                        <ExpressButton />
+                    </div>
+                </div>
+            {/if}
+
             {#if $uiWebsitesStore}
                 <UiWebsiteContainer />
             {/if}
@@ -284,15 +289,6 @@
                 </div>
             {/if}
             <ExternalComponents zone="centeredPopup" />
-
-            <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
-                 directly above the menu button. -->
-            <div
-                class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
-            >
-                <ExplorerMenu />
-                <ExpressButton />
-            </div>
         </section>
         <div class="">
             <!--<ActionBar />-->

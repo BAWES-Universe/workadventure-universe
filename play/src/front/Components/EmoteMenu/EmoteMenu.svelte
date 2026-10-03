@@ -8,8 +8,8 @@
     import { locale } from "../../../i18n/i18n-svelte";
 
     export let onEmojiClick: (event: EmojiClickEvent) => void = () => {};
-    // onClose is triggered when the "Esc" key is pressed
-    export let onClose: () => void = () => {};
+    // onClose is triggered when the "Esc" key is pressed, or with the click when someone clicks outside the picker
+    export let onClose: (event?: Event) => void = () => {};
 
     let emojiPicker: Picker;
 
@@ -189,9 +189,9 @@
         emoteMenuStore.closeEmoteMenu();
     });
 
-    function close() {
+    function close(event?: Event) {
         emoteMenuStore.closeEmoteMenu();
-        onClose();
+        onClose(event);
     }
 </script>
 
