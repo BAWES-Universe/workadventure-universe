@@ -41,6 +41,7 @@
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import { mapEditorSideBarWidthStore } from "./MapEditor/MapEditorSideBarWidthStore";
+    import { mapEditorIsMobileLayoutStore } from "./MapEditor/MapEditorTools";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
     import HelpNotificationSettingsPopup from "./HelpSettings/HelpNotificationSettingPopup.svelte";
@@ -128,8 +129,11 @@
         $modalPanelWidthStore > 0
             ? $modalPanelWidthStore + CHAT_FLOAT_INSET + 80
             : 0;
+    // On mobile the map editor panel is a bottom sheet, so it takes no width from the layout.
     $: mapEditorWidth =
-        $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
+        $mapEditorVisibilityStore &&
+        $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor &&
+        !$mapEditorIsMobileLayoutStore
             ? $mapEditorSideBarWidthStore
             : 0;
     $: marginRight = Math.max(mapEditorWidth, besideOrbit);

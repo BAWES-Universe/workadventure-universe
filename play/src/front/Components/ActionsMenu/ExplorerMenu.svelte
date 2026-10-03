@@ -1,8 +1,8 @@
 <script lang="ts">
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { mapEditorModeStore, mapExplorationModeStore } from "../../Stores/MapEditorStore";
+    import { mapExplorationModeStore } from "../../Stores/MapEditorStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
+    import { enterExploreTheRoom, leaveExploreTheRoom } from "../../Phaser/Game/MapEditor/ExploreTheRoom";
     import LL from "../../../i18n/i18n-svelte";
     import { roomListActivated } from "../../Stores/MenuStore";
     import { roomListVisibilityStore } from "../../Stores/ModalStore";
@@ -29,15 +29,13 @@
     function openMapExplorer() {
         analyticsClient.clickTopOpenMapExplorer();
 
-        mapEditorModeStore.switchMode(true);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.ExploreTheRoom);
+        enterExploreTheRoom();
     }
 
     function centerToUser() {
         analyticsClient.clickCenterToUser();
 
-        mapEditorModeStore.switchMode(false);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
+        leaveExploreTheRoom();
     }
 </script>
 
