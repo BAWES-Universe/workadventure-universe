@@ -83,6 +83,8 @@ export async function saveMessageFiles(files: SaveableFile[]): Promise<void> {
     const result = await saveFiles(files);
     if (result === "failed") {
         notificationPlayingStore.playNotification(get(LL).chat.messageActions.saveFailed());
+    } else if (result === "partial") {
+        notificationPlayingStore.playNotification(get(LL).chat.messageActions.savePartial());
     }
 }
 

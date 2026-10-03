@@ -50,6 +50,8 @@ export function messageGestures(
     function reset() {
         clearTimer();
         pointerId = undefined;
+        // A mouse doesn't go through onPointerDown: a long press must not outlive its finger and swallow a right-click.
+        longPressed = false;
         if (swiping || swipeOffset !== 0) setOffset(0, true);
         swiping = false;
     }

@@ -214,6 +214,7 @@ const chat: BaseTranslation = {
         saveFiles: "Save {count:number} files",
         saving: "Saving…",
         saveFailed: "This file can't be saved from here. Open it, then press and hold it to save.",
+        savePartial: "Some files can't be saved from here. Open them, then press and hold each one to save.",
         save: "Save",
         edit: "Edit",
         delete: "Delete",

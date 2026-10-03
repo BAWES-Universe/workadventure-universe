@@ -1,7 +1,8 @@
 import type { SaveableFile } from "./messageActions";
 import { isImageUrl } from "./messageActions";
 
-export type SaveResult = "shared" | "downloaded" | "cancelled" | "failed";
+/** "partial": some of the files were saved, the others could not be read from the game. */
+export type SaveResult = "shared" | "downloaded" | "partial" | "cancelled" | "failed";
 
 const prepared = new Map<string, Promise<File | undefined>>();
 
@@ -71,7 +72,7 @@ export async function saveFiles(files: SaveableFile[]): Promise<SaveResult> {
     if (isTouchDevice() && typeof navigator.canShare === "function" && navigator.canShare({ files: ready })) {
         try {
             await navigator.share({ files: ready });
-            return ready.length === files.length ? "shared" : "failed";
+            return ready.length === files.length ? "shared" : "partial";
         } catch (error) {
             if (error instanceof DOMException && error.name === "AbortError") return "cancelled";
             // NotAllowedError: the tap is too old for the share sheet. Downloading still works.
@@ -81,5 +82,5 @@ export async function saveFiles(files: SaveableFile[]): Promise<SaveResult> {
 
     // Browsers drop downloads started in the same instant: space them out.
     ready.forEach((file, index) => setTimeout(() => downloadFile(file), index * 250));
-    return ready.length === files.length ? "downloaded" : "failed";
+    return ready.length === files.length ? "downloaded" : "partial";
 }
