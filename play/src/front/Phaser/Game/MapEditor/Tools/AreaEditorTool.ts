@@ -318,6 +318,10 @@ export class AreaEditorTool extends MapEditorTool {
             this.draggingdArea = false;
             this.wasAreaMoved = false;
 
+            // A finger on the empty map pans it; phones draw a new area with the draft box, never by dragging.
+            if (pointer.wasTouch) {
+                return;
+            }
             if (mode === "ADD") {
                 this.drawingNewArea = true;
                 this.drawinNewAreaStartPos = { x: pointer.worldX, y: pointer.worldY };
@@ -371,6 +375,10 @@ export class AreaEditorTool extends MapEditorTool {
                 this.drawingNewArea = false;
                 this.newAreaPreview.clear();
                 this.scene.markDirty();
+                return;
+            }
+            if (pointer.wasTouch && sortedAreaPreviews.length === 0) {
+                // A tap or a pan on the empty map: nothing to select, and the draft box keeps its mode.
                 return;
             }
             this.changeAreaMode("EDIT", sortedAreaPreviews[0]);

@@ -457,13 +457,14 @@ export class MapEditorModeManager {
         pointer: Phaser.Input.Pointer,
         gameObjects: Phaser.GameObjects.GameObject[]
     ) => {
+        // Every press starts a fresh distance, so a tool asking after the release learns about this press only.
+        this.dragPanDistance = 0;
         if (!pointer.leftButtonDown() && !pointer.wasTouch) return;
         if (gameObjects.length > 0) return;
         if (this.activeTool === EditorToolName.AreaEditor && !pointer.wasTouch) return;
         if (!this.currentlyActiveTool?.canDragToLookAround(pointer)) return;
         this.dragPanActive = true;
         this.dragPanPointerId = pointer.id;
-        this.dragPanDistance = 0;
         this.scene.getCameraManager().stopSpeed();
     };
     private readonly dragPanMoveHandler = (pointer: Phaser.Input.Pointer) => {
@@ -482,9 +483,13 @@ export class MapEditorModeManager {
     private static readonly DRAG_PAN_THRESHOLD = 10;
     private dragPanBound = false;
 
-    /** True while the last pointer went further than a tap: a tool that places on tap uses it to ignore that release. */
+    /**
+     * True when the last press went further than a tap: a tool that places on tap uses it to ignore that release.
+     * The distance outlives the release on purpose, so the answer is the same whether the tool's own release
+     * handler runs before or after the one above (their order depends on which was bound first).
+     */
     public get isDraggingToLookAround(): boolean {
-        return this.dragPanActive && this.dragPanDistance >= MapEditorModeManager.DRAG_PAN_THRESHOLD;
+        return this.dragPanDistance >= MapEditorModeManager.DRAG_PAN_THRESHOLD;
     }
 
     private updateDragToLookAround(): void {
@@ -506,6 +511,7 @@ export class MapEditorModeManager {
             this.scene.input.off(Phaser.Input.Events.GAME_OUT, this.dragPanUpHandler);
             this.dragPanBound = false;
             this.dragPanActive = false;
+            this.dragPanDistance = 0;
         }
     }
 
