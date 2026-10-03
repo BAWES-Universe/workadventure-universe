@@ -6,7 +6,7 @@ import AnimatedTiles from "phaser-animated-tiles";
 import { Queue } from "queue-typescript";
 import type { ComponentType } from "svelte";
 import type { Readable, Unsubscriber } from "svelte/store";
-import { get } from "svelte/store";
+import { derived, get } from "svelte/store";
 import { throttle } from "throttle-debounce";
 import { ForwardableStore, MapStore } from "@workadventure/store-utils";
 import { MathUtils } from "@workadventure/math-utils";
@@ -108,6 +108,7 @@ import { errorScreenStore } from "../../Stores/ErrorScreenStore";
 import {
     availabilityStatusStore,
     batchGetUserMediaStore,
+    deviceListStore,
     lastNewMediaDeviceDetectedStore,
     localVoiceIndicatorStore,
     requestedCameraDeviceIdStore,
@@ -120,9 +121,20 @@ import { LL, locale } from "../../../i18n/i18n-svelte";
 import { GameSceneUserInputHandler } from "../UserInput/GameSceneUserInputHandler";
 import { followUsersColorStore, followUsersStore } from "../../Stores/FollowStore";
 import { axiosWithRetry, hideConnectionIssueMessage } from "../../Connection/AxiosUtils";
-import { RESUME_NETWORK_WAIT_MS, showReconnectingScreen, waitForNetwork } from "../../Connection/ReconnectScreen";
+import {
+    RESUME_NETWORK_WAIT_MS,
+    keepLogoInMemory,
+    showReconnectingScreen,
+    waitForNetwork,
+} from "../../Connection/ReconnectScreen";
 import { reconnectWatchdog } from "../../Connection/AppReconnectWatchdog";
+import { BackgroundLeave, markLeftInBackground, waitToComeBack } from "../../Connection/BackgroundLeave";
+import { privacyShutdownStore } from "../../Stores/PrivacyShutdownStore";
+import { isLiveStreamingStore } from "../../Stores/IsStreamingStore";
+import { isAndroid, isIOS } from "../../WebRtc/DeviceUtils";
 import { StringUtils } from "../../Utils/StringUtils";
+import { groupMediaDevicesByLabel } from "../../Utils/NewMediaDevices";
+import { visibilityStore } from "../../Stores/VisibilityStore";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
 import { embedScreenLayoutStore } from "../../Stores/EmbedScreenLayoutStore";
@@ -134,7 +146,7 @@ import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
 import { exploreStore } from "../../Stores/ExploreStore";
-import { myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
+import { inExternalServiceStore, myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
 import type { GameStateEvent } from "../../Api/Events/GameStateEvent";
 import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
 import {
@@ -182,7 +194,7 @@ import PopUpMapEditorNotEnabled from "../../Components/PopUp/PopUpMapEditorNotEn
 import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcut.svelte";
 import { enableUserInputsStore } from "../../Stores/UserInputStore";
 import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
-import { videoStreamStore, screenShareStreamStore } from "../../Stores/PeerStore";
+import { videoStreamStore, screenShareStreamStore, videoStreamElementsStore } from "../../Stores/PeerStore";
 import type {
     ChatConnectionInterface,
     ChatRoom,
@@ -311,6 +323,7 @@ export class GameScene extends DirtyScene {
     private mapExplorationStoreUnsubscriber!: Unsubscriber;
     private modalVisibilityStoreUnsubscriber!: Unsubscriber;
     private lastNewMediaDeviceDetectedStoreUnsubscriber!: Unsubscriber;
+    private readonly pendingNewMediaDevices = new Map<string, MediaDeviceInfo>();
     private peerStoreUnsubscriber!: Unsubscriber;
     private unsubscribers: Unsubscriber[] = [];
     private entityPermissions: EntityPermissions | undefined;
@@ -668,6 +681,8 @@ export class GameScene extends DirtyScene {
 
         this.outlineManager = new OutlineManager(this);
         gameManager.gameSceneIsCreated(this);
+        // While the network is up: the reconnecting screen will need the logo when it is not.
+        keepLogoInMemory(this._room.errorSceneLogo);
         urlManager.pushRoomIdToUrl(this._room);
         analyticsClient.enteredRoom(this._room.id, this._room.group);
         contactPageStore.set(this._room.contactPage);
@@ -1757,8 +1772,11 @@ export class GameScene extends DirtyScene {
      */
     private connect(): void {
         const camera = this.cameraManager.getCamera();
-        // Back in the app with the connection closed: give the phone's network a moment before the first attempt.
-        const networkReady = this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : Promise.resolve();
+        // Left in the background (see BackgroundLeave): stay out until the page is on screen again. Then, as for any
+        // return to the app with the connection closed, give the phone's network a moment before the first attempt.
+        const networkReady = waitToComeBack().then(() =>
+            this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : undefined
+        );
 
         networkReady
             .then(() => {
@@ -1982,6 +2000,7 @@ export class GameScene extends DirtyScene {
 
                     this.createSuccessorGameScene(true, true);
                 });
+                this.watchBackgroundLeave();
                 hideConnectionIssueMessage();
 
                 // The itemEventMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
@@ -2405,59 +2424,19 @@ export class GameScene extends DirtyScene {
 
         this.lastNewMediaDeviceDetectedStoreUnsubscriber = lastNewMediaDeviceDetectedStore.subscribe((devices) => {
             if (devices.length === 0) return;
-            // filter device by name tu avoid multiple notification for the same device
-            const devicesToNotify = devices.reduce((devices: MediaDeviceInfo[], currentDevice: MediaDeviceInfo) => {
-                if (
-                    devices.find((device_) => device_.label == currentDevice.label) != undefined ||
-                    get(requestedCameraDeviceIdStore) == currentDevice.deviceId ||
-                    get(requestedMicrophoneDeviceIdStore) == currentDevice.deviceId ||
-                    get(speakerSelectedStore) == currentDevice.deviceId
-                )
-                    return devices;
-
-                devices.push(currentDevice);
-                return devices;
-            }, []);
-
-            for (const device of devicesToNotify) {
-                const id = `playtext-mediadevice-${device.deviceId}`;
-                this.CurrentPlayer.destroyText(id);
-                this.CurrentPlayer.playText(
-                    id,
-                    get(LL).camera.webrtc.newDeviceDetected({ device: device.label }),
-                    5000,
-                    () => {
-                        this.CurrentPlayer.destroyText(id);
-
-                        // get all devices with the same label
-                        const devicesToUse = devices.filter((device_) => device_.label === device.label);
-
-                        for (const deviceToUse of devicesToUse) {
-                            switch (deviceToUse.kind) {
-                                case "videoinput":
-                                    requestedCameraDeviceIdStore.set(deviceToUse.deviceId);
-                                    localUserStore.setPreferredVideoInputDevice(deviceToUse.deviceId);
-                                    break;
-                                // use the new device
-                                case "audioinput":
-                                    requestedMicrophoneDeviceIdStore.set(deviceToUse.deviceId);
-                                    localUserStore.setPreferredAudioInputDevice(deviceToUse.deviceId);
-                                    break;
-
-                                case "audiooutput":
-                                    localUserStore.setSpeakerDeviceId(deviceToUse.deviceId);
-                                    speakerSelectedStore.set(deviceToUse.deviceId);
-                                    break;
-                                default:
-                                    console.warn("Unknown device kind: ", deviceToUse.kind);
-                            }
-                        }
-                    },
-                    true,
-                    "message"
-                );
+            for (const device of devices) {
+                this.pendingNewMediaDevices.set(device.deviceId, device);
             }
+            // Consume the devices so that the next scene does not offer them again.
+            lastNewMediaDeviceDetectedStore.set([]);
+            this.offerPendingNewMediaDevices();
         });
+        // Devices detected while the tab was hidden are offered once the user is back.
+        this.unsubscribers.push(
+            visibilityStore.subscribe((isVisible) => {
+                if (isVisible) this.offerPendingNewMediaDevices();
+            })
+        );
 
         this.isLiveStreamingUnsubscriber = this.spaceRegistry.isLiveStreamingStore.subscribe((isStreaming) => {
             if (isStreaming) {
@@ -2474,6 +2453,98 @@ export class GameScene extends DirtyScene {
                 this.load.audio(`audio-webrtc-out-${soundType}`, `/resources/objects/webrtc-out-${soundType}.mp3`);
                 this.load.start();
             })
+        );
+    }
+
+    /**
+     * On a phone, leaves the room after a while in the background while away and alone (see BackgroundLeave). The
+     * time only runs with nobody near, no live session and no meeting app open, so calls are never cut.
+     */
+    private watchBackgroundLeave(): void {
+        if (!isIOS() && !isAndroid()) return;
+        const backgroundLeave = new BackgroundLeave({
+            isHidden: () => document.visibilityState === "hidden",
+            leave: () => {
+                markLeftInBackground();
+                this.connection?.leaveInBackground();
+            },
+        });
+        const awayAndAlone = derived(
+            [
+                privacyShutdownStore,
+                visibilityStore,
+                videoStreamElementsStore,
+                isLiveStreamingStore,
+                inExternalServiceStore,
+            ],
+            ([$privacyShutdown, $visible, $peers, $live, $inExternalService]) =>
+                $privacyShutdown && !$visible && $peers.length === 0 && !$live && !$inExternalService
+        );
+        const unsubscribe = awayAndAlone.subscribe((value) => backgroundLeave.update(value));
+        this.unsubscribers.push(() => {
+            unsubscribe();
+            backgroundLeave.stop();
+        });
+    }
+
+    /**
+     * Shows a single "New device detected" bubble for the devices waiting to be offered. With
+     * several new devices (a virtual audio app registers a handful at once), the bubble names the
+     * best one and says how many others there are; they stay available in the device settings.
+     */
+    private offerPendingNewMediaDevices(): void {
+        if (this.pendingNewMediaDevices.size === 0 || document.visibilityState !== "visible") return;
+
+        const presentDevices = get(deviceListStore) ?? [];
+        const selectedDeviceIds = [
+            get(requestedCameraDeviceIdStore),
+            get(requestedMicrophoneDeviceIdStore),
+            get(speakerSelectedStore),
+        ];
+        const devices = Array.from(this.pendingNewMediaDevices.values()).filter(
+            (device) =>
+                presentDevices.some((present) => present.deviceId === device.deviceId) &&
+                !selectedDeviceIds.includes(device.deviceId)
+        );
+        this.pendingNewMediaDevices.clear();
+
+        const groups = groupMediaDevicesByLabel(devices);
+        const firstGroup = groups.entries().next();
+        if (firstGroup.done) return;
+        const [label, devicesToUse] = firstGroup.value;
+        const otherCount = groups.size - 1;
+
+        const id = "playtext-mediadevice";
+        this.CurrentPlayer.playText(
+            id,
+            otherCount === 0
+                ? get(LL).camera.webrtc.newDeviceDetected({ device: label })
+                : get(LL).camera.webrtc.newDevicesDetected({ device: label, count: otherCount }),
+            5000,
+            () => {
+                this.CurrentPlayer.destroyText(id);
+
+                for (const deviceToUse of devicesToUse) {
+                    switch (deviceToUse.kind) {
+                        case "videoinput":
+                            requestedCameraDeviceIdStore.set(deviceToUse.deviceId);
+                            localUserStore.setPreferredVideoInputDevice(deviceToUse.deviceId);
+                            break;
+                        case "audioinput":
+                            requestedMicrophoneDeviceIdStore.set(deviceToUse.deviceId);
+                            localUserStore.setPreferredAudioInputDevice(deviceToUse.deviceId);
+                            break;
+                        case "audiooutput":
+                            localUserStore.setSpeakerDeviceId(deviceToUse.deviceId);
+                            speakerSelectedStore.set(deviceToUse.deviceId);
+                            break;
+                        default:
+                            console.warn("Unknown device kind: ", deviceToUse.kind);
+                    }
+                }
+            },
+            true,
+            "message"
         );
     }
 

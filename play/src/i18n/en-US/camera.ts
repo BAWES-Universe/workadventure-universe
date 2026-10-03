@@ -40,11 +40,12 @@ const camera: BaseTranslation = {
         refresh: "Refresh",
         continue: "Continue",
         newDeviceDetected: "New device detected {device} 🎉 Switch? [SPACE]",
+        newDevicesDetected: "New device detected {device} (+{count:number} more) 🎉 Switch? [SPACE]",
     },
     my: {
         silentZone: "Silent zone",
         silentZoneDesc:
-            "You are in a silent zone. You can only see and hear the people you are with. You can not see or hear the other people in the room.",
+            "No calls here. Your camera and microphone are off, and no one can start a conversation with you until you leave this area.",
         nameTag: "You",
         loading: "Loading your camera...",
     },

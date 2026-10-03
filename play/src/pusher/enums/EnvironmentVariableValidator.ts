@@ -287,8 +287,8 @@ export const EnvironmentVariables = z.object({
         .transform((val) => toBool(val, false))
         .describe("If true, Jitsi rooms are private and require authentication. Defaults to false"),
     MAX_USERNAME_LENGTH: PositiveIntAsString.optional()
-        .transform((val) => toNumber(val, 10))
-        .describe("Maximum allowed length for usernames. Defaults to 10"),
+        .transform((val) => toNumber(val, 32))
+        .describe("Maximum allowed length for usernames. Defaults to 32 (full names from sign-in fit)"),
     MAX_PER_GROUP: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 4))
         .describe("Maximum number of users in a bubble/group. Defaults to 4"),

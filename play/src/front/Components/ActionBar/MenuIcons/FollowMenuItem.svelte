@@ -30,6 +30,7 @@
         followClick();
     }}
     classList="group/btn-follow"
+    wideLabel={$followStateStore === "active" ? $LL.actionbar.help.unfollow.title() : $LL.actionbar.help.follow.title()}
     tooltipTitle={$followStateStore === "active"
         ? $LL.actionbar.help.unfollow.title()
         : $LL.actionbar.help.follow.title()}

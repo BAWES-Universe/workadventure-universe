@@ -49,8 +49,8 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     mapEditorLocked: "L'éditeur de carte est verrouillé 🔐",
     app: "Applications",
     camera: {
-        disabled: "Votre caméra est désactivé",
-        activate: "Activer votre camera",
+        disabled: "Votre caméra est coupée",
+        activate: "Activer la caméra",
         noDevices: "Aucune caméra trouvée",
         setBackground: "Définir le fond",
         blurEffects: "Effets de flou",
@@ -58,8 +58,8 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         close: "Fermer",
     },
     microphone: {
-        disabled: "Votre micro est désactivé",
-        activate: "Activer votre micro",
+        disabled: "Votre micro est coupé",
+        activate: "Activer le micro",
         noDevices: "Aucun micro trouvé",
     },
     speaker: {
