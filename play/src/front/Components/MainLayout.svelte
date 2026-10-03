@@ -35,7 +35,11 @@
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
     import { highlightFullScreen } from "../Stores/ActionsCamStore";
     import { chatVisibilityStore } from "../Stores/ChatStore";
-    import { chatFloatInsetStore, chatSidebarWidthStore } from "../Chat/ChatSidebarWidthStore";
+    import {
+        chatFloatInsetStore,
+        chatSidebarWidthStore,
+        hideActionBarStoreBecauseOfChatBar,
+    } from "../Chat/ChatSidebarWidthStore";
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
@@ -231,13 +235,17 @@
 
             <!-- Bottom-right column: the zoom and map tools, with the Express button under them,
                  directly above the menu button. It comes before the windows (room websites, Explore, the woka menu):
-                 a window opened over it covers it, and it stays in its place behind. -->
-            <div
-                class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
-            >
-                <ExplorerMenu />
-                <ExpressButton />
-            </div>
+                 a window opened over it covers it, and it stays in its place behind. When the chat leaves no room
+                 for the bar (a phone), the column goes with the bar: beside the chat is only a peek at the map, and
+                 everything comes back when the chat closes. -->
+            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar)}
+                <div
+                    class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
+                >
+                    <ExplorerMenu />
+                    <ExpressButton />
+                </div>
+            {/if}
 
             {#if $uiWebsitesStore}
                 <UiWebsiteContainer />
