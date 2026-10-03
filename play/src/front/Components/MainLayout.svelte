@@ -239,11 +239,15 @@
                  for the bar (a phone), the column goes with the bar: beside the chat is only a peek at the map, and
                  everything comes back when the chat closes. -->
             {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar)}
-                <div
-                    class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
-                >
-                    <ExplorerMenu />
-                    <ExpressButton />
+                <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
+                     it grows, instead of the column floating over the website. -->
+                <div class="absolute inset-0 overflow-hidden pointer-events-none">
+                    <div
+                        class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
+                    >
+                        <ExplorerMenu />
+                        <ExpressButton />
+                    </div>
                 </div>
             {/if}
 
