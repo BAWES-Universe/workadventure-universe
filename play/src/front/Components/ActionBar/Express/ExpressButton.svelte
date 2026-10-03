@@ -3,7 +3,7 @@
     import { clickOutside } from "svelte-outside";
     import { hideActionBarStoreBecauseOfChatBar } from "../../../Chat/ChatSidebarWidthStore";
     import { highlightFullScreen } from "../../../Stores/ActionsCamStore";
-    import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
+    import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { emoteDataStore, emotePlayedStore } from "../../../Stores/EmoteStore";
     import { expressTrayStore } from "../../../Stores/ExpressStore";
     import { connectionManager } from "../../../Connection/ConnectionManager";
@@ -19,8 +19,9 @@
     let button: HTMLButtonElement;
 
     // Hidden when the chat covers the game (phones: the action bar hides too), a video is full screen,
-    // or the map editor is in use. With the chat open beside the game on a desktop, it stays.
-    $: visible = !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorModeStore;
+    // or the map editor's toolbar is in use ("Look around the map" keeps it). With the chat open beside the game on
+    // a desktop, it stays.
+    $: visible = !$hideActionBarStoreBecauseOfChatBar && !$highlightFullScreen && !$mapEditorToolbarInUseStore;
     // The tray only shows while the button does, whatever the store says.
     $: open = visible && $expressTrayStore !== "closed";
     // Close the store once the button hides. Deferred to after this update: setting the store while Svelte is

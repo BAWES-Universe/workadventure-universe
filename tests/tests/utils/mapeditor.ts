@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { expectInViewport } from "./viewport";
 
 class MapEditor {
@@ -19,6 +19,12 @@ class MapEditor {
 
   async openExploration(page: Page) {
     await page.locator('section.side-bar-container .side-bar .tool-button button#ExploreTheRoom').first().click();
+    await expect(page.getByTestId('look-around')).toBeVisible();
+  }
+
+  async openPlaces(page: Page) {
+    await page.getByTestId('look-around-places-button').click();
+    await expect(page.getByTestId('look-around-places')).toBeVisible();
   }
 
   async openTrashEditor(page: Page) {

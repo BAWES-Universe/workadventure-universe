@@ -20,6 +20,13 @@ class Menu {
         await expect(page.locator('section.side-bar-container')).toBeVisible();
     }
 
+    // "Look around the map": what a guest gets from the map editor key, with no editing toolbar.
+    async openLookAround(page: Page) {
+        await page.keyboard.press('e');
+        await expect(page.getByTestId('look-around')).toBeVisible();
+        await expect(page.locator('section.side-bar-container')).toBeHidden();
+    }
+
     async openMenu(page: Page) {
         await page.getByTestId('action-user').click({timeout: 30_000});
         await expect(page.getByTestId('profile-menu')).toBeVisible();

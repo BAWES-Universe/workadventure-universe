@@ -29,7 +29,7 @@
         mapEditorAskToClaimPersonalAreaStore,
         mapEditorSelectedToolStore,
         mapEditorVisibilityStore,
-        mapExplorationObjectSelectedStore,
+        mapExplorationModeStore,
     } from "../Stores/MapEditorStore";
     import { warningMessageStore } from "../Stores/ErrorStore";
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
@@ -62,7 +62,7 @@
     import Modal from "./Modal/Modal.svelte";
     import HelpPopUpBlocked from "./HelpSettings/HelpPopUpBlocked.svelte";
     import Notification from "./UI/Notification.svelte";
-    import ObjectDetails from "./Modal/ObjectDetails.svelte";
+    import LookAround from "./LookAround/LookAround.svelte";
     import MapList from "./Exploration/MapList.svelte";
     import WarningToast from "./WarningContainer/WarningToast.svelte";
     import ClaimPersonalAreaDialogBox from "./MapEditor/ClaimPersonalAreaDialogBox.svelte";
@@ -121,8 +121,11 @@
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
     $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
     // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
+    // "Look around the map" has no side bar: it draws over the game and the bar keeps its width.
     $: marginRight =
-        $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
+        $mapEditorVisibilityStore &&
+        $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor &&
+        $mapEditorSelectedToolStore !== EditorToolName.ExploreTheRoom
             ? $mapEditorSideBarWidthStore
             : 0;
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
@@ -238,10 +241,16 @@
                  a window opened over it covers it, and it stays in its place behind. When the chat leaves no room
                  for the bar (a phone), the column goes with the bar: beside the chat is only a peek at the map, and
                  everything comes back when the chat closes. -->
+            <!-- "Look around the map": the pill, hint, box and places, drawn over the game under the zoom column. -->
+            {#if $mapExplorationModeStore}
+                <LookAround />
+            {/if}
+
             {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar)}
                 <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
-                     it grows, instead of the column floating over the website. -->
-                <div class="absolute inset-0 overflow-hidden pointer-events-none">
+                     it grows, instead of the column floating over the website. Above "Look around the map", so its
+                     Places panel never covers the column. -->
+                <div class="absolute inset-0 overflow-hidden pointer-events-none z-[22]">
                     <div
                         class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
                     >
@@ -257,10 +266,6 @@
 
             {#if $mapEditorAskToClaimPersonalAreaStore}
                 <ClaimPersonalAreaDialogBox />
-            {/if}
-
-            {#if $mapExplorationObjectSelectedStore}
-                <ObjectDetails />
             {/if}
 
             {#if $roomListVisibilityStore}

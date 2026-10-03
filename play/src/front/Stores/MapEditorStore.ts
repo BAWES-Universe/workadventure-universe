@@ -1,5 +1,5 @@
 import type { AreaData, EntityDataProperties, EntityPrefab } from "@workadventure/map-editor";
-import { writable } from "svelte/store";
+import { writable, derived } from "svelte/store";
 import type {
     DeleteCustomEntityMessage,
     ModifyCustomEntityMessage,
@@ -79,6 +79,14 @@ export const mapEditorWamSettingsEditorToolCurrentMenuItemStore = writable<
 >(undefined);
 
 export const mapExplorationModeStore = writable<boolean>(false);
+/**
+ * True while the editor's toolbar is in use: the map editor mode is on and the tool is not "Look around the map".
+ * Looking around runs on the editor's engine but shows none of its toolbar, so the bar and Express stay.
+ */
+export const mapEditorToolbarInUseStore = derived(
+    [mapEditorModeStore, mapExplorationModeStore],
+    ([$mapEditorModeStore, $mapExplorationModeStore]) => $mapEditorModeStore && !$mapExplorationModeStore
+);
 export const mapExplorationObjectSelectedStore = writable<Entity | AreaPreview | undefined>(undefined);
 export const mapExplorationEntitiesStore = writable<Map<string, Entity>>(new Map());
 export const mapExplorationAreasStore = writable<Map<string, AreaPreview> | undefined>(new Map());

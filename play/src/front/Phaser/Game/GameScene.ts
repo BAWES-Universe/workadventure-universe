@@ -219,6 +219,13 @@ import type { AddPlayerInterface } from "./AddPlayerInterface";
 import type { CameraManagerEventCameraUpdateData } from "./CameraManager";
 import { CameraManager, CameraManagerEvent } from "./CameraManager";
 import { EditorToolName, MapEditorModeManager } from "./MapEditor/MapEditorModeManager";
+import {
+    EXPLORE_ZOOM_IN_RADIUS_AROUND_WOKA,
+    EXPLORE_ZOOM_OUT_END,
+    EXPLORE_ZOOM_OUT_START,
+    enterExploreTheRoom,
+    leaveExploreTheRoom,
+} from "./MapEditor/ExploreTheRoom";
 import type { PlayerDetailsUpdate } from "./RemotePlayersRepository";
 import { RemotePlayersRepository } from "./RemotePlayersRepository";
 import { IframeEventDispatcher } from "./IframeEventDispatcher";
@@ -2403,6 +2410,7 @@ export class GameScene extends DirtyScene {
                 // add interactions back only for activatables
                 this.gameMapFrontWrapper.getEntitiesManager().makeAllEntitiesInteractive(true);
             }
+            this.updateExploreZoomResistance();
             this.markDirty();
         });
 
@@ -2412,6 +2420,7 @@ export class GameScene extends DirtyScene {
             } else {
                 this.input.keyboard?.enableGlobalCapture();
             }
+            this.updateExploreZoomResistance();
         });
 
         this.lastNewMediaDeviceDetectedStoreUnsubscriber = lastNewMediaDeviceDetectedStore.subscribe((devices) => {
@@ -4055,8 +4064,40 @@ ${escapedMessage}
         this.whiteMask = undefined;
     }
 
-    private disableCameraResistance(): void {
-        this.cameraManager.disableResistanceZone();
+    /**
+     * Zooming far out enters "Look around the map"; while looking around, zooming back in near your avatar leaves it.
+     * Both go through the camera's resistance zone (white fade, then the callback).
+     * The zone is off while another map editor tool is in use, so zooming out to edit never switches tools.
+     */
+    private updateExploreZoomResistance(): void {
+        if (!this.mapEditorModeManager || !this.cameraManager || !this.CurrentPlayer) {
+            return;
+        }
+        if (get(mapExplorationModeStore)) {
+            this.cameraManager.setResistanceZone(
+                EXPLORE_ZOOM_OUT_END,
+                EXPLORE_ZOOM_OUT_START,
+                1,
+                leaveExploreTheRoom,
+                false,
+                EXPLORE_ZOOM_IN_RADIUS_AROUND_WOKA,
+                this.CurrentPlayer
+            );
+            return;
+        }
+        if (get(mapEditorModeStore)) {
+            this.cameraManager.disableResistanceZone();
+            return;
+        }
+        this.cameraManager.setResistanceZone(
+            EXPLORE_ZOOM_OUT_START,
+            EXPLORE_ZOOM_OUT_END,
+            1,
+            enterExploreTheRoom,
+            true,
+            undefined,
+            this.CurrentPlayer
+        );
     }
 
     private proximityChatRoomPromise(): Promise<ProximityChatRoom> {

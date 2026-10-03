@@ -1,8 +1,10 @@
 <script lang="ts">
+    import { fade } from "svelte/transition";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { mapEditorModeStore, mapExplorationModeStore } from "../../Stores/MapEditorStore";
+    import { mapExplorationModeStore } from "../../Stores/MapEditorStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
-    import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
+    import { enterExploreTheRoom, leaveExploreTheRoom } from "../../Phaser/Game/MapEditor/ExploreTheRoom";
+    import { lookAroundNoteSeenStore } from "../../Stores/LookAroundStore";
     import LL from "../../../i18n/i18n-svelte";
     import { roomListActivated } from "../../Stores/MenuStore";
     import { roomListVisibilityStore } from "../../Stores/ModalStore";
@@ -10,7 +12,7 @@
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { displayName } from "../Exploration/exploreText";
     import { toggleExploreList } from "../Exploration/toggleExploreList";
-    import { IconFocusCentered, IconMinus, IconPlanet, IconPlus, IconZoomOutArea } from "@wa-icons";
+    import { IconMinus, IconPlanet, IconPlus, IconZoomOutArea } from "@wa-icons";
 
     function zoomIn() {
         analyticsClient.clickToZoomIn();
@@ -26,18 +28,16 @@
         cameraManager.zoomByFactor(0.8, true);
     }
 
-    function openMapExplorer() {
+    // The map button opens "Look around the map" and, while it is open, brings you back: one button, grey while open.
+    function toggleLookAround() {
+        if ($mapExplorationModeStore) {
+            analyticsClient.clickCenterToUser();
+            leaveExploreTheRoom();
+            return;
+        }
         analyticsClient.clickTopOpenMapExplorer();
-
-        mapEditorModeStore.switchMode(true);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.ExploreTheRoom);
-    }
-
-    function centerToUser() {
-        analyticsClient.clickCenterToUser();
-
-        mapEditorModeStore.switchMode(false);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.CloseMapEditor);
+        lookAroundNoteSeenStore.set(true);
+        enterExploreTheRoom();
     }
 </script>
 
@@ -77,28 +77,39 @@
         </button>
         <span class="explorer-divider" aria-hidden="true" />
     {/if}
-    {#if $mapExplorationModeStore === false}
+    <span class="explorer-map">
         <button
             type="button"
             class="explorer-btn group"
-            aria-label={$LL.mapEditor.explorer.title()}
+            class:open={$mapExplorationModeStore}
+            aria-label={$mapExplorationModeStore
+                ? $LL.mapEditor.explorer.showMyLocation()
+                : $LL.mapEditor.lookAround.title()}
+            aria-pressed={$mapExplorationModeStore}
             data-testid="map-overview-button"
-            on:click={openMapExplorer}
+            on:click={toggleLookAround}
         >
             <IconZoomOutArea font-size="20" />
-            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.title()}</span>
+            <span class="explorer-tip" aria-hidden="true"
+                >{$mapExplorationModeStore
+                    ? $LL.mapEditor.explorer.showMyLocation()
+                    : $LL.mapEditor.lookAround.title()}</span
+            >
         </button>
-    {:else}
-        <button
-            type="button"
-            class="explorer-btn group"
-            aria-label={$LL.mapEditor.explorer.showMyLocation()}
-            on:click={centerToUser}
-        >
-            <IconFocusCentered font-size="20" />
-            <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.showMyLocation()}</span>
-        </button>
-    {/if}
+        <!-- The first time only: a small note beside the button says what it does. It goes once Look around has opened. -->
+        {#if !$lookAroundNoteSeenStore && !$mapExplorationModeStore}
+            <button
+                type="button"
+                class="explorer-note u-surface"
+                data-testid="look-around-note"
+                transition:fade={{ duration: 200 }}
+                on:click={toggleLookAround}
+            >
+                <b>{$LL.mapEditor.lookAround.noteTitle()}</b>
+                <span>{$LL.mapEditor.lookAround.noteBody()}</span>
+            </button>
+        {/if}
+    </span>
 </div>
 
 <style>
@@ -145,6 +156,38 @@
     .explorer-btn:focus-visible {
         outline: none;
         box-shadow: inset 0 0 0 2px #fff;
+    }
+    .explorer-map {
+        position: relative;
+        display: block;
+    }
+    /* The one-time note, to the left of the map button, in the raised ink surface. */
+    .explorer-note {
+        position: absolute;
+        top: 50%;
+        right: calc(100% + 16px);
+        transform: translateY(-50%);
+        width: 170px;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 16px;
+        color: #fff;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1.3;
+        text-align: start;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .explorer-note b {
+        display: block;
+        font-weight: 600;
+    }
+    .explorer-note span {
+        display: block;
+        margin-top: 2px;
+        color: rgba(244, 242, 250, 0.64);
+        font-size: 12.5px;
     }
     .explorer-divider {
         width: 28px;

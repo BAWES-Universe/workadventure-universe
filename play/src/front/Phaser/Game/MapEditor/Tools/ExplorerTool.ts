@@ -12,6 +12,12 @@ import {
     mapExplorationModeStore,
     mapExplorationObjectSelectedStore,
 } from "../../../../Stores/MapEditorStore";
+import {
+    lookAroundDraggedStore,
+    lookAroundNormalZoomStore,
+    lookAroundPlacesOpenStore,
+} from "../../../../Stores/LookAroundStore";
+import { EXPLORE_ZOOM_OUT_END, leaveExploreTheRoom } from "../ExploreTheRoom";
 import { gameManager } from "../../GameManager";
 import type { GameScene } from "../../GameScene";
 import { Entity } from "../../../ECS/Entity";
@@ -38,6 +44,11 @@ export class ExplorerTool implements MapEditorTool {
     private zoomLevelBeforeExplorerMode: number | undefined;
 
     private keyDownHandler = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+            // Esc goes back to you, as the "Back to me" button does.
+            leaveExploreTheRoom();
+            return;
+        }
         if (!get(enableUserInputsStore)) return;
         if (event.key === "ArrowDown" || event.key === "s") {
             this.downIsPressed = true;
@@ -96,20 +107,36 @@ export class ExplorerTool implements MapEditorTool {
             .getCameraManager()
             .scrollCamera(pointer.prevPosition.x - pointer.x, pointer.prevPosition.y - pointer.y);
     };
-    private pointerUpHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
+    private pointerUpHandler = (
+        pointerOrTime: Phaser.Input.Pointer | number,
+        gameObjects?: Phaser.GameObjects.GameObject[]
+    ) => {
+        // The pointer leaving the canvas (over the pill, the hint, a panel) ends the drag too, and that event
+        // carries the time instead of the pointer.
+        const pointer = pointerOrTime instanceof Phaser.Input.Pointer ? pointerOrTime : this.scene.input.activePointer;
         this.scene.input.setDefaultCursor("grab");
+        const wasDragging = this.explorationMouseIsActive;
         this.explorationMouseIsActive = false;
 
-        if (gameObjects.length > 0) {
-            const gameObject = gameObjects[0];
-            if (gameObject instanceof Entity || gameObject instanceof AreaPreview)
-                mapExplorationObjectSelectedStore.set(gameObject);
-        }
+        // A tap is a release close to where the pointer went down. Only a real drag keeps the camera gliding:
+        // a plain tap used to fling the map away because the pointer's velocity is never exactly zero.
+        const dragged = wasDragging && pointer.getDistance() > ExplorerTool.TAP_MAX_DISTANCE;
 
-        // The velocity will be null if the cursor is no longer above the game when the button is released
-        if (pointer.velocity) {
-            // Let's compute the remaining velocity
-            this.scene.getCameraManager().setSpeed({ x: -pointer.velocity.x * 10, y: -pointer.velocity.y * 10 });
+        if (dragged) {
+            lookAroundDraggedStore.set(true);
+            // The velocity will be null if the cursor is no longer above the game when the button is released
+            if (pointer.velocity) {
+                // Let's compute the remaining velocity
+                this.scene.getCameraManager().setSpeed({ x: -pointer.velocity.x * 10, y: -pointer.velocity.y * 10 });
+            }
+        } else if (wasDragging && Array.isArray(gameObjects)) {
+            const gameObject = gameObjects.find((object) => object instanceof Entity || object instanceof AreaPreview);
+            if (gameObject instanceof Entity || gameObject instanceof AreaPreview) {
+                mapExplorationObjectSelectedStore.set(gameObject);
+            } else {
+                // Tapping the empty map closes the place card.
+                mapExplorationObjectSelectedStore.set(undefined);
+            }
         }
 
         this.scene.markDirty();
@@ -125,6 +152,9 @@ export class ExplorerTool implements MapEditorTool {
         gameObject.setStrokeStyle(2, 0x000000);
         this.scene.markDirty();
     };
+
+    /** Releases closer than this (in screen pixels) to where the pointer went down are taps, not drags. */
+    private static readonly TAP_MAX_DISTANCE = 8;
 
     constructor(private mapEditorModeManager: MapEditorModeManager, private readonly scene: GameScene) {
         this.entitiesManager = this.scene.getGameMapFrontWrapper().getEntitiesManager();
@@ -211,6 +241,8 @@ export class ExplorerTool implements MapEditorTool {
         mapExplorationObjectSelectedStore.set(undefined);
         mapExplorationModeStore.set(false);
         mapExplorationAreasStore.set(undefined);
+        lookAroundPlacesOpenStore.set(false);
+        lookAroundNormalZoomStore.set(undefined);
     }
     public activate(): void {
         // Put analytics for exploration mode
@@ -218,7 +250,8 @@ export class ExplorerTool implements MapEditorTool {
 
         // Active store of map exploration mode
         mapExplorationModeStore.set(true);
-        mapEditorVisibilityStore.set(true);
+        // Looking around has its own overlay (LookAround.svelte): the editor's side bar and panel stay hidden.
+        mapEditorVisibilityStore.set(false);
 
         const entitySearchableMap = new Map<string, Entity>();
         gameManager
@@ -250,6 +283,7 @@ export class ExplorerTool implements MapEditorTool {
         this.scene.input.on(Phaser.Input.Events.GAME_OUT, this.pointerUpHandler);
 
         this.zoomLevelBeforeExplorerMode = waScaleManager.zoomModifier;
+        lookAroundNormalZoomStore.set(this.zoomLevelBeforeExplorerMode);
 
         // Make all entities interactive
         this.setAllEntitiesInteractive();
@@ -257,11 +291,15 @@ export class ExplorerTool implements MapEditorTool {
 
         this.scene.playSound("audio-cloud");
 
+        // Glide out around you. Entering by zooming out is already past this level, so nothing moves then.
+        if (waScaleManager.zoomModifier > EXPLORE_ZOOM_OUT_END) {
+            this.scene
+                .getCameraManager()
+                .centerCameraOn({ x: this.scene.CurrentPlayer.x, y: this.scene.CurrentPlayer.y }, EXPLORE_ZOOM_OUT_END);
+        }
+
         // Mark the scene as dirty
         this.scene.markDirty();
-
-        // Create flash animation
-        this.scene.cameras.main.flash();
     }
     public destroy(): void {
         this.clear();

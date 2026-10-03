@@ -3,7 +3,6 @@
     import { onMount } from "svelte";
     import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { mapEditorSelectedToolStore, mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
-    import Explorer from "../Exploration/Explorer.svelte";
     import ArrowBarRight from "../Icons/ArrowBarRight.svelte";
     import { windowSize } from "../../Stores/CoWebsiteStore";
     import ButtonClose from "../Input/ButtonClose.svelte";
@@ -114,9 +113,6 @@
                 {/if}
                 {#if $mapEditorSelectedToolStore === EditorToolName.AreaEditor}
                     <AreaEditor />
-                {/if}
-                {#if $mapEditorSelectedToolStore === EditorToolName.ExploreTheRoom}
-                    <Explorer />
                 {/if}
             </div>
         {/if}

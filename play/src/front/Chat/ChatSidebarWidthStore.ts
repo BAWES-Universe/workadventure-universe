@@ -3,7 +3,7 @@ import { chatVisibilityStore } from "../Stores/ChatStore";
 import { windowSize } from "../Stores/CoWebsiteStore";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { mapEditorSideBarWidthStore } from "../Components/MapEditor/MapEditorSideBarWidthStore";
-import { mapEditorModeStore } from "../Stores/MapEditorStore";
+import { mapEditorToolbarInUseStore } from "../Stores/MapEditorStore";
 import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
 
 export const chatSidebarWidthStore = writable(localUserStore.getChatSideBarWidth());
@@ -28,7 +28,7 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         chatSidebarWidthStore,
         windowSize,
         mapEditorSideBarWidthStore,
-        mapEditorModeStore,
+        mapEditorToolbarInUseStore,
         chatFloatInsetStore,
     ],
     ([
@@ -36,16 +36,16 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         $chatSidebarWidthStore,
         $windowSize,
         $mapEditorWidthStore,
-        $mapEditorModeStore,
+        $mapEditorToolbarInUseStore,
         $chatFloatInsetStore,
     ]) => {
-        if (!$chatVisibilityStore && !$mapEditorModeStore) {
+        if (!$chatVisibilityStore && !$mapEditorToolbarInUseStore) {
             return false;
         }
         return (
             $windowSize.width -
                 ($chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0) -
-                ($mapEditorModeStore ? $mapEditorWidthStore : 0) <
+                ($mapEditorToolbarInUseStore ? $mapEditorWidthStore : 0) <
             285
         );
     }

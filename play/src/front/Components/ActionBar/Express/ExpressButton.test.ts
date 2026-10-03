@@ -14,7 +14,7 @@ vi.mock("../../../Stores/ChatStore", () => ({
 }));
 vi.mock("../../../Chat/ChatSidebarWidthStore", () => ({ hideActionBarStoreBecauseOfChatBar: writable(false) }));
 vi.mock("../../../Stores/ActionsCamStore", () => ({ highlightFullScreen: writable(false) }));
-vi.mock("../../../Stores/MapEditorStore", () => ({ mapEditorModeStore: writable(false) }));
+vi.mock("../../../Stores/MapEditorStore", () => ({ mapEditorToolbarInUseStore: writable(false) }));
 vi.mock("../../../Connection/ConnectionManager", () => ({
     connectionManager: { currentRoom: { isSayEnabled: true } },
 }));
@@ -33,7 +33,7 @@ vi.mock("../../../../i18n/i18n-svelte", () => {
 });
 
 import { expressTrayOpenOptions, expressTrayStore } from "../../../Stores/ExpressStore";
-import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
+import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
 import ExpressButton from "./ExpressButton.svelte";
 
 function trayState(): string {
@@ -50,7 +50,8 @@ async function settle() {
     await tick();
 }
 
-const setMapEditor = (on: boolean) => (mapEditorModeStore as unknown as { set: (value: boolean) => void }).set(on);
+const setMapEditor = (on: boolean) =>
+    (mapEditorToolbarInUseStore as unknown as { set: (value: boolean) => void }).set(on);
 
 describe("ExpressButton", () => {
     let component: ExpressButton | undefined;
@@ -73,7 +74,7 @@ describe("ExpressButton", () => {
         await settle();
         expect(tray()).not.toBeNull();
 
-        // The map editor hides the button and closes the tray.
+        // The map editor's toolbar hides the button and closes the tray.
         setMapEditor(true);
         await settle();
         expect(button()).toBeNull();

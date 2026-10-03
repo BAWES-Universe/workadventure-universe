@@ -7,7 +7,7 @@
     import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
     import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
     import { gameSceneIsLoadedStore } from "../Stores/GameSceneStore";
-    import { mapEditorModeStore } from "../Stores/MapEditorStore";
+    import { mapEditorToolbarInUseStore } from "../Stores/MapEditorStore";
     import { refreshPromptStore } from "../Stores/RefreshPromptStore";
     import { forceRefreshChatStore } from "../Stores/ChatStore";
     import { loaderVisibleStore } from "../Stores/LoaderStore";
@@ -93,7 +93,8 @@
     {/if}
     {#key $forceRefreshChatStore}
         <ChatSidebar />
-        {#if $mapEditorModeStore}
+        <!-- "Look around the map" runs on the editor's engine but shows none of its toolbar: it draws in MainLayout. -->
+        {#if $mapEditorToolbarInUseStore}
             <MapEditor />
         {/if}
         {#if $showModalGlobalComminucationVisibilityStore}

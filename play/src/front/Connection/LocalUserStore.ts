@@ -59,6 +59,8 @@ const foldersOpened = "foldersOpened";
 const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
+const lookAroundHintSeenKey = "lookAroundHintSeen";
+const lookAroundNoteSeenKey = "lookAroundNoteSeen";
 const bubbleSound = "bubbleSound";
 const knownMediaDevices = "knownMediaDevices";
 
@@ -452,6 +454,24 @@ class LocalUserStore {
         }
 
         return deviceId;
+    }
+
+    /** The "Drag to look around" hint has been seen: it goes after the first real drag. */
+    setLookAroundHintSeen(value: boolean): void {
+        localStorage.setItem(lookAroundHintSeenKey, value.toString());
+    }
+
+    getLookAroundHintSeen(): boolean {
+        return localStorage.getItem(lookAroundHintSeenKey) === "true";
+    }
+
+    /** The one-time note by the map button has been seen (Look around was opened once). */
+    setLookAroundNoteSeen(value: boolean): void {
+        localStorage.setItem(lookAroundNoteSeenKey, value.toString());
+    }
+
+    getLookAroundNoteSeen(): boolean {
+        return localStorage.getItem(lookAroundNoteSeenKey) === "true";
     }
 
     setCameraPrivacySettings(option: boolean) {
