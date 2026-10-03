@@ -3,6 +3,7 @@ import { derived, get, readable, writable } from "svelte/store";
 import deepEqual from "fast-deep-equal";
 import { AvailabilityStatus } from "@workadventure/messages";
 import * as Sentry from "@sentry/svelte";
+import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { isIOS, isSafari } from "../WebRtc/DeviceUtils";
 import type { ObtainedMediaStreamConstraints } from "../WebRtc/P2PMessages/ConstraintMessage";
@@ -11,10 +12,13 @@ import { findNewMediaDevices, listLacksNamesFor, rememberMediaDevices } from "..
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { statusChanger } from "../Components/ActionBar/AvailabilityStatus/statusChanger";
 import {
+    BackgroundProcessingUnsupportedError,
     createBackgroundTransformer,
     type BackgroundTransformer,
     type BackgroundConfig,
+    type BackgroundMode,
 } from "../WebRtc/BackgroundProcessor/createBackgroundTransformer";
+import { waitForFirstVideoFrame } from "../WebRtc/BackgroundProcessor/waitForFirstVideoFrame";
 import { LL } from "../../i18n/i18n-svelte";
 import { MediaStreamConstraintsError } from "./Errors/MediaStreamConstraintsError";
 import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
@@ -28,7 +32,11 @@ import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
 
-import { backgroundConfigStore, backgroundProcessingEnabledStore } from "./BackgroundTransformStore";
+import {
+    backgroundConfigStore,
+    backgroundEffectStartingStore,
+    backgroundProcessingEnabledStore,
+} from "./BackgroundTransformStore";
 
 /**
  * A store that contains the camera state requested by the user (on or off).
@@ -542,18 +550,15 @@ let lastBackgroundConfig: BackgroundConfig | undefined = undefined;
 export function updateBackgroundProcessor(config: {
     blurAmount?: number;
     backgroundImage?: string;
-    backgroundVideo?: string;
-    mode?: string;
-    segmenterOptions?: unknown;
+    mode?: BackgroundMode;
 }) {
     if (backgroundTransformer && backgroundTransformer.updateConfig) {
         try {
             backgroundTransformer
                 .updateConfig({
-                    mode: config.mode as "none" | "blur" | "image" | "video",
+                    mode: config.mode,
                     blurAmount: config.blurAmount,
                     backgroundImage: config.backgroundImage,
-                    backgroundVideo: config.backgroundVideo,
                 })
                 .catch((error) => {
                     console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -561,16 +566,13 @@ export function updateBackgroundProcessor(config: {
 
             // Update the tracked config
             if (lastBackgroundConfig && config.mode) {
-                lastBackgroundConfig.mode = config.mode as "none" | "blur" | "image" | "video";
+                lastBackgroundConfig.mode = config.mode;
             }
             if (lastBackgroundConfig && config.blurAmount !== undefined) {
                 lastBackgroundConfig.blurAmount = config.blurAmount;
             }
             if (lastBackgroundConfig && config.backgroundImage !== undefined) {
                 lastBackgroundConfig.backgroundImage = config.backgroundImage;
-            }
-            if (lastBackgroundConfig && config.backgroundVideo !== undefined) {
-                lastBackgroundConfig.backgroundVideo = config.backgroundVideo;
             }
         } catch (error) {
             console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -827,12 +829,30 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
     }
 );
 
+// After this, the effect's stream is used even if it hasn't drawn yet (upstream's behaviour).
+const FIRST_EFFECT_FRAME_TIMEOUT_MS = 20_000;
+
+// Aborts the transform still loading for the previous stream, so a late result never replaces a newer stream.
+let currentTransformAbortController: AbortController | undefined = undefined;
+
+function dropBackgroundTransformer(transformer: BackgroundTransformer): void {
+    transformer.close();
+    if (backgroundTransformer === transformer) {
+        backgroundTransformer = undefined;
+        lastBackgroundConfig = undefined;
+    }
+}
+
 export const localStreamStore = derived<
     [typeof rawLocalStreamStore, typeof backgroundProcessingEnabledStore],
     LocalStreamStoreValue
 >(
     [rawLocalStreamStore, backgroundProcessingEnabledStore],
     ([$rawLocalStreamStore, $backgroundProcessingEnabled], set) => {
+        currentTransformAbortController?.abort(new AbortError("Background transform cancelled: new stream update"));
+        currentTransformAbortController = undefined;
+        backgroundEffectStartingStore.set(false);
+
         if (
             $rawLocalStreamStore.type === "error" ||
             $rawLocalStreamStore.stream === undefined ||
@@ -847,34 +867,61 @@ export const localStreamStore = derived<
             return;
         }
 
-        let finalStream;
-
         if (!backgroundTransformer) {
-            // Get current config from the store
-            const currentConfig = get(backgroundConfigStore);
-
-            backgroundTransformer = createBackgroundTransformer(currentConfig);
+            const transformer = createBackgroundTransformer(get(backgroundConfigStore), (error) => {
+                // The worker died after it started (lost WebGL context, crash...): fall back to the plain camera.
+                if (backgroundTransformer !== transformer) {
+                    return;
+                }
+                console.warn("[MediaStore] Background transformer stopped after a terminal failure:", error);
+                Sentry.captureException(error);
+                warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+                dropBackgroundTransformer(transformer);
+                backgroundConfigStore.reset();
+            });
+            backgroundTransformer = transformer;
         }
 
-        (async () => {
-            // Only create if we don't have a transformer yet
-            if ($rawLocalStreamStore.stream && backgroundTransformer) {
-                // Transform the stream using the new approach if available
-                finalStream = await backgroundTransformer.transform($rawLocalStreamStore.stream);
+        const transformer = backgroundTransformer;
+        const abortController = new AbortController();
+        currentTransformAbortController = abortController;
+        // The first effect downloads and starts the model; the device list shows "Starting…" meanwhile.
+        backgroundEffectStartingStore.set(true);
+
+        transformer
+            .transform($rawLocalStreamStore.stream, abortController.signal)
+            .then(async (finalStream) => {
+                // Keep sending the previous camera image until the effect has drawn its first frame.
+                await waitForFirstVideoFrame(finalStream, abortController.signal, FIRST_EFFECT_FRAME_TIMEOUT_MS);
+                if (abortController.signal.aborted) {
+                    return;
+                }
+                backgroundEffectStartingStore.set(false);
                 // Store config for next comparison
                 lastBackgroundConfig = { ...get(backgroundConfigStore) };
-
                 set({
                     type: "success",
                     stream: finalStream,
                 });
-            }
-        })().catch((error) => {
-            console.warn("[MediaStore] Failed to transform stream:", error);
-            Sentry.captureException(error);
-            warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
-            backgroundConfigStore.reset();
-        });
+            })
+            .catch((error) => {
+                if (abortController.signal.aborted || error instanceof AbortError) {
+                    return;
+                }
+                backgroundEffectStartingStore.set(false);
+                if (error instanceof BackgroundProcessingUnsupportedError) {
+                    console.warn("[MediaStore] Background processing is not supported on this browser:", error.message);
+                    warningMessageStore.addWarningMessage(
+                        get(LL).warning.backgroundProcessing.notSupportedOnThisBrowser()
+                    );
+                } else {
+                    console.warn("[MediaStore] Failed to transform stream:", error);
+                    Sentry.captureException(error);
+                    warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+                }
+                dropBackgroundTransformer(transformer);
+                backgroundConfigStore.reset();
+            });
     }
 );
 
@@ -1233,7 +1280,6 @@ const backgroundConfigStoreSubscription = backgroundConfigStore.subscribe(($conf
         mode: $config.mode,
         blurAmount: $config.blurAmount,
         backgroundImage: $config.backgroundImage,
-        backgroundVideo: $config.backgroundVideo,
     });
 });
 export const unsubscribeBackgroundConfigStoreSubscription = () => {

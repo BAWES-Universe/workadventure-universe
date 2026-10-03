@@ -683,14 +683,6 @@ class LocalUserStore {
         return localStorage.getItem("backgroundImage");
     }
 
-    setBackgroundVideo(value: string) {
-        localStorage.setItem("backgroundVideo", value);
-    }
-
-    getBackgroundVideo(): string | null {
-        return localStorage.getItem("backgroundVideo");
-    }
-
     getRequestedStatus(): RequestedStatus | null {
         return requestedStatusFactory.createRequestedStatus(localStorage.getItem(requestedStatus));
     }

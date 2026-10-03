@@ -23,11 +23,20 @@
     import { localUserStore } from "../../Connection/LocalUserStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { LL } from "../../../i18n/i18n-svelte";
-    import PopUpBackgroundCamera from "../PopUp/PopUpBackgroundCamera.svelte";
-    import { popupStore } from "../../Stores/PopupStore";
-    import { IconCamera, IconMicrophoneOn, IconHeadphones, IconCheck, IconPhoto } from "@wa-icons";
+    import { backgroundProcessingEnabledStore } from "../../Stores/BackgroundTransformStore";
+    import BackgroundPanel from "./BackgroundPanel.svelte";
+    import { IconCamera, IconMicrophoneOn, IconHeadphones, IconCheck } from "@wa-icons";
 
     export let mediaSettingsDisplayed = false;
+
+    let tab: "devices" | "background" = "devices";
+
+    function showTab(newTab: "devices" | "background") {
+        if (newTab === "background" && tab !== "background") {
+            analyticsClient.openBackgroundSettings();
+        }
+        tab = newTab;
+    }
 
     const dispatch = createEventDispatcher<{
         close: void;
@@ -72,13 +81,6 @@
             requestedMicrophoneState.enableMicrophone();
         }
     }
-
-    function openBackgroundSettings() {
-        const actionId = "backgroundCamera";
-        popupStore.addPopup(PopUpBackgroundCamera, {}, actionId);
-        analyticsClient.openBackgroundSettings();
-        dispatch("close");
-    }
 </script>
 
 <!-- Same box as before: 256px wide, under the mic and camera on desktop and above them on phones, centred on them.
@@ -91,133 +93,157 @@
     in:fly={{ y: 40, duration: 150 }}
     use:clickOutside={() => dispatch("close")}
 >
-    <div class="relative z-10 flex flex-col min-h-0 flex-1 overflow-auto px-1.5 pt-2 pb-1 *:shrink-0">
-        <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.camera()}</div>
-        {#if $silentStore == false && $requestedCameraState && $cameraListStore && $cameraListStore.length > 0}
-            {#each $cameraListStore as camera, index (index)}
-                <button
-                    type="button"
-                    class="device-row group min-h-10 mobile:min-h-12"
-                    class:selected={$usedCameraDeviceIdStore === camera.deviceId}
-                    aria-pressed={$usedCameraDeviceIdStore === camera.deviceId}
-                    title={StringUtils.normalizeDeviceName(camera.label)}
-                    on:click|stopPropagation|preventDefault={() => {
-                        analyticsClient.selectCamera();
-                        selectCamera(camera.deviceId);
-                    }}
-                >
-                    <span class="device-tile"><IconCamera font-size="16" /></span>
-                    <span class="device-name">{StringUtils.normalizeDeviceName(camera.label)}</span>
-                    {#if $usedCameraDeviceIdStore === camera.deviceId}
-                        <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
-                    {/if}
-                </button>
-            {/each}
-            <button
-                type="button"
-                class="u-cta-secondary flex items-center justify-center gap-2 h-9 mobile:h-11 mx-1 mt-1 mb-0.5 rounded-xl text-[13px] font-bold text-nowrap"
-                on:click={() => analyticsClient.microphone()}
-                on:click={openBackgroundSettings}
-            >
-                <IconPhoto font-size="15" />
-                {$LL.actionbar.camera.setBackground()}
-            </button>
-        {:else}
-            <div class="device-off">
-                <span class="device-off-dot" />
-                {#if $cameraListStore == undefined || $cameraListStore.length == 0}
-                    {$LL.actionbar.camera.noDevices()}
-                {:else}
-                    {$LL.actionbar.camera.disabled()}
-                {/if}
-            </div>
-            {#if $silentStore == false && $requestedCameraState == false}
-                <button
-                    type="button"
-                    class="u-cta flex items-center justify-center h-10 mobile:h-12 mx-1 mb-1 rounded-xl text-sm font-bold"
-                    on:click={() => analyticsClient.camera()}
-                    on:click={cameraClick}
-                >
-                    {$LL.actionbar.camera.activate()}
-                </button>
-            {/if}
-        {/if}
-        <div class="h-px bg-white/10 mx-1.5 my-1.5" />
-        <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.microphone()}</div>
-        {#if $silentStore == false && $requestedMicrophoneState && $microphoneListStore && $microphoneListStore.length > 0}
-            {#each $microphoneListStore as microphone, index (index)}
-                <button
-                    type="button"
-                    class="device-row group min-h-10 mobile:min-h-12"
-                    class:selected={$usedMicrophoneDeviceIdStore === microphone.deviceId}
-                    aria-pressed={$usedMicrophoneDeviceIdStore === microphone.deviceId}
-                    title={StringUtils.normalizeDeviceName(microphone.label)}
-                    on:click={() => {
-                        analyticsClient.selectMicrophone();
-                    }}
-                    on:click|stopPropagation|preventDefault={() => selectMicrophone(microphone.deviceId)}
-                >
-                    <span class="device-tile"><IconMicrophoneOn font-size="16" /></span>
-                    <span class="device-name">{StringUtils.normalizeDeviceName(microphone.label)}</span>
-                    {#if $usedMicrophoneDeviceIdStore === microphone.deviceId}
-                        <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
-                    {/if}
-                </button>
-            {/each}
-        {:else}
-            <div class="device-off">
-                <span class="device-off-dot" />
-                {#if $microphoneListStore == undefined || $microphoneListStore.length == 0}
-                    {$LL.actionbar.microphone.noDevices()}
-                {:else}
-                    {$LL.actionbar.microphone.disabled()}
-                {/if}
-            </div>
-            {#if $silentStore == false && $requestedMicrophoneState == false}
-                <button
-                    type="button"
-                    class="u-cta flex items-center justify-center h-10 mobile:h-12 mx-1 mb-1 rounded-xl text-sm font-bold"
-                    on:click={() => analyticsClient.microphone()}
-                    on:click={microphoneClick}
-                >
-                    {$LL.actionbar.microphone.activate()}
-                </button>
-            {/if}
-        {/if}
-        {#if $speakerListStore !== undefined}
-            <div class="h-px bg-white/10 mx-1.5 my-1.5" />
-            <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.speaker()}</div>
-        {/if}
-        {#if $speakerSelectedStore != undefined && $speakerListStore && $speakerListStore.length > 0}
-            {#each $speakerListStore as speaker, index (index)}
-                <button
-                    type="button"
-                    class="device-row group min-h-10 mobile:min-h-12"
-                    class:selected={$speakerSelectedStore === speaker.deviceId}
-                    aria-pressed={$speakerSelectedStore === speaker.deviceId}
-                    title={StringUtils.normalizeDeviceName(speaker.label)}
-                    on:click={() => {
-                        analyticsClient.selectSpeaker();
-                    }}
-                    on:click|stopPropagation|preventDefault={() => selectSpeaker(speaker.deviceId)}
-                >
-                    <span class="device-tile"><IconHeadphones font-size="16" /></span>
-                    <span class="device-name">{StringUtils.normalizeDeviceName(speaker.label)}</span>
-                    {#if $speakerSelectedStore === speaker.deviceId}
-                        <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
-                    {/if}
-                </button>
-            {/each}
-        {:else if $speakerListStore !== undefined}
-            <div class="device-off">
-                {#if $speakerListStore.length === 0}
-                    {$LL.actionbar.speaker.noDevices()}
-                {:else}
-                    {$LL.actionbar.speaker.disabled()}
-                {/if}
-            </div>
-        {/if}
+    <!-- Devices | Background: pill tabs in the same violet as the selected device. The dot means an effect is on. -->
+    <div class="tabs relative z-10 mx-1.5 mt-1.5" role="tablist">
+        <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "devices"}
+            class:on={tab === "devices"}
+            on:click|stopPropagation={() => showTab("devices")}>{$LL.camera.backgroundEffects.devicesTab()}</button
+        >
+        <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "background"}
+            class:on={tab === "background"}
+            data-testid="background-tab"
+            on:click|stopPropagation={() => showTab("background")}
+        >
+            {$LL.camera.backgroundEffects.backgroundTab()}
+            {#if $backgroundProcessingEnabledStore}<span class="tab-dot" />{/if}
+        </button>
     </div>
+    {#if tab === "background"}
+        <div
+            class="relative z-10 flex flex-col min-h-0 flex-1 overflow-auto px-1.5 pt-2 pb-1 *:shrink-0"
+            role="tabpanel"
+        >
+            <BackgroundPanel />
+        </div>
+    {:else}
+        <div
+            class="relative z-10 flex flex-col min-h-0 flex-1 overflow-auto px-1.5 pt-2 pb-1 *:shrink-0"
+            role="tabpanel"
+        >
+            <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.camera()}</div>
+            {#if $silentStore == false && $requestedCameraState && $cameraListStore && $cameraListStore.length > 0}
+                {#each $cameraListStore as camera, index (index)}
+                    <button
+                        type="button"
+                        class="device-row group min-h-10 mobile:min-h-12"
+                        class:selected={$usedCameraDeviceIdStore === camera.deviceId}
+                        aria-pressed={$usedCameraDeviceIdStore === camera.deviceId}
+                        title={StringUtils.normalizeDeviceName(camera.label)}
+                        on:click|stopPropagation|preventDefault={() => {
+                            analyticsClient.selectCamera();
+                            selectCamera(camera.deviceId);
+                        }}
+                    >
+                        <span class="device-tile"><IconCamera font-size="16" /></span>
+                        <span class="device-name">{StringUtils.normalizeDeviceName(camera.label)}</span>
+                        {#if $usedCameraDeviceIdStore === camera.deviceId}
+                            <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
+                        {/if}
+                    </button>
+                {/each}
+            {:else}
+                <div class="device-off">
+                    <span class="device-off-dot" />
+                    {#if $cameraListStore == undefined || $cameraListStore.length == 0}
+                        {$LL.actionbar.camera.noDevices()}
+                    {:else}
+                        {$LL.actionbar.camera.disabled()}
+                    {/if}
+                </div>
+                {#if $silentStore == false && $requestedCameraState == false}
+                    <button
+                        type="button"
+                        class="u-cta flex items-center justify-center h-10 mobile:h-12 mx-1 mb-1 rounded-xl text-sm font-bold"
+                        on:click={() => analyticsClient.camera()}
+                        on:click={cameraClick}
+                    >
+                        {$LL.actionbar.camera.activate()}
+                    </button>
+                {/if}
+            {/if}
+            <div class="h-px bg-white/10 mx-1.5 my-1.5" />
+            <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.microphone()}</div>
+            {#if $silentStore == false && $requestedMicrophoneState && $microphoneListStore && $microphoneListStore.length > 0}
+                {#each $microphoneListStore as microphone, index (index)}
+                    <button
+                        type="button"
+                        class="device-row group min-h-10 mobile:min-h-12"
+                        class:selected={$usedMicrophoneDeviceIdStore === microphone.deviceId}
+                        aria-pressed={$usedMicrophoneDeviceIdStore === microphone.deviceId}
+                        title={StringUtils.normalizeDeviceName(microphone.label)}
+                        on:click={() => {
+                            analyticsClient.selectMicrophone();
+                        }}
+                        on:click|stopPropagation|preventDefault={() => selectMicrophone(microphone.deviceId)}
+                    >
+                        <span class="device-tile"><IconMicrophoneOn font-size="16" /></span>
+                        <span class="device-name">{StringUtils.normalizeDeviceName(microphone.label)}</span>
+                        {#if $usedMicrophoneDeviceIdStore === microphone.deviceId}
+                            <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
+                        {/if}
+                    </button>
+                {/each}
+            {:else}
+                <div class="device-off">
+                    <span class="device-off-dot" />
+                    {#if $microphoneListStore == undefined || $microphoneListStore.length == 0}
+                        {$LL.actionbar.microphone.noDevices()}
+                    {:else}
+                        {$LL.actionbar.microphone.disabled()}
+                    {/if}
+                </div>
+                {#if $silentStore == false && $requestedMicrophoneState == false}
+                    <button
+                        type="button"
+                        class="u-cta flex items-center justify-center h-10 mobile:h-12 mx-1 mb-1 rounded-xl text-sm font-bold"
+                        on:click={() => analyticsClient.microphone()}
+                        on:click={microphoneClick}
+                    >
+                        {$LL.actionbar.microphone.activate()}
+                    </button>
+                {/if}
+            {/if}
+            {#if $speakerListStore !== undefined}
+                <div class="h-px bg-white/10 mx-1.5 my-1.5" />
+                <div class="u-eyebrow px-2 py-1.5">{$LL.actionbar.subtitle.speaker()}</div>
+            {/if}
+            {#if $speakerSelectedStore != undefined && $speakerListStore && $speakerListStore.length > 0}
+                {#each $speakerListStore as speaker, index (index)}
+                    <button
+                        type="button"
+                        class="device-row group min-h-10 mobile:min-h-12"
+                        class:selected={$speakerSelectedStore === speaker.deviceId}
+                        aria-pressed={$speakerSelectedStore === speaker.deviceId}
+                        title={StringUtils.normalizeDeviceName(speaker.label)}
+                        on:click={() => {
+                            analyticsClient.selectSpeaker();
+                        }}
+                        on:click|stopPropagation|preventDefault={() => selectSpeaker(speaker.deviceId)}
+                    >
+                        <span class="device-tile"><IconHeadphones font-size="16" /></span>
+                        <span class="device-name">{StringUtils.normalizeDeviceName(speaker.label)}</span>
+                        {#if $speakerSelectedStore === speaker.deviceId}
+                            <IconCheck font-size="16" class="shrink-0 text-[#c4b5fd]" />
+                        {/if}
+                    </button>
+                {/each}
+            {:else if $speakerListStore !== undefined}
+                <div class="device-off">
+                    {#if $speakerListStore.length === 0}
+                        {$LL.actionbar.speaker.noDevices()}
+                    {:else}
+                        {$LL.actionbar.speaker.disabled()}
+                    {/if}
+                </div>
+            {/if}
+        </div>
+    {/if}
     <div class="relative z-10 flex shrink-0 gap-2 p-2.5 border-t border-white/5">
         <button
             type="button"
@@ -243,6 +269,49 @@
     }
     .device-list button {
         font-family: inherit;
+    }
+    .tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px;
+        padding: 3px;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+    .tabs button {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border: 1px solid transparent;
+        border-radius: 9999px;
+        font-size: 13px;
+        font-weight: 700;
+        color: rgba(255, 255, 255, 0.62);
+        cursor: pointer;
+        transition: background-color 150ms ease, color 150ms ease;
+    }
+    .tabs button:hover:not(.on) {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .tabs button:focus-visible {
+        outline: 2px solid rgba(196, 181, 253, 0.9);
+        outline-offset: -2px;
+    }
+    .tabs button.on {
+        background: rgba(134, 41, 252, 0.2);
+        border-color: rgba(167, 139, 250, 0.45);
+        color: #fff;
+    }
+    .tab-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 9999px;
+        background: linear-gradient(135deg, #8629fc, #4156f6);
+        box-shadow: 0 0 0 2px rgba(134, 41, 252, 0.3);
     }
     .device-row {
         display: flex;

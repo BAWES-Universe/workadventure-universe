@@ -1,8 +1,9 @@
+import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import type { BackgroundConfig, BackgroundTransformer } from "./createBackgroundTransformer";
 
 /**
  * Fallback transformer that doesn't transform anything
- * Used when MediaStreamTrackProcessor is not available or fails
+ * Used when MediaPipe initialization or processing is not available.
  */
 export class FallbackBackgroundTransformer implements BackgroundTransformer {
     private outputTrack: MediaStreamTrack | null = null;
@@ -17,7 +18,10 @@ export class FallbackBackgroundTransformer implements BackgroundTransformer {
         return Promise.resolve();
     }
 
-    public transform(inputStream: MediaStream): Promise<MediaStream> {
+    public async transform(inputStream: MediaStream, signal?: AbortSignal): Promise<MediaStream> {
+        if (signal?.aborted) {
+            throw signal.reason ?? new AbortError("Fallback transform aborted");
+        }
         // For FallbackBackgroundTransformer, we return the original stream unchanged
         this.outputTrack = inputStream.getVideoTracks()[0];
         return Promise.resolve(inputStream);

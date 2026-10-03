@@ -1,5 +1,3 @@
-import { basename } from "path";
-import fs from "fs";
 import { defineConfig, loadEnv } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { sveltePreprocess } from "svelte-preprocess";
@@ -30,7 +28,6 @@ export default defineConfig(({ mode }) => {
             sourcemap: env.GENERATE_SOURCEMAP !== "false",
             outDir: "./dist/public",
             rollupOptions: {
-                plugins: [mediapipe_workaround()],
                 // external: ["@mediapipe/tasks-vision"],
                 //plugins: [inject({ Buffer: ["buffer/", "Buffer"] })],
             },
@@ -129,20 +126,3 @@ export default defineConfig(({ mode }) => {
     }
     return config;
 });
-
-// use to fix the build issue with mediapipe ==> https://github.com/tensorflow/tfjs/issues/7165
-// TODO: remove this when we migrate to mediapipe/tasks-vision
-function mediapipe_workaround() {
-    return {
-        name: "mediapipe_workaround",
-        load(id: string) {
-            if (basename(id) === "selfie_segmentation.js") {
-                let code = fs.readFileSync(id, "utf-8");
-                code += "exports.SelfieSegmentation = SelfieSegmentation;";
-                return { code };
-            } else {
-                return null;
-            }
-        },
-    };
-}
