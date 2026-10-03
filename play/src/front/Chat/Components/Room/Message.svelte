@@ -18,12 +18,31 @@
     import MessageReactions from "./MessageReactions.svelte";
     import MessageIncoming from "./Message/MessageIncoming.svelte";
     import MessageOutcoming from "./Message/MessageOutcoming.svelte";
-    import { IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
+    import MessageActionMenu from "./MessageActions/MessageActionMenu.svelte";
+    import QuotedMessage from "./MessageActions/QuotedMessage.svelte";
+    import { messageGestures } from "./MessageActions/messageGestures";
+    import { availableActions, hasAnyAction, replyTo } from "./MessageActions/availableActions";
+    import { IconArrowBackUp, IconInfoCircle, IconPaperclip, IconTrash } from "@wa-icons";
 
     export let message: ChatMessage;
     export let replyDepth = 0;
 
     let messageRef: HTMLDivElement | undefined;
+    let bubbleRef: HTMLDivElement | undefined;
+    let menuOpen = false;
+    let barOpen = false;
+    let barRef: HTMLDivElement | undefined;
+    /** "side": next to the bubble, in the empty space toward the middle of the chat. "above": over its inner top corner. */
+    let barPlacement: "side" | "above" = "side";
+
+    function placeBar() {
+        if (!barRef || !bubbleRef || !messageRef) return;
+        const row = messageRef.getBoundingClientRect();
+        const bubble = bubbleRef.getBoundingClientRect();
+        const room = isMyMessage ? bubble.left - row.left : row.right - bubble.right;
+        barPlacement = room >= barRef.offsetWidth + 12 ? "side" : "above";
+    }
+    let swipeProgress = 0;
 
     const dispatch = createEventDispatcher<{
         updateMessageBody: { id: string };
@@ -65,6 +84,33 @@
         proximity: MessageText as ComponentType,
     };
 
+    const actions = availableActions(message);
+    $: actionable =
+        replyDepth === 0 &&
+        !isQuotedMessage &&
+        !$isDeleted &&
+        !messageFromSystem &&
+        ($selectedChatMessageToEdit === null || $selectedChatMessageToEdit.id !== id) &&
+        hasAnyAction($actions);
+    $: if (!actionable) menuOpen = false;
+
+    function openMenu() {
+        if (!actionable || !bubbleRef) return;
+        menuOpen = true;
+    }
+
+    /** Tapping a quote scrolls to the message it quotes, if it is loaded, and flashes it. */
+    function jumpToQuoted() {
+        if (!quotedMessage) return;
+        const target = document.querySelector(`[data-event-id="${CSS.escape(quotedMessage.id)}"]`);
+        if (!(target instanceof HTMLElement)) return;
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.classList.remove("quote-flash");
+        void target.offsetWidth;
+        target.classList.add("quote-flash");
+        setTimeout(() => target.classList.remove("quote-flash"), 1600);
+    }
+
     const reactionsWithUsers = derived(
         [reactions, ...Array.from(reactions.values()).map((reaction) => reaction.users)],
         ([$reactions, ...$users]) => {
@@ -73,15 +119,28 @@
     );
 </script>
 
+<!-- Hovering only decides where the hover bar goes; the bar's buttons are reachable with the keyboard. -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
     id="message"
     tabindex="-1"
     class={`${isMyMessage && "self-end flex-row-reverse relative"} ${
         messageFromSystem && "justify-center"
     } select-text block-user-action messageContainer items-center`}
+    class:menu-open={menuOpen}
+    class:bar-open={barOpen}
+    class:top-level={replyDepth === 0}
     bind:this={messageRef}
+    on:mouseenter={placeBar}
+    on:focusin={placeBar}
 >
     <div
+        use:messageGestures={{
+            onOpenMenu: openMenu,
+            onSwipeReply: actionable && $actions.reply ? () => replyTo(message) : undefined,
+            onSwipeProgress: (progress) => (swipeProgress = progress),
+            disabled: !actionable,
+        }}
         style={replyDepth === 0 ? "max-width: calc( 100% - 50px );" : "padding-left: 0"}
         class="message-grid container-grid justify-start overflow-visible relative {replyDepth === 0
             ? 'max-w-[calc(100% - 100px)]'
@@ -95,7 +154,19 @@
             </div>
         {/if}
 
+        {#if actionable && $actions.reply}
+            <span
+                class="swipe-reply"
+                style="opacity: {swipeProgress}; transform: translateY(-50%) scale({0.6 + swipeProgress * 0.4});"
+                aria-hidden="true"
+            >
+                <IconArrowBackUp font-size={14} />
+            </span>
+        {/if}
+
         <div
+            bind:this={bubbleRef}
+            class:lifted={menuOpen}
             class="message rounded-md
                     {$isDeleted && !isMyMessage && !messageFromSystem && replyDepth === 0 ? 'bg-white/10' : ''}
                     {$isDeleted && isMyMessage && !messageFromSystem && replyDepth === 0 ? 'bg-white/10' : ''}
@@ -117,6 +188,9 @@
             {:else}
                 {#if replyDepth > 0}
                     <div class="px-2 pt-1 text-xxs font-bold">{isMyMessage ? "You" : sender?.username}</div>
+                {/if}
+                {#if quotedMessage && replyDepth === 0}
+                    <QuotedMessage message={quotedMessage} onJump={jumpToQuoted} />
                 {/if}
 
                 {#if !notSent}
@@ -147,24 +221,13 @@
                 {/if}
 
                 {#if $reactionsWithUsers.length > 0}
-                    <MessageReactions
-                        classes={isMyMessage ? "bg-secondary/30 right-2" : "bg-contrast/30"}
-                        reactions={$reactionsWithUsers}
-                    />
+                    <MessageReactions classes={isMyMessage ? "right-2" : "left-2"} reactions={$reactionsWithUsers} />
                 {/if}
                 {#if $isModified}
                     <div class="text-white/50 text-xxs p-0 m-0 px-2 pb-1 text-right">
                         ({$LL.chat.messageEdited()})
                     </div>
                 {/if}
-            {/if}
-
-            {#if quotedMessage && replyDepth < 1 && !$isDeleted}
-                <div class="p-1 opacity-80">
-                    <div class="response bg-white/10 rounded">
-                        <svelte:self replyDepth={replyDepth + 1} message={quotedMessage} />
-                    </div>
-                </div>
             {/if}
         </div>
         {#if replyDepth <= 0}
@@ -193,16 +256,20 @@
                 >
             </div>
         {/if}
-        {#if !isQuotedMessage && !$isDeleted && message.type !== "proximity" && message.type !== "incoming" && message.type !== "outcoming" && ($selectedChatMessageToEdit === null || $selectedChatMessageToEdit.id !== id)}
+        {#if actionable && !menuOpen}
             <div
-                class="options absolute top-0 z-50 bg-contrast/80 rounded p-1 -translate-y-2/3 {!isMyMessage
-                    ? 'right-0 translate-x-1/3'
-                    : 'left-0 -translate-x-1/3'}"
+                bind:this={barRef}
+                class="options {barPlacement}"
+                class:mine={isMyMessage}
+                data-testid="messageHoverBar"
             >
-                <MessageOptions {message} {messageRef} />
+                <MessageOptions {message} {messageRef} bind:open={barOpen} />
             </div>
         {/if}
     </div>
+    {#if menuOpen && bubbleRef}
+        <MessageActionMenu {message} anchor={bubbleRef} onClose={() => (menuOpen = false)} />
+    {/if}
 </div>
 
 <style>
@@ -212,17 +279,107 @@
         position: relative;
     }
 
-    #message:hover .options {
-        display: flex;
-        flex-direction: row;
-        gap: 2px;
-        transition-delay: 0.5s;
-        opacity: 1;
+    /* Wide enough for the swipe and the menus, without ever making the timeline scroll sideways. */
+    #message.top-level {
+        overflow-x: clip;
     }
 
+    #message.menu-open {
+        z-index: 60;
+    }
+
+    #message.menu-open .messageHeader {
+        visibility: hidden;
+    }
+
+    /*
+     * The hover bar goes beside the bubble, toward the middle of the chat, so it covers nothing. When the bubble is too
+     * wide for that, it sits just above the bubble's inner end instead.
+     */
     .options {
-        transition: all 0.2s ease-in-out;
+        position: absolute;
+        grid-area: message;
+        z-index: 50;
         opacity: 0;
+        pointer-events: none;
+        transition: opacity 120ms ease;
+    }
+
+    .options.side {
+        top: -2px;
+        left: calc(100% + 6px);
+    }
+
+    .options.side.mine {
+        left: auto;
+        right: calc(100% + 6px);
+    }
+
+    .options.above {
+        top: -40px;
+        right: 0;
+    }
+
+    .options.above.mine {
+        right: auto;
+        left: 0;
+    }
+
+    @media (hover: hover) {
+        #message.top-level:hover .options,
+        #message.top-level:has(:focus-visible) .options,
+        #message.bar-open .options {
+            opacity: 1;
+            pointer-events: auto;
+        }
+    }
+
+    /* Phones use press and hold instead. */
+    @media (hover: none) {
+        .options {
+            display: none;
+        }
+
+        /* Holding a message opens our menu, not the phone's text selection or image menu ("Copy text" covers it). */
+        #message.top-level > .message-grid,
+        #message.top-level > .message-grid :global(*) {
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+        }
+    }
+
+    .swipe-reply {
+        position: absolute;
+        left: -30px;
+        top: 50%;
+        width: 24px;
+        height: 24px;
+        border-radius: 9999px;
+        display: grid;
+        place-items: center;
+        background: rgb(255 255 255 / 0.14);
+        color: #fff;
+        pointer-events: none;
+    }
+
+    .message.lifted {
+        transform: scale(1.02);
+        box-shadow: 0 14px 30px rgb(0 0 0 / 0.55);
+    }
+
+    :global(li.quote-flash) {
+        animation: quote-flash 1.6s ease-out;
+    }
+
+    @keyframes -global-quote-flash {
+        0%,
+        30% {
+            background-color: rgb(167 139 250 / 0.22);
+        }
+        100% {
+            background-color: transparent;
+        }
     }
 
     .container-grid {
@@ -242,16 +399,10 @@
         min-width: 180px;
         overflow-wrap: anywhere;
         position: relative;
-        transition: all 0.2s ease-in-out 0s;
+        transition: transform 160ms ease, box-shadow 160ms ease;
     }
 
-    .message.my:hover {
-        transform: translateY(-6px);
-        transition-delay: 0.5s;
-    }
     .message.my:hover + .messageHeader {
-        transform: translateY(2px);
-        transition-delay: 0.5s;
         opacity: 1;
     }
 
@@ -259,9 +410,5 @@
         grid-area: avatar;
         display: flex;
         /*align-items: flex-end;*/
-    }
-
-    .response {
-        grid-area: response;
     }
 </style>

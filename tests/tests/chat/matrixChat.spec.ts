@@ -271,6 +271,8 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
     await page.getByText(chatMessageContent).hover();
+    // Edit and delete live in the hover bar's "More" menu.
+    await page.getByTestId("messageMoreButton").click();
     await page.getByTestId("removeMessageButton").click();
     await expect(page.getByText(chatMessageContent)).not.toBeAttached();
 
@@ -293,6 +295,8 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
     await page.getByText(chatMessageContent).hover();
+    // Edit and delete live in the hover bar's "More" menu.
+    await page.getByTestId("messageMoreButton").click();
     await page.getByTestId("editMessageButton").click();
     await page.getByTestId("editMessageInput").fill(chatMessageEdited);
     await page.getByTestId("saveMessageEditionButton").click();
@@ -318,6 +322,8 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
     await page.getByText(chatMessageContent).hover();
+    // Edit and delete live in the hover bar's "More" menu.
+    await page.getByTestId("messageMoreButton").click();
     await page.getByTestId("editMessageButton").click();
     await page.getByTestId("editMessageInput").fill(chatMessageEdited);
     await page.getByTestId("cancelMessageEditionButton").click();

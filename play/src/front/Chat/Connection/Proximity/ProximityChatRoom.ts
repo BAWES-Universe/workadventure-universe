@@ -95,6 +95,9 @@ export class ProximityChatMessage implements ChatMessage {
     isDeleted = writable(false);
     isModified = writable(false);
     canDelete = writable(false);
+    // Nearby chat sends neither reactions nor quoted replies to the others yet.
+    canReact = writable(false);
+    canReply = writable(false);
     reactions: MapStore<string, ChatMessageReaction> = new MapStore();
     /**
      * Set on the local markers written when this tab joins or leaves a group, so the timeline can draw
