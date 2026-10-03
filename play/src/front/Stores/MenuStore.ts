@@ -419,10 +419,11 @@ export const mapEditorMenuVisibleStore = derived(
         return ($mapEditorActivated || $mapEditorActivatedForThematics) && $mapManagerActivated;
     }
 );
+// Room editors see the entry too, so they can turn the megaphone on from the Live message card.
 export const globalMessageVisibleStore = derived(
-    [megaphoneCanBeUsedStore, userIsAdminStore],
-    ([$megaphoneCanBeUsedStore, $userIsAdminStore]) => {
-        return $megaphoneCanBeUsedStore || $userIsAdminStore;
+    [megaphoneCanBeUsedStore, userIsAdminStore, mapEditorActivated],
+    ([$megaphoneCanBeUsedStore, $userIsAdminStore, $mapEditorActivated]) => {
+        return $megaphoneCanBeUsedStore || $userIsAdminStore || $mapEditorActivated;
     }
 );
 export const mapMenuVisibleStore = derived(

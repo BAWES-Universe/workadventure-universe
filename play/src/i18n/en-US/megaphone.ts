@@ -28,6 +28,10 @@ const megaphone: BaseTranslation = {
             An example of a live message use case: "Hello everyone, shall we start the conference? 🎉 Follow my avatar to the conference area and open the video app 🚀"
             `,
             settings: "Settings",
+            offInRoom: "Megaphone is off in this room",
+            turnOn: "Turn it on",
+            offAskEditor: "Megaphone is off in this room. Ask someone who can edit this room to turn it on.",
+            notAllowed: "You are not allowed to use the megaphone in this room. Ask a room admin for access.",
         },
         textMessage: {
             title: "Text message",
