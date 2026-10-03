@@ -2,6 +2,9 @@
     import { createEventDispatcher, onDestroy } from "svelte";
     import { fade } from "svelte/transition";
     import { lightboxOpenStore } from "../../../../Stores/UserInputStore";
+    import LL from "../../../../../i18n/i18n-svelte";
+    import { saveMessageFiles } from "../MessageActions/availableActions";
+    import { IconDownload } from "@wa-icons";
 
     export let src: string | undefined;
     export let alt: string | undefined;
@@ -11,6 +14,14 @@
     export let thumbnails: string[] = [];
     export let currentIndex: number = 0;
     export let isVideo: boolean = false;
+    /** The name the shown file was uploaded under, used when saving it. */
+    export let filename: string | undefined = undefined;
+
+    function save() {
+        if (!src) return;
+        const name = filename && filename.trim() !== "" ? filename : src.split("?")[0].split("/").pop() || "file";
+        saveMessageFiles([{ url: src, name }]).catch((error) => console.error(error));
+    }
 
     const dispatch = createEventDispatcher<{
         close: void;
@@ -304,6 +315,17 @@
         on:keydown={onKeyDown}
     >
         <div data-lightbox-content class="relative w-full h-full flex items-center justify-center" role="none">
+            <!-- Save button -->
+            <button
+                class="absolute top-4 right-16 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"
+                on:click|stopPropagation={save}
+                aria-label={$LL.chat.messageActions.save()}
+                title={$LL.chat.messageActions.save()}
+                data-testid="lightboxSaveButton"
+            >
+                <IconDownload font-size={24} />
+            </button>
+
             <!-- Close button -->
             <button
                 class="absolute top-4 right-4 z-10 p-2 rounded-full bg-black/40 text-white hover:bg-white/20 transition-colors"

@@ -147,6 +147,10 @@ export interface ChatMessage {
     isModified: Readable<boolean>;
     addReaction: (reaction: string) => Promise<void>;
     canDelete: Readable<boolean>;
+    /** Whether reactions on this message reach the other people in the chat. */
+    canReact: Readable<boolean>;
+    /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
+    canReply: Readable<boolean>;
 }
 
 export interface ChatMessageReaction {

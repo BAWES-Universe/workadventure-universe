@@ -145,3 +145,5 @@ export { default as IconDoor } from "~icons/tabler/door";
 export { default as IconPlanet } from "~icons/tabler/planet";
 export { default as IconLayoutNavbar } from "~icons/tabler/layout-navbar";
 export { default as IconZoomOutArea } from "~icons/tabler/zoom-out-area";
+export { default as IconMoodPlus } from "~icons/tabler/mood-plus";
+export { default as IconDownload } from "~icons/tabler/download";

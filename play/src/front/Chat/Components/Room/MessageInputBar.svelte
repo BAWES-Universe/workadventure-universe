@@ -50,6 +50,7 @@
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import MessageInput from "./MessageInput.svelte";
+    import ReplyPreview from "./MessageActions/ReplyPreview.svelte";
     import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
     import { mainUploadFailure, UploadFailure, uploadFailureReason } from "./UploadFailure";
     import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
@@ -872,8 +873,6 @@
     function onProcessedApplicationProperty() {
         applicationPropertyInProcessing = false;
     }
-
-    $: quotedMessageContent = $selectedChatMessageToReply?.content;
 </script>
 
 {#if files.length > 0 || uploadError}
@@ -1170,27 +1169,7 @@
 >
     {#if $selectedChatMessageToReply !== null}
         <div class="flex p-2 items-start absolute top-0 -translate-y-full w-full">
-            <div class="flex flex-row gap-2 items-center justify-between bg-contrast rounded w-full backdrop-blur">
-                <div class="flex flex-col p-2 rounded w-full">
-                    <span class="flex flex-row justify-between">
-                        <span class="text-sm text-gray-400">
-                            {$LL.chat.replyTo()}
-                        </span>
-                        <button class="p-2 m-0" on:click={unselectChatMessageToReply}>
-                            <!--<IconCircleX />-->
-                            <IconX font-size={18} />
-                        </button>
-                    </span>
-                    <div class="flex row w-full border-l border-l-white/10 ml-1 border-solid border-0">
-                        <p
-                            class=" text-xs text-white/30 rounded-md p-2 m-0 truncate w-full text-ellipsis"
-                            style:overflow-wrap="anywhere"
-                        >
-                            {$quotedMessageContent?.body}
-                        </p>
-                    </div>
-                </div>
-            </div>
+            <ReplyPreview message={$selectedChatMessageToReply} onClose={unselectChatMessageToReply} />
         </div>
     {/if}
     <MessageInput
