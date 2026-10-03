@@ -61,7 +61,6 @@ export enum SubMenusInterface {
     profile = "profile",
     invite = "invite",
     aboutRoom = "credit",
-    globalMessages = "globalMessages",
     contact = "contact",
     report = "report",
     chat = "chat",
@@ -115,11 +114,6 @@ function createSubMenusStore() {
             type: "translated",
             key: SubMenusInterface.aboutRoom,
             visible: alwaysVisible,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.globalMessages,
-            visible: userIsAdminStore,
         },
         {
             type: "translated",
@@ -260,6 +254,16 @@ export function handleMenuUnregisterEvent(key: string) {
 }
 
 export function handleOpenMenuEvent(key: string) {
+    // The "Global messages" menu page was removed in favour of the Tools > "Send global message" modal.
+    // Scripts that still open it by key get the modal instead, for whoever sees the menu entry for it.
+    if (key === "globalMessages") {
+        if (get(globalMessageVisibleStore)) {
+            menuVisiblilityStore.set(false);
+            showModalGlobalComminucationVisibilityStore.set(true);
+            analyticsClient.globalMessage();
+        }
+        return;
+    }
     const menu = subMenusStore.findByKey(key);
     activeSubMenuStore.activateByMenuItem(menu);
     menuVisiblilityStore.set(true);
@@ -433,10 +437,11 @@ export const mapEditorMenuVisibleStore = derived(
         return ($mapEditorActivated || $mapEditorActivatedForThematics) && $mapManagerActivated;
     }
 );
+// Room editors see the entry too, so they can turn the megaphone on from the Live message card.
 export const globalMessageVisibleStore = derived(
-    [megaphoneCanBeUsedStore, userIsAdminStore],
-    ([$megaphoneCanBeUsedStore, $userIsAdminStore]) => {
-        return $megaphoneCanBeUsedStore || $userIsAdminStore;
+    [megaphoneCanBeUsedStore, userIsAdminStore, mapEditorActivated],
+    ([$megaphoneCanBeUsedStore, $userIsAdminStore, $mapEditorActivated]) => {
+        return $megaphoneCanBeUsedStore || $userIsAdminStore || $mapEditorActivated;
     }
 );
 export const mapMenuVisibleStore = derived(

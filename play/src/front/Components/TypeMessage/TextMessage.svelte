@@ -1,16 +1,16 @@
 <script lang="ts">
     import { fade } from "svelte/transition";
-    import { QuillDeltaToHtmlConverter } from "quill-delta-to-html";
     import type { Message } from "../../Stores/TypeMessageStore/MessageStore";
     import { textMessageStore } from "../../Stores/TypeMessageStore/TextMessageStore";
     import ButtonClose from "../Input/ButtonClose.svelte";
+    import { renderGlobalTextMessage } from "./renderGlobalTextMessage";
 
     /* eslint-disable svelte/no-at-html-tags */
 
     export let message: Message;
 
     const content = JSON.parse(message.text);
-    const converter = new QuillDeltaToHtmlConverter(content.ops, { inlineStyles: true });
+    const html = renderGlobalTextMessage(content.ops);
 
     function closeTextMessage() {
         textMessageStore.clearMessageById(message.id);
@@ -31,7 +31,7 @@
 >
     <div class="icon mt-3 text-white text-xl">💬</div>
     <div class="content-text-message flex text-white max-h-60 w-full overflow-auto mr-6">
-        {@html converter.convert()}
+        {@html html}
     </div>
     <ButtonClose on:click={closeTextMessage} />
 </div>

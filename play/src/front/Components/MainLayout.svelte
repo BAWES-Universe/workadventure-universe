@@ -44,6 +44,7 @@
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import { mapEditorSideBarWidthStore } from "./MapEditor/MapEditorSideBarWidthStore";
+    import { mapEditorIsMobileLayoutStore } from "./MapEditor/MapEditorTools";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
     import HelpNotificationSettingsPopup from "./HelpSettings/HelpNotificationSettingPopup.svelte";
@@ -121,8 +122,11 @@
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
     $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
     // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
+    // On mobile the map editor panel is a bottom sheet, so it takes no width from the layout.
     $: marginRight =
-        $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
+        $mapEditorVisibilityStore &&
+        $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor &&
+        !$mapEditorIsMobileLayoutStore
             ? $mapEditorSideBarWidthStore
             : 0;
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.

@@ -6,6 +6,9 @@ import { requestedScreenSharingState } from "./ScreenSharingStore";
 
 export const currentLiveStreamingSpaceStore = writable<SpaceInterface | undefined>();
 export const megaphoneCanBeUsedStore = writable<boolean>(false);
+// Whether the megaphone is on in this room at all, whatever this user's rights (the server only sends a megaphone URL
+// when it is on).
+export const megaphoneEnabledInRoomStore = writable<boolean>(false);
 
 export const requestedMegaphoneStore = writable<boolean>(false);
 
