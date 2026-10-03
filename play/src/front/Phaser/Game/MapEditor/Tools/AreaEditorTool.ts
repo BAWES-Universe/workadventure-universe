@@ -393,6 +393,15 @@ export class AreaEditorTool extends MapEditorTool {
                 }
             }
 
+            if (
+                pointer.wasTouch &&
+                sortedAreaPreviews.length === 0 &&
+                this.mapEditorModeManager.isDraggingToLookAround
+            ) {
+                // A finger pan keeps the selected area; a tap on the empty map still deselects it, as a click does.
+                return;
+            }
+
             if (currentlySelectedArea) {
                 if (!sortedAreaPreviews.includes(currentlySelectedArea)) {
                     if (document.activeElement instanceof HTMLElement) {
