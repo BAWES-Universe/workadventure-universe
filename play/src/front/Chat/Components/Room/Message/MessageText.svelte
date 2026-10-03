@@ -4,6 +4,7 @@
     import { onDestroy, onMount, createEventDispatcher } from "svelte";
     import remend from "remend";
     import type { ChatMessageContent } from "../../../Connection/ChatConnection";
+    import { linkifyBareDomains } from "../../../LinkPreview/ChatLinks";
     import { sanitizeHTML } from "./WA-HTML-Sanitizer";
     export let content: Readable<ChatMessageContent>;
     export let hasDepth: false;
@@ -59,7 +60,7 @@
             let promiseHtml = getMarked(healed).then((marked) => marked.parse(healed));
             promiseHtml
                 .then((result) => {
-                    html = result;
+                    html = linkifyBareDomains(result);
                 })
                 .catch((error) => {
                     console.error("Failed to parse markdown content", error);

@@ -1,23 +1,8 @@
-<script context="module" lang="ts">
-    // Create interface for the property
-    export interface ApplicationProperty {
-        name: string;
-        img: string;
-        title: string;
-        description: string;
-        link: string;
-        placeholder: string;
-        regexUrl: string | undefined;
-        targetEmbedableUrl: string | undefined;
-    }
-</script>
-
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
     import { fly } from "svelte/transition";
     import { v4 as uuid } from "uuid";
     import type { EmojiClickEvent } from "emoji-picker-element/shared";
-    import { defautlNativeIntegrationAppName } from "@workadventure/shared-utils";
     import { readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
@@ -28,18 +13,7 @@
     import { ProximityChatRoom } from "../../Connection/Proximity/ProximityChatRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { chatInputFocusStore } from "../../../Stores/ChatStore";
-    import { connectionManager } from "../../../Connection/ConnectionManager";
 
-    import youtubeSvg from "../../../Components/images/applications/icon_youtube.svg";
-    import klaxoonSvg from "../../../Components/images/applications/icon_klaxoon.svg";
-    import googleDriveSvg from "../../../Components/images/applications/icon_google_drive.svg";
-    import googleDocsSvg from "../../../Components/images/applications/icon_google_docs.svg";
-    import googleSheetsSvg from "../../../Components/images/applications/icon_google_sheets.svg";
-    import googleSlidesSvg from "../../../Components/images/applications/icon_google_slides.svg";
-    import eraserSvg from "../../../Components/images/applications/icon_eraser.svg";
-    import excalidrawSvg from "../../../Components/images/applications/icon_excalidraw.svg";
-    import cardsPng from "../../../Components/images/applications/icon_cards.svg";
-    import tldrawJpeg from "../../../Components/images/applications/icon_tldraw.jpeg";
     import { showFloatingUi } from "../../../Utils/svelte-floatingui-show";
     import LazyEmote from "../../../Components/EmoteMenu/LazyEmote.svelte";
     import { composerDraftStore } from "../../Stores/ComposerDraftStore";
@@ -49,7 +23,6 @@
     import { UPLOADER_URL } from "../../../Enum/EnvironmentVariable";
     import MessageInput from "./MessageInput.svelte";
     import { captureSendDestination, isSendDestinationOpen, spaceGenerationOf } from "./SendDestination";
-    import ApplicationFormWrapper from "./Application/ApplicationFormWrapper.svelte";
     import { IconMoodSmile, IconPaperclip, IconSend, IconX } from "@wa-icons";
 
     // Frontend pre-check constants (server enforces the real limits)
@@ -87,7 +60,6 @@
     let filesPreview: { id: string; size: number; name: string; type: string; url: FileReader["result"] }[] = [];
     const TYPINT_TIMEOUT = 10000;
 
-    let applicationComponentOpened = false;
     let fileAttachementEnabled = false;
     let isUploading = false;
     let uploadError: string | null = null;
@@ -104,7 +76,6 @@
         }, 5000);
     }
 
-    let applicationProperty: ApplicationProperty | undefined = undefined;
     let replyMessageId: string | null = null;
     // Drafts are kept per conversation.
     // - Saved rooms and DMs: in IndexedDB, as always, so they survive a reload.
@@ -184,7 +155,7 @@
     }
 
     async function sendMessage(messageToSend: string) {
-        // Every send path (Enter, the Send button, files, application link) ends the typing status.
+        // Every send path (Enter, the Send button, files) ends the typing status.
         stopTypingNow();
 
         // Where this message is meant to go, captured now: an upload may finish after the bubble has changed.
@@ -192,19 +163,10 @@
         const submittedAt = new Date();
         const submittedDraft = message;
 
-        const hasSomethingToSend =
-            (applicationProperty !== undefined && applicationProperty.link.length !== 0) ||
-            files.length > 0 ||
-            messageToSend.trim().length !== 0;
+        const hasSomethingToSend = files.length > 0 || messageToSend.trim().length !== 0;
         if (hasSomethingToSend) {
             analyticsClient.chatMessageSent(room instanceof ProximityChatRoom ? "proximity" : "matrix");
         }
-        if (applicationProperty && applicationProperty.link.length !== 0) {
-            room?.sendMessage(applicationProperty.link);
-        }
-        // close application part
-        applicationProperty = undefined;
-        applicationComponentOpened = false;
 
         // send files
         if (files && files.length > 0) {
@@ -477,7 +439,6 @@
                 replyingToMessageId: replyMessageId ?? null,
             });
         }
-        if (setTimeOutProperty) clearTimeout(setTimeOutProperty);
         closeEmojiPicker?.();
         closeEmojiPicker = undefined;
         selectedChatChatMessageToReplyUnsubscriber();
@@ -601,152 +562,6 @@
         chatInputFocusStore.set(false);
     }
 
-    // This function open the application part to propose to the user to add a new application or close application part
-    function toggleApplicationComponent() {
-        applicationComponentOpened = !applicationComponentOpened;
-        applicationProperty = undefined;
-    }
-    // This function open form to send a link to the user
-    let setTimeOutProperty: ReturnType<typeof setTimeout>;
-    function openLinkForm(appName: string) {
-        applicationProperty = undefined;
-        // Use setTimeout to force the component to be updated
-        if (setTimeOutProperty) clearTimeout(setTimeOutProperty);
-        setTimeOutProperty = setTimeout(() => {
-            applicationProperty = getPropertyFromType(appName);
-        }, 0);
-    }
-
-    function getPropertyFromType(subtype: string) {
-        let placeholder: string;
-        let title: string;
-        let description: string;
-        let img: string;
-        let name: string;
-        let regexUrl: string | undefined;
-        let targetEmbedableUrl: string | undefined;
-        switch (subtype) {
-            case "youtube": {
-                name = defautlNativeIntegrationAppName.YOUTUBE;
-                placeholder = "https://www.youtube.com/watch?v=Y9ubBWf5w20";
-                title = $LL.chat.form.application.youtube.title();
-                description = $LL.chat.form.application.youtube.description();
-                img = youtubeSvg;
-                break;
-            }
-            case "klaxoon": {
-                name = defautlNativeIntegrationAppName.KLAXOON;
-                placeholder = "https://app.klaxoon.com/";
-                title = $LL.chat.form.application.klaxoon.title();
-                description = $LL.chat.form.application.klaxoon.description();
-                img = klaxoonSvg;
-                break;
-            }
-            case "googleDrive": {
-                name = defautlNativeIntegrationAppName.GOOGLE_DRIVE;
-                placeholder = "https://drive.google.com/file/d/1DjNjZVbVeQO9EvgONLzCtl6wG-kxSr9Z/preview";
-                title = $LL.chat.form.application.googleDrive.title();
-                description = $LL.chat.form.application.googleDrive.description();
-                img = googleDriveSvg;
-                break;
-            }
-            case "googleDocs": {
-                name = defautlNativeIntegrationAppName.GOOGLE_DOCS;
-                placeholder = "https://docs.google.com/document/d/1iFHmKL4HJ6WzvQI-6FlyeuCy1gzX8bWQ83dNlcTzigk/edit";
-                title = $LL.chat.form.application.googleDocs.title();
-                description = $LL.chat.form.application.googleDocs.description();
-                img = googleDocsSvg;
-                break;
-            }
-            case "googleSheets": {
-                name = defautlNativeIntegrationAppName.GOOGLE_SHEETS;
-                placeholder =
-                    "https://docs.google.com/spreadsheets/d/1SBIn3IBG30eeq944OhT4VI_tSg-b1CbB0TV0ejK70RA/edit";
-                title = $LL.chat.form.application.googleSheets.title();
-                description = $LL.chat.form.application.googleSheets.description();
-                img = googleSheetsSvg;
-                break;
-            }
-            case "googleSlides": {
-                name = defautlNativeIntegrationAppName.GOOGLE_SLIDES;
-                placeholder =
-                    "https://docs.google.com/presentation/d/1fU4fOnRiDIvOoVXbksrF2Eb0L8BYavs7YSsBmR_We3g/edit";
-                title = $LL.chat.form.application.googleSlides.title();
-                description = $LL.chat.form.application.googleSlides.description();
-                img = googleSlidesSvg;
-                break;
-            }
-            case "eraser": {
-                name = defautlNativeIntegrationAppName.ERASER;
-                placeholder = "https://app.eraser.io/workspace/ExSd8Z4wPsaqMMgTN4VU";
-                title = $LL.chat.form.application.eraser.title();
-                description = $LL.chat.form.application.eraser.description();
-                img = eraserSvg;
-                break;
-            }
-            case "excalidraw": {
-                name = defautlNativeIntegrationAppName.EXCALIDRAW;
-                placeholder = "https://excalidraw.workadventu.re/";
-                title = $LL.chat.form.application.excalidraw.title();
-                description = $LL.chat.form.application.excalidraw.description();
-                img = excalidrawSvg;
-                break;
-            }
-            case "cards": {
-                name = defautlNativeIntegrationAppName.CARDS;
-                placeholder = "https://member.workadventu.re?tenant=<your cards tenant>&learning=<Your cards learning>";
-                title = $LL.chat.form.application.cards.title();
-                description = $LL.chat.form.application.cards.description();
-                img = cardsPng;
-                break;
-            }
-            case "tldraw": {
-                name = defautlNativeIntegrationAppName.TLDRAW;
-                placeholder = "https://tldraw.com/";
-                title = $LL.chat.form.application.tldraw.title();
-                description = $LL.chat.form.application.tldraw.description();
-                img = tldrawJpeg;
-                break;
-            }
-            default: {
-                const app = connectionManager.applications.find((app) => app.name === subtype);
-                if (app == undefined) throw new Error(`Application ${subtype} not found`);
-
-                name = app.name;
-                placeholder = app.description ?? "";
-                title = app.name;
-                description = app.description ?? "";
-                img = app.image ?? "";
-                regexUrl = app.regexUrl;
-                targetEmbedableUrl = app.targetUrl;
-                break;
-            }
-        }
-        return {
-            name,
-            placeholder,
-            title,
-            description,
-            img,
-            link: "",
-            regexUrl,
-            targetEmbedableUrl,
-        };
-    }
-
-    function onUpdatApplicationProperty(applicationPropertyEvent: CustomEvent<ApplicationProperty>) {
-        applicationProperty = applicationPropertyEvent.detail;
-    }
-
-    let applicationPropertyInProcessing = false;
-    function onProcessingApplicationProperty() {
-        applicationPropertyInProcessing = true;
-    }
-
-    function onProcessedApplicationProperty() {
-        applicationPropertyInProcessing = false;
-    }
-
     $: quotedMessageContent = $selectedChatMessageToReply?.content;
 </script>
 
@@ -834,201 +649,6 @@
         </div>
     </div>
 {/if}
-{#if applicationComponentOpened}
-    <div class="w-full bg-contrast/50 rounded-t-2xl">
-        <div class="flex flex-wrap w-full justify-between items-center p-2 gap-2">
-            <button
-                data-testid="youtubeApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("youtube")}
-                class:bg-secondary-800={applicationProperty?.name === "youtube"}
-                disabled={!connectionManager.youtubeToolActivated}
-            >
-                <img draggable="false" class="w-8" src={youtubeSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.youtube.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.youtubeToolActivated
-                        ? $LL.chat.form.application.youtube.description()
-                        : $LL.mapEditor.properties.youtube.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="klaxoonApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("klaxoon")}
-                class:bg-secondary-800={applicationProperty?.name === "klaxoon"}
-                disabled={!connectionManager.klaxoonToolActivated}
-            >
-                <img draggable="false" class="w-8" src={klaxoonSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.klaxoon.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.klaxoonToolActivated
-                        ? $LL.chat.form.application.klaxoon.description()
-                        : $LL.mapEditor.properties.klaxoon.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="googleSheetsApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("googleSheets")}
-                class:bg-secondary-800={applicationProperty?.name === "googleSheets"}
-                disabled={!connectionManager.googleSheetsToolActivated}
-            >
-                <img draggable="false" class="w-8" src={googleSheetsSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.googleSheets.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.googleSheetsToolActivated
-                        ? $LL.chat.form.application.googleSheets.description()
-                        : $LL.mapEditor.properties.googleSheets.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="googleDocsApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("googleDocs")}
-                class:bg-secondary-800={applicationProperty?.name === "googleDocs"}
-                disabled={!connectionManager.googleDocsToolActivated}
-            >
-                <img draggable="false" class="w-8" src={googleDocsSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.googleDocs.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.googleDocsToolActivated
-                        ? $LL.chat.form.application.googleDocs.description()
-                        : $LL.mapEditor.properties.googleDocs.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="googleSlidesApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("googleSlides")}
-                class:bg-secondary-800={applicationProperty?.name === "googleSlides"}
-                disabled={!connectionManager.googleSlidesToolActivated}
-            >
-                <img draggable="false" class="w-8" src={googleSlidesSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.googleSlides.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.googleSheetsToolActivated
-                        ? $LL.chat.form.application.googleSlides.description()
-                        : $LL.mapEditor.properties.googleSlides.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="googleDriveApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("googleDrive")}
-                class:bg-secondary-800={applicationProperty?.name === "googleDrive"}
-                disabled={!connectionManager.googleSheetsToolActivated}
-            >
-                <img draggable="false" class="w-8" src={googleDriveSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.googleDrive.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.googleDriveToolActivated
-                        ? $LL.chat.form.application.googleDrive.description()
-                        : $LL.mapEditor.properties.googleDrive.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="eraserApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("eraser")}
-                class:bg-secondary-800={applicationProperty?.name === "eraser"}
-                disabled={!connectionManager.eraserToolActivated}
-            >
-                <img draggable="false" class="w-8" src={eraserSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.eraser.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.eraserToolActivated
-                        ? $LL.chat.form.application.eraser.description()
-                        : $LL.mapEditor.properties.eraser.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="excalidrawApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("excalidraw")}
-                class:bg-secondary-800={applicationProperty?.name === "excalidraw"}
-                disabled={!connectionManager.excalidrawToolActivated}
-            >
-                <img draggable="false" class="w-8" src={excalidrawSvg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.excalidraw.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.excalidrawToolActivated
-                        ? $LL.chat.form.application.excalidraw.description()
-                        : $LL.mapEditor.properties.excalidraw.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="cardsApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("cards")}
-                class:bg-secondary-800={applicationProperty?.name === "cards"}
-                disabled={!connectionManager.cardsToolActivated}
-            >
-                <img draggable="false" class="w-8" src={cardsPng} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.cards.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.cardsToolActivated
-                        ? $LL.chat.form.application.cards.description()
-                        : $LL.mapEditor.properties.cards.disabled()}
-                </p>
-            </button>
-
-            <button
-                data-testid="tldrawApplicationButton"
-                class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                on:click={() => openLinkForm("tldraw")}
-                class:bg-secondary-800={applicationProperty?.name === "tldraw"}
-                disabled={!connectionManager.tldrawToolActivated}
-            >
-                <img draggable="false" class="w-8" src={tldrawJpeg} alt="info icon" />
-                <h2 class="text-sm p-0 m-0">{$LL.chat.form.application.tldraw.title()}</h2>
-                <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                    {connectionManager.tldrawToolActivated
-                        ? $LL.chat.form.application.tldraw.description()
-                        : $LL.mapEditor.properties.tldraw.disabled()}
-                </p>
-            </button>
-        </div>
-
-        <div class="flex flex-wrap w-full justify-between items-center p-2 gap-2">
-            {#each connectionManager.applications as app, index (`my-own-app-${index}`)}
-                <button
-                    data-testid="{app.name}ApplicationButton"
-                    class="p-2 m-0 flex flex-col w-36 items-center justify-center hover:bg-white/10 rounded-2xl gap-2 disabled:opacity-50"
-                    class:bg-secondary-800={applicationProperty?.name === app.name}
-                    on:click={() => openLinkForm(app.name)}
-                >
-                    <img draggable="false" class="w-8" src={app.image} alt="info icon" />
-                    <h2 class="text-sm p-0 m-0">{app.name}</h2>
-                    <p class="text-xs p-0 m-0 h-12 w-full overflow-hidden overflow-ellipsis text-gray-400">
-                        {app.description}
-                    </p>
-                </button>
-            {/each}
-        </div>
-    </div>
-{/if}
-{#if applicationProperty}
-    <div
-        class="flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50"
-    >
-        <ApplicationFormWrapper
-            property={applicationProperty}
-            on:close={() => (applicationProperty = undefined)}
-            on:update={onUpdatApplicationProperty}
-            on:processing={onProcessingApplicationProperty}
-            on:processed={onProcessedApplicationProperty}
-        />
-    </div>
-{/if}
 <div
     class="flex w-full flex-none items-center border border-solid border-b-0 border-x-0 border-t-1 border-white/10 bg-contrast/50 relative"
     bind:this={messageBarRef}
@@ -1110,28 +730,16 @@
         <IconPaperclip font-size={18} />
     </button>
     <button
-        data-testid="addApplicationButton"
-        class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
-        class:bg-secondary-800={applicationComponentOpened}
-        on:click={toggleApplicationComponent}
-    >
-        <IconX
-            font-size={18}
-            class={applicationComponentOpened ? "rotate-0" : "rotate-45"}
-            style="transition: all .2s ease-out;"
-        />
-    </button>
-    <button
         class="p-0 m-0 h-11 w-11 flex items-center justify-center hover:bg-white/10 rounded-none"
         on:click={openCloseEmojiPicker}
     >
         <IconMoodSmile font-size={18} />
     </button>
-    {#if message.trim().length !== 0 || files.length !== 0 || (applicationProperty && applicationProperty.link.length !== 0)}
+    {#if message.trim().length !== 0 || files.length !== 0}
         <button
             data-testid="sendMessageButton"
             class="disabled:opacity-30 disabled:!cursor-none disabled:text-white py-0 px-3 m-0 bg-secondary h-full rounded-none"
-            disabled={applicationPropertyInProcessing || isUploading}
+            disabled={isUploading}
             on:click={() => sendMessage(message).catch((error) => console.error(error))}
         >
             <IconSend />
