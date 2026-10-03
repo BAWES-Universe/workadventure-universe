@@ -57,13 +57,20 @@
     async function startRecording() {
         error = undefined;
         state = "starting";
+        let started: VoiceRecorder;
         try {
-            recorder = await startVoiceRecorder();
+            started = await startVoiceRecorder();
         } catch (e) {
             console.warn("Broadcast: the microphone could not be opened for a voice note", e);
             state = "blocked";
             return;
         }
+        // The card closed while the browser was asking for the microphone: let it go again.
+        if (destroyed) {
+            started.stop().catch(() => {});
+            return;
+        }
+        recorder = started;
         state = "recording";
         seconds = 0;
         const startedAt = Date.now();
