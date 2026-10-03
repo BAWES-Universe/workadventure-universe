@@ -438,12 +438,17 @@ export class GameScene extends DirtyScene {
     private latestBroadcastChannels: { scope: string; url: string }[] = [];
     /** The scopes whose space join is still in flight (the registry joins a name twice if asked twice). */
     private readonly pendingBroadcastJoins = new Set<string>();
+    /** Set once the scene is closing: a join that lands after that must not touch the destroyed registry. */
+    private broadcastSceneClosing = false;
 
     /**
      * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
      * leaves the ones that are gone, so a live broadcast on any reach that covers this room arrives here.
      */
     private syncBroadcastSpaces(channels: { scope: string; url: string }[], broadcastService: BroadcastService): void {
+        if (this.broadcastSceneClosing) {
+            return;
+        }
         this.latestBroadcastChannels = channels;
         if (!this._spaceRegistry) {
             console.warn("No space registry available for megaphone space management");
@@ -505,7 +510,7 @@ export class GameScene extends DirtyScene {
                 .finally(() => {
                     this.pendingBroadcastJoins.delete(scope);
                     // The channels may have changed while this join was in flight: settle on the latest.
-                    if (this.latestBroadcastChannels !== channels && !this.abortController.signal.aborted) {
+                    if (this.latestBroadcastChannels !== channels && !this.broadcastSceneClosing) {
                         this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
                     }
                 });
@@ -1246,6 +1251,10 @@ export class GameScene extends DirtyScene {
     }
 
     public cleanupClosingScene(): void {
+        // No broadcast join may land on a destroyed registry.
+        this.broadcastSceneClosing = true;
+        this.pendingBroadcastJoins.clear();
+        this.latestBroadcastChannels = [];
         // A person card belongs to this map: close it before the map and its players go (a reconnect, a map change).
         wokaMenuStore.clear();
         // make sure we restart own medias
