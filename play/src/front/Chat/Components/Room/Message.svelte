@@ -316,7 +316,7 @@
     }
 
     .options.above {
-        top: -40px;
+        top: -28px;
         right: 0;
     }
 
