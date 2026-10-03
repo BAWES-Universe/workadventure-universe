@@ -468,7 +468,14 @@ export class MediaPipeTasksVisionWorkerTransformer implements BackgroundTransfor
                 const timestampMs = Math.max(performance.now(), this.lastTimestampMs + 1);
                 this.lastTimestampMs = timestampMs;
                 this.activeFrameId = frameId;
-                this.postToWorker({ type: "process-frame", frameId, frame, timestampMs }, [frame]);
+                try {
+                    this.postToWorker({ type: "process-frame", frameId, frame, timestampMs }, [frame]);
+                } catch (error) {
+                    // Nothing will answer this frame, so free the slot or the video would stop for good.
+                    this.activeFrameId = null;
+                    frame.close();
+                    throw error;
+                }
             })
             .catch((error: unknown) => {
                 console.warn("[MediaPipe Tasks Vision] Failed to create or transfer a camera frame:", error);

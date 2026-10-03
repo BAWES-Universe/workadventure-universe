@@ -245,6 +245,39 @@ describe("MediaPipeTasksVisionWorkerRuntime", () => {
         expect([width, height, freshMask]).toEqual([3, 4, true]);
     });
 
+    it("keeps rendering the current effect while a new background image downloads", async () => {
+        let finishDownload: (response: unknown) => void = () => undefined;
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(
+                () =>
+                    new Promise((resolve) => {
+                        finishDownload = resolve;
+                    })
+            )
+        );
+        vi.stubGlobal(
+            "createImageBitmap",
+            vi.fn(() => Promise.resolve({ width: 8, height: 6, close: vi.fn() }))
+        );
+        send({ type: "initialize", config: { mode: "blur", blurAmount: 25 } });
+        await waitForPosted(1);
+
+        send({ type: "update-config", requestId: 7, config: { mode: "image", backgroundImage: "/bg.jpg" } });
+        send({ type: "process-frame", frameId: 1, frame: createBitmap(), timestampMs: 10 });
+        await waitForPosted(2);
+        expect(lastPosted()).toMatchObject({ type: "frame", frameId: 1, bitmap: transferredBitmap });
+        expect(compositorMocks.drawBlur).toHaveBeenCalledOnce();
+        expect(compositorMocks.drawReplace).not.toHaveBeenCalled();
+
+        finishDownload({ ok: true, blob: () => Promise.resolve({}) });
+        await vi.waitFor(() =>
+            expect(posted.some((message) => message.type === "config-updated" && message.requestId === 7)).toBe(true)
+        );
+        send({ type: "process-frame", frameId: 2, frame: createBitmap(), timestampMs: 20 });
+        await vi.waitFor(() => expect(compositorMocks.drawReplace).toHaveBeenCalledOnce());
+    });
+
     it("switches to the landscape model once a landscape frame arrives, without skipping frames", async () => {
         send({ type: "initialize", config: { mode: "blur" } });
         await waitForPosted(1);
