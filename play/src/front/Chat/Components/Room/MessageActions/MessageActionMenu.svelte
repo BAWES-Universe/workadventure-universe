@@ -140,10 +140,10 @@
         }
     }
 
-    function openPicker(event: MouseEvent) {
-        const target = event.currentTarget;
+    function openPicker() {
         onClose();
-        openReactionPicker(message, target instanceof Element && target.isConnected ? target : anchor);
+        // Anchored to the message: this menu, and the button that was tapped, go away as the picker opens.
+        openReactionPicker(message, anchor);
     }
 
     onMount(() => {
