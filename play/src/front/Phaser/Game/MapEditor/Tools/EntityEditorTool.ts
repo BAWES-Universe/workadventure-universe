@@ -11,8 +11,10 @@ import {
     mapEditorEntityModeStore,
     mapEditorEntityUploadEventStore,
     mapEditorModifyCustomEntityEventStore,
+    mapEditorSelectedEntityPrefabStore,
     mapEditorSelectedEntityStore,
     mapEditorSelectedToolStore,
+    mapEditorVisibilityStore,
 } from "../../../../Stores/MapEditorStore";
 import { TexturesHelper } from "../../../Helpers/TexturesHelper";
 import { CopyEntityEventData, EntitiesManagerEvent } from "../../GameMap/EntitiesManager";
@@ -27,7 +29,7 @@ import { EditorToolName } from "../MapEditorModeManager";
 import { AreaPreview } from "../../../Components/MapEditor/AreaPreview";
 import type { Entity } from "../../../ECS/Entity";
 import { mapEditorActivated } from "../../../../Stores/MenuStore";
-import { editRecentObjectsStore, editTouchPreviewStore } from "../../../../Stores/EditModeStore";
+import { editObjectsViewStore, editRecentObjectsStore, editTouchPreviewStore } from "../../../../Stores/EditModeStore";
 import { EntityRelatedEditorTool } from "./EntityRelatedEditorTool";
 
 export class EntityEditorTool extends EntityRelatedEditorTool {
@@ -568,9 +570,15 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             .then(() => {
                 const openEntity = this.entitiesManager.getEntities().get(entityId);
                 if (get(mapEditorEntityFileDroppedStore)) {
+                    // A dropped file is placed once: placing ends and the new object's settings open, with the file
+                    // in them, as the old editor did.
                     mapEditorEntityFileDroppedStore.set(false);
+                    mapEditorCopiedEntityDataPropertiesStore.set(undefined);
+                    mapEditorSelectedEntityPrefabStore.set(undefined);
                     mapEditorEntityModeStore.set("EDIT");
                     mapEditorSelectedEntityStore.set(openEntity);
+                    editObjectsViewStore.set("settings");
+                    mapEditorVisibilityStore.set(true);
                 }
             })
             .catch((e) => console.error(e));
