@@ -22,15 +22,23 @@ function fakeHandle() {
 
 class FakeAudioContext {
     state = "running";
-    resume = vi.fn(() => Promise.resolve());
+    resume = vi.fn(() => {
+        this.state = "running";
+        return Promise.resolve();
+    });
+    suspend = vi.fn(() => {
+        this.state = "suspended";
+        return Promise.resolve();
+    });
     close = vi.fn(() => {
         this.state = "closed";
         return Promise.resolve();
     });
     createMediaStreamSource = vi.fn(() => fakeNode());
-    createMediaStreamDestination = vi.fn(() => ({
-        stream: { getAudioTracks: () => [{ kind: "audio", stop: vi.fn() }] },
-    }));
+    createMediaStreamDestination = vi.fn(() => {
+        const track = { kind: "audio", stop: vi.fn() };
+        return { stream: { getAudioTracks: () => [track] } };
+    });
 }
 
 class FakeMediaStream {
@@ -71,6 +79,40 @@ describe("NoiseSuppressionTransformer", () => {
 
         expect(createWorklet).toHaveBeenCalledTimes(1);
         expect(observeMessages).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the previous output playing until the new microphone is wired", async () => {
+        createWorklet.mockResolvedValue(fakeHandle());
+        const transformer = new NoiseSuppressionTransformer();
+        const firstOutput = await transformer.transform({ id: "a" } as unknown as MediaStreamTrack);
+
+        const resume = deferred<void>();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (transformer as any).audioContext.resume.mockReturnValueOnce(resume.promise);
+        const pending = transformer.transform({ id: "b" } as unknown as MediaStreamTrack);
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        expect(firstOutput.stop).not.toHaveBeenCalled();
+
+        resume.resolve();
+        const secondOutput = await pending;
+        expect(secondOutput).not.toBe(firstOutput);
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        expect(firstOutput.stop).toHaveBeenCalledOnce();
+    });
+
+    it("pauses the audio context when stopped and resumes it on the next transform", async () => {
+        createWorklet.mockResolvedValue(fakeHandle());
+        const transformer = new NoiseSuppressionTransformer();
+        await transformer.transform({ id: "a" } as unknown as MediaStreamTrack);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const audioContext = (transformer as any).audioContext as FakeAudioContext;
+
+        transformer.stop();
+        expect(audioContext.suspend).toHaveBeenCalledOnce();
+        expect(audioContext.state).toBe("suspended");
+
+        await transformer.transform({ id: "a" } as unknown as MediaStreamTrack);
+        expect(audioContext.state).toBe("running");
     });
 
     it("disposes a worklet that finishes loading after the transformer was destroyed", async () => {

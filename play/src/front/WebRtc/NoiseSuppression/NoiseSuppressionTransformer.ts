@@ -65,7 +65,7 @@ export class NoiseSuppressionTransformer {
             return this.outputTrack;
         }
 
-        this.stop();
+        // The previous output keeps playing until the new one is wired, so a microphone switch has no silent gap.
         this.onStatusChange?.({
             status: this.lastProcessorStatus === "ready" ? "ready" : "initializing",
         });
@@ -80,24 +80,36 @@ export class NoiseSuppressionTransformer {
         }
 
         const inputStream = new MediaStream([inputTrack]);
-        this.sourceNode = this.audioContext.createMediaStreamSource(inputStream);
-        this.destinationNode = this.audioContext.createMediaStreamDestination();
-
-        this.sourceNode.connect(this.workletHandle.node);
-        this.workletHandle.node.connect(this.destinationNode);
-
-        const outputTrack = this.destinationNode.stream.getAudioTracks()[0];
+        const sourceNode = this.audioContext.createMediaStreamSource(inputStream);
+        const destinationNode = this.audioContext.createMediaStreamDestination();
+        const outputTrack = destinationNode.stream.getAudioTracks()[0];
         if (!outputTrack) {
             throw new Error("Noise suppression worklet did not produce an audio track.");
         }
 
+        this.disconnectGraph();
+        sourceNode.connect(this.workletHandle.node);
+        this.workletHandle.node.connect(destinationNode);
+
+        this.sourceNode = sourceNode;
+        this.destinationNode = destinationNode;
         this.outputTrack = outputTrack;
         this.inputTrack = inputTrack;
 
         return outputTrack;
     }
 
+    /** Disconnects the microphone and pauses the audio context, so the model uses no CPU until the next transform. */
     public stop(): void {
+        this.disconnectGraph();
+        if (this.audioContext.state === "running") {
+            this.audioContext.suspend().catch((error: unknown) => {
+                console.warn("[NoiseSuppressionTransformer] Could not pause the audio context:", error);
+            });
+        }
+    }
+
+    private disconnectGraph(): void {
         const workletNode = this.workletHandle?.node;
 
         if (this.sourceNode && workletNode) {
