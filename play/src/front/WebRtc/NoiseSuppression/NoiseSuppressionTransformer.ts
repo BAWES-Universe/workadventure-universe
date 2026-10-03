@@ -27,6 +27,9 @@ export class NoiseSuppressionTransformer {
     private lastProcessorStatus: NoiseSuppressionStatusMessage["status"] | undefined;
     private sourceNode: MediaStreamAudioSourceNode | undefined;
     private workletHandle: NoiseSuppressionAudioWorkletHandle | undefined;
+    // Shared by overlapping transform() calls, so only one worklet is ever created.
+    private workletHandleCreation: Promise<void> | undefined;
+    private destroyed = false;
     private stopObservingWorkletMessages: (() => void) | undefined;
     private destinationNode: MediaStreamAudioDestinationNode | undefined;
     private outputTrack: MediaStreamTrack | undefined;
@@ -138,9 +141,23 @@ export class NoiseSuppressionTransformer {
             return;
         }
 
+        if (!this.workletHandleCreation) {
+            this.workletHandleCreation = this.createWorkletHandle().finally(() => {
+                this.workletHandleCreation = undefined;
+            });
+        }
+        await this.workletHandleCreation;
+    }
+
+    private async createWorkletHandle(): Promise<void> {
         const workletHandle = await createNoiseSuppressionAudioWorklet(this.audioContext, {
             bypassUntilReady: true,
         });
+
+        if (this.destroyed) {
+            workletHandle.dispose();
+            throw new AbortError("Noise suppression transformer was destroyed");
+        }
 
         this.stopObservingWorkletMessages = observeNoiseSuppressionAudioWorkletMessages(
             workletHandle,
@@ -173,6 +190,7 @@ export class NoiseSuppressionTransformer {
     }
 
     public async closeAndDestroy(): Promise<void> {
+        this.destroyed = true;
         this.stop();
         this.stopObservingWorkletMessages?.();
         this.stopObservingWorkletMessages = undefined;
