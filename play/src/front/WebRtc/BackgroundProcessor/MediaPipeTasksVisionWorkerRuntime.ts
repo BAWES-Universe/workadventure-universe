@@ -77,6 +77,8 @@ export class MediaPipeTasksVisionWorkerRuntime {
     private fatal = false;
     private activeStream: { streamId: number; abortController: AbortController } | null = null;
     private messageQueue: Promise<void> = Promise.resolve();
+    // Once initialized, frames skip the queue so a background image still downloading never freezes the video.
+    private initialized = false;
 
     constructor(private readonly post: PostToMainThread) {}
 
@@ -89,6 +91,10 @@ export class MediaPipeTasksVisionWorkerRuntime {
         }
         if (message.type === "stop-stream") {
             this.stopStream(message.streamId);
+            return;
+        }
+        if (message.type === "process-frame" && this.initialized) {
+            this.processFrame(message.frameId, message.frame, message.timestampMs);
             return;
         }
         this.messageQueue = this.messageQueue
@@ -110,7 +116,8 @@ export class MediaPipeTasksVisionWorkerRuntime {
         this.config = { ...config };
         try {
             const delegate = await this.initializeMediaPipe();
-            await this.updateBackgroundImage();
+            this.applyBackgroundImage(await this.loadBackgroundImage(this.config));
+            this.initialized = true;
             this.post({ type: "ready", delegate });
         } catch (error) {
             this.dispose();
@@ -190,31 +197,40 @@ export class MediaPipeTasksVisionWorkerRuntime {
         this.model = model;
     }
 
-    private async updateBackgroundImage(): Promise<void> {
-        const nextUrl = this.config.mode === "image" ? this.config.backgroundImage : undefined;
-        if (nextUrl === this.backgroundImageUrl) {
+    /** Downloads the image the config needs, or returns undefined when the current one already fits. */
+    private async loadBackgroundImage(
+        config: BackgroundConfig
+    ): Promise<{ url: string | null; image: ImageBitmap | null } | undefined> {
+        const nextUrl = config.mode === "image" ? config.backgroundImage : undefined;
+        if ((nextUrl ?? null) === this.backgroundImageUrl) {
+            return undefined;
+        }
+        if (!nextUrl) {
+            return { url: null, image: null };
+        }
+        const response = await fetch(nextUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to load background image: HTTP ${response.status}`);
+        }
+        return { url: nextUrl, image: await createImageBitmap(await response.blob()) };
+    }
+
+    private applyBackgroundImage(loaded: { url: string | null; image: ImageBitmap | null } | undefined): void {
+        if (!loaded) {
             return;
         }
-
-        let nextBackgroundImage: ImageBitmap | null = null;
-        if (nextUrl) {
-            const response = await fetch(nextUrl);
-            if (!response.ok) {
-                throw new Error(`Failed to load background image: HTTP ${response.status}`);
-            }
-            nextBackgroundImage = await createImageBitmap(await response.blob());
-        }
-
         this.backgroundImage?.close();
-        this.backgroundImage = nextBackgroundImage;
-        this.backgroundImageUrl = nextUrl ?? null;
+        this.backgroundImage = loaded.image;
+        this.backgroundImageUrl = loaded.url;
         this.backgroundCanvas = null;
     }
 
     private async updateConfig(requestId: number, nextConfig: Partial<BackgroundConfig>): Promise<void> {
         try {
+            // Frames keep the current effect while the new image downloads; both switch together.
+            const loaded = await this.loadBackgroundImage({ ...this.config, ...nextConfig });
             Object.assign(this.config, nextConfig);
-            await this.updateBackgroundImage();
+            this.applyBackgroundImage(loaded);
             this.post({ type: "config-updated", requestId });
         } catch (error) {
             this.post({ type: "config-update-error", requestId, error: serializeError(error) });
@@ -474,7 +490,7 @@ export class MediaPipeTasksVisionWorkerRuntime {
         this.dispose();
         try {
             await this.initializeMediaPipe();
-            await this.updateBackgroundImage();
+            this.applyBackgroundImage(await this.loadBackgroundImage(this.config));
         } catch (error) {
             console.error("[MediaPipe Tasks Vision Worker] Recovery attempt failed:", error);
             return this.recover();
