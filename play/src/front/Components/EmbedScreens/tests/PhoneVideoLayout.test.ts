@@ -62,6 +62,11 @@ describe("phoneVideoLayout", () => {
         expect(phoneVideoLayout(7, W, 600, true, 6)).toMatchObject({ shown: 7, scrolls: true });
     });
 
+    it("lays out nobody until the space is measured", () => {
+        expect(phoneVideoLayout(3, NaN, 300)).toMatchObject({ shown: 0, more: 0 });
+        expect(phoneVideoLayout(3, W, NaN)).toMatchObject({ shown: 0, more: 0 });
+    });
+
     it("is the same for the same space, whichever sets it", () => {
         expect(phoneVideoLayout(9, W, 330)).toEqual(phoneVideoLayout(9, W, 330));
     });

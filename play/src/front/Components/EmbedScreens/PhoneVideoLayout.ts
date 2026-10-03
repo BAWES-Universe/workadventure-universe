@@ -71,7 +71,8 @@ export function phoneVideoLayout(
     everyone = false,
     max = Infinity
 ): PhoneVideoLayout {
-    if (count <= 0 || width <= 0) {
+    // No people, or a space not measured yet (NaN while the page lays out).
+    if (count <= 0 || !(width > 0) || !Number.isFinite(height)) {
         return { kind: "videos", width: PHONE_VIDEO_MIN_WIDTH, height: 90, shown: 0, more: 0, scrolls: false };
     }
     const facesPerRow = perRow(width, PHONE_FACE_SIZE);

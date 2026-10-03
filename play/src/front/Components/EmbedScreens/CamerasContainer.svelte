@@ -97,15 +97,17 @@
     // "+N" tapped: everyone, in a list that scrolls. Dragging the sheet or the white bar goes back to the layout.
     let showEveryone = false;
     let phoneLayout: PhoneVideoLayout | undefined;
-    $: phoneLayout = phoneLayoutOn
-        ? phoneVideoLayout(
-              $oneLineStreamableCollectionStore.length,
-              containerWidth,
-              phoneHeight,
-              showEveryone,
-              maximumVideosPerPage
-          )
-        : undefined;
+    // Not before the container is measured: its size is unknown (NaN) on the first pass after mounting.
+    $: phoneLayout =
+        phoneLayoutOn && containerWidth > 0 && Number.isFinite(phoneHeight)
+            ? phoneVideoLayout(
+                  $oneLineStreamableCollectionStore.length,
+                  containerWidth,
+                  phoneHeight,
+                  showEveryone,
+                  maximumVideosPerPage
+              )
+            : undefined;
     $: shownCount = phoneLayout && phoneLayout.more > 0 ? phoneLayout.shown : Infinity;
     // One line along the top (walking), or rows.
     $: line = isOnOneLine && !phoneLayoutOn;
