@@ -221,8 +221,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     const chatMessageContent = "This is a test message";
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
-    await page.getByText(chatMessageContent).hover();
-    await page.getByTestId("replyToMessageButton").click();
+    await ChatUtils.messageAction(page, chatMessageContent, "reply");
     await page.getByTestId("messageInput").fill("Sample response");
     await page.getByTestId("sendMessageButton").click();
     await expect(page.getByText(chatMessageContent)).toHaveCount(2);
@@ -244,8 +243,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     const chatMessageContent = "This is a test message";
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
-    await page.getByText(chatMessageContent).hover();
-    await page.getByTestId("openEmojiPickerButton").click();
+    await ChatUtils.messageAction(page, chatMessageContent, "react");
     await page.getByLabel('😀, grinning face, grinning,').click();
     await expect(page.locator('.reactions-bar').getByText('😀')).toBeVisible();
     await page.locator('.reactions-bar').getByText('😀').click();
@@ -270,10 +268,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     const chatMessageContent = "This is a test message";
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
-    await page.getByText(chatMessageContent).hover();
-    // Edit and delete live in the hover bar's "More" menu.
-    await page.getByTestId("messageMoreButton").click();
-    await page.getByTestId("removeMessageButton").click();
+    await ChatUtils.messageAction(page, chatMessageContent, "delete");
     await expect(page.getByText(chatMessageContent)).not.toBeAttached();
 
     await page.context().close();
@@ -294,10 +289,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     const chatMessageEdited = "This is a test edited message";
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
-    await page.getByText(chatMessageContent).hover();
-    // Edit and delete live in the hover bar's "More" menu.
-    await page.getByTestId("messageMoreButton").click();
-    await page.getByTestId("editMessageButton").click();
+    await ChatUtils.messageAction(page, chatMessageContent, "edit");
     await page.getByTestId("editMessageInput").fill(chatMessageEdited);
     await page.getByTestId("saveMessageEditionButton").click();
     await expect(page.getByText(chatMessageEdited)).toBeAttached();
@@ -321,10 +313,7 @@ test.describe("Matrix chat tests @oidc @matrix @nowebkit", () => {
     const chatMessageEdited = "This is a test edited message";
     await page.getByTestId("messageInput").fill(chatMessageContent);
     await page.getByTestId("sendMessageButton").click();
-    await page.getByText(chatMessageContent).hover();
-    // Edit and delete live in the hover bar's "More" menu.
-    await page.getByTestId("messageMoreButton").click();
-    await page.getByTestId("editMessageButton").click();
+    await ChatUtils.messageAction(page, chatMessageContent, "edit");
     await page.getByTestId("editMessageInput").fill(chatMessageEdited);
     await page.getByTestId("cancelMessageEditionButton").click();
     await expect(page.getByText(chatMessageEdited)).not.toBeAttached();
