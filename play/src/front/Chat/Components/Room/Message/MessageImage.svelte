@@ -9,6 +9,8 @@
 
     function openLightbox(e: MouseEvent) {
         e.preventDefault();
+        // Still loading: there's no image to show yet.
+        if (!$content.url) return;
         showLightbox = true;
     }
 
@@ -39,7 +41,12 @@
             </svg>
         </div>
     </div>
-    <img class="w-full object-cover max-h-52 rounded" src={$content.url} alt={$content.body} draggable="false" />
+    {#if $content.url}
+        <img class="w-full object-cover max-h-52 rounded" src={$content.url} alt={$content.body} draggable="false" />
+    {:else}
+        <!-- Matrix images are fetched with the access token first -->
+        <div class="w-48 max-w-full h-32 rounded bg-white/10 animate-pulse" data-testid="messageImageLoading" />
+    {/if}
 </a>
 
 {#if hasCaption}

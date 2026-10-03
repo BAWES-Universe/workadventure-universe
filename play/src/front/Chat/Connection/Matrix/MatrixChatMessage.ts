@@ -8,6 +8,7 @@ import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from 
 import { chatUserFactory } from "./MatrixChatUser";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { MatrixChatRelation } from "./MatrixChatRelation";
+import { resolveMatrixMediaUrl } from "./MatrixMedia";
 
 export class MatrixChatMessage implements ChatMessage {
     id: string;
@@ -76,11 +77,29 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     private initMessageContent(): Writable<ChatMessageContent> {
-        return writable(this.getMessageContent());
+        // The file is only downloaded once the message is shown.
+        return writable(this.getMessageContent(), () => {
+            this.loadMediaUrl();
+        });
     }
 
     private updateMessageContentOnDecryptedEvent() {
+        // Until it is decrypted, the event's type is m.room.encrypted: an image or file only shows as one now.
+        this.type = this.mapMatrixMessageTypeToChatMessage();
         this.content.set(this.getMessageContent());
+        this.loadMediaUrl();
+    }
+
+    /** Files need the access token to download (authenticated media): the URL arrives once fetched. */
+    private loadMediaUrl() {
+        if (this.type === "text" || this.event.isDecryptionFailure()) return;
+        const mxcUrl: unknown = this.event.getOriginalContent().url;
+        resolveMatrixMediaUrl(this.room.client, mxcUrl)
+            .then((url) => {
+                if (url === undefined || mxcUrl !== this.event.getOriginalContent().url) return;
+                this.content.update((content) => ({ ...content, url }));
+            })
+            .catch((error) => console.error(error));
     }
 
     private getMessageContent(): ChatMessageContent {
@@ -124,9 +143,11 @@ export class MatrixChatMessage implements ChatMessage {
         if (this.type !== "text") {
             return {
                 body: content.body,
-                url: this.room.client.mxcUrlToHttp(this.event.getOriginalContent().url) ?? undefined,
+                // Set by loadMediaUrl once the file is fetched.
+                url: undefined,
                 urls: undefined,
-                filename: undefined,
+                // The body of a Matrix file is its name: the blob: URL it loads from has none.
+                filename: this.type === "file" ? content.body : undefined,
                 fileNames: undefined,
             };
         }
