@@ -51,6 +51,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     search: "Rechercher",
     closeSearch: "Fermer recherche",
     closeChat: "Fermer le chat",
+    sheetHandle: "Hauteur du chat : faites glisser pour redimensionner, ou vers le bas pour fermer",
     connecting: "Connexion au serveur ...",
     waitingInit: "Attente de l'initialisation du serveur ...",
     waitingData: "En attentes des informations de l'utilisateur ...",

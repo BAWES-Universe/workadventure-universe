@@ -127,11 +127,9 @@
                     <RefreshChat />
                 {/if}
                 <ChatHeader />
-                <div
-                    class="relative pt-1 {$isEncryptionRequiredAndNotSet === true && $isGuest === false
-                        ? ' h-[calc(100%-2rem)]'
-                        : 'h-full'}"
-                >
+                <!-- Fills the panel above the invite footer, and grows past it with a long list: the footer then follows
+                     the last row instead of sitting over the rows that overflow (often on a phone's chat sheet). -->
+                <div class="relative pt-1 grow shrink-0">
                     {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
                         <ChatLoader label={$LL.chat.connecting()} />
                     {/if}
