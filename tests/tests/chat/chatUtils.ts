@@ -109,7 +109,7 @@ class ChatUtils {
 
   /**
    * Starts an action on a message the way the device offers it: the hover bar (and its "More" menu) with a mouse,
-   * the press-and-hold menu on a touch screen, where a right-click opens the same menu.
+   * the press-and-hold menu on a screen without hover.
    */
   public async messageAction(
     page: Page,
@@ -119,7 +119,9 @@ class ChatUtils {
     const message = page.getByText(messageText);
     const touchScreen = await page.evaluate(() => window.matchMedia("(hover: none)").matches);
     if (touchScreen) {
-      await message.click({ button: "right" });
+      // The same event a long press or a right-click sends. Headless desktop Firefox reports no hover, and its
+      // synthetic right-click doesn't reliably reach the menu, so the event is sent straight to the message.
+      await message.dispatchEvent("contextmenu");
       const menu = page.getByTestId("messageActionMenu");
       await expect(menu).toBeVisible();
       const item = {
