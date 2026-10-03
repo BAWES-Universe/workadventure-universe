@@ -34,7 +34,7 @@
             dispatch("sent");
         } catch (e) {
             console.error(e);
-            error = $LL.broadcast.voice.uploadFailed();
+            error = $LL.broadcast.write.sendFailed();
         }
     }
 </script>

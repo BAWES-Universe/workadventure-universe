@@ -50,6 +50,7 @@ const broadcast: BaseTranslation = {
     write: {
         placeholder: "Write your message",
         empty: "Write something first.",
+        sendFailed: "The message could not be sent. Try again.",
     },
     voice: {
         recording: "Recording. Tap to stop.",
@@ -75,6 +76,7 @@ const broadcast: BaseTranslation = {
         notice: "Everyone in {name:string} sees and hears you until you press End.",
         noticeNoName: "Everyone sees and hears you until you press End.",
         needs: "Turn on your mic, camera or screen to go live.",
+        notReady: "Not connected to this reach yet. Try again in a moment.",
         go: "Go live",
         live: "Live",
         end: "End",

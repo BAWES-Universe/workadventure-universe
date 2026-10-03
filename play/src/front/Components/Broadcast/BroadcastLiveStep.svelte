@@ -54,11 +54,16 @@
     let micTurnedOnHere = false;
     let wentLive = false;
 
+    // Said under the buttons when going live could not start (the reach's channel is not joined yet).
+    let error: string | undefined;
+
     function goLive() {
         if (!anythingOn) return;
         if (startLiveBroadcast(reach)) {
             wentLive = true;
             dispatch("live");
+        } else {
+            error = $LL.broadcast.live.notReady();
         }
     }
 
@@ -162,7 +167,9 @@
 </div>
 
 <p class="m-0 text-center text-sm text-white/60">
-    {#if !anythingOn}
+    {#if error}
+        <span class="text-[#f08a70]" role="alert">{error}</span>
+    {:else if !anythingOn}
         {$LL.broadcast.live.needs()}
     {:else if name}
         {$LL.broadcast.live.notice({ name })}
