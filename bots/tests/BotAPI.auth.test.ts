@@ -25,6 +25,9 @@ const adminApiService = {
     canSessionManageBot: vi.fn(),
     getBotConfigurations: vi.fn(),
     getAvailableAIProviders: vi.fn(),
+    getBotConfiguration: vi.fn(),
+    saveBotConfiguration: vi.fn(),
+    deleteBotConfiguration: vi.fn(),
 };
 
 let server: Server;
@@ -119,5 +122,63 @@ describe('bot server control routes', () => {
         const response = await fetch(`${base}/api/bots/ai-providers`);
         expect(response.status).toBe(401);
         expect(adminApiService.getAvailableAIProviders).not.toHaveBeenCalled();
+    });
+
+    // Sentry review on this PR: the per-bot routes behind the session check still let any signed-in person act on
+    // any bot, with the Admin API token behind them.
+    function call(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
+        return fetch(`${base}${path}`, {
+            method,
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SESSION}`, ...headers },
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+    }
+
+    it.each([
+        ['POST', '/api/bots/b1/spawn', undefined],
+        ['POST', '/api/bots/b1/despawn', undefined],
+        ['PUT', '/api/bots/b1', { name: 'Hijacked' }],
+        ['DELETE', '/api/bots/b1', undefined],
+        ['GET', '/api/bots/b1', undefined],
+        ['GET', '/api/bots/b1/conversations', undefined],
+        ['DELETE', '/api/bots/b1/conversations/cleanup', undefined],
+        ['GET', '/api/bots/b1/status', undefined],
+        ['POST', '/api/bots/test/run-suite', { testSuite: 'basic', botId: 'b1' }],
+    ])('refuses %s %s to a signed-in person who cannot manage the bot', async (method, path, body) => {
+        adminApiService.canSessionManageBot.mockResolvedValue(false);
+        const response = await call(method, path, body);
+        expect(response.status).toBe(403);
+        expect(adminApiService.canSessionManageBot).toHaveBeenCalledWith(SESSION, 'b1');
+        expect(botManager.spawnBot).not.toHaveBeenCalled();
+        expect(botManager.despawnBot).not.toHaveBeenCalled();
+        expect(adminApiService.getBotConfiguration).not.toHaveBeenCalled();
+        expect(adminApiService.saveBotConfiguration).not.toHaveBeenCalled();
+        expect(adminApiService.deleteBotConfiguration).not.toHaveBeenCalled();
+    });
+
+    it('despawns through the per-bot route for a person who can manage the bot', async () => {
+        const response = await call('POST', '/api/bots/b1/despawn');
+        expect(response.status).toBe(200);
+        expect(botManager.despawnBot).toHaveBeenCalledWith('b1');
+    });
+
+    it.each([
+        ['POST', '/api/bots', { roomUrl: 'r', behaviorType: 'idle' }],
+        ['GET', '/api/bots?roomUrl=r', undefined],
+        ['DELETE', '/api/bots/conversations/cleanup', undefined],
+        ['POST', '/api/bots/improve/cycle', {}],
+        ['POST', '/api/bots/metrics', { metrics: [] }],
+    ])('keeps operator tool %s %s from people, even bot managers', async (method, path, body) => {
+        process.env.BOT_SERVICE_TOKEN = 'service-secret';
+        expect((await call(method, path, body)).status).toBe(403);
+        expect((await call(method, path, body, { 'x-bot-service-token': 'wrong' })).status).toBe(403);
+        expect(adminApiService.saveBotConfiguration).not.toHaveBeenCalled();
+        expect(adminApiService.getBotConfigurations).not.toHaveBeenCalled();
+    });
+
+    it('lets an operator with the service token through', async () => {
+        process.env.BOT_SERVICE_TOKEN = 'service-secret';
+        const response = await call('POST', '/api/bots/metrics', { metrics: [] }, { 'x-bot-service-token': 'service-secret' });
+        expect(response.status).not.toBe(403);
     });
 });
