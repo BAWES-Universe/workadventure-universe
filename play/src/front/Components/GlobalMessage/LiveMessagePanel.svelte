@@ -274,7 +274,7 @@
                     class="btn btn-light flex-[2] justify-center"
                     data-testid="megaphone-start"
                     on:click={startLive}
-                    disabled={!$requestedCameraState && !$requestedMicrophoneState}
+                    disabled={nothingToStream}
                 >
                     {$LL.megaphone.modal.liveMessage.startMegaphone()}
                 </button>
