@@ -22,7 +22,7 @@ export function openGlobalMessageComposer(): void {
     if (get(mapEditorModeStore)) {
         // Unequip first, like closing the editor does, so it doesn't reopen on the tool in use
         // here (Map overview, say) next time.
-        gameManager.getCurrentGameScene().getMapEditorModeManager()?.equipTool(undefined);
+        gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.equipTool(undefined);
         mapEditorModeStore.switchMode(false);
     }
     showModalGlobalComminucationVisibilityStore.set(true);

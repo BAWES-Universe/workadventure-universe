@@ -16,10 +16,11 @@ export const EXPLORE_ZOOM_IN_RADIUS_AROUND_WOKA = 320;
  */
 export function enterExploreTheRoom(): void {
     // Without the map editor (ENABLE_MAP_EDITOR off) there is no tool to equip, and turning the
-    // mode on would only show editor UI whose buttons have nothing behind them.
+    // mode on would only show editor UI whose buttons have nothing behind them. Between two maps
+    // there is no scene at all, and nothing to explore.
     const mapEditorModeManager: MapEditorModeManager | undefined = gameManager
-        .getCurrentGameScene()
-        .getMapEditorModeManager();
+        .tryGetCurrentGameScene()
+        ?.getMapEditorModeManager();
     if (!mapEditorModeManager) return;
     if (!get(mapEditorModeStore)) {
         mapEditorModeStore.switchMode(true);
@@ -31,7 +32,7 @@ export function enterExploreTheRoom(): void {
 export function leaveExploreTheRoom(): void {
     // Equip the close tool first: it turns the mode off itself, so the editor does not remember
     // "Explore the room" as the tool to reopen with.
-    gameManager.getCurrentGameScene().getMapEditorModeManager()?.equipTool(EditorToolName.CloseMapEditor);
+    gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.equipTool(EditorToolName.CloseMapEditor);
     if (get(mapEditorModeStore)) {
         mapEditorModeStore.switchMode(false);
     }
