@@ -582,6 +582,29 @@ export class AreaEditorTool extends MapEditorTool {
             .catch((e) => console.error(e));
     }
 
+    /** Open an area's settings from the list in the panel. */
+    public selectArea(id: string): void {
+        const preview = this.getAreaPreview(id);
+        if (!preview) return;
+        this.changeAreaMode("EDIT", preview);
+    }
+
+    /** Back to the list: no area selected. */
+    public deselectArea(): void {
+        this.changeAreaMode("ADD");
+    }
+
+    /** Create an area from the box drawn in the "New area" overlay (phones and computers alike). */
+    public createNewAreaFromDraft(draft: { x: number; y: number; width: number; height: number }): void {
+        if (draft.width < 10 || draft.height < 10) return;
+        this.createNewArea(Math.round(draft.x), Math.round(draft.y), Math.round(draft.width), Math.round(draft.height));
+    }
+
+    /** Dragging the empty map moves around unless the mouse is drawing a new area. */
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return pointer.wasTouch && !this.drawingNewArea;
+    }
+
     private createNewArea(x: number, y: number, width: number, height: number): void {
         const id = uuid();
         this.mapEditorModeManager

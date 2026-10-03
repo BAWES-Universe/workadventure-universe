@@ -4,13 +4,15 @@ import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModu
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
 import { mapEditorModeStore, mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
+import { registerEditTool } from "../../Stores/EditModeStore";
+import LL from "../../../i18n/i18n-svelte";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { BOT_SERVER_URL } from "../../Enum/EnvironmentVariable";
 import { botApiService } from "./services/BotApiService";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
-import { IconMapPin } from "@wa-icons";
+import { IconMapPin, IconRobot } from "@wa-icons";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
 let botEditorOpen = false;
@@ -84,6 +86,8 @@ export function openBotEditorFromMenu(): void {
 }
 
 let _extensionOptions: ExtensionModuleOptions | null = null;
+let unregisterEditTool: (() => void) | undefined;
+let unsubscribeSelectedToolBridge: (() => void) | undefined;
 let toolButtonElement: HTMLElement | null = null;
 let sidebarContentElement: HTMLElement | null = null;
 // Svelte component instance. Removing its DOM element does not destroy it: its store subscriptions (and the auto-save
@@ -705,6 +709,29 @@ function setupBotEditor(options: ExtensionModuleOptions) {
             // Map editor is inactive, close bot editor and remove tool button
             closeBotEditor();
             removeBotEditorTool();
+        }
+    });
+
+    // The room editor's rail draws the "Bots" tool itself from the editor's tool registry, so no button has to be
+    // found in the DOM. Opening and closing follow the selected tool: picking "Bots" opens the editor, picking any
+    // other tool closes it. (The DOM injection above stays for the old sidebar, where it finds nothing new to do.)
+    unregisterEditTool?.();
+    unregisterEditTool = registerEditTool({
+        id: BOT_EDITOR_TOOL_NAME,
+        label: get(LL).mapEditor.edit.tools.bots(),
+        subtitle: get(LL).mapEditor.edit.bots.subtitle(),
+        icon: IconRobot,
+        onSelect: () => openBotEditorFromMenu(),
+    });
+    unsubscribeSelectedToolBridge?.();
+    unsubscribeSelectedToolBridge = mapEditorSelectedToolStore.subscribe((selectedTool) => {
+        if (selectedTool === BOT_EDITOR_TOOL_NAME && !botEditorOpen && get(mapEditorActivated)) {
+            openBotEditor();
+            return;
+        }
+        if (selectedTool !== BOT_EDITOR_TOOL_NAME && botEditorOpen) {
+            botEditorOpen = false;
+            removeBotEditorComponent();
         }
     });
 
@@ -1407,6 +1434,10 @@ const botExtensionModule: ExtensionModule = {
             unsubscribeMapEditorVisibility();
             unsubscribeMapEditorVisibility = null;
         }
+        unregisterEditTool?.();
+        unregisterEditTool = undefined;
+        unsubscribeSelectedToolBridge?.();
+        unsubscribeSelectedToolBridge = undefined;
         if (unsubscribeSelectedTool) {
             unsubscribeSelectedTool();
             unsubscribeSelectedTool = null;

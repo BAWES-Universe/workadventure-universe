@@ -2,7 +2,6 @@ import { derived, writable } from "svelte/store";
 import { chatVisibilityStore } from "../Stores/ChatStore";
 import { windowSize } from "../Stores/CoWebsiteStore";
 import { localUserStore } from "../Connection/LocalUserStore";
-import { mapEditorSideBarWidthStore } from "../Components/MapEditor/MapEditorSideBarWidthStore";
 import { mapEditorToolbarInUseStore } from "../Stores/MapEditorStore";
 import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
 
@@ -23,31 +22,23 @@ export const chatFloatInsetStore = derived(windowSize, ($windowSize) =>
 );
 
 export const hideActionBarStoreBecauseOfChatBar = derived(
-    [
-        chatVisibilityStore,
-        chatSidebarWidthStore,
-        windowSize,
-        mapEditorSideBarWidthStore,
-        mapEditorToolbarInUseStore,
-        chatFloatInsetStore,
-    ],
+    [chatVisibilityStore, chatSidebarWidthStore, windowSize, mapEditorToolbarInUseStore, chatFloatInsetStore],
     ([
         $chatVisibilityStore,
         $chatSidebarWidthStore,
         $windowSize,
-        $mapEditorWidthStore,
         $mapEditorToolbarInUseStore,
         $chatFloatInsetStore,
     ]) => {
         if (!$chatVisibilityStore && !$mapEditorToolbarInUseStore) {
             return false;
         }
-        return (
-            $windowSize.width -
-                ($chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0) -
-                ($mapEditorToolbarInUseStore ? $mapEditorWidthStore : 0) <
-            285
-        );
+        // Editing a room on a phone or a small window hides the bar until Done: the editor's panel floats over the
+        // map and would cover it. On a desktop the editor floats on the right and the bar keeps its place.
+        if ($mapEditorToolbarInUseStore && $windowSize.width < DESKTOP_LAYOUT_MIN_WIDTH) {
+            return true;
+        }
+        return $windowSize.width - ($chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0) < 285;
     }
 );
 

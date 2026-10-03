@@ -105,6 +105,10 @@ export class GameSceneUserInputHandler implements UserInputHandlerInterface {
     }
 
     public handlePointerUpEvent(pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]): void {
+        // While editing the room, a tap on the map is for the editor (place, select, pan): it never walks you there.
+        if (get(mapEditorModeStore)) {
+            return;
+        }
         if (pointer.wasTouch || pointer.leftButtonReleased()) {
             for (const object of gameObjects) {
                 if (isActivatable(object)) {

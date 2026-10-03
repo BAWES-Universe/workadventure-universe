@@ -22,7 +22,7 @@
     import SelectCompanionScene from "./SelectCompanion/SelectCompanionScene.svelte";
     import ErrorDialog from "./UI/ErrorDialog.svelte";
     import ErrorScreen from "./UI/ErrorScreen.svelte";
-    import MapEditor from "./MapEditor/MapEditor.svelte";
+    import EditMode from "./MapEditor/EditMode/EditMode.svelte";
     import RefreshPrompt from "./RefreshPrompt.svelte";
     import LoaderScene from "./Loader/LoaderScene.svelte";
     import EnableCameraScene from "./EnableCamera/EnableCameraScene.svelte";
@@ -95,7 +95,7 @@
         <ChatSidebar />
         <!-- "Look around the map" runs on the editor's engine but shows none of its toolbar: it draws in MainLayout. -->
         {#if $mapEditorToolbarInUseStore}
-            <MapEditor />
+            <EditMode />
         {/if}
         {#if $showModalGlobalComminucationVisibilityStore}
             <GlobalCommunicationModal />
