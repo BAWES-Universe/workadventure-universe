@@ -25,6 +25,7 @@
     import { LL } from "../../../i18n/i18n-svelte";
     import { backgroundProcessingEnabledStore } from "../../Stores/BackgroundTransformStore";
     import BackgroundPanel from "./BackgroundPanel.svelte";
+    import NoiseFilterChoice from "./NoiseFilterChoice.svelte";
     import { IconCamera, IconMicrophoneOn, IconHeadphones, IconCheck } from "@wa-icons";
 
     export let mediaSettingsDisplayed = false;
@@ -189,6 +190,7 @@
                         {/if}
                     </button>
                 {/each}
+                <NoiseFilterChoice />
             {:else}
                 <div class="device-off">
                     <span class="device-off-dot" />

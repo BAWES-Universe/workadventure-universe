@@ -3,6 +3,7 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { sveltePreprocess } from "svelte-preprocess";
 import legacy from "@vitejs/plugin-legacy";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
+import { noiseSuppressionAudioWorkletVitePlugin } from "@workadventure/noise-suppression/vite";
 import Icons from "unplugin-icons/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
@@ -34,6 +35,8 @@ export default defineConfig(({ mode }) => {
             assetsInclude: ["**/*.tflite", "**/*.wasm"],
         },
         plugins: [
+            // Serves the noise filter's AudioWorklet as plain JavaScript in dev (it can't load Vite's client there).
+            noiseSuppressionAudioWorkletVitePlugin(),
             nodePolyfills({
                 include: ["events", "buffer"],
                 globals: {

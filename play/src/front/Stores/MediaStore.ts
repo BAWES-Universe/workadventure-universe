@@ -19,6 +19,7 @@ import {
     type BackgroundMode,
 } from "../WebRtc/BackgroundProcessor/createBackgroundTransformer";
 import { waitForFirstVideoFrame } from "../WebRtc/BackgroundProcessor/waitForFirstVideoFrame";
+import { NoiseSuppressionTransformer } from "../WebRtc/NoiseSuppression/NoiseSuppressionTransformer";
 import { LL } from "../../i18n/i18n-svelte";
 import { MediaStreamConstraintsError } from "./Errors/MediaStreamConstraintsError";
 import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
@@ -37,6 +38,12 @@ import {
     backgroundEffectStartingStore,
     backgroundProcessingEnabledStore,
 } from "./BackgroundTransformStore";
+import {
+    noiseFilterStore,
+    strongNoiseFilterStateStore,
+    strongNoiseFilterSupported,
+    voiceIsolationSupportedStore,
+} from "./NoiseFilterStore";
 
 /**
  * A store that contains the camera state requested by the user (on or off).
@@ -263,26 +270,33 @@ export const videoConstraintStore = derived(
 /**
  * A store that contains video constraints.
  */
-export const audioConstraintStore = derived(requestedMicrophoneDeviceIdStore, ($microphoneDeviceIdStore) => {
-    let constraints = {
-        //TODO: make these values configurable in the game settings menu and store them in localstorage
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-    } as boolean | MediaTrackConstraints;
+export const audioConstraintStore = derived(
+    [requestedMicrophoneDeviceIdStore, noiseFilterStore, strongNoiseFilterStateStore],
+    ([$microphoneDeviceIdStore, $noiseFilterStore, $strongNoiseFilterStateStore]) => {
+        let constraints = {
+            autoGainControl: true,
+            echoCancellation: true,
+            // The Strong filter replaces the browser's once it runs. Until then the browser's filter stays on.
+            noiseSuppression: !($noiseFilterStore === "strong" && $strongNoiseFilterStateStore === "on"),
+        } as boolean | MediaTrackConstraints;
 
-    if (typeof constraints === "boolean") {
-        constraints = {};
+        if (typeof constraints === "boolean") {
+            constraints = {};
+        }
+        if (
+            $microphoneDeviceIdStore !== undefined &&
+            navigator.mediaDevices &&
+            navigator.mediaDevices.getSupportedConstraints().deviceId === true
+        ) {
+            constraints.deviceId = { exact: $microphoneDeviceIdStore };
+        }
+        if ($noiseFilterStore === "voiceOnly") {
+            // Browsers that don't know this constraint ignore it.
+            constraints.voiceIsolation = true;
+        }
+        return constraints;
     }
-    if (
-        $microphoneDeviceIdStore !== undefined &&
-        navigator.mediaDevices &&
-        navigator.mediaDevices.getSupportedConstraints().deviceId === true
-    ) {
-        constraints.deviceId = { exact: $microphoneDeviceIdStore };
-    }
-    return constraints;
-});
+);
 
 /**
  * A store that contains "true" if the webcam should be stopped for energy efficiency reason - i.e. we are not moving and not in a conversation.
@@ -667,7 +681,12 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                             requestedCameraState.enableWebcam();
                         }
                         if (currentStream.getAudioTracks().length > 0) {
-                            usedMicrophoneDeviceIdStore.set(currentStream.getAudioTracks()[0]?.getSettings().deviceId);
+                            const audioTrackSettings = currentStream.getAudioTracks()[0]?.getSettings();
+                            usedMicrophoneDeviceIdStore.set(audioTrackSettings?.deviceId);
+                            voiceIsolationSupportedStore.set(
+                                navigator.mediaDevices?.getSupportedConstraints().voiceIsolation === true &&
+                                    audioTrackSettings?.voiceIsolation !== undefined
+                            );
                             obtainedMediaConstraintStore.update((c) => {
                                 c.audio = true;
                                 return c;
@@ -843,7 +862,7 @@ function dropBackgroundTransformer(transformer: BackgroundTransformer): void {
     }
 }
 
-export const localStreamStore = derived<
+const backgroundProcessedStreamStore = derived<
     [typeof rawLocalStreamStore, typeof backgroundProcessingEnabledStore],
     LocalStreamStoreValue
 >(
@@ -924,6 +943,85 @@ export const localStreamStore = derived<
             });
     }
 );
+
+let noiseSuppressionTransformer: NoiseSuppressionTransformer | undefined = undefined;
+// Aborts the noise filter still starting for the previous microphone track.
+let currentNoiseFilterAbortController: AbortController | undefined = undefined;
+
+/** Strong could not start or stopped working: back to the browser's filter, and the device list says why. */
+function failStrongNoiseFilter(error: unknown): void {
+    console.warn("[MediaStore] Strong noise filter failed, back to the browser's filter:", error);
+    Sentry.captureException(error);
+    const transformer = noiseSuppressionTransformer;
+    noiseSuppressionTransformer = undefined;
+    transformer?.closeAndDestroy().catch((closeError) => {
+        console.warn("[MediaStore] Failed to close the noise filter:", closeError);
+    });
+    strongNoiseFilterStateStore.set("failed");
+    noiseFilterStore.set("standard");
+}
+
+/**
+ * The stream everyone else gets: the camera after background effects, and the microphone after the Strong noise
+ * filter when it is picked. The filter comes last so changing it never restarts a background effect.
+ */
+export const localStreamStore = derived<
+    [typeof backgroundProcessedStreamStore, typeof noiseFilterStore],
+    LocalStreamStoreValue
+>([backgroundProcessedStreamStore, noiseFilterStore], ([$backgroundProcessedStream, $noiseFilter], set) => {
+    currentNoiseFilterAbortController?.abort(new AbortError("Noise filter cancelled: new stream update"));
+    currentNoiseFilterAbortController = undefined;
+
+    const inputStream = $backgroundProcessedStream.type === "success" ? $backgroundProcessedStream.stream : undefined;
+    const audioTrack = inputStream?.getAudioTracks()[0];
+    if ($noiseFilter !== "strong" || !strongNoiseFilterSupported || !inputStream || !audioTrack) {
+        noiseSuppressionTransformer?.stop();
+        if ($noiseFilter !== "strong") {
+            // Keep "failed" so the device list can still explain why Standard is back.
+            strongNoiseFilterStateStore.update((state) => (state === "failed" ? state : "off"));
+        }
+        set($backgroundProcessedStream);
+        return;
+    }
+
+    if (!noiseSuppressionTransformer) {
+        const transformer = new NoiseSuppressionTransformer({
+            onStatusChange: (message) => {
+                if (noiseSuppressionTransformer !== transformer) {
+                    return;
+                }
+                if (message.status === "ready") {
+                    strongNoiseFilterStateStore.set("on");
+                } else if (message.status === "error") {
+                    failStrongNoiseFilter(new Error(message.message ?? "The noise filter failed to start"));
+                }
+            },
+        });
+        noiseSuppressionTransformer = transformer;
+        strongNoiseFilterStateStore.set("starting");
+    }
+
+    const transformer = noiseSuppressionTransformer;
+    const abortController = new AbortController();
+    currentNoiseFilterAbortController = abortController;
+    // The worklet passes the microphone through unchanged until the model is ready, so nobody goes silent.
+    transformer
+        .transform(audioTrack, abortController.signal)
+        .then((outputTrack) => {
+            if (abortController.signal.aborted) {
+                return;
+            }
+            set({ type: "success", stream: new MediaStream([...inputStream.getVideoTracks(), outputTrack]) });
+        })
+        .catch((error) => {
+            if (abortController.signal.aborted || error instanceof AbortError) {
+                return;
+            }
+            if (noiseSuppressionTransformer === transformer) {
+                failStrongNoiseFilter(error);
+            }
+        });
+});
 
 /**
  * Firefox does not support the OverconstrainedError class.
