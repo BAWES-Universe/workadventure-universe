@@ -542,7 +542,11 @@ export class AreaEditorTool extends MapEditorTool {
 
         if (area) {
             area.updatePreview(newConfig);
-            mapEditorSelectedAreaPreviewStore.set(area);
+            // The panel re-reads the selected area; a change to another area (a save that lands after you moved on,
+            // or someone else's edit) must not open that area instead.
+            if (get(mapEditorSelectedAreaPreviewStore) === area) {
+                mapEditorSelectedAreaPreviewStore.set(area);
+            }
         }
 
         this.scene.markDirty();

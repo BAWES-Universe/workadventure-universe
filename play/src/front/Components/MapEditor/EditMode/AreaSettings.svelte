@@ -180,7 +180,14 @@
     }
 
     function saveName() {
+        // Enter saves and takes the field away. Chrome fires blur when a focused field is removed (a second save,
+        // and a second name label on the map), Firefox fires nothing (the game's keys stay off, as if a field were
+        // still focused): so the field is blurred here first, once, and the save runs on that blur only.
+        if (!renaming) return;
         renaming = false;
+        if (nameInput && document.activeElement === nameInput) {
+            nameInput.blur();
+        }
         preview?.setAreaName(areaName);
     }
     function startRename() {
