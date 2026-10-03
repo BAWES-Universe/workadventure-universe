@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher, onDestroy, onMount } from "svelte";
+    import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
     import type { KlaxoonEvent } from "@workadventure/shared-utils";
     import {
         ApplicationService,
@@ -10,6 +10,7 @@
     } from "@workadventure/shared-utils";
     import CloseButton from "../../../../Components/MapEditor/PropertyEditor/CloseButton.svelte";
     import { connectionManager } from "../../../../Connection/ConnectionManager";
+    import { chatInputFocusStore } from "../../../../Stores/ChatStore";
     import { GOOGLE_DRIVE_PICKER_APP_ID, GOOGLE_DRIVE_PICKER_CLIENT_ID } from "../../../../Enum/EnvironmentVariable";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { ApplicationProperty } from "../MessageInputBar.svelte";
@@ -22,6 +23,10 @@
         processed: void;
         close: void;
         input: string;
+        // Enter pressed in the link field: the link is being resolved before it is sent
+        submitstart: void;
+        // The link from that Enter is resolved and valid: send it
+        submit: void;
     }>();
 
     export let property: ApplicationProperty;
@@ -30,6 +35,10 @@
     let htmlElementInput: HTMLInputElement;
     let timeOutToFocusElement: ReturnType<typeof setTimeout>;
     let timeOutToHtmlInpuElement: ReturnType<typeof setTimeout>;
+    // Once the form is closed (sent or dismissed), a link still resolving must not reopen it.
+    let destroyed = false;
+    let submitting = false;
+    let hasFocus = false;
 
     async function initialiseLinkFactory() {
         errorLink = undefined;
@@ -90,7 +99,9 @@
         }
     }
 
-    async function unFocus() {
+    /** Resolves the typed link. Returns true when it is valid and the form is still open. */
+    async function unFocus(): Promise<boolean> {
+        if (destroyed) return false;
         dispatch("processing");
         errorLink = undefined;
         let link = htmlElementInput.value.trim();
@@ -115,8 +126,45 @@
             errorLink = getErrorFromPropertyName() ?? errorLink ?? (error as Error).message;
         } finally {
             dispatch("processed");
-            dispatch("update", { ...property, link });
+            if (!destroyed) {
+                dispatch("update", { ...property, link });
+            }
         }
+        return !destroyed && link.length !== 0;
+    }
+
+    async function submit() {
+        // Holding or repeating Enter while the link resolves sends it once.
+        if (submitting) return;
+        submitting = true;
+        if (timeOutToHtmlInpuElement) clearTimeout(timeOutToHtmlInpuElement);
+        dispatch("submitstart");
+        try {
+            if (await unFocus()) {
+                dispatch("submit");
+                // Sending closes the form: Chrome fires focusout when the focused input is removed,
+                // which must not resolve the link again.
+                await tick();
+            }
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            submitting = false;
+        }
+    }
+
+    function onFocusIn() {
+        hasFocus = true;
+        // Typing a link must not move the Woka, play emotes or open the Say popup.
+        chatInputFocusStore.set(true);
+    }
+
+    function onFocusOut() {
+        hasFocus = false;
+        chatInputFocusStore.set(false);
+        if (submitting || destroyed) return;
+        unFocus().catch((error) => {
+            console.error(error);
+        });
     }
 
     function getErrorFromPropertyName() {
@@ -168,6 +216,9 @@
     });
 
     onDestroy(() => {
+        destroyed = true;
+        // A focused input removed from the page doesn't always fire focusout: give the game its keys back.
+        if (hasFocus) chatInputFocusStore.set(false);
         if (timeOutToFocusElement) clearTimeout(timeOutToFocusElement);
         if (timeOutToHtmlInpuElement) clearTimeout(timeOutToHtmlInpuElement);
     });
@@ -196,10 +247,13 @@
         on:input={() => {
             dispatch("input", property.link);
         }}
-        on:focusout={unFocus}
+        on:focusin={onFocusIn}
+        on:focusout={onFocusOut}
         on:keydown={(event) => {
-            if (event.key === "Enter") {
-                unFocus().catch((error) => {
+            if (event.key === "Enter" && !event.isComposing) {
+                event.preventDefault();
+                event.stopPropagation();
+                submit().catch((error) => {
                     console.error(error);
                 });
             }
