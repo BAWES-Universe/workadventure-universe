@@ -979,6 +979,7 @@ message SpaceEvent {
     MuteAudioForEverybodyPublicMessage muteAudioForEverybody = 3;
     MuteVideoForEverybodyPublicMessage muteVideoForEverybody = 4;
     SpaceStreamMessage spaceStreamMessage = 5;
+    SpaceMessageReaction spaceMessageReaction = 6;
   }
 }
 
@@ -1040,6 +1041,33 @@ message SpaceMessage {
   repeated string galleryUrls = 7;  // Additional file/image URLs for gallery messages
   optional string fileName = 8;     // Original uploaded filename (not URL-derived)
   repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
+  optional string id = 10;          // Chosen by the sender, the same for everyone, so reactions and replies can point at it
+  optional SpaceMessageQuote replyTo = 11; // The message this one replies to
+}
+
+/**
+ * What a reply quotes, so people who never received the original still see what it was.
+ * Receivers that have the original (same id) show their own copy instead.
+ */
+message SpaceMessageQuote {
+  string id = 1;
+  optional string senderUserId = 2; // spaceUserId of the original's sender
+  optional string name = 3;
+  string message = 4;               // Shortened by the sender
+  optional string url = 5;
+  repeated string galleryUrls = 6;
+  optional string fileName = 7;
+  repeated string fileNames = 8;
+}
+
+/**
+ * Adds or removes the sender's reaction on a nearby chat message, found by the id its sender chose.
+ */
+message SpaceMessageReaction {
+  string messageId = 1;
+  string reaction = 2;
+  bool add = 3;                     // false removes it
+  optional string name = 4;         // Filled in by the server from the sender
 }
 
 message SpaceIsTyping {
