@@ -1,5 +1,5 @@
 <script lang="ts" context="module">
-    export type ExpressSent = { kind: "emote"; emoji: string } | { kind: "say" | "think" };
+    export type ExpressSent = { kind: "emote"; emoji: string } | { kind: "say" | "think" } | { kind: "hand" };
 </script>
 
 <script lang="ts">
@@ -27,7 +27,14 @@
     import type { SayType } from "../../../Phaser/Game/Say/sendSay";
     import { SAY_MAX_LENGTH, sayTypeForcedByStatus, sendSayBubble } from "../../../Phaser/Game/Say/sendSay";
     import LL from "../../../../i18n/i18n-svelte";
-    import { IconCheck, IconPencil, IconSend } from "@wa-icons";
+    import {
+        canRaiseHandStore,
+        lowerHand,
+        myHandPositionStore,
+        raiseHand,
+    } from "../../../Space/RaiseHand/RaiseHandStore";
+    import { localUserStore } from "../../../Connection/LocalUserStore";
+    import { IconCheck, IconHandStop, IconPencil, IconSend } from "@wa-icons";
 
     /** Whether this room allows say and think bubbles. Emotes are always available. */
     export let sayEnabled = true;
@@ -48,6 +55,22 @@
     );
 
     $: editing = $expressTrayStore === "editing";
+
+    // Raise hand is the tray's first line, only in a conversation (a bubble or a meeting room).
+    const myHandPosition = myHandPositionStore(localUserStore.getLocalUser()?.uuid ?? "");
+    $: handUp = $myHandPosition !== undefined;
+
+    function toggleHand() {
+        if (handUp) {
+            lowerHand();
+            analyticsClient.lowerHand("self");
+            dispatch("close", {});
+        } else {
+            raiseHand();
+            analyticsClient.raiseHand();
+            dispatch("close", { sent: { kind: "hand" } });
+        }
+    }
 
     // The phrases only show when all four fit on one line, measured with the real (translated or custom) text
     // on an invisible copy of the row.
@@ -378,6 +401,31 @@
         <p class="mb-2 mt-0 px-1 text-center text-xs text-white/55">{$LL.say.express.editHint()}</p>
     {/if}
 
+    {#if $canRaiseHandStore && !editing}
+        <button
+            type="button"
+            class="raise-hand mb-2 flex h-12 w-full items-center justify-center gap-2 rounded-full p-0 text-base font-bold text-white"
+            class:is-up={handUp}
+            aria-pressed={handUp}
+            data-testid="express-raise-hand"
+            on:click={toggleHand}
+        >
+            <IconHandStop font-size="22" class="raise-hand-icon" />
+            {#if handUp}
+                {$LL.say.raiseHand.lower()}
+                {#if $myHandPosition}
+                    <span class="font-normal text-sm text-white/65"
+                        >· {$myHandPosition === 1
+                            ? $LL.say.raiseHand.next()
+                            : $LL.say.raiseHand.inLine({ position: $myHandPosition })}</span
+                    >
+                {/if}
+            {:else}
+                {$LL.say.raiseHand.raise()}
+            {/if}
+        </button>
+    {/if}
+
     {#if sayEnabled && !editing}
         <div
             class="composer flex items-center gap-1.5 rounded-xl bg-white/[0.07] p-1 ring-1 ring-white/10 transition-shadow focus-within:ring-2"
@@ -606,6 +654,32 @@
         transform: translateX(-2.25rem);
     }
 
+    .raise-hand {
+        cursor: pointer;
+        background: rgba(255, 255, 255, 0.06);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+        transition: background 150ms ease, box-shadow 150ms ease, transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .raise-hand:hover,
+    .raise-hand:focus-visible {
+        background: rgba(245, 196, 81, 0.1);
+        box-shadow: inset 0 0 0 1px rgba(245, 196, 81, 0.45);
+    }
+    .raise-hand:active {
+        transform: scale(0.97);
+    }
+    .raise-hand.is-up {
+        background: rgba(245, 196, 81, 0.14);
+        box-shadow: inset 0 0 0 1.5px rgba(245, 196, 81, 0.7);
+    }
+    .raise-hand.is-up:hover,
+    .raise-hand.is-up:focus-visible {
+        background: rgba(245, 196, 81, 0.2);
+    }
+    .raise-hand.is-up :global(.raise-hand-icon) {
+        color: #f5c451;
+    }
+
     .send-button {
         background: rgba(255, 255, 255, 0.08);
         opacity: 0.45;
@@ -754,6 +828,7 @@
         .is-editing .emote-glyph,
         .edit-toggle,
         button.phrase-chip,
+        .raise-hand,
         .toggle-thumb,
         .send-button,
         .emote-glyph {

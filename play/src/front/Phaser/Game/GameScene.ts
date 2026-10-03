@@ -6,7 +6,7 @@ import AnimatedTiles from "phaser-animated-tiles";
 import { Queue } from "queue-typescript";
 import type { ComponentType } from "svelte";
 import type { Readable, Unsubscriber } from "svelte/store";
-import { get } from "svelte/store";
+import { derived, get } from "svelte/store";
 import { throttle } from "throttle-debounce";
 import { ForwardableStore, MapStore } from "@workadventure/store-utils";
 import { MathUtils } from "@workadventure/math-utils";
@@ -61,6 +61,7 @@ import {
 import { Room } from "../../Connection/Room";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { localUserStore } from "../../Connection/LocalUserStore";
+import { myHandRaisedStore, raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
 import { HtmlUtils } from "../../WebRtc/HtmlUtils";
 import { Loader } from "../Components/Loader";
 import { RemotePlayer } from "../Entity/RemotePlayer";
@@ -2437,6 +2438,21 @@ export class GameScene extends DirtyScene {
                 this.disableVoiceIndicator();
             }
         });
+
+        // A gold hand with the number in line next to the name of everyone whose hand is up.
+        this.unsubscribers.push(
+            derived([raisedHandsStore, myHandRaisedStore, this.MapPlayersByKey], (values) => values).subscribe(
+                ([hands, myHandRaised, players]) => {
+                    const positions = new Map(hands.map((hand) => [hand.uuid, hand.position]));
+                    for (const player of players.values()) {
+                        player.setRaisedHand(positions.get(player.userUuid));
+                    }
+                    const myUuid = localUserStore.getLocalUser()?.uuid ?? "";
+                    // Our own hand shows at once, and gets its number when the server answers.
+                    this.CurrentPlayer?.setRaisedHand(myHandRaised ? positions.get(myUuid) ?? 0 : undefined);
+                }
+            )
+        );
 
         // Subscribe to bubble sound changes
         this.unsubscribers.push(

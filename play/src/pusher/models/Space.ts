@@ -343,6 +343,17 @@ export class Space implements SpaceForSpaceConnectionInterface {
             throw new Error("spaceUser not found " + userUuid);
         }
 
+        if (updateSpaceUserMessage.updateMask.includes("handRaisedAt")) {
+            // The server's clock orders the raised hands, not each browser's. A hand already up keeps its place.
+            const raised = (updateSpaceUserMessage.user.handRaisedAt ?? 0) > 0;
+            const alreadyRaisedAt = spaceUser.handRaisedAt ?? 0;
+            let handRaisedAt = 0;
+            if (raised) {
+                handRaisedAt = alreadyRaisedAt > 0 ? alreadyRaisedAt : Date.now();
+            }
+            updateSpaceUserMessage.user.handRaisedAt = handRaisedAt;
+        }
+
         const updateValues = applyFieldMask(updateSpaceUserMessage.user, updateSpaceUserMessage.updateMask);
 
         merge(spaceUser, updateValues);

@@ -990,6 +990,29 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    raiseHand(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_raise_hand");
+            })
+            .catch((e) => console.error(e));
+    }
+    /** Why the hand went down: lowered by its owner, after they spoke, or by a moderator. */
+    lowerHand(reason: "self" | "spoke" | "moderator"): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_lower_hand", { reason });
+            })
+            .catch((e) => console.error(e));
+    }
+    /** "Keep it raised" after speaking with the hand up. */
+    keepHandRaised(): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_keep_hand_raised");
+            })
+            .catch((e) => console.error(e));
+    }
     /** The chat panel went from closed to open. Tab switches inside an open panel don't count. */
     chatPanelOpened(source: ChatOpenSource): void {
         this.posthogPromise

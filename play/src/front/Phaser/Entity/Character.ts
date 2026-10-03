@@ -21,6 +21,7 @@ import { getPlayerAnimations, PlayerAnimationTypes } from "../Player/Animation";
 import { ProtobufClientUtils } from "../../Network/ProtobufClientUtils";
 import { SpeakerIcon } from "../Components/SpeakerIcon";
 import { MegaphoneIcon } from "../Components/MegaphoneIcon";
+import { RaisedHandBadge } from "../Components/RaisedHandBadge";
 import { StringUtils } from "../../Utils/StringUtils";
 
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
@@ -56,6 +57,7 @@ export abstract class Character extends Container implements OutlineableInterfac
     protected readonly statusDot: PlayerStatusDot;
     protected readonly speakerIcon: SpeakerIcon;
     protected readonly megaphoneIcon: MegaphoneIcon;
+    private readonly raisedHandBadge: RaisedHandBadge;
     public readonly playerName: string;
     public sprites: Map<string, Sprite>;
     protected _lastDirection: PositionMessage_Direction = PositionMessage_Direction.DOWN;
@@ -197,6 +199,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             this.megaphoneIcon.setX((this.playerNameText.getRightCenter().x ?? 0) + 8);
             this.statusDot.visible = true;
             this.megaphoneIcon.visible = true;
+            this.placeRaisedHandBadge();
 
             scene.getOutlineManager().add(this.playerNameText, () => {
                 return this.getCurrentOutline();
@@ -213,7 +216,8 @@ export abstract class Character extends Container implements OutlineableInterfac
         this.megaphoneIcon.visible = false;
         this.talkIcon = new TalkIcon(scene, 0, -45);
         this.speakerIcon = new SpeakerIcon(scene, 0, -45);
-        this.add([this.talkIcon, this.speakerIcon, this.statusDot, this.megaphoneIcon]);
+        this.raisedHandBadge = new RaisedHandBadge(scene, 0, playerNameY - 1);
+        this.add([this.talkIcon, this.speakerIcon, this.statusDot, this.megaphoneIcon, this.raisedHandBadge]);
 
         if (isClickable) {
             this.setInteractive({
@@ -347,6 +351,20 @@ export abstract class Character extends Container implements OutlineableInterfac
         } else {
             this.megaphoneIcon.show(false, false);
         }
+        this.placeRaisedHandBadge();
+    }
+
+    /** A gold hand with the number in line next to the name, or none (undefined) when the hand is down. */
+    public setRaisedHand(position: number | undefined): void {
+        this.raisedHandBadge.showPlace(position);
+        this.placeRaisedHandBadge();
+        this.scene.markDirty();
+    }
+
+    private placeRaisedHandBadge(): void {
+        const nameRight = this.playerNameText?.getRightCenter().x ?? 0;
+        // After the megaphone icon when it shows.
+        this.raisedHandBadge.x = nameRight + (this.megaphoneIcon.isShown() ? 15 : 3);
     }
 
     public getAvailabilityStatus() {
