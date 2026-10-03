@@ -1,19 +1,14 @@
 /**
- * A gold hand with the person's number in line, next to their name on the map, while their hand is raised.
+ * The ✋ with the person's number in line, above their name on the map, while their hand is raised. It matches the
+ * raise hand button while the hand is up: an ink pill with a gold edge and a gold number.
  * The picture is drawn once per number on a canvas (at 4 times the size, for a sharp result when zoomed in).
  */
 
-const HAND_PATHS = [
-    "M8 13V5.5a1.5 1.5 0 0 1 3 0V12",
-    "M11 5.5v-2a1.5 1.5 0 1 1 3 0V12",
-    "M14 5.5a1.5 1.5 0 0 1 3 0V12",
-    "M17 7.5a1.5 1.5 0 0 1 3 0V16a6 6 0 0 1 -6 6h-2h.208a6 6 0 0 1 -5.012 -2.7L7 19c-.312 -.479 -1.407 -2.388 -3.286 -5.728a1.5 1.5 0 0 1 .536 -2.022a1.867 1.867 0 0 1 2.28 .28L8 13",
-];
-
 const GOLD = "#F5C451";
-const INK = "#1D1606";
+const INK = "#14121E";
+const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
 const RESOLUTION = 4;
-const HEIGHT = 11;
+const HEIGHT = 13;
 
 function textureKey(position: number): string {
     return `raised-hand-badge-${position}`;
@@ -25,9 +20,9 @@ function ensureTexture(scene: Phaser.Scene, position: number): string {
         return key;
     }
     const label = position > 0 ? String(position) : "";
-    const iconSize = 8;
-    const padding = 2;
-    const textWidth = label ? label.length * 4.6 + 1 : 0;
+    const iconSize = 9;
+    const padding = 2.5;
+    const textWidth = label ? label.length * 5.2 + 1 : 0;
     const width = Math.max(HEIGHT, padding + iconSize + textWidth + padding);
 
     const canvas = document.createElement("canvas");
@@ -39,40 +34,36 @@ function ensureTexture(scene: Phaser.Scene, position: number): string {
     }
     context.scale(RESOLUTION, RESOLUTION);
 
-    // Gold pill
+    // Ink pill with a gold edge
     const radius = HEIGHT / 2;
-    context.fillStyle = GOLD;
-    context.beginPath();
-    context.moveTo(radius, 0);
-    context.lineTo(width - radius, 0);
-    context.arc(width - radius, radius, radius, -Math.PI / 2, Math.PI / 2);
-    context.lineTo(radius, HEIGHT);
-    context.arc(radius, radius, radius, Math.PI / 2, (3 * Math.PI) / 2);
-    context.fill();
+    const pill = new Path2D();
+    pill.moveTo(radius, 0.5);
+    pill.lineTo(width - radius, 0.5);
+    pill.arc(width - radius, radius, radius - 0.5, -Math.PI / 2, Math.PI / 2);
+    pill.lineTo(radius, HEIGHT - 0.5);
+    pill.arc(radius, radius, radius - 0.5, Math.PI / 2, (3 * Math.PI) / 2);
+    context.fillStyle = INK;
+    context.fill(pill);
+    context.strokeStyle = GOLD;
+    context.lineWidth = 0.8;
+    context.stroke(pill);
 
-    // Hand
-    context.save();
+    // ✋
     const iconX = label ? padding : (width - iconSize) / 2;
-    context.translate(iconX, (HEIGHT - iconSize) / 2);
-    context.scale(iconSize / 24, iconSize / 24);
-    context.strokeStyle = INK;
-    context.lineWidth = 2.4;
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    for (const path of HAND_PATHS) {
-        context.stroke(new Path2D(path));
-    }
-    context.restore();
+    context.font = `${iconSize - 0.5}px ${EMOJI_FONT}`;
+    context.textBaseline = "middle";
+    context.fillText("✋", iconX, HEIGHT / 2 + 0.4);
 
     // Number in line
     if (label) {
-        context.fillStyle = INK;
-        context.font = "bold 7.5px Roboto, Arial, sans-serif";
+        context.fillStyle = GOLD;
+        context.font = "bold 8.5px Roboto, Arial, sans-serif";
         context.textBaseline = "middle";
         context.fillText(label, padding + iconSize + 0.5, HEIGHT / 2 + 0.4);
     }
 
-    scene.textures.addCanvas(key, canvas);
+    // Smooth scaling: the map's pixel-art filter would make the emoji and number unreadable at this size.
+    scene.textures.addCanvas(key, canvas)?.setFilter(Phaser.Textures.FilterMode.LINEAR);
     return key;
 }
 
@@ -81,7 +72,7 @@ export class RaisedHandBadge extends Phaser.GameObjects.Image {
 
     constructor(scene: Phaser.Scene, x: number, y: number) {
         super(scene, x, y, ensureTexture(scene, 0));
-        this.setOrigin(0, 0.5);
+        this.setOrigin(0.5, 0.5);
         this.setScale(1 / RESOLUTION);
         this.setVisible(false);
         this.scene.add.existing(this);

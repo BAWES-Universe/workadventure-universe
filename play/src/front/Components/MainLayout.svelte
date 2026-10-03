@@ -74,6 +74,7 @@
     import AudioStreamWrapper from "./Video/PictureInPicture/AudioStreamWrapper.svelte";
     import ExpressButton from "./ActionBar/Express/ExpressButton.svelte";
     import ExplorerMenu from "./ActionsMenu/ExplorerMenu.svelte";
+    import RaiseHandButton from "./ActionBar/RaiseHand/RaiseHandButton.svelte";
 
     const handleFocusInEvent = (event: FocusEvent) => {
         if (
@@ -246,6 +247,7 @@
                         class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
                     >
                         <ExplorerMenu />
+                        <RaiseHandButton />
                         <ExpressButton />
                     </div>
                 </div>

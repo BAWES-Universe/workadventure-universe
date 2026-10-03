@@ -19,8 +19,6 @@ const say: DeepPartial<Translation["say"]> = {
         lower: "أنزل يدك",
         next: "دورك التالي",
         inLine: "رقم {position} في الدور",
-        handUp: "يدك مرفوعة",
-        handUpInLine: "يدك مرفوعة، رقم {position} في الدور",
         spoke: "تحدثت، لذا ستُنزل يدك",
         keepRaised: "أبقِها مرفوعة",
         loweredByModerator: "أنزل أحد المشرفين يدك",

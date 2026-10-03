@@ -19,8 +19,6 @@ const say: DeepPartial<Translation["say"]> = {
         lower: "Baisser la main",
         next: "à vous ensuite",
         inLine: "numéro {position} dans la file",
-        handUp: "Votre main est levée",
-        handUpInLine: "Votre main est levée, numéro {position} dans la file",
         spoke: "Vous avez parlé, votre main va se baisser",
         keepRaised: "Garder la main levée",
         loweredByModerator: "Un modérateur a baissé votre main",

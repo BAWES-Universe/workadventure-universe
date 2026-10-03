@@ -1,17 +1,16 @@
 import type { Readable, Unsubscriber } from "svelte/store";
-import { derived } from "svelte/store";
+import { derived, writable } from "svelte/store";
 import { localVoiceIndicatorStore, requestedMicrophoneState } from "../../Stores/MediaStore";
-import { popupStore } from "../../Stores/PopupStore";
-import KeepHandRaisedPopup from "../../Components/PopUp/KeepHandRaisedPopup.svelte";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
 import { lowerHand, myHandRaisedStore } from "./RaiseHandStore";
+
+/** The "Keep it raised" offer, shown beside the hand button. */
+export const keepHandOfferStore = writable<{ keep: () => void; durationMs: number } | undefined>(undefined);
 
 /** Talking this long, in total, with the hand up counts as having had your turn. */
 export const SPOKEN_MS = 2000;
 /** How long "Keep it raised" stays on screen before the hand goes down. */
 export const KEEP_IT_RAISED_MS = 6000;
-
-const POPUP_ID = "keep-hand-raised";
 
 let holders = 0;
 let stop: Unsubscriber | undefined;
@@ -108,9 +107,9 @@ export function watchSpokenWhileHandRaised(
 }
 
 function showKeepItRaised(keep: () => void): void {
-    popupStore.addPopup(KeepHandRaisedPopup, { keep, durationMs: KEEP_IT_RAISED_MS }, POPUP_ID);
+    keepHandOfferStore.set({ keep, durationMs: KEEP_IT_RAISED_MS });
 }
 
 function hideKeepItRaised(): void {
-    popupStore.removePopup(POPUP_ID);
+    keepHandOfferStore.set(undefined);
 }

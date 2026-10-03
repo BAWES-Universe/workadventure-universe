@@ -10,11 +10,8 @@
     import { longpress } from "../../../Utils/longpress";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import LL from "../../../../i18n/i18n-svelte";
-    import { myHandPositionStore } from "../../../Space/RaiseHand/RaiseHandStore";
-    import { localUserStore } from "../../../Connection/LocalUserStore";
     import type { ExpressSent } from "./ExpressTray.svelte";
     import ExpressTray from "./ExpressTray.svelte";
-    import { IconHandStop } from "@wa-icons";
 
     // Same source as the action bar's emoji menu; never throws while a scene is loading.
     const sayEnabled = connectionManager.currentRoom?.isSayEnabled ?? true;
@@ -33,15 +30,6 @@
         queueMicrotask(() => expressTrayStore.close());
     }
     $: faceEmoji = $emoteDataStore.get(1)?.emoji ?? "👍";
-
-    // While our hand is up, the button shows the hand and our number in line instead of the emote.
-    const myHandPosition = myHandPositionStore(localUserStore.getLocalUser()?.uuid ?? "");
-    $: handUp = $myHandPosition !== undefined;
-    $: closedLabel = !handUp
-        ? $LL.say.express.button()
-        : $myHandPosition
-        ? $LL.say.raiseHand.handUpInLine({ position: $myHandPosition })
-        : $LL.say.raiseHand.handUp();
     $: emotes = [...$emoteDataStore.entries()].sort(([a], [b]) => a - b);
 
     // Shortcut card: on devices with a mouse, after a short hover (or keyboard focus), while the tray is closed.
@@ -134,7 +122,7 @@
         expressTrayStore.close();
         const sent = event.detail.sent;
         if (sent) {
-            burst(sent.kind === "emote" ? sent.emoji : sent.kind === "hand" ? "✋" : sent.kind === "say" ? "💬" : "💭");
+            burst(sent.kind === "emote" ? sent.emoji : sent.kind === "say" ? "💬" : "💭");
         } else {
             button?.focus({ preventScroll: true });
         }
@@ -188,12 +176,11 @@
             type="button"
             class="express-button relative m-0 flex h-16 w-16 sm:h-14 sm:w-14 xl:h-16 xl:w-16 items-center justify-center rounded-full p-0"
             class:is-open={open}
-            class:hand-up={handUp}
             class:pulse
-            aria-label={open ? $LL.say.express.close() : closedLabel}
+            aria-label={open ? $LL.say.express.close() : $LL.say.express.button()}
             aria-expanded={open}
             aria-haspopup="dialog"
-            title={open || finePointer ? undefined : closedLabel}
+            title={open || finePointer ? undefined : $LL.say.express.button()}
             data-testid="express-button"
             data-opens-express
             aria-describedby={hintVisible ? "express-shortcuts" : undefined}
@@ -209,16 +196,7 @@
             on:animationend={() => (pulse = false)}
         >
             <span class="express-halo" aria-hidden="true" />
-            {#if handUp}
-                <span class="express-face express-hand" aria-hidden="true"><IconHandStop font-size="30" /></span>
-                {#if $myHandPosition}
-                    <span class="express-hand-badge" aria-hidden="true" data-testid="express-hand-position"
-                        >{$myHandPosition}</span
-                    >
-                {/if}
-            {:else}
-                <span class="express-face text-[1.9rem] leading-none" aria-hidden="true">{faceEmoji}</span>
-            {/if}
+            <span class="express-face text-[1.9rem] leading-none" aria-hidden="true">{faceEmoji}</span>
             <span class="express-close" aria-hidden="true">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2"
                     ><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg
@@ -321,44 +299,6 @@
     .express-button:focus-visible {
         outline: 2px solid #8629fc;
         outline-offset: 2px;
-    }
-
-    /* Hand up: a warm gold ring and the hand, so you remember you're in line. */
-    .express-button.hand-up:not(.is-open) {
-        background: radial-gradient(circle at 50% 35%, rgb(60 48 30), rgb(24 20 22));
-        box-shadow: 0 0 0 2px #f5c451, 0 0 18px rgba(245, 196, 81, 0.35);
-    }
-    .express-button.hand-up:not(.is-open) .express-halo {
-        opacity: 0;
-    }
-    .express-hand {
-        color: #f5c451;
-        display: flex;
-    }
-    .express-hand-badge {
-        position: absolute;
-        top: -2px;
-        right: -2px;
-        display: grid;
-        place-items: center;
-        min-width: 22px;
-        height: 22px;
-        padding: 0 5px;
-        border-radius: 9999px;
-        background: #f5c451;
-        color: #1d1606;
-        font-size: 12px;
-        font-weight: 700;
-        line-height: 1;
-        box-shadow: 0 0 0 2px #000;
-        transition: opacity 180ms ease;
-    }
-    .express-button.is-open .express-hand-badge {
-        opacity: 0;
-    }
-    :global([dir="rtl"]) .express-hand-badge {
-        right: auto;
-        left: -2px;
     }
 
     /* A slow, soft aurora around the edge: it's alive, not flashing. */

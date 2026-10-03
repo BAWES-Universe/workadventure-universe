@@ -19,8 +19,6 @@ const say: BaseTranslation = {
         lower: "Lower hand",
         next: "you're next",
         inLine: "number {position:number} in line",
-        handUp: "Your hand is up",
-        handUpInLine: "Your hand is up, number {position:number} in line",
         spoke: "You spoke, so your hand will go down",
         keepRaised: "Keep it raised",
         loweredByModerator: "A moderator lowered your hand",

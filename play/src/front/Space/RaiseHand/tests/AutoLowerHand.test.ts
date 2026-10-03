@@ -5,10 +5,6 @@ vi.mock("../../../Stores/MediaStore", () => ({
     localVoiceIndicatorStore: writable(false),
     requestedMicrophoneState: writable(true),
 }));
-vi.mock("../../../Stores/PopupStore", () => ({
-    popupStore: { addPopup: vi.fn(), removePopup: vi.fn() },
-}));
-vi.mock("../../../Components/PopUp/KeepHandRaisedPopup.svelte", () => ({ default: {} }));
 vi.mock("../../../Administration/AnalyticsClient", () => ({
     analyticsClient: { lowerHand: vi.fn(), keepHandRaised: vi.fn() },
 }));

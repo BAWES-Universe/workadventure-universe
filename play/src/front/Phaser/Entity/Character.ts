@@ -342,6 +342,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             this.talkIcon.show(show, forceClose);
             this.speakerIcon.show(false, forceClose);
         }
+        this.placeRaisedHandBadge();
     }
 
     public setAvailabilityStatus(availabilityStatus: AvailabilityStatusType, instant = false): void {
@@ -354,7 +355,7 @@ export abstract class Character extends Container implements OutlineableInterfac
         this.placeRaisedHandBadge();
     }
 
-    /** A gold hand with the number in line next to the name, or none (undefined) when the hand is down. */
+    /** A gold hand with the number in line above the name, or none (undefined) when the hand is down. */
     public setRaisedHand(position: number | undefined): void {
         this.raisedHandBadge.showPlace(position);
         this.placeRaisedHandBadge();
@@ -362,9 +363,9 @@ export abstract class Character extends Container implements OutlineableInterfac
     }
 
     private placeRaisedHandBadge(): void {
-        const nameRight = this.playerNameText?.getRightCenter().x ?? 0;
-        // After the megaphone icon when it shows.
-        this.raisedHandBadge.x = nameRight + (this.megaphoneIcon.isShown() ? 15 : 3);
+        // Centred above the name, so a woka standing close by never covers it; above the talk bubble while it shows.
+        this.raisedHandBadge.x = 0;
+        this.raisedHandBadge.y = this.talkIcon.isShown() || this.speakerIcon.isShown() ? -63 : playerNameY - 15;
     }
 
     public getAvailabilityStatus() {
