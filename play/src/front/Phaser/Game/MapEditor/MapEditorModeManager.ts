@@ -474,7 +474,7 @@ export class MapEditorModeManager {
         this.dragPanDistance += Math.abs(dx) + Math.abs(dy);
         // The first few pixels are a tap that wobbled, not a drag: placing an object must not shift the map.
         if (this.dragPanDistance < MapEditorModeManager.DRAG_PAN_THRESHOLD) return;
-        this.scene.getCameraManager().scrollCamera(dx, dy);
+        this.scene.getCameraManager().dragCamera(dx, dy);
     };
     private readonly dragPanUpHandler = () => {
         this.dragPanActive = false;
@@ -549,6 +549,7 @@ export class MapEditorModeManager {
             if (!this.active) {
                 this.lastlyUsedTool = get(mapEditorSelectedToolStore);
                 this.equipTool(undefined);
+                this.scene.getCameraManager().endDragFreedom();
                 return;
             }
             this.equipTool(

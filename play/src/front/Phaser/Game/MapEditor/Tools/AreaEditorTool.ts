@@ -377,8 +377,11 @@ export class AreaEditorTool extends MapEditorTool {
                 this.scene.markDirty();
                 return;
             }
-            if (pointer.wasTouch && sortedAreaPreviews.length === 0) {
-                // A tap or a pan on the empty map: nothing to select, and the draft box keeps its mode.
+            if (
+                pointer.wasTouch &&
+                (sortedAreaPreviews.length === 0 || this.mapEditorModeManager.isDraggingToLookAround)
+            ) {
+                // A tap on the empty map has nothing to select, and a pan selects nothing wherever it ends.
                 return;
             }
             this.changeAreaMode("EDIT", sortedAreaPreviews[0]);
@@ -393,12 +396,9 @@ export class AreaEditorTool extends MapEditorTool {
                 }
             }
 
-            if (
-                pointer.wasTouch &&
-                sortedAreaPreviews.length === 0 &&
-                this.mapEditorModeManager.isDraggingToLookAround
-            ) {
-                // A finger pan keeps the selected area; a tap on the empty map still deselects it, as a click does.
+            if (pointer.wasTouch && this.mapEditorModeManager.isDraggingToLookAround) {
+                // A finger pan keeps the selected area wherever it ends; a tap on the empty map still deselects it,
+                // as a click does, and a tap on an area selects that area.
                 return;
             }
 
