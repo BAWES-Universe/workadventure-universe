@@ -50,17 +50,30 @@
         else requestedScreenSharingState.enableScreenSharing();
     }
 
+    // The step turns the mic on for the preview; leaving without going live turns it back off.
+    let micTurnedOnHere = false;
+    let wentLive = false;
+
     function goLive() {
         if (!anythingOn) return;
-        if (startLiveBroadcast(reach)) dispatch("live");
+        if (startLiveBroadcast(reach)) {
+            wentLive = true;
+            dispatch("live");
+        }
     }
 
     onMount(() => {
         // The preview keeps the camera awake, and the mic comes on so going live is one tap.
         displayedMegaphoneScreenStore.set(true);
-        if (!$requestedMicrophoneState) requestedMicrophoneState.enableMicrophone();
+        if (!$requestedMicrophoneState) {
+            micTurnedOnHere = true;
+            requestedMicrophoneState.enableMicrophone();
+        }
     });
-    onDestroy(() => displayedMegaphoneScreenStore.set(false));
+    onDestroy(() => {
+        displayedMegaphoneScreenStore.set(false);
+        if (micTurnedOnHere && !wentLive && $requestedMicrophoneState) requestedMicrophoneState.disableMicrophone();
+    });
 </script>
 
 <div class="relative aspect-[16/10] w-full overflow-hidden rounded-2xl bg-white/5 border border-white/10">

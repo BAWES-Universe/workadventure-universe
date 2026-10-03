@@ -2402,6 +2402,7 @@ export class GameScene extends DirtyScene {
             this.tryChangeShowVoiceIndicatorState(this.jitsiDominantSpeaker && this.jitsiParticipantsCount > 1);
         });
 
+        let previousAvailabilityStatus: AvailabilityStatus | undefined;
         this.availabilityStatusStoreUnsubscriber = availabilityStatusStore.subscribe((availabilityStatus) => {
             if (!this.connection) {
                 throw new Error("Connection is undefined");
@@ -2411,6 +2412,15 @@ export class GameScene extends DirtyScene {
             if (availabilityStatus === AvailabilityStatus.SILENT) {
                 this.CurrentPlayer.toggleTalk(false, true);
             }
+            // Leaving Do not disturb: join the broadcast channels skipped while it was on.
+            if (
+                previousAvailabilityStatus === AvailabilityStatus.DO_NOT_DISTURB &&
+                availabilityStatus !== AvailabilityStatus.DO_NOT_DISTURB &&
+                this._broadcastService
+            ) {
+                this.syncBroadcastSpaces(get(megaphoneChannelsStore), this._broadcastService);
+            }
+            previousAvailabilityStatus = availabilityStatus;
         });
 
         this.emoteUnsubscriber = emoteStore.subscribe((emote) => {
