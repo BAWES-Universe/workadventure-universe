@@ -1369,8 +1369,8 @@ export const lastNewMediaDeviceDetectedStore = writable<MediaDeviceInfo[]>([]);
  * This avoids recreating the entire stream when only parameters change
  */
 const backgroundConfigStoreSubscription = backgroundConfigStore.subscribe(($config) => {
-    // Skip if no transformer exists yet
-    if (!backgroundTransformer || !lastBackgroundConfig) {
+    // Skip if no transformer exists yet. A transformer still starting gets the change too: it applies it once ready.
+    if (!backgroundTransformer) {
         return;
     }
 
