@@ -8,6 +8,7 @@
     import { windowSize } from "../../Stores/CoWebsiteStore";
     import ButtonClose from "../Input/ButtonClose.svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { LL } from "../../../i18n/i18n-svelte";
     import AreaEditor from "./AreaEditor/AreaEditor.svelte";
     import EntityEditor from "./EntityEditor/EntityEditor.svelte";
     import MapEditorSideBar from "./MapEditorSideBar.svelte";
@@ -15,6 +16,7 @@
     import ConfigureMyRoom from "./WAMSettingsEditor.svelte";
     import MapEditorResizeHandle from "./MapEditorResizeHandle.svelte";
     import { mapEditorSideBarWidthStore } from "./MapEditorSideBarWidthStore";
+    import { mapEditorIsMobileLayoutStore } from "./MapEditorTools";
 
     const direction = document.documentElement.getAttribute("dir") || "ltr";
 
@@ -113,6 +115,11 @@
                     <EntityEditor />
                 {/if}
                 {#if $mapEditorSelectedToolStore === EditorToolName.AreaEditor}
+                    {#if $mapEditorIsMobileLayoutStore}
+                        <p class="m-0 rounded bg-white/10 px-3 py-2 text-sm" data-testid="worksBestOnDesktopNotice">
+                            {$LL.mapEditor.sideBar.worksBestOnDesktop()}
+                        </p>
+                    {/if}
                     <AreaEditor />
                 {/if}
                 {#if $mapEditorSelectedToolStore === EditorToolName.ExploreTheRoom}
