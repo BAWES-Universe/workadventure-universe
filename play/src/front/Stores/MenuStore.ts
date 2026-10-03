@@ -59,7 +59,6 @@ export enum SubMenusInterface {
     profile = "profile",
     invite = "invite",
     aboutRoom = "credit",
-    globalMessages = "globalMessages",
     contact = "contact",
     report = "report",
     chat = "chat",
@@ -113,11 +112,6 @@ function createSubMenusStore() {
             type: "translated",
             key: SubMenusInterface.aboutRoom,
             visible: alwaysVisible,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.globalMessages,
-            visible: userIsAdminStore,
         },
         {
             type: "translated",
@@ -258,6 +252,16 @@ export function handleMenuUnregisterEvent(key: string) {
 }
 
 export function handleOpenMenuEvent(key: string) {
+    // The "Global messages" menu page was removed in favour of the Tools > "Send global message" modal.
+    // Scripts that still open it by key get the modal instead.
+    if (key === "globalMessages") {
+        if (get(userIsAdminStore)) {
+            menuVisiblilityStore.set(false);
+            showModalGlobalComminucationVisibilityStore.set(true);
+            analyticsClient.globalMessage();
+        }
+        return;
+    }
     const menu = subMenusStore.findByKey(key);
     activeSubMenuStore.activateByMenuItem(menu);
     menuVisiblilityStore.set(true);

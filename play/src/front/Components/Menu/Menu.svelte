@@ -34,19 +34,19 @@
     let unsubscriberSubMenuStore: Unsubscriber;
     let unsubscriberActiveSubMenuStore: Unsubscriber;
 
-    onMount(async () => {
+    onMount(() => {
         unsubscriberActiveSubMenuStore = activeSubMenuStore.subscribe((value) => {
             if ($subMenusStore.length >= value - 1) {
-                void switchMenu($subMenusStore[value]);
+                switchMenu($subMenusStore[value]);
             }
         });
         unsubscriberSubMenuStore = subMenusStore.subscribe(() => {
             if (!$subMenusStore.includes(activeSubMenu)) {
-                void switchMenu($subMenusStore[$activeSubMenuStore]);
+                switchMenu($subMenusStore[$activeSubMenuStore]);
             }
         });
 
-        await switchMenu($subMenusStore[$activeSubMenuStore]);
+        switchMenu($subMenusStore[$activeSubMenuStore]);
     });
 
     onDestroy(() => {
@@ -59,7 +59,11 @@
         }
     });
 
-    async function switchMenu(menu: MenuItem) {
+    function switchMenu(menu: MenuItem | undefined) {
+        // The active index can point past the end after a scripting menu is unregistered.
+        if (menu === undefined) {
+            return;
+        }
         if (menu.type === "translated") {
             activeSubMenu = menu;
             activeSubMenuStore.activateByMenuItem(menu);
@@ -83,10 +87,6 @@
                 case SubMenusInterface.contact:
                     activeComponent = ContactSubMenu;
                     analyticsClient.menuContact();
-                    break;
-                case SubMenusInterface.globalMessages:
-                    activeComponent = (await import("./GlobalMessagesSubMenu.svelte")).default;
-                    analyticsClient.globalMessage();
                     break;
                 case SubMenusInterface.report:
                     activeComponent = ReportSubMenu;
