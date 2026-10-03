@@ -1,7 +1,7 @@
 import { get } from "svelte/store";
 import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
 import { gameManager } from "../GameManager";
-import { EditorToolName } from "./MapEditorModeManager";
+import { EditorToolName, type MapEditorModeManager } from "./MapEditorModeManager";
 
 /** Zooming out from this level starts the white fade that leads to "Explore the room". */
 export const EXPLORE_ZOOM_OUT_START = 0.6;
@@ -15,10 +15,16 @@ export const EXPLORE_ZOOM_IN_RADIUS_AROUND_WOKA = 320;
  * Never toggles: calling it while already exploring keeps exploring.
  */
 export function enterExploreTheRoom(): void {
+    // Without the map editor (ENABLE_MAP_EDITOR off) there is no tool to equip, and turning the
+    // mode on would only show editor UI whose buttons have nothing behind them.
+    const mapEditorModeManager: MapEditorModeManager | undefined = gameManager
+        .getCurrentGameScene()
+        .getMapEditorModeManager();
+    if (!mapEditorModeManager) return;
     if (!get(mapEditorModeStore)) {
         mapEditorModeStore.switchMode(true);
     }
-    gameManager.getCurrentGameScene().getMapEditorModeManager()?.equipTool(EditorToolName.ExploreTheRoom);
+    mapEditorModeManager.equipTool(EditorToolName.ExploreTheRoom);
 }
 
 /** Leave "Explore the room" and go back to your avatar, like "Show my location". */
