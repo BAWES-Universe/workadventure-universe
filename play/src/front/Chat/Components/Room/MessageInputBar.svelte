@@ -94,18 +94,19 @@
     let fileAttachementEnabled = false;
     let isUploading = false;
     let uploadError: string | null = null;
-    let failedFileIds: Set<string> = new Set();
+    // The files an upload failed for, each with why, so the line can be rebuilt when one of them is removed.
+    let failedFiles: Map<string, UploadFailure> = new Map();
 
     // The error stays until it is closed, its files are removed or the user sends again: it used to vanish
     // after 5 seconds, before it could be read on a phone.
-    function showUploadError(msg: string, failed?: Set<string>) {
+    function showUploadError(msg: string, failed?: Map<string, UploadFailure>) {
         uploadError = msg;
-        failedFileIds = failed ?? new Set();
+        failedFiles = failed ?? new Map();
     }
 
     function clearUploadError() {
         uploadError = null;
-        failedFileIds = new Set();
+        failedFiles = new Map();
     }
 
     /** One line: what wasn't sent, then the reason the user can act on. */
@@ -313,7 +314,7 @@
                     // Separate successes from failures
                     const succeeded: { location: string; name: string; type: string }[] = [];
                     const failedIds: string[] = [];
-                    const failures: UploadFailure[] = [];
+                    const failures = new Map<string, UploadFailure>();
                     for (let i = 0; i < uploadResults.length; i++) {
                         const pendingFile = pendingFiles[i];
                         const result = uploadResults[i];
@@ -321,7 +322,8 @@
                             succeeded.push(result.value);
                         } else {
                             failedIds.push(pendingFile.id);
-                            failures.push(
+                            failures.set(
+                                pendingFile.id,
                                 result.reason instanceof UploadFailure ? result.reason : new UploadFailure("other")
                             );
                         }
@@ -335,11 +337,11 @@
                         showUploadError(
                             uploadFailureLine(
                                 files.map(({ file }) => file),
-                                failures
+                                [...failures.values()]
                             ),
-                            new Set(failedIds)
+                            failures
                         );
-                        reportUploadFailure(failures, failedIds.length);
+                        reportUploadFailure([...failures.values()], failedIds.length);
                         // Don't return — still send text and successful uploads below
                     } else {
                         // All succeeded — clear and send messages
@@ -416,13 +418,14 @@
                     }
                 } catch (error: unknown) {
                     console.error("Error uploading files:", error);
-                    const failures = [new UploadFailure("other", undefined, "unexpected-error")];
+                    const failure = new UploadFailure("other", undefined, "unexpected-error");
+                    const failures = [failure];
                     showUploadError(
                         uploadFailureLine(
                             pendingFiles.map(({ file }) => file),
                             failures
                         ),
-                        new Set(pendingFiles.map(({ id }) => id))
+                        new Map(pendingFiles.map(({ id }) => [id, failure]))
                     );
                     reportUploadFailure(failures, pendingFiles.length);
                     // Don't return — still send text message below
@@ -446,13 +449,14 @@
                     })
                     .catch((error) => {
                         console.error("Error sending files:", error);
-                        const failures = [new UploadFailure("other", undefined, "matrix-error")];
+                        const failure = new UploadFailure("other", undefined, "matrix-error");
+                        const failures = [failure];
                         showUploadError(
                             uploadFailureLine(
                                 sentFiles.map(({ file }) => file),
                                 failures
                             ),
-                            new Set(sentFiles.map(({ id }) => id))
+                            new Map(sentFiles.map(({ id }) => [id, failure]))
                         );
                         reportUploadFailure(failures, sentFiles.length);
                     })
@@ -687,13 +691,20 @@
     function deleteFile(id: string) {
         files = files.filter((file) => file.id !== id);
         filesPreview = filesPreview.filter((filePreview) => filePreview.id !== id);
-        if (failedFileIds.has(id)) {
-            failedFileIds.delete(id);
-            // The error was about the files just removed: nothing is left for it to explain.
-            if (failedFileIds.size === 0) {
+        if (failedFiles.has(id)) {
+            failedFiles.delete(id);
+            if (failedFiles.size === 0) {
+                // The error was about the files just removed: nothing is left for it to explain.
                 clearUploadError();
             } else {
-                failedFileIds = failedFileIds;
+                // Rebuilt for the files still failing, so its count and reason stay true.
+                showUploadError(
+                    uploadFailureLine(
+                        files.filter((file) => failedFiles.has(file.id)).map(({ file }) => file),
+                        [...failedFiles.values()]
+                    ),
+                    failedFiles
+                );
             }
         }
     }
@@ -893,7 +904,7 @@
                         <div
                             class="relative content-center {preview.type.includes('image')
                                 ? 'w-20'
-                                : 'w-28'} h-20 rounded-[12px] {failedFileIds.has(preview.id) ? 'upload-failed' : ''}"
+                                : 'w-28'} h-20 rounded-[12px] {failedFiles.has(preview.id) ? 'upload-failed' : ''}"
                         >
                             <!-- On the top-right corner, partly outside the file, as in Discord. -->
                             <button
