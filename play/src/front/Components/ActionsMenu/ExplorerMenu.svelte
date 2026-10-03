@@ -42,9 +42,25 @@
 </script>
 
 <!-- The zoom column, in the bar's ink: + and − (desktops and tablets; phones pinch), then the map overview. On a phone
-     it also holds "Explore {Universe}", which has no room in the phone's bar. Tooltips show on hover and keyboard
-     focus, to the left. -->
-<div class="explorer-pill pointer-events-auto" data-testid="actions-explorer">
+     it is smaller, so Express stays the main button below it, and holds "Explore {Universe}" on top, which has no room
+     in the phone's bar. Tooltips show on hover and keyboard focus, to the left. -->
+<div class="explorer-pill pointer-events-auto" class:compact={$mobileLayoutStore} data-testid="actions-explorer">
+    {#if $mobileLayoutStore && $roomListActivated}
+        <button
+            type="button"
+            class="explorer-btn group"
+            class:open={$roomListVisibilityStore}
+            aria-label={$universeNameStore
+                ? $LL.actionbar.explore.button({ universe: displayName($universeNameStore) })
+                : $LL.actionbar.explore.buttonWithoutName()}
+            aria-pressed={$roomListVisibilityStore}
+            data-testid="explore-tile"
+            on:click={toggleExploreList}
+        >
+            <IconPlanet font-size="20" />
+        </button>
+        <span class="explorer-divider" aria-hidden="true" />
+    {/if}
     {#if !$mobileLayoutStore}
         <button type="button" class="explorer-btn group" aria-label={$LL.mapEditor.explorer.zoomIn()} on:click={zoomIn}>
             <IconPlus font-size="20" />
@@ -81,22 +97,6 @@
         >
             <IconFocusCentered font-size="20" />
             <span class="explorer-tip" aria-hidden="true">{$LL.mapEditor.explorer.showMyLocation()}</span>
-        </button>
-    {/if}
-    {#if $mobileLayoutStore && $roomListActivated}
-        <span class="explorer-divider" aria-hidden="true" />
-        <button
-            type="button"
-            class="explorer-btn group"
-            class:open={$roomListVisibilityStore}
-            aria-label={$universeNameStore
-                ? $LL.actionbar.explore.button({ universe: displayName($universeNameStore) })
-                : $LL.actionbar.explore.buttonWithoutName()}
-            aria-pressed={$roomListVisibilityStore}
-            data-testid="explore-tile"
-            on:click={toggleExploreList}
-        >
-            <IconPlanet font-size="20" />
         </button>
     {/if}
 </div>
@@ -151,6 +151,24 @@
         height: 1px;
         margin: 4px 0;
         background: rgba(255, 255, 255, 0.1);
+    }
+    /* Phones: 40px buttons in a 48px pill, on Express's right edge, held 8px further up off it. */
+    .explorer-pill.compact {
+        gap: 2px;
+        padding: 4px;
+        margin-bottom: 8px;
+    }
+    .compact .explorer-btn {
+        width: 40px;
+        height: 40px;
+    }
+    .compact .explorer-btn :global(svg) {
+        width: 18px;
+        height: 18px;
+    }
+    .compact .explorer-divider {
+        width: 22px;
+        margin: 2px 0;
     }
     /* The ink tooltip, to the left of the button. */
     .explorer-tip {
