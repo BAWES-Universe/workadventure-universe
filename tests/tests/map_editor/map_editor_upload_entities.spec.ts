@@ -305,7 +305,8 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
 
         await EntityEditor.moveAndClick(page, 32, 300);
 
-        await expect(page.getByText('Books (Variant 5)')).toBeVisible();
+        // The placed object opens in the edit panel; the placing bar at the bottom names the same object.
+        await expect(page.getByTestId('edit-panel').getByText('Books (Variant 5)')).toBeVisible();
         await expect(page.getByText('lorem-ipsum.pdf')).toBeVisible();
     });
 });
