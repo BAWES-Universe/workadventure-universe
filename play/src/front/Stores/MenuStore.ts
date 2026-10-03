@@ -23,7 +23,8 @@ import { megaphoneCanBeUsedStore } from "./MegaphoneStore";
 import { chatVisibilityStore, isMatrixChatEnabledStore } from "./ChatStore";
 import { gameSceneStore } from "./GameSceneStore";
 import { mobileLayoutStore } from "./MobileLayoutStore";
-import { modalIframeStore, modalVisibilityStore, showModalGlobalComminucationVisibilityStore } from "./ModalStore";
+import { modalIframeStore, modalVisibilityStore } from "./ModalStore";
+import { broadcastPanelOpenStore, toggleBroadcastPanel } from "./BroadcastStore";
 import { getAdditionalMenuItemStore } from "./AdditionalItemsMenuStore";
 
 export const menuIconVisiblilityStore = writable(false);
@@ -61,7 +62,6 @@ export enum SubMenusInterface {
     profile = "profile",
     invite = "invite",
     aboutRoom = "credit",
-    globalMessages = "globalMessages",
     contact = "contact",
     report = "report",
     chat = "chat",
@@ -115,11 +115,6 @@ function createSubMenusStore() {
             type: "translated",
             key: SubMenusInterface.aboutRoom,
             visible: alwaysVisible,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.globalMessages,
-            visible: userIsAdminStore,
         },
         {
             type: "translated",
@@ -260,6 +255,11 @@ export function handleMenuUnregisterEvent(key: string) {
 }
 
 export function handleOpenMenuEvent(key: string) {
+    // The "Global Messages" menu page is now the Broadcast card: map scripts asking for it get the card.
+    if (key === "globalMessages") {
+        toggleBroadcastPanel();
+        return;
+    }
     const menu = subMenusStore.findByKey(key);
     activeSubMenuStore.activateByMenuItem(menu);
     menuVisiblilityStore.set(true);
@@ -433,10 +433,12 @@ export const mapEditorMenuVisibleStore = derived(
         return ($mapEditorActivated || $mapEditorActivatedForThematics) && $mapManagerActivated;
     }
 );
+/** Broadcast is in the menu for whoever may go live here, for admins (who can also send messages and voice notes),
+ * and for whoever may edit the room (to set who can go live here, even while broadcasting is off). */
 export const globalMessageVisibleStore = derived(
-    [megaphoneCanBeUsedStore, userIsAdminStore],
-    ([$megaphoneCanBeUsedStore, $userIsAdminStore]) => {
-        return $megaphoneCanBeUsedStore || $userIsAdminStore;
+    [megaphoneCanBeUsedStore, userIsAdminStore, mapEditorActivated],
+    ([$megaphoneCanBeUsedStore, $userIsAdminStore, $mapEditorActivated]) => {
+        return $megaphoneCanBeUsedStore || $userIsAdminStore || $mapEditorActivated;
     }
 );
 export const mapMenuVisibleStore = derived(
@@ -493,5 +495,5 @@ export function showMenuItem(key: MenuKeys | string) {
     chatVisibilityStore.set(false);
     modalVisibilityStore.set(false);
     modalIframeStore.set(null);
-    showModalGlobalComminucationVisibilityStore.set(false);
+    broadcastPanelOpenStore.set(false);
 }

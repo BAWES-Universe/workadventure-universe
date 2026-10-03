@@ -68,26 +68,49 @@ class Menu {
         await expect(page.locator('#map-editor-container .configure-my-room .close-window')).toBeHidden();
     }
 
+    /** Opens the Broadcast card from the Tools menu. */
     async toggleMegaphoneButton(page: Page) {
         await this.openMapMenu(page);
-        await page.getByRole('button', { name: 'Send global message' }).click();
-        //await page.getByTestId('global-message').click({timeout: 30_000});
+        await page.getByTestId('broadcast-menu').click();
+        await expect(page.getByTestId('broadcast-panel')).toBeVisible();
     }
 
+    /** The Broadcast card offers "Go live" to this player. */
     async isThereMegaphoneButton(page: Page) {
-        await this.openMapMenu(page);
-        await page.getByRole('button', { name: 'Send global message' }).click();
-        await expect(page.getByRole('button', { name: 'Start live message' })).toBeEnabled();
-        await page.locator(".close-btn").first().click();
-        //await this.closeMapMenu(page);
+        await this.toggleMegaphoneButton(page);
+        await expect(page.getByTestId('broadcast-kind-live')).toBeEnabled();
+        await page.getByTestId('broadcast-close').click();
+        await expect(page.getByTestId('broadcast-panel')).toBeHidden();
     }
 
+    /** The Broadcast card shows "Go live" greyed out: this player may not go live here. */
     async isNotThereMegaphoneButton(page: Page) {
-        await this.openMapMenu(page);
-        await page.getByRole('button', { name: 'Send global message' }).click();
-        await expect(page.getByRole('button', { name: 'Start live message' })).toBeDisabled();
-        await page.locator(".close-btn").first().click();
-        //await this.closeMapMenu(page);
+        await this.toggleMegaphoneButton(page);
+        await expect(page.getByTestId('broadcast-kind-live')).toBeDisabled();
+        await page.getByTestId('broadcast-close').click();
+        await expect(page.getByTestId('broadcast-panel')).toBeHidden();
+    }
+
+    /**
+     * Goes live from the Broadcast card (it must be open): picks "Go live", the world's reach when the card asks,
+     * and presses Go live. The card closes and the Live pill shows.
+     */
+    async startLiveBroadcast(page: Page) {
+        await page.getByTestId('broadcast-kind-live').click();
+        const worldReach = page.getByTestId('broadcast-reach-WORLD');
+        if (await worldReach.isVisible()) {
+            await worldReach.click();
+            await page.getByTestId('broadcast-next').click();
+        }
+        await expect(page.getByTestId('broadcast-go-live')).toBeEnabled({ timeout: 10_000 });
+        await page.getByTestId('broadcast-go-live').click();
+        await expect(page.getByTestId('broadcast-live-pill')).toBeVisible();
+    }
+
+    /** Ends the live broadcast from the Live pill. */
+    async stopLiveBroadcast(page: Page) {
+        await page.getByTestId('broadcast-end-live').click();
+        await expect(page.getByTestId('broadcast-live-pill')).toBeHidden();
     }
 
     async clickOnStatus(page:Page, status: string){

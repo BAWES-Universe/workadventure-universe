@@ -222,6 +222,12 @@ message UpdateMegaphoneSettingMessage {
   optional string title = 2;
   optional string scope = 3;
   repeated string rights = 4;
+  // The reaches people may go live at from this room ("ROOM", "WORLD"). Absent: the single legacy "scope" applies.
+  optional MegaphoneScopes scopes = 5;
+}
+
+message MegaphoneScopes {
+  repeated string scopes = 1;
 }
 
 message EditMapCommandMessage {
@@ -432,6 +438,20 @@ message PlayGlobalMessage {
   string type = 1;
   string content = 2;
   bool broadcastToWorld = 3;
+  // Who sent it and how far it goes. Absent on messages from older clients: the room, or the world when broadcastToWorld.
+  optional BroadcastMeta broadcast = 4;
+}
+
+// A broadcast (written notice, voice note) carries who sent it and the reach it was sent to, so the people who
+// receive it see "Khalid · To everyone in BAWES HQ".
+message BroadcastMeta {
+  optional string senderName = 1;
+  // "room", "world" or "universe".
+  string reach = 2;
+  // The name of what the reach covers: the room's, the world's or the universe's name.
+  optional string reachLabel = 3;
+  // A line of text sent with a voice note.
+  optional string caption = 4;
 }
 
 /************ Queries and answers ****************/
@@ -868,8 +888,21 @@ message RoomJoinedMessage {
 }
 
 message MegaphoneSettings{
+  // True when this user may go live on at least one channel of this room.
   bool enabled = 1;
+  // The first channel this user may go live on (kept for older clients).
   optional string url = 2;
+  // Every broadcast channel this room listens to, and whether this user may go live on each.
+  repeated MegaphoneChannel channels = 3;
+}
+
+message MegaphoneChannel {
+  // "ROOM", "WORLD" or "UNIVERSE".
+  string scope = 1;
+  // The space joined for that channel.
+  string url = 2;
+  // Whether this user may go live on it.
+  bool canStream = 3;
 }
 
 message WebRtcStartMessage {
@@ -888,6 +921,7 @@ message TeleportMessageMessage{
 message SendUserMessage{
   string type = 1;
   string message = 2;
+  optional BroadcastMeta broadcast = 3;
 }
 
 message WorldFullWarningMessage{
@@ -1346,6 +1380,7 @@ message AdminRoomMessage {
   string message = 1;
   string roomId = 2;
   string type = 3;
+  optional BroadcastMeta broadcast = 4;
 }
 
 // A message sent by an administrator to absolutely everybody

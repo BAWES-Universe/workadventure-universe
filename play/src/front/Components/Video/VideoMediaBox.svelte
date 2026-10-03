@@ -14,6 +14,7 @@
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
     import { showFloatingUi } from "../../Utils/svelte-floatingui-show";
     import { userActivationManager } from "../../Stores/UserActivationStore";
+    import { liveBroadcastStore } from "../../Stores/MegaphoneStore";
     import ActionMediaBox from "./ActionMediaBox.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
@@ -56,7 +57,9 @@
 
     $: videoEnabled = $hasVideoStore;
 
-    $: isMegaphoneSpace = videoBox.isMegaphoneSpace ?? false;
+    // Live: someone else's broadcast you listen to, or your own tile while you are live.
+    $: isMegaphoneSpace =
+        (videoBox.isMegaphoneSpace ?? false) || (videoBox.uniqueId === "-1" && $liveBroadcastStore !== undefined);
 
     function toggleFullScreen() {
         highlightFullScreen.update((current) => !current);
