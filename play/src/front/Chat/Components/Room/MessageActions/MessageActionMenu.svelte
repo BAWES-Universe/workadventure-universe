@@ -40,6 +40,8 @@
     let positioned = false;
 
     $: files = $actions.files;
+    // Again whenever the files change while the menu is open, so a photo added meanwhile is ready to save too.
+    $: prepareFiles(files);
     $: saveLabel = areAllPhotos(files)
         ? files.length > 1
             ? $LL.chat.messageActions.savePhotos({ count: files.length })
@@ -145,7 +147,6 @@
     }
 
     onMount(() => {
-        prepareFiles(files);
         position().catch((error) => console.error(error));
         root.querySelector<HTMLElement>("[data-menu-first]")?.focus({ preventScroll: true });
     });

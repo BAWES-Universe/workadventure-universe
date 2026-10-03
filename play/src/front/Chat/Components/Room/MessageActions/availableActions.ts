@@ -100,7 +100,9 @@ export function openReactionPicker(message: ChatMessage, anchor: Element, onClos
         LazyEmote,
         {
             onEmojiClick: (event: EmojiClickEvent) => {
-                reactTo(message, event.detail.unicode ?? "");
+                // Custom emoji have no unicode: there is nothing to react with.
+                const emoji = event.detail.unicode;
+                if (emoji) reactTo(message, emoji);
                 close();
             },
             onClose: close,
