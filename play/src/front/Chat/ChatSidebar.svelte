@@ -149,13 +149,10 @@
     $: sheet = $chatSheetLayoutStore;
     // Height while the handle is dragged; undefined while the sheet rests on a snap.
     let sheetDragHeight: number | undefined;
-    $: sheetSnapHeights = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES);
-    $: sheetHeight = sheetDragHeight ?? sheetSnapHeights[$chatSheetSnapStore];
-    // The videos above the sheet follow its height, drag included.
-    $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
 
     // A message arriving in a bubble opens the chat by itself: it opens low, over as little of the map and the
     // videos as it can. Opened on purpose, it comes back at the height it was left at.
+    // Before the height below, so a chat opened by a bubble starts at peek without a pass at its old height.
     let wasVisible = false;
     $: onVisibilityChange($chatVisibilityStore);
     function onVisibilityChange(visible: boolean) {
@@ -165,6 +162,11 @@
         if (!visible) sheetDragHeight = undefined;
         wasVisible = visible;
     }
+
+    $: sheetSnapHeights = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES);
+    $: sheetHeight = sheetDragHeight ?? sheetSnapHeights[$chatSheetSnapStore];
+    // The videos above the sheet follow its height, drag included.
+    $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
 
     function onSheetDrag(height: number) {
         // It follows the finger below its lowest height too, so letting go there closes it.
