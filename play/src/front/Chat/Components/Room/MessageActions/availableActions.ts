@@ -45,6 +45,12 @@ export function hasAnyAction(actions: AvailableActions): boolean {
 }
 
 export function reactTo(message: ChatMessage, emoji: string): void {
+    // An emoji already on the message toggles like its chip: picking your own reaction again takes it back.
+    const existing = message.reactions.get(emoji);
+    if (existing) {
+        existing.react();
+        return;
+    }
     message.addReaction(emoji).catch((error) => console.error(error));
 }
 
