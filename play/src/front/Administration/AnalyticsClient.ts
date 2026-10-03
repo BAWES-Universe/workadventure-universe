@@ -1006,6 +1006,13 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    chatUploadFailed(reason: string, status: number | undefined, count: number): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_chat_upload_failed", { reason, status, count });
+            })
+            .catch((e) => console.error(e));
+    }
     clickTopOpenMapExplorer(): void {
         this.posthogPromise
             ?.then((posthog) => {
