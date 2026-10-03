@@ -14,6 +14,11 @@
  * the keyboard closes, blocks the page pinch-zoom (the game's own pinch-to-zoom is untouched) and undoes a page zoom
  * found on load or on coming back to the app. Lists and text fields scroll as always. Desktop and Android don't pan
  * or zoom the page this way, so there it has nothing to do.
+ *
+ * Leaving the app while typing is its own case: iOS closes the keyboard in the background and opens it again on the
+ * way back, without showing the field, and the page could stay shifted once it closed. So the field lets go of the
+ * keyboard when the app is left (the text stays), and the page is put back on the way in. After the keyboard closes,
+ * the page is checked a few times while iOS finishes its animation, since iOS may move it again meanwhile.
  */
 
 /** How close (in CSS px) the visual viewport must be to the window's height to count as "keyboard closed". */
@@ -24,6 +29,8 @@ export const REVEAL_WINDOW_MS = 1_000;
 export const MOMENTUM_MS = 800;
 /** A page zoom further from 1 than this is a zoom, not rounding. */
 const ZOOM_TOLERANCE = 0.01;
+/** After the keyboard closes or the app comes back, when to check the page is in place (ms), while iOS settles. */
+export const SETTLE_CHECKS_MS = [0, 150, 400, 800];
 
 type ViewportLike = Pick<VisualViewport, "height" | "addEventListener" | "removeEventListener"> &
     Partial<Pick<VisualViewport, "scale" | "pageLeft" | "pageTop">>;
@@ -43,6 +50,8 @@ export interface ViewportGuardWindow {
 export interface ViewportGuardOptions {
     /** Called after a page zoom was found and undone, with the zoom found and when it was found. */
     onZoomReset?: (scale: number, reason: "load" | "resume" | "pageshow" | "orientation") => void;
+    /** Called when the page was found moved after the keyboard closed or the app came back, and was put back. */
+    onShiftReset?: (properties: { x: number; y: number; reason: "keyboard-closed" | "resume" }) => void;
     now?: () => number;
 }
 
@@ -214,6 +223,42 @@ export function installViewportGuard(
         options.onZoomReset?.(scale, reason);
     };
 
+    // After the keyboard closed or the app came back: the page belongs at the top-left corner, checked while iOS
+    // settles. The scroll is asked for even when the page reads as in place: iOS has left it drawn shifted.
+    let settleTimers = 0;
+    const settle = (reason: "keyboard-closed" | "resume") => {
+        const run = ++settleTimers;
+        let reported = false;
+        for (const delay of SETTLE_CHECKS_MS) {
+            win.setTimeout(() => {
+                // A newer settle took over, or the keyboard is up again, a finger is down or the page is zoomed.
+                if (run !== settleTimers || keyboardOpen() || fingersDown > 0 || isZoomed()) return;
+                const { x, y } = pagePosition(win);
+                const shiftX = x || win.scrollX;
+                const shiftY = y || win.scrollY;
+                if ((shiftX !== 0 || shiftY !== 0) && !reported) {
+                    reported = true;
+                    options.onShiftReset?.({ x: shiftX, y: shiftY, reason });
+                }
+                win.scrollTo(0, 0);
+                resetPagePosition(win);
+            }, delay);
+        }
+    };
+
+    // Leaving the app or coming back: the field lets go of the keyboard (its text stays), so iOS doesn't bring the
+    // keyboard back over a field it doesn't show, and where the page was held no longer counts.
+    const releaseTextField = () => {
+        const active = activeElementDeep(doc);
+        if (isTextField(active) && active instanceof HTMLElement) active.blur();
+        anchor = undefined;
+    };
+    const onResume = () => {
+        releaseTextField();
+        wasKeyboardOpen = keyboardOpen();
+        settle("resume");
+    };
+
     const holdPage = () => {
         if (!keyboardOpen()) {
             // Nothing should move the page itself. With the keyboard closed and no text field focused, any page
@@ -244,6 +289,7 @@ export function installViewportGuard(
         } else if (wasKeyboardOpen) {
             anchor = undefined;
             resetPagePosition(win);
+            settle("keyboard-closed");
         }
         wasKeyboardOpen = open;
     };
@@ -301,9 +347,17 @@ export function installViewportGuard(
     };
 
     const onVisibilityChange = () => {
-        if (doc.visibilityState === "visible") undoZoom("resume");
+        if (doc.visibilityState === "visible") {
+            undoZoom("resume");
+            onResume();
+        } else {
+            releaseTextField();
+        }
     };
-    const onPageShow = () => undoZoom("pageshow");
+    const onPageShow = () => {
+        undoZoom("pageshow");
+        onResume();
+    };
     const onOrientationChange = () => {
         win.setTimeout(() => undoZoom("orientation"), 300);
     };
