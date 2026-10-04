@@ -101,19 +101,35 @@ function requireServiceOperator(req: BotAPIRequest, res: Response, next: NextFun
     next();
 }
 
+export interface BotAPIOptions {
+    /** Each bot's state for direct messages (online, resting, unready, gone); only when Matrix DMs are on. */
+    dmStatus?: (botIds: string[]) => Promise<Record<string, string>>;
+}
+
+/** Most bots one state lookup may ask about: a chat list's worth. */
+const DM_STATUS_MAX_IDS = 50;
+
 export class BotAPI {
     private app: express.Application;
     private botManager: BotManager;
     private adminApiService: AdminApiService;
     private botRegistry: BotRegistry;
     private server: any = null;
+    private dmStatus: BotAPIOptions['dmStatus'];
 
-    constructor(botManager: BotManager, adminApiService: AdminApiService, botRegistry: BotRegistry, preRouters: express.Router[] = []) {
+    constructor(
+        botManager: BotManager,
+        adminApiService: AdminApiService,
+        botRegistry: BotRegistry,
+        preRouters: express.Router[] = [],
+        options: BotAPIOptions = {}
+    ) {
         console.log('[BotAPI] Constructor called');
         this.app = express();
         this.botManager = botManager;
         this.adminApiService = adminApiService;
         this.botRegistry = botRegistry;
+        this.dmStatus = options.dmStatus;
 
         // Routers with their own auth and body limits (the Matrix application service) go before the shared parser.
         for (const router of preRouters) {
@@ -484,6 +500,29 @@ export class BotAPI {
         });
 
         // Get available AI providers (for bot editor UI). Signed-in only; returns metadata, no credentials
+        // Bot states for the game's chat header and People list. Signed in only; it says nothing but the state of bots
+        // the caller already names, never their names or rooms.
+        this.app.get('/api/bots/dm-status', requireSession, async (req: Request, res: Response) => {
+            if (!this.dmStatus) {
+                res.status(404).json({ error: 'Direct messages are off' });
+                return;
+            }
+            const ids = String(req.query.ids ?? '')
+                .split(',')
+                .map((id) => id.trim())
+                .filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id));
+            if (ids.length === 0 || ids.length > DM_STATUS_MAX_IDS) {
+                res.status(400).json({ error: `Send 1 to ${DM_STATUS_MAX_IDS} bot ids` });
+                return;
+            }
+            try {
+                res.json({ bots: await this.dmStatus([...new Set(ids)]) });
+            } catch (error) {
+                console.error('[BotAPI] Error reading bot states:', error);
+                res.status(500).json({ error: 'Could not read bot states' });
+            }
+        });
+
         this.app.get('/api/bots/ai-providers', requireSession, async (req: Request, res: Response) => {
             try {
                 const enabled = req.query.enabled === 'true' || req.query.enabled === undefined;

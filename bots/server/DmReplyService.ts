@@ -44,7 +44,15 @@ export interface DmReply {
     text: string;
     /** Media the bot's tools produced, to send after the text. */
     media: PendingMedia[];
+    /** The AI provider failed on this message, so there is no answer; the person can send it again. */
+    failed?: boolean;
 }
+
+/** How a resting bot words "not now", so it still sounds like itself. */
+const RESTING_PROMPT =
+    "Right now you are switched off for a while and can't chat. Answer the person's message with one short sentence, " +
+    "in character and in the same language they wrote in, saying you can't talk right now and they can come back later. " +
+    "Don't answer their question, and don't mention AI, settings or anyone who runs you.";
 
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
@@ -96,17 +104,36 @@ export class DmReplyService extends BaseBehavior {
         return id;
     }
 
-    /** The bot's configuration: the live one when it is spawned, else Orbit's (cached briefly). */
-    async getBotConfig(botId: string): Promise<BotConfiguration | null> {
+    /**
+     * The bot's configuration: the live one when it is spawned, else Orbit's (cached briefly). `fresh` skips the cache,
+     * for checking whether a resting bot is back.
+     */
+    async getBotConfig(botId: string, fresh = false): Promise<BotConfiguration | null> {
         const live = this.botManager.getBot(botId)?.getFullConfig();
         if (live) return live;
         const cached = this.configCache.get(botId);
-        if (cached && Date.now() - cached.at < CONFIG_CACHE_MS) return cached.config;
+        if (!fresh && cached && Date.now() - cached.at < CONFIG_CACHE_MS) return cached.config;
         const config = await this.botManager.getAdminApiService().getBotConfiguration(botId);
         this.configCache.delete(botId);
         this.configCache.set(botId, { config, at: Date.now() });
         if (this.configCache.size > MAX_CACHED_CONFIGS) this.configCache.delete(this.configCache.keys().next().value!);
         return config;
+    }
+
+    /**
+     * One short in-character line from a resting bot, in the language of the person's message. Empty when the bot has
+     * no AI provider or the provider fails; the plain note explains it either way. Not kept in memory.
+     */
+    async restingLine(config: BotConfiguration, text: string): Promise<string> {
+        if (!config.aiProviderRef || !this.aiService || !text.trim()) return '';
+        const instructions = `${config.chatInstructions || DEFAULT_INSTRUCTIONS}\n\n${RESTING_PROMPT}`;
+        try {
+            const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500));
+            return parseEmotionsFromResponse(line).cleanedResponse.trim().slice(0, 300);
+        } catch (error) {
+            console.warn(`[DmReplyService] Resting line failed for bot ${config.botId}:`, (error as Error)?.message ?? error);
+            return '';
+        }
     }
 
     private async ensureMemoriesLoaded(botId: string): Promise<void> {
@@ -206,7 +233,7 @@ export class DmReplyService extends BaseBehavior {
             }
         } catch (error) {
             console.error(`[DmReplyService] AI error for bot ${botId}:`, error);
-            return { text: "I'm having trouble processing that. Could you rephrase?", media: [] };
+            return { text: '', media: [], failed: true };
         }
 
         const responseTime = latency || Date.now() - startTime;

@@ -22,6 +22,7 @@ import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
 import { uploadAttachment } from '../matrix/uploadAttachment';
+import { availabilityOf, type BotAvailability } from '../matrix/BotStatusNotes';
 import type { Router } from 'express';
 import * as path from 'path';
 
@@ -50,19 +51,36 @@ const botManager = new BotManager(adminApiService, botRegistry);
 // Direct messages to bots over Matrix (off unless MATRIX_* is set). Synapse pushes events here; no socket per bot.
 const matrixConfig = readMatrixConfig();
 const preRouters: Router[] = [];
+let matrixBridge: MatrixDmBridge | null = null;
+let dmStatus: ((botIds: string[]) => Promise<Record<string, BotAvailability | 'unknown'>>) | undefined;
 if (matrixConfig) {
     const dmReplyService = new DmReplyService(botManager);
-    const matrixBridge = new MatrixDmBridge(matrixConfig, new MatrixAppServiceClient(matrixConfig), {
-        getBotConfig: (botId) => dmReplyService.getBotConfig(botId),
+    matrixBridge = new MatrixDmBridge(matrixConfig, new MatrixAppServiceClient(matrixConfig), {
+        getBotConfig: (botId, fresh) => dmReplyService.getBotConfig(botId, fresh),
         checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
         rooms: botRegistry,
         uploadAttachment,
+        restingLine: (config, text) => dmReplyService.restingLine(config, text),
+        waiting: botRegistry,
     });
     preRouters.push(createMatrixAppServiceRouter(matrixConfig, matrixBridge));
+    // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.
+    dmStatus = async (botIds) =>
+        Object.fromEntries(
+            await Promise.all(
+                botIds.map(async (botId) => {
+                    try {
+                        return [botId, availabilityOf(await dmReplyService.getBotConfig(botId))] as const;
+                    } catch {
+                        return [botId, 'unknown'] as const;
+                    }
+                })
+            )
+        );
     console.log(`[BotServer] Matrix direct messages on for ${matrixConfig.domain}`);
 }
-const botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters);
+const botAPI = new BotAPI(botManager, adminApiService, botRegistry, preRouters, { dmStatus });
 
 // Start autopilot improvement system (DEVELOPMENT ONLY - fully autonomous)
 // This system runs tests every 30 seconds and creates improvement task files for AI analysis
@@ -102,6 +120,7 @@ async function shutdown(signal: string) {
         stopMovementAnalysis();
         
         // Stop API server
+        matrixBridge?.stop();
         await botAPI.stop();
         
         // Shutdown bot manager (disconnects all bots)
@@ -127,6 +146,7 @@ async function start() {
 
         // Start API server
         botAPI.start(BOT_SERVER_PORT);
+        matrixBridge?.start();
 
         console.log(`[BotServer] Bot server started on port ${BOT_SERVER_PORT}`);
 

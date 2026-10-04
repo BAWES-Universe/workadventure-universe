@@ -41,6 +41,15 @@ export class MatrixAppServiceClient {
         );
     }
 
+    /** The display name a user has on the homeserver, or null when it has none. */
+    async getDisplayName(userId: string): Promise<string | null> {
+        const response = await this.http.get(`/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {
+            params: { user_id: userId },
+            validateStatus: () => true,
+        });
+        return response.status === 200 && typeof response.data?.displayname === 'string' ? response.data.displayname : null;
+    }
+
     async joinRoom(userId: string, roomId: string): Promise<void> {
         await this.http.post(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/join`, {}, { params: { user_id: userId } });
     }

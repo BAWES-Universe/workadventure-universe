@@ -133,6 +133,57 @@ export class BotRegistry {
         await this.redis.hDel('bots:matrix:dm-rooms', roomId);
     }
 
+    /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */
+    hasSharedStore(): boolean {
+        return !!this.redis?.isOpen;
+    }
+
+    /**
+     * Keep the last message someone left a resting bot in one room, for it to answer once it is back. One per room;
+     * a newer message replaces the older one. Gone after a day.
+     */
+    async rememberWaitingDm(botId: string, roomId: string, message: string): Promise<void> {
+        if (!this.redis?.isOpen) return;
+        const key = `bots:matrix:dm-waiting:${botId}`;
+        await this.redis.hSet(key, roomId, message);
+        await this.redis.expire(key, 24 * 60 * 60);
+        await this.redis.sAdd('bots:matrix:dm-waiting', botId);
+    }
+
+    /** Bots that have messages waiting for them. A bot whose messages all expired is dropped from the list. */
+    async waitingDmBots(): Promise<string[]> {
+        if (!this.redis?.isOpen) return [];
+        const waiting: string[] = [];
+        for (const botId of await this.redis.sMembers('bots:matrix:dm-waiting')) {
+            if (await this.redis.exists(`bots:matrix:dm-waiting:${botId}`)) {
+                waiting.push(botId);
+            } else {
+                await this.redis.sRem('bots:matrix:dm-waiting', botId);
+            }
+        }
+        return waiting;
+    }
+
+    async hasWaitingDms(botId: string): Promise<boolean> {
+        if (!this.redis?.isOpen) return false;
+        return this.redis.sIsMember('bots:matrix:dm-waiting', botId);
+    }
+
+    /**
+     * Take a bot's waiting messages. Each is removed as it is taken, so when several bot servers drain at once every
+     * message is answered by one of them only.
+     */
+    async takeWaitingDms(botId: string): Promise<string[]> {
+        if (!this.redis?.isOpen) return [];
+        const key = `bots:matrix:dm-waiting:${botId}`;
+        const taken: string[] = [];
+        for (const [roomId, message] of Object.entries(await this.redis.hGetAll(key))) {
+            if ((await this.redis.hDel(key, roomId)) === 1) taken.push(message);
+        }
+        if ((await this.redis.hLen(key)) === 0) await this.redis.sRem('bots:matrix:dm-waiting', botId);
+        return taken;
+    }
+
     /**
      * Register this bot server with its capacity
      */

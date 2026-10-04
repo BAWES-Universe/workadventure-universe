@@ -2,9 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { MatrixDmBridge, type MatrixDmBridgeDeps } from '../matrix/MatrixDmBridge';
+import { MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 import { botIdFromMatrixId, botMatrixId, readMatrixConfig } from '../matrix/MatrixConfig';
+import { BOT_STATUS_KEY, availabilityOf, detectLanguage, statusNoteContent } from '../matrix/BotStatusNotes';
 
 const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as-secret', hsToken: 'hs-secret' };
 const BOT = '0b7c1d2e-1111-4222-8333-944455556666';
@@ -12,10 +13,12 @@ const BOT_USER = `@bot_${BOT}:matrix.test`;
 const ALICE = '@alice:matrix.test';
 const ROOM = '!dm:matrix.test';
 
-function makeClient() {
+// Loosely typed so tests can reach the vi.fn helpers on each method.
+function makeClient(): any {
     return {
         ensureRegistered: vi.fn(async () => undefined),
         setDisplayName: vi.fn(async () => undefined),
+        getDisplayName: vi.fn(async (): Promise<string | null> => 'Guide'),
         joinRoom: vi.fn(async () => undefined),
         leaveRoom: vi.fn(async () => undefined),
         sendText: vi.fn(async () => '$evt'),
@@ -28,12 +31,13 @@ function makeClient() {
     };
 }
 
-function makeDeps(): MatrixDmBridgeDeps & { [k: string]: any } {
+function makeDeps(): any {
     const rooms = new Map<string, string>();
     return {
         getBotConfig: vi.fn(async () => ({ botId: BOT, name: 'Guide', enabled: true, aiProviderRef: 'p' }) as never),
         checkAccess: vi.fn(async () => ({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } })),
-        reply: vi.fn(async () => ({ text: 'Hello Alice!', media: [] })),
+        reply: vi.fn(async (): Promise<any> => ({ text: 'Hello Alice!', media: [] })),
+        restingLine: vi.fn(async () => 'The ship is in the harbour, come back later!'),
         rooms: {
             rememberDmRoom: vi.fn(async (r: string, b: string) => void rooms.set(r, b)),
             getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
@@ -66,8 +70,8 @@ describe('MatrixConfig', () => {
 });
 
 describe('MatrixDmBridge', () => {
-    let client: ReturnType<typeof makeClient>;
-    let deps: ReturnType<typeof makeDeps>;
+    let client: any;
+    let deps: any;
     let bridge: MatrixDmBridge;
 
     beforeEach(() => {
@@ -81,7 +85,10 @@ describe('MatrixDmBridge', () => {
         expect(client.ensureRegistered).toHaveBeenCalledWith(`bot_${BOT}`);
         expect(client.setDisplayName).toHaveBeenCalledWith(BOT_USER, 'Guide');
         expect(await bridge.userExists(ALICE)).toBe(false);
+        // A resting bot still exists, so a chat with it can open and explain; a deleted one does not.
         deps.getBotConfig.mockResolvedValueOnce({ enabled: false } as never);
+        expect(await bridge.userExists(BOT_USER)).toBe(true);
+        deps.getBotConfig.mockResolvedValueOnce(null as never);
         expect(await bridge.userExists(BOT_USER)).toBe(false);
     });
 
@@ -173,7 +180,11 @@ describe('MatrixDmBridge', () => {
         deps.checkAccess.mockResolvedValue({ allowed: false, reason: 'no_room_access', user: null });
         await bridge.onEvent(invite());
         expect(client.joinRoom).toHaveBeenCalled();
-        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, expect.stringContaining('can only chat'));
+        expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({
+            msgtype: 'm.notice',
+            body: "You can chat with Guide once you can visit the bot's room.",
+            [BOT_STATUS_KEY]: expect.objectContaining({ state: 'no_access' }),
+        }));
         expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
         await bridge.onEvent(message('hello?'));
         expect(deps.reply).not.toHaveBeenCalled();
@@ -230,7 +241,8 @@ describe('MatrixDmBridge', () => {
         await bridge.onEvent(message('one'));
         await bridge.onEvent(message('two'));
         expect(deps.reply).not.toHaveBeenCalled();
-        expect(client.sendText).toHaveBeenCalledTimes(1);
+        expect(client.sendMessage).toHaveBeenCalledTimes(1);
+        expect(client.sendText).not.toHaveBeenCalled();
     });
 
     it('remembers its rooms across a restart through the shared store', async () => {
@@ -247,6 +259,151 @@ describe('MatrixDmBridge', () => {
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
         await bridge.onEvent(message('hello?'));
         expect(deps.reply).not.toHaveBeenCalled();
+    });
+
+    const noteStates = () =>
+        client.sendMessage.mock.calls.map((call: any[]) => call[2]?.[BOT_STATUS_KEY]?.state).filter(Boolean);
+    const resting = { botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' };
+
+    it('a resting bot says so in character once, adds the plain note, and keeps the message for later', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('Are you around?'));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(deps.restingLine).toHaveBeenCalledWith(resting, 'Are you around?');
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'The ship is in the harbour, come back later!');
+        expect(noteStates()).toEqual(['resting']);
+        expect(client.sendMessage.mock.calls[0][2].body).toBe(
+            "Guide is resting. The bot's owner turned it off for now, so it can't reply until it's back on."
+        );
+
+        // A second message soon after: no second AI line and no second note.
+        await bridge.onEvent(message('Hello??'));
+        expect(deps.restingLine).toHaveBeenCalledTimes(1);
+        expect(noteStates()).toEqual(['resting']);
+
+        // Back on: the bot answers the last message left in this chat, once.
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'Hello??', [], expect.anything());
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops waiting messages older than a day, and checks with a fresh config', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent({ ...message('from yesterday'), origin_server_ts: Date.now() - 25 * 60 * 60 * 1000 });
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.getBotConfig).toHaveBeenCalledWith(BOT, true);
+        expect(deps.reply).not.toHaveBeenCalled();
+    });
+
+    it('answers waiting messages as soon as someone else gets an answer', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.onEvent(message('now?'));
+        await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(2));
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['now?', 'left while resting']);
+    });
+
+    it('keeps waiting messages in the shared store when there is one', async () => {
+        const store = new Map<string, string>();
+        deps.waiting = {
+            hasSharedStore: () => true,
+            rememberWaitingDm: vi.fn(async (_b: string, r: string, m: string) => void store.set(r, m)),
+            waitingDmBots: vi.fn(async () => (store.size ? [BOT] : [])),
+            hasWaitingDms: vi.fn(async () => store.size > 0),
+            takeWaitingDms: vi.fn(async () => {
+                const all = [...store.values()];
+                store.clear();
+                return all;
+            }),
+        };
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('saved for later'));
+        expect(deps.waiting.rememberWaitingDm).toHaveBeenCalledWith(BOT, ROOM, expect.stringContaining('saved for later'));
+        expect((bridge as any).localWaiting.size).toBe(0);
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'saved for later', [], expect.anything());
+    });
+
+    it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);
+        await bridge.onEvent(message('Hi!'));
+        await bridge.onEvent(message('Hello??'));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(noteStates()).toEqual(['unready']);
+    });
+
+    it('says the problem is on our side when the AI fails, the reply throws, or Orbit is down', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValueOnce({ text: '', media: [], failed: true });
+        await bridge.onEvent(message('Tell me about the island'));
+        deps.reply.mockRejectedValueOnce(new Error('boom'));
+        await bridge.onEvent(message('again'));
+        deps.getBotConfig.mockRejectedValueOnce(new Error('orbit down'));
+        await bridge.onEvent(message('and again'));
+        expect(noteStates()).toEqual(['trouble', 'trouble', 'trouble']);
+        expect(client.sendMessage.mock.calls[0][2].body).toBe("Guide couldn't answer that just now. Send it again in a minute.");
+        expect(client.sendText).not.toHaveBeenCalled();
+    });
+
+    it('a deleted bot says goodbye once, leaves, and forgets the chat', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(null as never);
+        await bridge.onEvent(message('Hello?'));
+        expect(noteStates()).toEqual(['gone']);
+        expect(client.sendMessage.mock.calls[0][2].body).toBe(
+            "Guide isn't around anymore. The bot was removed, so this chat is closed."
+        );
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+    });
+
+    it('names a deleted bot from its Matrix profile after a restart', async () => {
+        await bridge.onEvent(invite());
+        const restarted = new MatrixDmBridge(config, client as never, deps);
+        client.getDisplayName.mockResolvedValueOnce('Captain Mira');
+        deps.getBotConfig.mockResolvedValue(null as never);
+        await restarted.onEvent(message('Hello?'));
+        expect(client.getDisplayName).toHaveBeenCalledWith(BOT_USER);
+        expect(client.sendMessage.mock.calls[0][2].body).toContain('Captain Mira');
+    });
+
+    it('writes the note in the language of the message', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('مرحبا، هل أنت موجودة؟'));
+        const note = client.sendMessage.mock.calls[0][2];
+        expect(note[BOT_STATUS_KEY]).toMatchObject({ state: 'resting', lang: 'ar', title: 'في استراحة' });
+    });
+
+    it('keeps typing showing through a long answer', async () => {
+        vi.useFakeTimers();
+        try {
+            let finish: (v: unknown) => void = () => undefined;
+            deps.reply.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+            await bridge.onEvent(invite());
+            const pending = bridge.onEvent(message('write me an essay'));
+            await vi.advanceTimersByTimeAsync(45000);
+            const typingOn = client.setTyping.mock.calls.filter((call: any[]) => call[2] === true).length;
+            expect(typingOn).toBeGreaterThanOrEqual(3);
+            finish({ text: 'Done.', media: [] });
+            await pending;
+            const after = client.setTyping.mock.calls.length;
+            await vi.advanceTimersByTimeAsync(60000);
+            expect(client.setTyping.mock.calls.length).toBe(after);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 
@@ -332,5 +489,76 @@ describe('DmReplyService ids', () => {
         expect(ids.size).toBe(10000);
         expect(ids.has('@p0:matrix.test')).toBe(false);
         expect(service.playerIdFor('@p0:matrix.test')).not.toBe(first);
+    });
+});
+
+describe('Bot status notes', () => {
+    it('guesses the language from the script or common words, English when unsure', () => {
+        expect(detectLanguage('مرحبا')).toBe('ar');
+        expect(detectLanguage('こんにちは、元気？')).toBe('ja');
+        expect(detectLanguage('안녕하세요')).toBe('ko');
+        expect(detectLanguage('你好，你在吗')).toBe('zh');
+        expect(detectLanguage('Bonjour, tu es là ?')).toBe('fr');
+        expect(detectLanguage('Hola, ¿estás ahí?')).toBe('es');
+        expect(detectLanguage('Hallo, bist du da?')).toBe('de');
+        expect(detectLanguage('Olá, você está aí?')).toBe('pt');
+        expect(detectLanguage('Ciao, come stai?')).toBe('it');
+        expect(detectLanguage('Hoi, ben je er?')).toBe('nl');
+        expect(detectLanguage('Bon dia, com estàs?')).toBe('ca');
+        expect(detectLanguage('Hello?')).toBe('en');
+        expect(detectLanguage('ok')).toBe('en');
+        expect(detectLanguage('')).toBe('en');
+    });
+
+    it('builds a notice other apps can read and the game can draw as a card', () => {
+        const note = statusNoteContent('unready', 'en', 'Gate Keeper');
+        expect(note).toEqual({
+            msgtype: 'm.notice',
+            body: "Gate Keeper isn't ready to chat yet. The bot's owner still needs to finish setting it up. Try again another day.",
+            [BOT_STATUS_KEY]: {
+                state: 'unready',
+                title: 'Not ready yet',
+                text: "The bot's owner still needs to finish setting it up. Try again another day.",
+                lang: 'en',
+            },
+        });
+    });
+
+    it('reads a bot state from its configuration', () => {
+        expect(availabilityOf(null)).toBe('gone');
+        expect(availabilityOf({ enabled: false, aiProviderRef: 'p' } as never)).toBe('resting');
+        expect(availabilityOf({ enabled: true } as never)).toBe('unready');
+        expect(availabilityOf({ aiProviderRef: 'p' } as never)).toBe('online');
+    });
+});
+
+describe('DmReplyService resting line', () => {
+    it('asks the bot for one short in-character line, and gives up quietly', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        const quickGenerate = vi.fn(async () => 'Not now, sailor!');
+        Object.assign(service, { aiService: { quickGenerate } });
+        const config = { botId: BOT, name: 'Mira', aiProviderRef: 'p', chatInstructions: 'You are a pirate.' } as never;
+        expect(await service.restingLine(config, 'Are you around?')).toBe('Not now, sailor!');
+        expect(quickGenerate).toHaveBeenCalledWith('p', expect.stringContaining('You are a pirate.'), 'Are you around?');
+        quickGenerate.mockRejectedValueOnce(new Error('provider down'));
+        expect(await service.restingLine(config, 'hi')).toBe('');
+        expect(await service.restingLine({ botId: BOT } as never, 'hi')).toBe('');
+    });
+});
+
+describe('MatrixDmBridge waiting messages', () => {
+    it('forgets messages kept in this process after a day, even if the bot stays off', async () => {
+        const client = makeClient();
+        const deps = makeDeps();
+        const bridge = new MatrixDmBridge(config, client as never, deps);
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false, aiProviderRef: 'p' } as never);
+        await bridge.onEvent(message('anyone?'));
+        expect((bridge as any).localWaiting.size).toBe(1);
+        const rooms: Map<string, { at: number }> = (bridge as any).localWaiting.get(BOT);
+        rooms.get(ROOM)!.at -= 24 * 60 * 60 * 1000;
+        await bridge.checkWaiting();
+        expect((bridge as any).localWaiting.size).toBe(0);
     });
 });
