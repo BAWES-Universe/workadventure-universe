@@ -393,8 +393,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
 
-        const { text, attachments } = await this.readMessage(botUserId, content);
-        if (!text && attachments.length === 0) return;
+        const { text, attachments, failed } = await this.readMessage(botUserId, content);
+        if (!text && attachments.length === 0) {
+            // A file with no caption that couldn't be fetched is a failed answer, not an empty message.
+            if (failed) await couldNotAnswer(config);
+            return;
+        }
 
         const person: DmPerson = {
             matrixUserId: event.sender,
@@ -493,6 +497,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (this.deps.waiting?.hasSharedStore()) {
             try {
                 await this.deps.waiting.rememberWaitingDm(botId, event.room_id, message);
+                // A copy kept here while the store was down is now older than this one, so only the store's is answered.
+                this.dropLocalWaiting(botId, event.room_id);
                 return;
             } catch (error: any) {
                 // The shared store dropped out: keep the message in this process instead of losing it.
@@ -502,6 +508,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const rooms = this.localWaiting.get(botId) ?? new Map<string, { message: string; at: number }>();
         rooms.set(event.room_id, { message, at: Date.now() });
         this.localWaiting.set(botId, rooms);
+    }
+
+    private dropLocalWaiting(botId: string, roomId: string): void {
+        const rooms = this.localWaiting.get(botId);
+        rooms?.delete(roomId);
+        if (rooms?.size === 0) this.localWaiting.delete(botId);
     }
 
     private async waitingBots(): Promise<string[]> {
@@ -589,7 +601,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** The message text, plus any file in it re-hosted where the bot can read it. */
-    private async readMessage(botUserId: string, content: Record<string, any>): Promise<{ text: string; attachments: DmAttachment[] }> {
+    /** `failed` means a file was there but could not be fetched or re-hosted this time. */
+    private async readMessage(
+        botUserId: string,
+        content: Record<string, any>
+    ): Promise<{ text: string; attachments: DmAttachment[]; failed?: boolean }> {
         const msgtype = content.msgtype;
         if (msgtype === 'm.text' || msgtype === 'm.emote') {
             return { text: String(content.body ?? '').trim(), attachments: [] };
@@ -611,7 +627,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return { text: caption, attachments: [{ url, mimeType, mediaType }] };
         } catch (error) {
             console.warn('[MatrixDmBridge] Could not read an attachment:', (error as Error)?.message ?? error);
-            return { text: caption, attachments: [] };
+            return { text: caption, attachments: [], failed: true };
         }
     }
 

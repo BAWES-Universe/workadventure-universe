@@ -432,6 +432,51 @@ describe('MatrixDmBridge', () => {
         await expect(new BotRegistry('test').rememberWaitingDm(BOT, ROOM, '{}')).rejects.toThrow('not connected');
     });
 
+    it('a waiting picture that cannot be fetched goes back in line instead of being dropped', async () => {
+        deps.uploadAttachment = vi.fn(async () => 'https://files.test/pic.png');
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        const picture: MatrixEvent = {
+            ...message('pic.png'),
+            content: { msgtype: 'm.image', body: 'pic.png', url: 'mxc://matrix.test/pic', info: { mimetype: 'image/png' } },
+        };
+        await bridge.onEvent(picture);
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        client.downloadMedia.mockRejectedValueOnce(new Error('media busy'));
+        await bridge.checkWaiting();
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.get(BOT)?.size).toBe(1);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), '', [expect.objectContaining({ mediaType: 'image' })], expect.anything());
+    });
+
+    it('a message kept here while the shared store was down is replaced by a newer one in the store, so it is answered once', async () => {
+        const store = new Map<string, string>();
+        let storeUp = false;
+        deps.waiting = {
+            hasSharedStore: () => true,
+            rememberWaitingDm: vi.fn(async (_b: string, r: string, m: string) => {
+                if (!storeUp) throw new Error('Shared store is not connected');
+                store.set(r, m);
+            }),
+            waitingDmBots: vi.fn(async () => (store.size ? [BOT] : [])),
+            hasWaitingDms: vi.fn(async () => store.size > 0),
+            takeWaitingDms: vi.fn(async () => {
+                const all = [...store.values()];
+                store.clear();
+                return all;
+            }),
+        };
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('first'));
+        storeUp = true;
+        await bridge.onEvent(message('second'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply.mock.calls.map((call: any[]) => call[2])).toEqual(['second']);
+    });
+
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);
