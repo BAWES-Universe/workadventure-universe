@@ -7,6 +7,7 @@ import { localUserStore } from "../Connection/LocalUserStore";
 import { isIOS, isSafari } from "../WebRtc/DeviceUtils";
 import type { ObtainedMediaStreamConstraints } from "../WebRtc/P2PMessages/ConstraintMessage";
 import { SoundMeter } from "../Phaser/Components/SoundMeter";
+import { findNewMediaDevices, listLacksNamesFor, rememberMediaDevices } from "../Utils/NewMediaDevices";
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { statusChanger } from "../Components/ActionBar/AvailabilityStatus/statusChanger";
 import {
@@ -950,6 +951,8 @@ export const localVoiceIndicatorStore = derived<Readable<number[] | undefined>, 
     false
 );
 
+const DEVICE_CHANGE_SETTLE_DELAY_MS = 1000;
+
 /**
  * Device list
  */
@@ -985,18 +988,21 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
                     speakerSelectedStore.set(preferredSpeakerDevice);
                 }
 
-                const actualsMediaDevices = get(deviceListStore);
-                // get all media that not exist in the list
-                if (actualsMediaDevices != undefined) {
-                    // set the last new media devices detected
-                    const newDevices = mediaDeviceInfos.filter(
-                        (device) => actualsMediaDevices.find((d) => d.deviceId === device.deviceId) == undefined
-                    );
-                    lastNewMediaDeviceDetectedStore.set(newDevices);
-                }
+                // Only devices this browser has never seen count as new. Devices present on the first
+                // listing are remembered silently.
+                const knownMediaDevices = localUserStore.getKnownMediaDevices();
+                const previousDevices = get(deviceListStore);
+                const newDevices =
+                    previousDevices === undefined
+                        ? []
+                        : findNewMediaDevices(mediaDeviceInfos, new Set(knownMediaDevices), previousDevices);
+                localUserStore.setKnownMediaDevices(rememberMediaDevices(knownMediaDevices, mediaDeviceInfos));
 
                 set(mediaDeviceInfos);
                 devicesNotLoaded.set(false);
+                if (newDevices.length > 0) {
+                    lastNewMediaDeviceDetectedStore.set(newDevices);
+                }
             })
             .catch((e) => {
                 console.error(e);
@@ -1007,21 +1013,36 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
 
     const unsubscribe = localStreamStore.subscribe((streamResult) => {
         if (streamResult.type === "success" && streamResult.stream !== undefined) {
-            if (deviceListCanBeQueried === false) {
+            // Read again when the stream brings a kind of device the list has no names for yet: the camera allowed
+            // after the microphone shows its names without a reload.
+            const tracks = {
+                video: streamResult.stream.getVideoTracks().length > 0,
+                audio: streamResult.stream.getAudioTracks().length > 0,
+            };
+            if (deviceListCanBeQueried === false || listLacksNamesFor(tracks, get(deviceListStore))) {
                 queryDeviceList();
                 deviceListCanBeQueried = true;
             }
         }
     });
 
+    // Devices often change in bursts (a virtual audio app registers several devices one by one),
+    // so wait for the list to settle before querying it.
+    let deviceChangeTimeout: ReturnType<typeof setTimeout> | undefined;
+    const onDeviceChange = () => {
+        clearTimeout(deviceChangeTimeout);
+        deviceChangeTimeout = setTimeout(queryDeviceList, DEVICE_CHANGE_SETTLE_DELAY_MS);
+    };
+
     if (navigator.mediaDevices) {
-        navigator.mediaDevices.addEventListener("devicechange", queryDeviceList);
+        navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
     }
 
     return function stop() {
         unsubscribe();
+        clearTimeout(deviceChangeTimeout);
         if (navigator.mediaDevices) {
-            navigator.mediaDevices.removeEventListener("devicechange", queryDeviceList);
+            navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
         }
     };
 });

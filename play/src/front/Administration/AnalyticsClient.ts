@@ -1006,6 +1006,13 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    chatUploadFailed(reason: string, status: number | undefined, count: number): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_chat_upload_failed", { reason, status, count });
+            })
+            .catch((e) => console.error(e));
+    }
     clickTopOpenMapExplorer(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -1070,6 +1077,13 @@ class AnalyticsClient {
             })
             .catch((e) => console.error(e));
     }
+    pageShiftReset(properties: { x: number; y: number; reason: string }): void {
+        this.posthogPromise
+            ?.then((posthog) => {
+                posthog.capture("wa_page_shift_reset", properties);
+            })
+            .catch((e) => console.error(e));
+    }
     showBusinessCard(): void {
         this.posthogPromise
             ?.then((posthog) => {
@@ -1092,7 +1106,11 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
     /** The game connection dropped: why, and whether the page had just been in the background. */
-    connectionLost(properties: { cause: "no_ping" | "socket_closed"; closeCode?: number; hiddenMs: number }): void {
+    connectionLost(properties: {
+        cause: "no_ping" | "socket_closed" | "background_leave";
+        closeCode?: number;
+        hiddenMs: number;
+    }): void {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_connection_lost", properties);

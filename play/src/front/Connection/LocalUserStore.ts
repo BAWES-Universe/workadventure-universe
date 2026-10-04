@@ -60,6 +60,7 @@ const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
 const bubbleSound = "bubbleSound";
+const knownMediaDevices = "knownMediaDevices";
 
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
 
@@ -72,6 +73,7 @@ const JwtAuthToken = z
 type JwtAuthToken = z.infer<typeof JwtAuthToken>;
 
 const FoldersOpenedSchema = z.union([z.null(), z.array(z.string()).transform((arr) => new Set(arr))]);
+const KnownMediaDevicesSchema = z.array(z.string());
 
 interface PlayerVariable {
     value: undefined;
@@ -386,6 +388,32 @@ class LocalUserStore {
         const folders = this.getFoldersOpened();
         folders.delete(folderId);
         this.setFoldersOpened(folders);
+    }
+
+    /**
+     * Media devices this browser has already seen, as "kind:label" keys (see NewMediaDevices.ts).
+     */
+    getKnownMediaDevices(): string[] {
+        const stored = localStorage.getItem(knownMediaDevices);
+        if (!stored) {
+            return [];
+        }
+        try {
+            return KnownMediaDevicesSchema.parse(JSON.parse(stored));
+        } catch (e) {
+            console.warn("Error parsing known media devices from localStorage:", e);
+            localStorage.removeItem(knownMediaDevices);
+            return [];
+        }
+    }
+
+    setKnownMediaDevices(keys: string[]) {
+        try {
+            localStorage.setItem(knownMediaDevices, JSON.stringify(keys));
+        } catch (e) {
+            // A full or blocked storage must not stop the device list from updating.
+            console.warn("Error saving known media devices to localStorage:", e);
+        }
     }
 
     setPreferredVideoInputDevice(deviceId?: string) {

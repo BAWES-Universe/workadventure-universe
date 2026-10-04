@@ -62,9 +62,12 @@ describe("ErrorScreen while reconnecting", () => {
         expect(text()).not.toMatch(/error|code/i);
         const details = target.querySelector('[data-testid="reconnectingDetails"]');
         expect(details?.classList.contains("flex-col")).toBe(true);
-        // Text first, then the spinner under it.
+        // Text first, then the spinner under it: the rings, with Orbit's butterfly on top of them.
         expect(details?.firstElementChild?.tagName).toBe("SPAN");
-        expect(details?.lastElementChild?.tagName.toLowerCase()).toBe("svg");
+        const pulse = details?.lastElementChild;
+        expect(pulse?.classList.contains("pulse")).toBe(true);
+        expect(pulse?.firstElementChild?.tagName.toLowerCase()).toBe("svg");
+        expect(pulse?.lastElementChild?.classList.contains("butterfly")).toBe(true);
     });
 
     it("says the device is offline only after a while without network, and goes back when online", async () => {
