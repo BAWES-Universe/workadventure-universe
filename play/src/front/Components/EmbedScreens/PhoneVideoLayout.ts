@@ -9,7 +9,7 @@
  *   first (whoever is talking, then whoever spoke last).
  * - When big videos would show fewer than a row of faces could, the videos become round faces, in rows.
  * - Below one row of videos, a row of round faces.
- * - Faces grow with the space, from 56px (36px in a very short row) up to 96px.
+ * - Faces grow with the space, from 56px (36px in a very short row, never taller than the row) up to 96px.
  * - With a screen share among them, no faces: a screen share in a circle can't be read.
  * - Never more than `max` people at once (MAX_DISPLAYED_VIDEOS), the rest behind the "+N" tile.
  * - Asked for everyone ("+N" tapped), all the videos, in a list that scrolls.
@@ -118,10 +118,17 @@ export function phoneVideoLayout(
     const rowHeight = Math.max(0, Math.floor(height));
     if (!faces) {
         // A screen share among them: one row of small whole videos instead.
-        const videoHeight = Math.max(PHONE_FACE_MIN_SIZE, rowHeight);
+        const videoHeight = Math.max(1, rowHeight);
         const videoWidth = Math.floor((videoHeight * 16) / 9);
         return fill("videos", videoWidth, videoHeight, perRow(width, videoWidth), count, max);
     }
-    const size = Math.max(PHONE_FACE_MIN_SIZE, biggestFaces(spots, width, rowHeight, rowHeight - PHONE_VIDEO_GAP));
+    // At least 36px when the row has room for it, and never taller than the row, which would cut it.
+    const size = Math.max(
+        1,
+        Math.min(
+            rowHeight,
+            Math.max(PHONE_FACE_MIN_SIZE, biggestFaces(spots, width, rowHeight, rowHeight - PHONE_VIDEO_GAP))
+        )
+    );
     return fill("faces", size, size, perRow(width, size), count, max);
 }

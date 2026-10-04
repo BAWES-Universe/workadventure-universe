@@ -66,8 +66,10 @@ describe("phoneVideoLayout", () => {
         expect(layout.shown + 1).toBe(Math.floor((W + 8) / (PHONE_FACE_SIZE + 8)));
     });
 
-    it("never makes a face smaller than 36px", () => {
-        expect(phoneVideoLayout(12, W, 10).width).toBe(36);
+    it("never makes a face smaller than 36px when the row has room, nor taller than the row", () => {
+        expect(phoneVideoLayout(12, W, 40).width).toBe(36);
+        expect(phoneVideoLayout(12, W, 30).width).toBe(30);
+        expect(phoneVideoLayout(3, 1430, 30, false, Infinity, false).height).toBe(30);
     });
 
     it("lists everyone in a list that scrolls when asked", () => {
