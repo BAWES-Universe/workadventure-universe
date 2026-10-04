@@ -117,6 +117,19 @@ describe('SocialBehavior moves', () => {
             expect(stillApproachable(behavior, 1)).toBe(false);
         });
 
+        it('only notices people within range of its spot, not of where it happens to stand', () => {
+            // Standing 60px off its spot: someone 90px from the bot is 150px from the spot
+            const bot = createBot({ x: 60, y: 0 }, [{ userId: 1, position: { x: 150, y: 0 } }]);
+            const behavior = new SocialBehavior(createConfig({ moves: 'stay', assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } }));
+            behavior.setBot(bot as any);
+            lookForPeople(behavior);
+            expect((behavior as any).targetPlayerId).toBeNull();
+
+            (bot.getPlayerInfo(1) as any).position = { x: 90, y: 0 };
+            lookForPeople(behavior);
+            expect((behavior as any).targetPlayerId).toBe(1);
+        });
+
         it('walks back to its spot after a chat and stands still once there', async () => {
             const bot = createBot({ x: 200, y: 0 });
             const behavior = new SocialBehavior(createConfig({ moves: 'stay', assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } }));
@@ -231,6 +244,15 @@ describe('SocialBehavior moves', () => {
             await move(behavior);
             const [x] = bot.moveTo.mock.calls[0];
             expect(x).toBeCloseTo(70 * 0.016);
+        });
+
+        it('does not notice someone further from its route than its notice range', () => {
+            // 40px off the route: someone 90px from the bot is 130px from the route
+            const bot = createBot({ x: 160, y: -40 }, [{ userId: 1, position: { x: 160, y: -130 } }]);
+            const behavior = new SocialBehavior(createConfig({ moves: 'route', waypoints: route }));
+            behavior.setBot(bot as any);
+            lookForPeople(behavior);
+            expect((behavior as any).targetPlayerId).toBeNull();
         });
 
         it('stays on its spot while the route has no stops', async () => {

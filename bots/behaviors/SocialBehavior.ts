@@ -2007,6 +2007,8 @@ export class SocialBehavior extends BaseBehavior {
         const currentTime = Date.now();
 
         for (const player of nearbyPlayers) {
+            // Only people the bot can reach from its leash (a summoned bot may go anywhere)
+            if (!this.isSummoned && !this.isWithinReach(player.position, config)) continue;
             // Check if we can start conversation with this player
             if (this.canStartConversation(player.userId, config, currentTime)) {
                 this.targetPlayerId = player.userId;
@@ -2063,32 +2065,34 @@ export class SocialBehavior extends BaseBehavior {
         if (config.respectPlayerStatus && !isAvailableForApproach(player.availabilityStatus)) return false;
         if (isInOtherBubble(this.bot.getBubbleUserIds(playerId), playerId, this.bot.getUserId())) return false;
         if (this.isSummoned) return true;
+        if (!this.isWithinReach(player.position, config)) return false;
+        return !shouldAbandonApproach({
+            now: currentTime,
+            approachStartedAt: this.approachStartedAt,
+            targetPosition: player.position,
+            leashMargin: config.conversationRadius || 100,
+        });
+    }
+
+    /**
+     * Whether someone is close enough to the bot's leash to walk over to: within the notice range of
+     * its spot, its route or the edge of its area. Noticing someone and giving up on them use this same
+     * limit, so a bot never picks someone it would give up on at once.
+     */
+    private isWithinReach(position: PositionInterface, config: SocialBehaviorConfig): boolean {
         const noticeRange = config.conversationRadius || 100;
         const moves = config.moves ?? 'wander';
         if (moves === 'route') {
             // A route bot leaves its route by at most how far it notices people
             const stops = config.waypoints ?? [];
-            if (stops.length > 0 && distanceToRoute(player.position, stops, config.loop !== false) > noticeRange) {
-                return false;
-            }
-            return !shouldAbandonApproach({
-                now: currentTime,
-                approachStartedAt: this.approachStartedAt,
-                targetPosition: player.position,
-                leashMargin: noticeRange,
-            });
+            return stops.length === 0 || distanceToRoute(position, stops, config.loop !== false) <= noticeRange;
         }
         const area =
             moves === 'stay'
                 ? { center: this.homeSpot(), radius: 0 }
                 : this.config.assignedSpace ?? { center: config.wanderCenter, radius: config.wanderRadius };
-        return !shouldAbandonApproach({
-            now: currentTime,
-            approachStartedAt: this.approachStartedAt,
-            targetPosition: player.position,
-            area: area?.center ? area : undefined,
-            leashMargin: noticeRange,
-        });
+        if (!area?.center) return true;
+        return distance(position, area.center) <= area.radius + noticeRange;
     }
 
     /**

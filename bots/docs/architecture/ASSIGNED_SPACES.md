@@ -139,8 +139,8 @@ protected returnToAssignedSpace(): void
 - Wanders within assigned space (if no wander config, uses assigned space)
 
 #### PatrolBehavior
-- Returns to assigned space after conversations
-- Waypoints should be within assigned space
+- Rejoins its route at the nearest stop after conversations
+- Waypoints are not limited by the assigned-space radius: they define the route and can go anywhere on the map
 
 #### IdleBehavior
 - Spawns at assignedSpace.center
@@ -159,7 +159,7 @@ When editing bots in the map editor, the assigned space can be visualized:
 1. **Appropriate Radius**: Set radius based on the area you want the bot to cover
 2. **Center Placement**: Place center at a logical location (e.g., desk, entrance)
 3. **Overlap Consideration**: Ensure assigned spaces don't overlap unnecessarily
-4. **Patrol Routes**: Make sure patrol waypoints are within assigned space
+4. **Patrol Routes**: Set waypoints to define the intended route; they can go outside the circle
 5. **Conversation Radius**: Set conversation radius smaller than assigned space radius
 
 ## Integration with Admin API
