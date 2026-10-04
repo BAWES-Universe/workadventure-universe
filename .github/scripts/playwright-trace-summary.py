@@ -2,9 +2,10 @@
 """Prints what each failed test's Playwright trace recorded, so a CI log says what the browser did.
 
 For every trace.zip under the given folder (default tests/test-results): navigations, console errors and
-warnings, requests to the sign-in endpoints, and the actions that failed with their last log lines. Each
-trace is a collapsed group in the job log. Traces are only recorded on the first retry, so a test that
-passed when retried has one too.
+warnings, requests to the sign-in endpoints, the actions that failed with their last log lines, and every
+action, request and the last heartbeat in the half minute before the first failure. A frozen page's
+hang-stack.txt (see tests/utils/hangStack.ts) is printed first. Each trace is a collapsed group in the job
+log. Traces are only recorded on the first retry, so a test that passed when retried has one too.
 """
 import glob
 import io
@@ -16,6 +17,7 @@ import zipfile
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "tests/test-results"
 MAX_LINES = 250
+HEARTBEAT = "[heartbeat]"
 KEY_URLS = re.compile(r"/me\b|anonymLogin|logout|login-screen|openid|/connect/|/register|/verify", re.I)
 NAVIGATIONS = ("goto", "reload", "goBack", "goForward")
 
@@ -37,6 +39,8 @@ def summarize(trace_path):
     logs = {}  # callId -> last log messages
     rows = []  # (time, text)
     requests = []  # every other request, kept for the window before a failure
+    steps = []  # every other action (clicks, fills, expects), kept for the window before a failure
+    heartbeats = []  # when the page's main thread last ran (see tests/utils/hangStack.ts)
     for event in events_of(trace_path):
         kind = event.get("type")
         if kind == "before":
@@ -46,6 +50,9 @@ def summarize(trace_path):
             actions[event.get("callId")] = f"{label} {detail}".strip()
             if event.get("method") in NAVIGATIONS:
                 rows.append((event.get("startTime", 0), f"action   {actions[event.get('callId')]}"))
+            else:
+                extra = params.get("key") or params.get("value") or params.get("text") or params.get("expression") or ""
+                steps.append((event.get("startTime", 0), f"action   {event.get('apiName', label)} {detail} {str(extra)[:80]}".rstrip()))
         elif kind == "log":
             logs.setdefault(event.get("callId"), []).append(event.get("message", ""))
         elif kind == "after" and event.get("error"):
@@ -54,6 +61,8 @@ def summarize(trace_path):
             rows.append((event.get("endTime", 0), f"FAILED   {actions.get(call, call)}: {message}"))
             for line in logs.get(call, [])[-6:]:
                 rows.append((event.get("endTime", 0), f"         log: {line[:200]}"))
+        elif kind == "console" and event.get("text") == HEARTBEAT:
+            heartbeats.append(event.get("time", 0))
         elif kind == "console" and event.get("messageType") in ("error", "warning"):
             rows.append((event.get("time", 0), f"console  {event['messageType']}: {event.get('text', '')[:300]}"))
         elif kind == "event":
@@ -76,12 +85,21 @@ def summarize(trace_path):
     first_failure = min((t for t, text in rows if text.startswith("FAILED")), default=None)
     if first_failure is not None:
         rows.extend((t, text) for t, text in requests if first_failure - 30000 <= t <= first_failure + 1000)
+        rows.extend((t, text) for t, text in steps if first_failure - 30000 <= t <= first_failure + 1000)
+        last_beat = max((t for t in heartbeats if t <= first_failure + 1000), default=None)
+        if last_beat is not None:
+            rows.append((last_beat, "heartbeat: the page's main thread last ran here"))
     rows.sort(key=lambda row: row[0] or 0)
     start = rows[0][0] if rows else 0
     return [f"{((t or 0) - (start or 0)) / 1000:8.1f}s {text}" for t, text in rows]
 
 
 def main():
+    for stack_path in sorted(glob.glob(os.path.join(ROOT, "**", "hang-stack.txt"), recursive=True)):
+        print(f"::group::frozen page {os.path.relpath(os.path.dirname(stack_path), ROOT)}")
+        with open(stack_path, encoding="utf-8", errors="replace") as stack_file:
+            print(stack_file.read().rstrip())
+        print("::endgroup::")
     traces = sorted(glob.glob(os.path.join(ROOT, "**", "trace.zip"), recursive=True))
     if not traces:
         print(f"No trace under {ROOT}.")
