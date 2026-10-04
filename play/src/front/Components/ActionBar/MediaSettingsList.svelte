@@ -116,7 +116,6 @@
             <button
                 type="button"
                 class="u-cta-secondary flex items-center justify-center gap-2 h-9 mobile:h-11 mx-1 mt-1 mb-0.5 rounded-xl text-[13px] font-bold text-nowrap"
-                on:click={() => analyticsClient.microphone()}
                 on:click={openBackgroundSettings}
             >
                 <IconPhoto font-size="15" />
