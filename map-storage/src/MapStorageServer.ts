@@ -172,8 +172,9 @@ const mapStorageServer: MapStorageServer = {
                     ? new EntityPermissions(gameMapAreas, connectedUserTags, userCanEdit, userUUID)
                     : undefined;
                 // Editors may edit objects anywhere; other players only inside an area that gives them write access.
-                const canEditEntityAt = (coordinates: EntityCoordinates): boolean =>
-                    userCanEdit || (entityCommandPermissions?.canEdit(coordinates) ?? false);
+                // With a size, the whole object must fit inside that area, as the map editor checks when placing it.
+                const canEditEntityAt = (coordinates: EntityCoordinates, width = 0, height = 0): boolean =>
+                    userCanEdit || (entityCommandPermissions?.canEdit(coordinates, width, height) ?? false);
 
                 const commandId = editMapCommandMessage.id;
 
@@ -291,7 +292,7 @@ const mapStorageServer: MapStorageServer = {
                             // Both where the object is now and where it is going
                             if (
                                 !canEditEntityAt({ x: entity.x, y: entity.y }) ||
-                                !canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }))
+                                !canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }), width, height)
                             ) {
                                 throw new Error(
                                     `User ${userUUID} is not allowed to modify entity ${message.id} on map ${mapUrl}`
@@ -318,7 +319,7 @@ const mapStorageServer: MapStorageServer = {
                     case "createEntityMessage": {
                         const message = editMapMessage.createEntityMessage;
                         const { x, y, width, height } = message;
-                        if (!canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }))) {
+                        if (!canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }), width, height)) {
                             throw new Error(`User ${userUUID} is not allowed to create an entity on map ${mapUrl}`);
                         }
                         await mapsManager.executeCommand(
@@ -345,7 +346,8 @@ const mapStorageServer: MapStorageServer = {
                     case "deleteEntityMessage": {
                         const message = editMapMessage.deleteEntityMessage;
                         const entity = gameMap.getGameMapEntities()?.getEntity(message.id);
-                        // An object's x/y is its top-left corner, which sits inside the area it was placed in
+                        // An object's x/y is its top-left corner. Map-storage doesn't know object sizes, but placing and
+                        // moving require the whole object inside the area, so its top-left corner is in there too.
                         if (!userCanEdit && (!entity || !canEditEntityAt({ x: entity.x, y: entity.y }))) {
                             throw new Error(
                                 `User ${userUUID} is not allowed to delete entity ${message.id} on map ${mapUrl}`

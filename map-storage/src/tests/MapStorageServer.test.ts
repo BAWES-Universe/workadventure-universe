@@ -127,6 +127,37 @@ describe("MapStorageServer edit rights", () => {
         it("lets the owner move an object within their area", async () => {
             expect(await send(moveTo("inside", 30, 30), owner)).toBe("modifyEntityMessage");
         });
+
+        it("refuses moving an object so it sticks out of the owner's area", async () => {
+            expect(await send(moveTo("inside", 95, 95), owner)).toBe("errorCommandMessage");
+            expect(executeCommand).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("createEntityMessage", () => {
+        const create = (x: number, y: number, width: number, height: number): EditMessage => ({
+            $case: "createEntityMessage",
+            createEntityMessage: {
+                id: "new",
+                x,
+                y,
+                width,
+                height,
+                prefabId: "chair",
+                collectionName: "Furniture",
+                properties: [],
+            },
+        });
+
+        it("lets the owner place an object inside their area", async () => {
+            expect(await send(create(10, 10, 20, 20), owner)).toBe("createEntityMessage");
+        });
+
+        it("refuses an object whose centre is in the owner's area but whose corner is outside it", async () => {
+            // Centre (10, 10) is inside, but the top-left corner (-20, -20) is not, so it couldn't be deleted later
+            expect(await send(create(-20, -20, 60, 60), owner)).toBe("errorCommandMessage");
+            expect(executeCommand).not.toHaveBeenCalled();
+        });
     });
 
     describe("custom assets and files", () => {
