@@ -636,7 +636,10 @@ export class AreaEditorTool extends MapEditorTool {
                         id,
                         name: "",
                         visible: true,
-                        properties: [],
+                        // The description comes with the area, so that selecting it adds nothing to the undo history.
+                        properties: [
+                            { id: uuid(), type: "areaDescriptionProperties", description: "", searchable: false },
+                        ],
                         width,
                         height,
                         x,
