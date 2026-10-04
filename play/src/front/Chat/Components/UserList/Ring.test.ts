@@ -1,7 +1,8 @@
+import { readable } from "svelte/store";
 import { describe, expect, it } from "vitest";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { OutgoingRing } from "../../Stores/RingStore";
-import { ringButton, ringLine } from "./Ring";
+import { lookOfCaller, ringButton, ringLine } from "./Ring";
 
 const NOW = 1_000_000;
 
@@ -33,5 +34,17 @@ describe("ringLine", () => {
         expect(ringLine(entry("no_answer"), NOW, 30_000)).toEqual({ kind: "noAnswer" });
         expect(ringLine(entry("too_soon"), NOW, 30_000)).toBeUndefined();
         expect(ringLine(undefined, NOW, 30_000)).toBeUndefined();
+    });
+});
+
+describe("lookOfCaller", () => {
+    it("finds the caller's woka in any room of this world, or none", () => {
+        const picture = readable<string | undefined>("data:woka");
+        const usersByRoom = new Map([
+            ["https://play/@/u/w/hall", { users: [{ uuid: "noura" }] }],
+            ["https://play/@/u/w/garden", { users: [{ uuid: "omar", pictureStore: picture, color: "#8629fc" }] }],
+        ]);
+        expect(lookOfCaller(usersByRoom, "omar")).toEqual({ picture, color: "#8629fc" });
+        expect(lookOfCaller(usersByRoom, "lina")).toEqual({});
     });
 });

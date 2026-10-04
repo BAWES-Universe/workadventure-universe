@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { get } from "svelte/store";
     import { fly } from "svelte/transition";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -6,6 +7,7 @@
     import type { RingToast } from "../../Stores/RingStore";
     import FriendAvatar from "./FriendAvatar.svelte";
     import { goToPersonRoom, walkToPerson } from "./PersonNavigation";
+    import { lookOfCaller } from "./Ring";
     import { IconBellRinging, IconCheck, IconInfoCircle, IconMapPin, IconSend } from "@wa-icons";
 
     /**
@@ -36,6 +38,25 @@
             ? $LL.chat.friends.inThisRoom()
             : [card.roomName, card.worldName || card.universeName].filter(Boolean).join(" · ")
         : "";
+
+    // Their woka when they are in this world; the default one otherwise.
+    let look: ReturnType<typeof lookOfCaller> = {};
+    $: findLook(card?.fromUuid);
+    function findLook(uuid: string | undefined) {
+        look = {};
+        if (!uuid) return;
+        let scene;
+        try {
+            scene = gameManager.getCurrentGameScene();
+        } catch {
+            return;
+        }
+        scene.userProviderMerger
+            .then((merger) => {
+                if (get(incomingRingStore)?.fromUuid === uuid) look = lookOfCaller(get(merger.usersByRoomStore), uuid);
+            })
+            .catch((e) => console.warn("Ring: could not find the caller's woka", e));
+    }
 
     // A short sound when a ring arrives, as for a new message (it follows the notification sound setting).
     let lastRingId: string | undefined;
@@ -119,7 +140,7 @@
                                 </linearGradient>
                             </defs>
                         </svg>
-                        <FriendAvatar size="face" />
+                        <FriendAvatar size="face" picture={look.picture} color={look.color} />
                     </span>
                     <div class="flex min-w-0 flex-col">
                         <h2 id="ring-card-title" class="m-0 truncate text-base font-bold normal-case tracking-normal">

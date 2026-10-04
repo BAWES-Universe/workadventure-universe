@@ -1,4 +1,5 @@
 import { AvailabilityStatus } from "@workadventure/messages";
+import type { PictureStore } from "../../../Stores/PictureStore";
 import type { OutgoingRing } from "../../Stores/RingStore";
 
 /**
@@ -64,4 +65,19 @@ export function ringLine(entry: OutgoingRing | undefined, now: number, ringMs: n
         default:
             return undefined;
     }
+}
+
+/** Someone's woka as People knows it: anyone in this world. A caller from elsewhere gets the default woka. */
+export function lookOfCaller(
+    usersByRoom: ReadonlyMap<
+        string | undefined,
+        { users: { uuid?: string; pictureStore?: PictureStore; color?: string | null }[] }
+    >,
+    uuid: string
+): { picture?: PictureStore; color?: string } {
+    for (const { users } of usersByRoom.values()) {
+        const user = users.find((candidate) => candidate.uuid === uuid);
+        if (user) return { picture: user.pictureStore, color: user.color ?? undefined };
+    }
+    return {};
 }
