@@ -358,7 +358,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             members = new Set(joined);
             this.roomMembers.set(event.room_id, members);
         }
-        if (members.size !== 2 || !members.has(event.sender)) return;
+        if (members.size !== 2 || !members.has(event.sender)) {
+            // Bots only talk one to one, so a chat that became a group while the bot rested gets no answer.
+            if (catchUp) console.info(`[MatrixDmBridge] Dropping a waiting message for bot ${botId}: ${event.room_id} is no longer a direct chat`);
+            return;
+        }
 
         let config: BotConfiguration | null;
         try {

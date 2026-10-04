@@ -146,9 +146,13 @@ export class BotRegistry {
         // Throws rather than drop the message, so the caller can keep it somewhere else.
         if (!this.redis?.isOpen) throw new Error('Shared store is not connected');
         const key = `bots:matrix:dm-waiting:${botId}`;
-        await this.redis.hSet(key, roomId, message);
-        await this.redis.expire(key, 24 * 60 * 60);
-        await this.redis.sAdd('bots:matrix:dm-waiting', botId);
+        // One transaction, so a message is never stored without its bot being listed as waiting.
+        await this.redis
+            .multi()
+            .hSet(key, roomId, message)
+            .expire(key, 24 * 60 * 60)
+            .sAdd('bots:matrix:dm-waiting', botId)
+            .exec();
     }
 
     /** Bots that have messages waiting for them. A bot whose messages all expired is dropped from the list. */
