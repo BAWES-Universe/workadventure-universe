@@ -115,9 +115,8 @@
     });
 
     // On a desktop, windows (the chat, Orbit) open over the game and nothing moves: the bar, Express and the zoom
-    // buttons keep their place and size, and a window simply covers what is behind it. "Keep the bar in view" only
-    // changes where the chat and Orbit start (under the bar), never where anything else sits. Phones and small windows
-    // keep their layout: what is beside the chat starts where it ends.
+    // buttons keep their place and size, and a window simply covers what is behind it. The chat and Orbit start under
+    // the bar. Phones and small windows keep their layout: what is beside the chat starts where it ends.
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
     $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
     // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.

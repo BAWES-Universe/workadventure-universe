@@ -6,7 +6,7 @@ import AnimatedTiles from "phaser-animated-tiles";
 import { Queue } from "queue-typescript";
 import type { ComponentType } from "svelte";
 import type { Readable, Unsubscriber } from "svelte/store";
-import { get } from "svelte/store";
+import { derived, get } from "svelte/store";
 import { throttle } from "throttle-debounce";
 import { ForwardableStore, MapStore } from "@workadventure/store-utils";
 import { MathUtils } from "@workadventure/math-utils";
@@ -128,6 +128,10 @@ import {
     waitForNetwork,
 } from "../../Connection/ReconnectScreen";
 import { reconnectWatchdog } from "../../Connection/AppReconnectWatchdog";
+import { BackgroundLeave, markLeftInBackground, waitToComeBack } from "../../Connection/BackgroundLeave";
+import { privacyShutdownStore } from "../../Stores/PrivacyShutdownStore";
+import { isLiveStreamingStore } from "../../Stores/IsStreamingStore";
+import { isAndroid, isIOS } from "../../WebRtc/DeviceUtils";
 import { StringUtils } from "../../Utils/StringUtils";
 import { groupMediaDevicesByLabel } from "../../Utils/NewMediaDevices";
 import { visibilityStore } from "../../Stores/VisibilityStore";
@@ -142,7 +146,7 @@ import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
 import { exploreStore } from "../../Stores/ExploreStore";
-import { myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
+import { inExternalServiceStore, myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
 import type { GameStateEvent } from "../../Api/Events/GameStateEvent";
 import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
 import {
@@ -190,7 +194,7 @@ import PopUpMapEditorNotEnabled from "../../Components/PopUp/PopUpMapEditorNotEn
 import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcut.svelte";
 import { enableUserInputsStore } from "../../Stores/UserInputStore";
 import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
-import { videoStreamStore, screenShareStreamStore } from "../../Stores/PeerStore";
+import { videoStreamStore, screenShareStreamStore, videoStreamElementsStore } from "../../Stores/PeerStore";
 import type {
     ChatConnectionInterface,
     ChatRoom,
@@ -1775,8 +1779,11 @@ export class GameScene extends DirtyScene {
      */
     private connect(): void {
         const camera = this.cameraManager.getCamera();
-        // Back in the app with the connection closed: give the phone's network a moment before the first attempt.
-        const networkReady = this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : Promise.resolve();
+        // Left in the background (see BackgroundLeave): stay out until the page is on screen again. Then, as for any
+        // return to the app with the connection closed, give the phone's network a moment before the first attempt.
+        const networkReady = waitToComeBack().then(() =>
+            this.isReconnecting ? waitForNetwork(RESUME_NETWORK_WAIT_MS) : undefined
+        );
 
         networkReady
             .then(() => {
@@ -2000,6 +2007,7 @@ export class GameScene extends DirtyScene {
 
                     this.createSuccessorGameScene(true, true);
                 });
+                this.watchBackgroundLeave();
                 hideConnectionIssueMessage();
 
                 // The itemEventMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
@@ -2455,6 +2463,37 @@ export class GameScene extends DirtyScene {
                 this.load.start();
             })
         );
+    }
+
+    /**
+     * On a phone, leaves the room after a while in the background while away and alone (see BackgroundLeave). The
+     * time only runs with nobody near, no live session and no meeting app open, so calls are never cut.
+     */
+    private watchBackgroundLeave(): void {
+        if (!isIOS() && !isAndroid()) return;
+        const backgroundLeave = new BackgroundLeave({
+            isHidden: () => document.visibilityState === "hidden",
+            leave: () => {
+                markLeftInBackground();
+                this.connection?.leaveInBackground();
+            },
+        });
+        const awayAndAlone = derived(
+            [
+                privacyShutdownStore,
+                visibilityStore,
+                videoStreamElementsStore,
+                isLiveStreamingStore,
+                inExternalServiceStore,
+            ],
+            ([$privacyShutdown, $visible, $peers, $live, $inExternalService]) =>
+                $privacyShutdown && !$visible && $peers.length === 0 && !$live && !$inExternalService
+        );
+        const unsubscribe = awayAndAlone.subscribe((value) => backgroundLeave.update(value));
+        this.unsubscribers.push(() => {
+            unsubscribe();
+            backgroundLeave.stop();
+        });
     }
 
     /**

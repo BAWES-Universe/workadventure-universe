@@ -4,7 +4,7 @@ import { windowSize } from "../Stores/CoWebsiteStore";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { mapEditorSideBarWidthStore } from "../Components/MapEditor/MapEditorSideBarWidthStore";
 import { mapEditorToolbarInUseStore } from "../Stores/MapEditorStore";
-import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
+import { DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
 
 export const chatSidebarWidthStore = writable(localUserStore.getChatSideBarWidth());
 
@@ -52,11 +52,7 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
 );
 
 /**
- * The chat shows its own close button: when the bar is hidden because the chat leaves no room for it, and on a
- * desktop where the chat opens over the bar (the "Keep the bar in view" switch is off), covering the bar's close.
+ * The chat shows its own close button when the bar is hidden because the chat leaves no room for it. On desktops the
+ * chat opens under the bar, so the bar's own close stays in reach.
  */
-export const chatCarriesItsCloseStore = derived(
-    [hideActionBarStoreBecauseOfChatBar, chatVisibilityStore, windowSize, barInViewStore],
-    ([$hideActionBar, $chatVisibilityStore, $windowSize, $barInView]) =>
-        $hideActionBar || ($chatVisibilityStore && $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH && !$barInView)
-);
+export const chatCarriesItsCloseStore = derived(hideActionBarStoreBecauseOfChatBar, ($hideActionBar) => $hideActionBar);

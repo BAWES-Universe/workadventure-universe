@@ -20,16 +20,15 @@ const { windowSize } = vi.hoisted(() => {
 });
 vi.mock("./CoWebsiteStore", () => ({ windowSize }));
 
-describe("Keep the bar in view", () => {
+describe("Bar in view", () => {
     beforeEach(() => {
         vi.resetModules();
         localStorage.clear();
         windowSize.set({ width: 1440, height: 900 });
     });
 
-    it("is on by default, on desktops only, and marks the page so the chat opens under the bar", async () => {
-        const { barInViewStore, keepBarInViewStore } = await import("./BarInViewStore");
-        expect(get(keepBarInViewStore)).toBe(true);
+    it("applies on desktops only and marks the page so the chat opens under the bar", async () => {
+        const { barInViewStore } = await import("./BarInViewStore");
         expect(get(barInViewStore)).toBe(true);
         expect(document.documentElement.classList.contains("u-bar-in-view")).toBe(true);
 
@@ -38,14 +37,10 @@ describe("Keep the bar in view", () => {
         expect(document.documentElement.classList.contains("u-bar-in-view")).toBe(false);
     });
 
-    it("is kept on this device when switched off", async () => {
-        const first = await import("./BarInViewStore");
-        first.keepBarInViewStore.set(false);
-        expect(localStorage.getItem("keepBarInView")).toBe("false");
-
-        vi.resetModules();
-        const second = await import("./BarInViewStore");
-        expect(get(second.keepBarInViewStore)).toBe(false);
-        expect(get(second.barInViewStore)).toBe(false);
+    it('ignores and clears an old saved "off" from the removed menu switch', async () => {
+        localStorage.setItem("keepBarInView", "false");
+        const { barInViewStore } = await import("./BarInViewStore");
+        expect(get(barInViewStore)).toBe(true);
+        expect(localStorage.getItem("keepBarInView")).toBeNull();
     });
 });
