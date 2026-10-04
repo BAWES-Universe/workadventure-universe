@@ -1106,7 +1106,11 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
     /** The game connection dropped: why, and whether the page had just been in the background. */
-    connectionLost(properties: { cause: "no_ping" | "socket_closed"; closeCode?: number; hiddenMs: number }): void {
+    connectionLost(properties: {
+        cause: "no_ping" | "socket_closed" | "background_leave";
+        closeCode?: number;
+        hiddenMs: number;
+    }): void {
         this.posthogPromise
             ?.then((posthog) => {
                 posthog.capture("wa_connection_lost", properties);
