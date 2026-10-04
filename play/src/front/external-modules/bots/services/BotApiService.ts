@@ -439,6 +439,23 @@ export class BotApiService {
     }
 
     /**
+     * Each bot's state for direct messages (online, resting, unready, gone), for the chat header and People list.
+     * Null when the bot server can't say (not signed in, direct messages off, or unreachable).
+     */
+    async getDmStatus(botIds: string[]): Promise<Record<string, string> | null> {
+        if (!this.botServerUrl || botIds.length === 0) return null;
+        try {
+            const response = await this.fetchBotServer(
+                `/api/bots/dm-status?ids=${botIds.map(encodeURIComponent).join(",")}`
+            );
+            const data = (await response.json()) as { bots?: Record<string, string> };
+            return data.bots ?? null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * Delete a bot
      */
     async deleteBot(id: string): Promise<void> {

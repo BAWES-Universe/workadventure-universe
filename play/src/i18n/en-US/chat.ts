@@ -597,6 +597,17 @@ const chat: BaseTranslation = {
         people: "People",
         bots: "Bots",
     },
+    botStatus: {
+        online: "Online",
+        resting: "Resting",
+        unready: "Not ready yet",
+        gone: "Left",
+        tag: "Bot",
+        restingPlaceholder: "Replies are paused",
+        unreadyPlaceholder: "Can't reply yet",
+        closed: "This chat is closed",
+        left: "{name} left",
+    },
     session: {
         live: "Live",
         endedAt: "Ended {time}",

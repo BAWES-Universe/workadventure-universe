@@ -2,7 +2,7 @@
     import { afterUpdate, beforeUpdate, onMount } from "svelte";
     import { get, readable } from "svelte/store";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import type { ChatMessage, ChatRoom } from "../../Connection/ChatConnection";
+    import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
     import { selectedChatMessageToReply, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
     import { selectedRoomStore } from "../../Stores/SelectRoomStore";
@@ -22,10 +22,14 @@
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
-    import Message from "./Message.svelte";
-    import MessageInputBar from "./MessageInputBar.svelte";
-    import MessageSystem from "./MessageSystem.svelte";
+    import { botIdFromChatId } from "../../Bots/BotChatStatus";
+    import { botStatusCache } from "../../Bots/BotStatusStore";
+    import BotStatusLine from "../Bots/BotStatusLine.svelte";
+    import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import TypingUsers from "./TypingUsers.svelte";
+    import MessageSystem from "./MessageSystem.svelte";
+    import MessageInputBar from "./MessageInputBar.svelte";
+    import Message from "./Message.svelte";
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
@@ -115,6 +119,41 @@
               })
         : "";
     $: isEmptyProximityView = shownSession !== undefined && shownSession.messages.length === 0;
+
+    // A direct chat with a bot shows the bot's state under its name and in the message box. Its account leaving the
+    // room means it was deleted: the chat stays readable but closed.
+    $: members = "members" in room ? (room as ChatRoom & ChatRoomMembershipManagement).members : readable([]);
+    $: partner = room.type === "direct" ? $members.find((member) => member.id !== myChatID) : undefined;
+    $: partnerBotId = botIdFromChatId(partner?.id);
+    $: partnerMembership = partner?.membership ?? readable(undefined);
+    $: botLeft = partnerBotId !== undefined && $partnerMembership === "leave";
+    $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
+    $: botState = botLeft ? "gone" : partnerBotId ? $botAvailability : undefined;
+    $: botClosed = botState === "gone";
+    // Someone who can't reach the bot's room learns nothing more from its state, and "Online" next to "Can't chat"
+    // reads like a bug: the header stays quiet while the bot's latest word is that note.
+    $: lastBotNote = partnerBotId
+        ? [...$messages].reverse().find((message) => !message.isMyMessage)?.botStatus
+        : undefined;
+    $: shownBotState = lastBotNote?.state === "no_access" && !botClosed ? undefined : botState;
+    $: botPlaceholder =
+        botState === "resting"
+            ? $LL.chat.botStatus.restingPlaceholder()
+            : botState === "unready"
+            ? $LL.chat.botStatus.unreadyPlaceholder()
+            : undefined;
+    $: botLeftLine = botLeft
+        ? {
+              date: null,
+              content: readable({
+                  body: $LL.chat.botStatus.left({ name: $roomName }),
+                  url: undefined,
+                  urls: undefined,
+                  filename: undefined,
+                  fileNames: undefined,
+              }),
+          }
+        : undefined;
 
     onMount(() => {
         initMessages()
@@ -330,6 +369,9 @@
                                 </span>
                             {/if}
                         </div>
+                        {#if shownBotState}
+                            <BotStatusLine state={shownBotState} />
+                        {/if}
                     {/if}
                 </div>
 
@@ -428,6 +470,8 @@
                             />
                         {:else if entry.message.type === "outcoming" || entry.message.type === "incoming"}
                             <MessageSystem message={entry.message} />
+                        {:else if entry.message.botStatus}
+                            <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
                             <Message on:updateMessageBody={onUpdateMessageBody} message={entry.message} />
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
@@ -438,6 +482,9 @@
                         {/if}
                     </li>
                 {/each}
+                {#if botLeftLine}
+                    <li class="last:pb-3" data-testid="botLeftLine"><MessageSystem message={botLeftLine} /></li>
+                {/if}
             </ul>
         </div>
 
@@ -451,9 +498,24 @@
         {:else}
             <!-- One composer per conversation: its draft, files and pending sends belong to this room only.
                  Keyed by id: re-selecting the same room must not remount it (files, focus and uploads are kept). -->
-            {#key room.id}
-                <MessageInputBar disabled={$shouldRetrySendingEvents} {room} bind:this={messageInputBarRef} />
-            {/key}
+            {#if botClosed}
+                <!-- The bot was deleted: nothing can reach it, so the message box gives way to a plain closed bar. -->
+                <div
+                    class="mx-2.5 mb-2.5 mt-1.5 flex min-h-12 items-center justify-center rounded-full border border-dashed border-white/12 bg-white/[0.03] px-3.5 text-sm text-white/50"
+                    data-testid="botChatClosed"
+                >
+                    {$LL.chat.botStatus.closed()}
+                </div>
+            {:else}
+                {#key room.id}
+                    <MessageInputBar
+                        disabled={$shouldRetrySendingEvents}
+                        {room}
+                        inputHint={botPlaceholder}
+                        bind:this={messageInputBarRef}
+                    />
+                {/key}
+            {/if}
         {/if}
     {/if}
 </div>

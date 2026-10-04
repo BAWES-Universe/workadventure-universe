@@ -2,7 +2,7 @@
     import { AvailabilityStatus } from "@workadventure/messages";
     import * as Sentry from "@sentry/svelte";
     import highlightWords from "highlight-words";
-    import { derived } from "svelte/store";
+    import { derived, readable } from "svelte/store";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import { availabilityStatusStore } from "../../../Stores/MediaStore";
     import { getColorHexOfStatus } from "../../../Utils/AvailabilityStatus";
@@ -17,6 +17,8 @@
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
     import { canOpenOrbit } from "../../../external-modules/admin-api/index";
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { botIdFromChatId, botStatusColour } from "../../Bots/BotChatStatus";
+    import { botStatusCache } from "../../Bots/BotStatusStore";
     import UserActionButton from "./UserActionButton.svelte";
     import ImageWithFallback from "./ImageWithFallback.svelte";
     import PersonActionButton from "./PersonActionButton.svelte";
@@ -42,6 +44,11 @@
     let showRoomCreationInProgress = false;
 
     $: ({ chatId, availabilityStatus, username = "", color, isAdmin, pictureStore } = user);
+
+    // A bot here is on (it walks the map), but may have no AI provider yet: say so before anyone writes to it.
+    $: botId = user.isBot ? botIdFromChatId(chatId) : undefined;
+    $: botAvailability = botId ? botStatusCache.store(botId) : readable(undefined);
+    $: botUnready = $botAvailability === "unready";
 
     // No scene while a reconnect swaps it: the row still shows, without the actions that need the map.
     const currentGameScene = gameManager.tryGetCurrentGameScene();
@@ -228,11 +235,29 @@
                                 {$LL.chat.role.adminShort()}
                             </div>
                         {/if}
+                        {#if user.isBot}
+                            <span
+                                class="ms-1.5 shrink-0 rounded-md bg-white/10 px-1.5 py-px text-[10px] font-bold uppercase leading-[13px] tracking-[0.08em] text-white/75"
+                                data-testid="botTag">{$LL.chat.botStatus.tag()}</span
+                            >
+                        {/if}
                     </div>
                 </div>
                 <div class="text-xs mb-0 font-condensed opacity-75 self-end">
                     {#if isMe}
                         {$LL.chat.you()}
+                    {:else if botUnready}
+                        <div
+                            class="flex items-center"
+                            style="color:{botStatusColour('unready')}"
+                            data-testid="botUnready"
+                        >
+                            <div
+                                class="rounded-full me-1 h-1.5 w-1.5"
+                                style="background:{botStatusColour('unready')}"
+                            />
+                            {$LL.chat.botStatus.unready()}
+                        </div>
                     {:else if $userStatus}
                         <div class="flex items-center brightness-150" style="color:{getColorHexOfStatus($userStatus)}">
                             {#if $userStatus}

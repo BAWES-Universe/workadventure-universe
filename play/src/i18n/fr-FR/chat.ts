@@ -589,6 +589,17 @@ const chat: DeepPartial<Translation["chat"]> = {
         collapse: "Replier {section}",
         expand: "Déplier {section}",
     },
+    botStatus: {
+        online: "En ligne",
+        resting: "En pause",
+        unready: "Pas encore prêt",
+        gone: "Parti",
+        tag: "Bot",
+        restingPlaceholder: "Réponses en pause",
+        unreadyPlaceholder: "Ne peut pas encore répondre",
+        closed: "Cette discussion est fermée",
+        left: "{name} est parti",
+    },
     session: {
         live: "En direct",
         endedAt: "Terminée à {time}",

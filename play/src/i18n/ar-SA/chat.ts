@@ -564,6 +564,17 @@ const chat: DeepPartial<Translation["chat"]> = {
         collapse: "طيّ {section}",
         expand: "توسيع {section}",
     },
+    botStatus: {
+        online: "متصل",
+        resting: "في استراحة",
+        unready: "ليس جاهزًا بعد",
+        gone: "غادر",
+        tag: "بوت",
+        restingPlaceholder: "الردود متوقفة",
+        unreadyPlaceholder: "لا يمكنه الرد بعد",
+        closed: "هذه الدردشة مغلقة",
+        left: "غادر {name}",
+    },
     session: {
         live: "مباشر",
         endedAt: "انتهت {time}",
