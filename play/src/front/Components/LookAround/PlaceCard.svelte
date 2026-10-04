@@ -59,7 +59,12 @@
     function walkThere() {
         const place = $mapExplorationObjectSelectedStore;
         if (!place) return;
-        const scene = gameManager.getCurrentGameScene();
+        // The card can still be tapped while the map is changing; then there is no scene to walk in.
+        const scene = gameManager.tryGetCurrentGameScene();
+        if (!scene) {
+            mapExplorationObjectSelectedStore.set(undefined);
+            return;
+        }
         scene.moveTo({ x: place.x, y: place.y }, true, WOKA_SPEED * 2.5).catch((error) => {
             console.warn("Error while moving to the entity or area", error);
             warningMessageStore.addWarningMessage($LL.mapEditor.explorer.details.errorMovingToObject(), {
