@@ -393,6 +393,10 @@ jobs:
             echo "::endgroup::"
           done
         if: failure()
+      - name: Show what the browser did in the failed tests
+        # Navigations, console errors, sign-in requests and the failed actions from each test's trace.
+        run: python3 .github/scripts/playwright-trace-summary.py tests/test-results
+        if: failure()
       - name: Show the Playwright summary last
         # The docker logs above are long; the end of the job log should name the failing tests.
         run: tail -n 300 tests/playwright-output.txt
