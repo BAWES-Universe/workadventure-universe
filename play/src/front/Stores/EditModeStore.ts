@@ -90,6 +90,36 @@ export const editTouchPreviewStore = writable<{ x: number; y: number; width: num
     undefined
 );
 
+/**
+ * What the Delete tool is about to remove, in screen pixels: on a phone the object or area the first tap marked (the
+ * second tap, or the Remove chip, removes it; a tap elsewhere keeps it), on a computer the one under the mouse.
+ */
+export interface DeleteMark {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    /** True after a tap: the box and the Remove chip are drawn. A mouse over it only brings the "Click to remove" hint. */
+    tapped: boolean;
+    remove: () => void;
+}
+export const editDeleteMarkStore = writable<DeleteMark | undefined>(undefined);
+
+/** "Plant removed · Undo": shown for a few seconds after the Delete tool removed something. */
+export const editUndoToastStore = writable<{ text: string } | undefined>(undefined);
+const UNDO_TOAST_MS = 6000;
+let undoToastTimer: ReturnType<typeof setTimeout> | undefined;
+export function showUndoToast(text: string): void {
+    if (undoToastTimer !== undefined) clearTimeout(undoToastTimer);
+    editUndoToastStore.set({ text });
+    undoToastTimer = setTimeout(() => hideUndoToast(), UNDO_TOAST_MS);
+}
+export function hideUndoToast(): void {
+    if (undoToastTimer !== undefined) clearTimeout(undoToastTimer);
+    undoToastTimer = undefined;
+    editUndoToastStore.set(undefined);
+}
+
 /** The box being drawn for a new area, in world pixels, before it becomes an area. */
 export interface AreaDraft {
     x: number;

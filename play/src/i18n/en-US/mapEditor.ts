@@ -583,6 +583,11 @@ const mapEditor: BaseTranslation = {
             title: "Delete",
             subtitle: "Tap what you want to remove",
             hint: "Tap an object or an area to remove it. Undo brings it back.",
+            remove: "Remove",
+            tapAgain: "Tap again to remove · tap elsewhere to keep",
+            clickToRemove: "Click to remove",
+            removed: "{name} removed",
+            area: "Area",
         },
         bots: {
             title: "Bots",
