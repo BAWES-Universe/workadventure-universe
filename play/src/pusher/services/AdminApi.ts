@@ -1192,7 +1192,7 @@ class AdminApi implements AdminInterface {
      */
     updateChatId(userIdentifier: string, chatId: string, roomUrl: string): Promise<void> {
         return axios.put(
-            `${ADMIN_API_URL}/api/members/${userIdentifier}/chatId`,
+            `${ADMIN_API_URL}/api/members/${encodeURIComponent(userIdentifier)}/chatId`,
             {
                 chatId,
                 userIdentifier,
