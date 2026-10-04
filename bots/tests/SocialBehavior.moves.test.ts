@@ -198,6 +198,30 @@ describe('SocialBehavior moves', () => {
             expect(stillApproachable(behavior, 1)).toBe(false);
         });
 
+        it('skips a stop only after failing to reach it three times in a row, not across a chat', async () => {
+            const bot = createBot({ x: 0, y: 0 });
+            bot.moveToWithPathfinding.mockImplementation(async () => false);
+            const behavior = new SocialBehavior(createConfig({ moves: 'route', waypoints: route }));
+            behavior.setBot(bot as any);
+            (behavior as any).routeIndex = 1;
+            const failOnce = async () => {
+                vi.setSystemTime(Date.now() + 1_001); // past the retry delay
+                await move(behavior);
+            };
+
+            await failOnce();
+            await failOnce();
+            (behavior as any).currentSpaceName = 'bubble'; // a chat starts...
+            await move(behavior);
+            (behavior as any).currentSpaceName = null; // ...and ends
+            await failOnce();
+            await failOnce();
+            expect((behavior as any).routeIndex).toBe(1);
+
+            await failOnce(); // third failure in a row since the chat
+            expect((behavior as any).routeIndex).toBe(2);
+        });
+
         it('stays on its spot while the route has no stops', async () => {
             const bot = createBot({ x: 100, y: 0 });
             const behavior = new SocialBehavior(createConfig({ moves: 'route', waypoints: [], assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } }));

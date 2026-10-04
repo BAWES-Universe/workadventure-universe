@@ -295,6 +295,8 @@ export class SocialBehavior extends BaseBehavior {
 
         // Handle movement
         if (this.targetPlayerId) {
+            // A chat breaks a run of failed walks to the next route stop: only failures in a row skip a stop
+            this.routeStopFailures = 0;
             // Approach player (async, but we don't await - it will handle pathfinding internally)
             this.approachPlayer(this.targetPlayerId, config).catch(error => {
                 console.error(`[SocialBehavior] Error approaching player:`, error);
@@ -2399,7 +2401,11 @@ export class SocialBehavior extends BaseBehavior {
      */
     private async followRoute(config: SocialBehaviorConfig): Promise<void> {
         if (!this.bot) return;
-        if (this.currentSpaceName || this.engagedWithUsers.size > 0) return;
+        if (this.currentSpaceName || this.engagedWithUsers.size > 0) {
+            // In a chat: failed walks from before it don't count towards skipping a stop afterwards
+            this.routeStopFailures = 0;
+            return;
+        }
         const stops = config.waypoints ?? [];
         if (stops.length === 0) {
             // A route with no stops yet: stay on the spot until one is drawn
