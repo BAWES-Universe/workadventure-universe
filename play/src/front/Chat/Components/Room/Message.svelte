@@ -100,7 +100,8 @@
             : 'justify-start pl-3'}"
     >
         {#if (!isMyMessage || isQuotedMessage) && sender !== undefined && replyDepth === 0}
-            <div class="avatar pt-1.5">
+            <!-- Not "avatar": that design-system class paints a grey 40px square behind the round woka. -->
+            <div class="sender-avatar pt-1.5">
                 <TopRowAvatar pictureStore={senderPicture} name={sender?.username ?? ""} size="xs" ring={false} />
             </div>
         {/if}
@@ -265,7 +266,7 @@
         opacity: 1;
     }
 
-    .avatar {
+    .sender-avatar {
         grid-area: avatar;
         display: flex;
         /*align-items: flex-end;*/
