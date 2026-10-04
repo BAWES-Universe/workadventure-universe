@@ -4,8 +4,8 @@
 
     export let pictureStore: Readable<string | undefined>;
     export let name: string;
-    /** "sm" is 32px (top row stacks), "lg" is 40px (chat list rows). */
-    export let size: "sm" | "lg" = "sm";
+    /** "xs" is 28px (message senders), "sm" is 32px (top row stacks), "lg" is 40px (chat list rows). */
+    export let size: "xs" | "sm" | "lg" = "sm";
     /** Ring drawn around the avatar, in the colour of what's behind it, so stacked avatars separate. */
     export let ring = true;
 
@@ -16,6 +16,8 @@
     class="top-row-avatar relative shrink-0 rounded-full overflow-hidden bg-contrast-600 flex items-center justify-center {size ===
     'lg'
         ? 'h-10 w-10'
+        : size === 'xs'
+        ? 'h-7 w-7'
         : 'h-8 w-8'} {ring ? 'ring-2 ring-contrast' : ''}"
     style:background-color={$pictureStore ? undefined : getColorByString(name) ?? undefined}
     title={name}
