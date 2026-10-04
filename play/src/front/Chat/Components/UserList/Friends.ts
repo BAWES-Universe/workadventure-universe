@@ -111,10 +111,13 @@ export function groupFriends(placed: readonly PlacedFriend[]): Record<FriendGrou
     return groups;
 }
 
-/** Friends online in other worlds, for the Everyone view's faces row: the most available first, then by name. */
+/**
+ * Friends online in other worlds, for the Everyone view's faces row: the most available first, then by name. A friend
+ * who hides where they are is in it too, as just online.
+ */
 export function otherWorldFaces(placed: readonly PlacedFriend[]): PlacedFriend[] {
     return placed
-        .filter((entry) => entry.group === "otherWorlds" && !entry.locationUnknown)
+        .filter((entry) => entry.group === "otherWorlds")
         .sort((a, b) => statusRank(a.status) - statusRank(b.status) || byName(a.friend, b.friend));
 }
 
@@ -137,7 +140,7 @@ export function relativeTime(iso: string | undefined, now: number, locale: strin
     const time = Date.parse(iso);
     if (Number.isNaN(time)) return "";
     const seconds = Math.round((time - now) / 1000);
-    const format = new Intl.RelativeTimeFormat(locale, { numeric: "auto", style: "short" });
+    const format = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
     const abs = Math.abs(seconds);
     if (abs < 60) return format.format(0, "minute");
     if (abs < 3600) return format.format(Math.round(seconds / 60), "minute");

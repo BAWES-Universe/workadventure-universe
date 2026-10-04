@@ -88,7 +88,7 @@ describe("placeFriends", () => {
         expect(placed).toEqual(
             expect.objectContaining({ group: "otherWorlds", locationUnknown: true, session: undefined })
         );
-        expect(otherWorldFaces([placed])).toEqual([]);
+        expect(otherWorldFaces([placed])).toEqual([placed]);
     });
 });
 
@@ -112,7 +112,7 @@ describe("groupFriends and otherWorldFaces", () => {
 describe("relativeTime", () => {
     const now = Date.parse("2026-10-04T12:00:00Z");
     it("says how long ago, in the player's language", () => {
-        expect(relativeTime("2026-10-04T10:00:00Z", now, "en")).toBe("2 hr. ago");
+        expect(relativeTime("2026-10-04T10:00:00Z", now, "en")).toBe("2 hours ago");
         expect(relativeTime("2026-10-04T11:59:30Z", now, "en")).toBe("this minute");
         expect(relativeTime("2026-10-03T12:00:00Z", now, "en")).toBe("yesterday");
         expect(relativeTime("", now, "en")).toBe("");

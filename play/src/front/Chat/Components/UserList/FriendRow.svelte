@@ -48,13 +48,17 @@
     $: canGo = canReach && entry.group !== "here";
     $: canMessage = isMatrixChatEnabled && !!friend.chatId;
     $: canViewProfile = $adminDashboardActivatedStore && canOpenOrbit();
-    $: otherSessions = !entry.locationUnknown ? (friend.presence?.sessions ?? []).filter((s) => s !== session) : [];
+    // Their other tabs, by room: the session to reach them at can come from the world's list, not from presence.
+    $: otherSessions =
+        !entry.locationUnknown && !presenceUnavailable
+            ? (friend.presence?.sessions ?? []).filter((s) => s.playUri !== session?.playUri)
+            : [];
     let sessionsOpen = false;
 
     function placeOf(s: FriendSession | undefined, group: PlacedFriend["group"]): string {
         if (!s) return "";
         const room = s.roomName || s.worldName;
-        if (group === "here") return $LL.chat.friends.placeHere({ room });
+        if (group === "here") return room ? $LL.chat.friends.placeHere({ room }) : $LL.chat.friends.inThisRoom();
         const where = s.worldName && s.worldName !== room ? s.worldName : s.universeName;
         return where ? $LL.chat.friends.place({ room, world: where }) : room;
     }

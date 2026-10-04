@@ -23,15 +23,26 @@
     // Where they are, or their status when it isn't plain "online" (Busy, Do not disturb...).
     function under(entry: PlacedFriend): string {
         if (entry.status !== AvailabilityStatus.ONLINE) return statusLabel(entry.status, $LL);
+        if (entry.locationUnknown) return $LL.chat.friends.online();
         return entry.session?.worldName || entry.session?.roomName || "";
     }
 </script>
 
 {#if faces.length > 0}
     <section class="flex flex-col pb-1" data-testid="friendFaces">
-        <h3 class="m-0 flex h-10 items-center gap-2.5 px-4 text-sm font-bold">
+        <h3 class="m-0 flex h-10 items-center gap-2.5 ps-4 pe-2 text-sm font-bold">
             <span class="u-eyebrow truncate">{$LL.chat.friends.inOtherWorlds()}</span>
             <span class="u-count shrink-0">{faces.length}</span>
+            <!-- The row scrolls sideways, so its own "All" can be out of sight: the header always offers it. -->
+            <button
+                type="button"
+                class="m-0 ms-auto shrink-0 rounded-full border-0 bg-transparent px-2 py-1 text-xs font-bold text-[#c4b5fd] hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary"
+                aria-label={$LL.chat.friends.seeAllFriends({ count: faces.length })}
+                data-testid="facesSeeAll"
+                on:click={() => dispatch("open", undefined)}
+            >
+                {$LL.chat.friends.seeAllLink()}
+            </button>
         </h3>
         <ul class="m-0 flex list-none gap-1 overflow-x-auto px-2 pb-1 [scrollbar-width:none]">
             {#each visible as entry (entry.friend.uuid)}

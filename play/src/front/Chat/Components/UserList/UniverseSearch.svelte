@@ -89,12 +89,12 @@
                         {/if}
                     </div>
                     {#if relationship === "friends"}
-                        <span class="flex shrink-0 items-center gap-1 px-2 text-xs font-bold text-white/70">
+                        <span class="flex shrink-0 items-center gap-1 ps-2 text-xs font-bold text-white/70">
                             <IconUserCheck font-size="14" />
                             {$LL.chat.friends.friendBadge()}
                         </span>
                     {:else if relationship === "request_sent"}
-                        <span class="flex shrink-0 items-center gap-1 px-2 text-xs font-bold text-white/60">
+                        <span class="flex shrink-0 items-center gap-1 ps-2 text-xs font-bold text-white/60">
                             <IconCheck font-size="14" />
                             {$LL.chat.friends.requestSent()}
                         </span>

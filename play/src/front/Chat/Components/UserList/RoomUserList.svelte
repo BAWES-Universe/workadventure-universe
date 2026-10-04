@@ -207,10 +207,14 @@
                 {
                     person,
                     playUri: person.primary.playUri ?? "",
-                    roomName: roomNameOf(
-                        person.primary.playUri ?? "",
-                        $usersByRoom.get(person.primary.playUri)?.roomName ?? person.primary.roomName
-                    ),
+                    // This room only by a real name: an unnamed map's own name is only its link.
+                    roomName:
+                        person.primary.playUri === currentRoomUrl
+                            ? hereEntry?.roomName?.trim() || mapRoomName || ""
+                            : roomNameOf(
+                                  person.primary.playUri ?? "",
+                                  $usersByRoom.get(person.primary.playUri)?.roomName ?? person.primary.roomName
+                              ),
                     status: statusOf(person.primary) ?? 0,
                 },
             ])

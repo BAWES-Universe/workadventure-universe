@@ -34,9 +34,21 @@
     $: blocked = $friendsStore.status === "signedOut" ? [] : $friendsStore.list?.blocked ?? [];
 
     $: requestOptions = [
-        { value: "anyone", label: $LL.chat.friends.settings.requestsFromAnyone() },
-        { value: "shared_world", label: $LL.chat.friends.settings.requestsFromSharedWorld() },
-        { value: "nobody", label: $LL.chat.friends.settings.requestsFromNobody() },
+        {
+            value: "anyone",
+            label: $LL.chat.friends.settings.requestsFromAnyone(),
+            hint: $LL.chat.friends.settings.requestsFromAnyoneHint(),
+        },
+        {
+            value: "shared_world",
+            label: $LL.chat.friends.settings.requestsFromSharedWorld(),
+            hint: $LL.chat.friends.settings.requestsFromSharedWorldHint(),
+        },
+        {
+            value: "nobody",
+            label: $LL.chat.friends.settings.requestsFromNobody(),
+            hint: $LL.chat.friends.settings.requestsFromNobodyHint(),
+        },
     ];
 
     // Shown at once, and put back if Orbit refuses it. Only the latest save may write back.

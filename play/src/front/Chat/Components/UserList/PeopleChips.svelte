@@ -27,7 +27,7 @@
 </script>
 
 <div
-    class="flex items-center gap-1.5 overflow-x-auto px-2 pb-2 [scrollbar-width:none]"
+    class="flex items-center gap-1 overflow-x-auto px-2 pt-1 pb-3 [scrollbar-width:none]"
     role="group"
     aria-label={$LL.chat.friends.chipsLabel()}
     data-testid="peopleChips"
@@ -35,9 +35,9 @@
     {#each chips as chip (chip.view)}
         <button
             type="button"
-            class="people-chip m-0 flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-sm font-bold transition-colors {$peopleViewStore ===
+            class="people-chip m-0 flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-sm font-bold transition-colors {$peopleViewStore ===
             chip.view
-                ? 'u-cta text-white'
+                ? 'u-cta border border-solid border-transparent text-white'
                 : 'u-glass text-white/80 hover:bg-white/10 hover:text-white'}"
             aria-pressed={$peopleViewStore === chip.view}
             data-testid={`peopleChip-${chip.view}`}
