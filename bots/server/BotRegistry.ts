@@ -143,7 +143,8 @@ export class BotRegistry {
      * a newer message replaces the older one. Gone after a day.
      */
     async rememberWaitingDm(botId: string, roomId: string, message: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        // Throws rather than drop the message, so the caller can keep it somewhere else.
+        if (!this.redis?.isOpen) throw new Error('Shared store is not connected');
         const key = `bots:matrix:dm-waiting:${botId}`;
         await this.redis.hSet(key, roomId, message);
         await this.redis.expire(key, 24 * 60 * 60);

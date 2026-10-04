@@ -245,12 +245,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
             await this.client.leaveRoom(botUserId, event.room_id, ONLY_DIRECT).catch(() => undefined);
             return;
         }
-        const config = await this.deps.getBotConfig(botId);
+        let config: BotConfiguration | null;
+        try {
+            config = await this.deps.getBotConfig(botId);
+            if (config) await this.ensureBotAccount(botId, config.name);
+        } catch (error: any) {
+            // Synapse sends the invite only once, so decline it rather than leave the bot invited and silent; the
+            // person can invite it again.
+            console.warn(`[MatrixDmBridge] Could not take an invite for bot ${botId}:`, error?.message ?? error);
+            await this.client.leaveRoom(botUserId, event.room_id).catch(() => undefined);
+            return;
+        }
         if (!config) {
             await this.client.leaveRoom(botUserId, event.room_id).catch(() => undefined);
             return;
         }
-        await this.ensureBotAccount(botId, config.name);
         if (!(await this.joinWithRetry(botUserId, event.room_id))) return;
 
         // People often type before the bot has joined. Synapse does not push those messages to a bot that was only
@@ -482,10 +491,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
             ...(attempts > 0 ? { unsigned: { universe_attempts: attempts } } : {}),
         });
         if (this.deps.waiting?.hasSharedStore()) {
-            await this.deps.waiting.rememberWaitingDm(botId, event.room_id, message).catch((error) =>
-                console.warn(`[MatrixDmBridge] Could not keep a waiting message for bot ${botId}:`, error?.message ?? error)
-            );
-            return;
+            try {
+                await this.deps.waiting.rememberWaitingDm(botId, event.room_id, message);
+                return;
+            } catch (error: any) {
+                // The shared store dropped out: keep the message in this process instead of losing it.
+                console.warn(`[MatrixDmBridge] Could not keep a waiting message for bot ${botId} in the shared store:`, error?.message ?? error);
+            }
         }
         const rooms = this.localWaiting.get(botId) ?? new Map<string, { message: string; at: number }>();
         rooms.set(event.room_id, { message, at: Date.now() });

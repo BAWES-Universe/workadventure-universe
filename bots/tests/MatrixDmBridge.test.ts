@@ -190,6 +190,17 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).not.toHaveBeenCalled();
     });
 
+    it('declines an invite it cannot take right now, instead of staying invited and silent', async () => {
+        deps.getBotConfig.mockRejectedValueOnce(new Error('orbit down'));
+        await bridge.onEvent(invite());
+        expect(client.joinRoom).not.toHaveBeenCalled();
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        client.ensureRegistered.mockRejectedValueOnce(new Error('synapse busy'));
+        await bridge.onEvent(invite({ event_id: '$invite2' }));
+        expect(client.joinRoom).not.toHaveBeenCalled();
+        expect(client.leaveRoom).toHaveBeenCalledTimes(2);
+    });
+
     it('turns down invites to rooms that are not direct chats, like area chats', async () => {
         await bridge.onEvent(invite({}, { membership: 'invite' }));
         expect(client.joinRoom).not.toHaveBeenCalled();
@@ -395,6 +406,30 @@ describe('MatrixDmBridge', () => {
         await bridge.checkWaiting();
         expect(deps.reply).not.toHaveBeenCalled();
         expect((bridge as any).localWaiting.has(BOT)).toBe(false);
+    });
+
+    it('keeps a waiting message in this process when the shared store drops out mid-write', async () => {
+        deps.waiting = {
+            hasSharedStore: () => true,
+            rememberWaitingDm: vi.fn(async () => {
+                throw new Error('Shared store is not connected');
+            }),
+            waitingDmBots: vi.fn(async () => []),
+            hasWaitingDms: vi.fn(async () => false),
+            takeWaitingDms: vi.fn(async () => []),
+        };
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('saved for later'));
+        expect((bridge as any).localWaiting.get(BOT)?.size).toBe(1);
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'saved for later', [], expect.anything());
+    });
+
+    it('the shared store refuses a waiting message it cannot keep, instead of dropping it', async () => {
+        const { BotRegistry } = await import('../server/BotRegistry');
+        await expect(new BotRegistry('test').rememberWaitingDm(BOT, ROOM, '{}')).rejects.toThrow('not connected');
     });
 
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
