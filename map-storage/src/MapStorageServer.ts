@@ -48,14 +48,13 @@ const editionLocks = new LockByKey<string>();
  * List of commands that can be executed even if the user does not have edit rights on the map
  * (but have local edit rights on a given area).
  */
+// Players who can't edit the map may still place, move and delete objects inside an area that gives them write access
+// (e.g. their personal area); each of these commands checks that below. Everything else needs edit rights, including
+// custom assets, which are shared by the whole world.
 const COMMANDS_ACCESSIBLE_WITHOUT_CAN_EDIT = new Set<string>([
     "modifyEntityMessage",
     "createEntityMessage",
     "deleteEntityMessage",
-    "uploadEntityMessage",
-    "modifyCustomEntityMessage",
-    "deleteCustomEntityMessage",
-    "uploadFileMessage",
 ]);
 
 /**
@@ -172,6 +171,9 @@ const mapStorageServer: MapStorageServer = {
                 const entityCommandPermissions = gameMapAreas
                     ? new EntityPermissions(gameMapAreas, connectedUserTags, userCanEdit, userUUID)
                     : undefined;
+                // Editors may edit objects anywhere; other players only inside an area that gives them write access.
+                const canEditEntityAt = (coordinates: EntityCoordinates): boolean =>
+                    userCanEdit || (entityCommandPermissions?.canEdit(coordinates) ?? false);
 
                 const commandId = editMapCommandMessage.id;
 
@@ -286,14 +288,14 @@ const mapStorageServer: MapStorageServer = {
                         const entity = gameMap.getGameMapEntities()?.getEntity(message.id);
                         if (entity) {
                             const { x, y, width, height } = message;
+                            // Both where the object is now and where it is going
                             if (
-                                entityCommandPermissions &&
-                                !entityCommandPermissions.canEdit(
-                                    getEntityCenterCoordinates({ x, y }, { width, height })
-                                )
+                                !canEditEntityAt({ x: entity.x, y: entity.y }) ||
+                                !canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }))
                             ) {
-                                Sentry.captureException("User is not allowed to modify the entity on map");
-                                break;
+                                throw new Error(
+                                    `User ${userUUID} is not allowed to modify entity ${message.id} on map ${mapUrl}`
+                                );
                             }
                             await mapsManager.executeCommand(
                                 mapKey,
@@ -316,12 +318,8 @@ const mapStorageServer: MapStorageServer = {
                     case "createEntityMessage": {
                         const message = editMapMessage.createEntityMessage;
                         const { x, y, width, height } = message;
-                        if (
-                            entityCommandPermissions &&
-                            !entityCommandPermissions.canEdit(getEntityCenterCoordinates({ x, y }, { width, height }))
-                        ) {
-                            Sentry.captureException("User is not allowed to create entity on map");
-                            break;
+                        if (!canEditEntityAt(getEntityCenterCoordinates({ x, y }, { width, height }))) {
+                            throw new Error(`User ${userUUID} is not allowed to create an entity on map ${mapUrl}`);
                         }
                         await mapsManager.executeCommand(
                             mapKey,
@@ -346,6 +344,13 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "deleteEntityMessage": {
                         const message = editMapMessage.deleteEntityMessage;
+                        const entity = gameMap.getGameMapEntities()?.getEntity(message.id);
+                        // An object's x/y is its top-left corner, which sits inside the area it was placed in
+                        if (!userCanEdit && (!entity || !canEditEntityAt({ x: entity.x, y: entity.y }))) {
+                            throw new Error(
+                                `User ${userUUID} is not allowed to delete entity ${message.id} on map ${mapUrl}`
+                            );
+                        }
                         await mapsManager.executeCommand(
                             mapKey,
                             mapUrl.host,
