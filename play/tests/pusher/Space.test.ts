@@ -510,3 +510,131 @@ describe("SpaceConnection", () => {
         });
     });
 });
+
+describe("Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage", () => {
+    const makeSpace = () => {
+        const mockSpaceConnection = mock<SpaceConnectionInterface>({
+            getSpaceStreamToBackPromise: vi.fn(),
+            removeSpace: vi.fn(),
+        });
+        const space = new Space(
+            "test",
+            "test",
+            new EventProcessor(),
+            FilterType.ALL_USERS,
+            vi.fn(),
+            mockSpaceConnection,
+            "world",
+            [],
+            () => ({} as unknown as SpaceToBackForwarder),
+            () => ({} as unknown as SpaceToFrontDispatcher)
+        );
+
+        const alice = {
+            ...SpaceUser.fromPartial({
+                spaceUserId: "alice_1",
+                uuid: "alice-uuid",
+                name: "Alice",
+                tags: ["member"],
+                playUri: "https://play.example.com/@/world/room",
+                visitCardUrl: "https://orbit.example.com/api/profile/alice?embed=true",
+            }),
+            lowercaseName: "alice",
+        };
+        const bob = {
+            ...SpaceUser.fromPartial({ spaceUserId: "bob_1", uuid: "bob-uuid", name: "Bob" }),
+            lowercaseName: "bob",
+        };
+        const aliceSocket = mock<Socket>({ getUserData: vi.fn().mockReturnValue({ spaceUserId: "alice_1" }) });
+        const bobSocket = mock<Socket>({ getUserData: vi.fn().mockReturnValue({ spaceUserId: "bob_1" }) });
+        space._localConnectedUserWithSpaceUser.set(aliceSocket, alice);
+        space._localConnectedUserWithSpaceUser.set(bobSocket, bob);
+        space._localConnectedUser.set("alice_1", aliceSocket);
+        space._localConnectedUser.set("bob_1", bobSocket);
+        return { space, alice, bob, aliceSocket };
+    };
+
+    it("keeps the media fields the front sends", () => {
+        const { space, alice, aliceSocket } = makeSpace();
+
+        const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, {
+            spaceName: "world.test",
+            user: SpaceUser.fromPartial({ spaceUserId: "alice_1", microphoneState: true, cameraState: true }),
+            updateMask: ["microphoneState", "cameraState"],
+        });
+
+        expect(result).toEqual({
+            changedFields: ["microphoneState", "cameraState"],
+            partialSpaceUser: { spaceUserId: "alice_1", microphoneState: true, cameraState: true },
+        });
+        expect(alice.microphoneState).toBe(true);
+        expect(alice.cameraState).toBe(true);
+    });
+
+    it("never lets a client change the fields set by the server", () => {
+        const { space, alice, aliceSocket } = makeSpace();
+
+        const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, {
+            spaceName: "world.test",
+            user: SpaceUser.fromPartial({
+                spaceUserId: "alice_1",
+                name: "Khalid",
+                uuid: "khalid-uuid",
+                tags: ["admin"],
+                isLogged: true,
+                playUri: "javascript:alert(1)//",
+                visitCardUrl: "javascript:alert(1)//",
+                chatID: "@khalid:example.com",
+                screenSharingState: true,
+            }),
+            updateMask: [
+                "name",
+                "uuid",
+                "tags",
+                "isLogged",
+                "playUri",
+                "visitCardUrl",
+                "chatID",
+                "spaceUserId",
+                "screenSharingState",
+            ],
+        });
+
+        expect(result).toEqual({
+            changedFields: ["screenSharingState"],
+            partialSpaceUser: { spaceUserId: "alice_1", screenSharingState: true },
+        });
+        expect(alice.name).toBe("Alice");
+        expect(alice.uuid).toBe("alice-uuid");
+        expect(alice.tags).toEqual(["member"]);
+        expect(alice.playUri).toBe("https://play.example.com/@/world/room");
+        expect(alice.visitCardUrl).toBe("https://orbit.example.com/api/profile/alice?embed=true");
+        expect(alice.chatID).toBeUndefined();
+    });
+
+    it("returns nothing when only read-only fields are sent", () => {
+        const { space, aliceSocket } = makeSpace();
+
+        const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, {
+            spaceName: "world.test",
+            user: SpaceUser.fromPartial({ spaceUserId: "alice_1", name: "Khalid" }),
+            updateMask: ["name"],
+        });
+
+        expect(result).toBeNull();
+    });
+
+    it("applies the update to the sender, never to the user named in the message", () => {
+        const { space, alice, bob, aliceSocket } = makeSpace();
+
+        const result = space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage(aliceSocket, {
+            spaceName: "world.test",
+            user: SpaceUser.fromPartial({ spaceUserId: "bob_1", microphoneState: true }),
+            updateMask: ["microphoneState"],
+        });
+
+        expect(result?.partialSpaceUser.spaceUserId).toBe("alice_1");
+        expect(alice.microphoneState).toBe(true);
+        expect(bob.microphoneState).toBe(false);
+    });
+});
