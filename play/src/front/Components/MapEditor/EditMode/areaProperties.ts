@@ -6,12 +6,8 @@ import type { ApplicationDefinitionInterface } from "@workadventure/messages";
 import { v4 as uuid } from "uuid";
 import type { TranslationFunctions } from "../../../../i18n/i18n-types";
 import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
-import {
-    ADMIN_URL,
-    FEATURE_FLAG_BROADCAST_AREAS,
-    MATRIX_PUBLIC_URI,
-    PUSHER_URL,
-} from "../../../Enum/EnvironmentVariable";
+import { ADMIN_URL, FEATURE_FLAG_BROADCAST_AREAS, MATRIX_PUBLIC_URI } from "../../../Enum/EnvironmentVariable";
+import { ABSOLUTE_PUSHER_URL } from "../../../Enum/ComputedConst";
 import { ON_ACTION_TRIGGER_ENTER } from "../../../WebRtc/LayoutManager";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import {
@@ -252,7 +248,8 @@ export const WEB_APP_SUBTYPES = [
     "tldraw",
 ] as const;
 
-const ROOM_AREA_PUSHER_URL = new URL("roomArea", PUSHER_URL).toString();
+// Built on the absolute pusher address: PUSHER_URL may be a path like "/", which URL() alone refuses.
+const ROOM_AREA_PUSHER_URL = new URL("roomArea", ABSOLUTE_PUSHER_URL).toString();
 
 /**
  * A new property of the given type with its defaults, as today's area editor makes it. Some settings bring a
