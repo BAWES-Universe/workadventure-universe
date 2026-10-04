@@ -67,7 +67,7 @@ Environment variables for the Play service (frontend and pusher).
 | `TURN_CREDENTIALS_RENEWAL_TIME` | No | Time interval (in milliseconds) for renewing TURN server credentials. Defaults to 10800000 milliseconds (3 hours) |
 | `JITSI_URL` | No | URL of the Jitsi Meet server for video conferencing |
 | `JITSI_PRIVATE_MODE` | No | If true, Jitsi rooms are private and require authentication. Defaults to false |
-| `MAX_USERNAME_LENGTH` | No | Maximum allowed length for usernames. Defaults to 10 |
+| `MAX_USERNAME_LENGTH` | No | Maximum allowed length for usernames. Defaults to 32 (full names from sign-in fit) |
 | `MAX_PER_GROUP` | No | Maximum number of users in a bubble/group. Defaults to 4 |
 | `MAX_DISPLAYED_VIDEOS` | No | An approximation of the maximum number of videos displayed at once. If there are more videos to display, the user will have to scroll. The number of videos can sometimes be slightly greater (MAX_DISPLAYED_VIDEOS + number of videos to display % number of videos per row). This is useful to avoid overloading the Livekit server when a lot of people are in the same room. |
 | `NODE_ENV` | No | Node.js environment: 'development', 'production', or 'test' |

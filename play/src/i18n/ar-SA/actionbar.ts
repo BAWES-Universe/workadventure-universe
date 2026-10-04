@@ -46,13 +46,13 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
     mapEditorLocked: "محرر الخرائط مغلق 🔐",
     app: "التطبيقات الخارجية",
     camera: {
-        disabled: "الكاميرا معطلة",
-        activate: "قم بتنشيط الكاميرا",
+        disabled: "الكاميرا متوقفة",
+        activate: "تشغيل الكاميرا",
         noDevices: "لم يتم العثور على جهاز كاميرا",
     },
     microphone: {
-        disabled: "الميكروفون معطل",
-        activate: "قم بتنشيط الميكروفون",
+        disabled: "الميكروفون متوقف",
+        activate: "تشغيل الميكروفون",
         noDevices: "لم يتم العثور على جهاز ميكروفون",
     },
     speaker: {
