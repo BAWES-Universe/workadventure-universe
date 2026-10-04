@@ -163,12 +163,8 @@ import { SpaceScriptingBridgeService } from "../../Space/Utils/SpaceScriptingBri
 import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from "../../Utils/Debuggers";
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
-import {
-    liveBroadcastStore,
-    megaphoneCanBeUsedStore,
-    megaphoneChannelsStore,
-    megaphoneSpacesStore,
-} from "../../Stores/MegaphoneStore";
+import { megaphoneCanBeUsedStore, megaphoneChannelsStore, megaphoneSpacesStore } from "../../Stores/MegaphoneStore";
+import { endLiveBroadcast } from "../../Components/Broadcast/live";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
 import { scriptUtils } from "../../Api/ScriptUtils";
@@ -1298,9 +1294,10 @@ export class GameScene extends DirtyScene {
         this.cameraManager?.destroy();
         this.mapEditorModeManager?.destroy();
         this.pathfindingManager?.cleanup();
+        // A broadcast you were giving ends with the scene: pill, ring and megaphone state all go.
+        endLiveBroadcast();
         megaphoneSpacesStore.set(new Map());
         megaphoneChannelsStore.set([]);
-        liveBroadcastStore.set(undefined);
         this._broadcastService?.destroy().catch((e) => {
             console.error("Error while destroying broadcast service", e);
             Sentry.captureException(e);

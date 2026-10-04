@@ -31,6 +31,9 @@
         else player.play().catch((e) => console.warn("Broadcast: could not play the voice note", e));
     }
 
+    // A voice note that arrives after Got it is dropped: its URL would never be revoked.
+    let destroyed = false;
+
     onMount(() => {
         if (!card.audioUrl) {
             gameManager.getCurrentGameScene().playSound("audio-megaphone");
@@ -41,10 +44,12 @@
             .then(async (response) => {
                 if (!response.ok) throw new Error(`${response.status} fetching the voice note`);
                 const blob = await response.blob();
+                if (destroyed) return;
                 objectUrl = URL.createObjectURL(blob);
                 audioSrc = objectUrl;
                 try {
                     const described = await describeAudioFile(blob);
+                    if (destroyed) return;
                     levels = described.levels;
                     duration = described.duration;
                 } catch (e) {
@@ -52,12 +57,14 @@
                 }
             })
             .catch((e) => {
+                if (destroyed) return;
                 console.warn("Broadcast: the voice note could not be fetched, streaming it instead", e);
                 audioSrc = url;
             });
     });
 
     onDestroy(() => {
+        destroyed = true;
         player?.pause();
         if (objectUrl) URL.revokeObjectURL(objectUrl);
     });
