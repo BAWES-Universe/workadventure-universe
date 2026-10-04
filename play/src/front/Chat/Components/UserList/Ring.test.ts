@@ -32,6 +32,7 @@ describe("ringLine", () => {
         expect(ringLine(entry("accepted"), NOW, 30_000)).toEqual({ kind: "onTheWay" });
         expect(ringLine(entry("declined"), NOW, 30_000)).toEqual({ kind: "notNow" });
         expect(ringLine(entry("no_answer"), NOW, 30_000)).toEqual({ kind: "noAnswer" });
+        expect(ringLine(entry("stopped"), NOW, 30_000)).toBeUndefined();
         expect(ringLine(entry("too_soon"), NOW, 30_000)).toBeUndefined();
         expect(ringLine(undefined, NOW, 30_000)).toBeUndefined();
     });

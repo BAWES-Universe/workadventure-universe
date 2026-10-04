@@ -60,7 +60,6 @@ export function ringLine(entry: OutgoingRing | undefined, now: number, ringMs: n
         case "declined":
             return { kind: "notNow" };
         case "no_answer":
-        case "stopped":
             return { kind: "noAnswer" };
         default:
             return undefined;

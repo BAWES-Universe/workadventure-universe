@@ -77,7 +77,9 @@
     >
         {#if state.kind === "stop"}
             <IconX font-size="14" />
-        {:else if disabled && state.kind !== "starting"}
+        {:else if state.kind === "starting"}
+            <IconBellRinging font-size="14" class="ring-wiggle" />
+        {:else if disabled}
             <IconBellOff font-size="14" />
         {:else}
             <IconBell font-size="14" />
