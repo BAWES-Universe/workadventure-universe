@@ -334,6 +334,37 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'saved for later', [], expect.anything());
     });
 
+    it('a waiting message that fails to get an answer goes back in line, and the person hears only after the last try', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        deps.reply.mockResolvedValue({ text: '', media: [], failed: true });
+        await bridge.checkWaiting();
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(2);
+        expect(noteStates()).toEqual(['resting']);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(3);
+        expect(noteStates()).toEqual(['resting', 'trouble']);
+        // Nothing is left waiting after the last try.
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(3);
+    });
+
+    it('a waiting message whose bot can\'t be loaded stays in line for the next check', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValueOnce({ ...resting, enabled: true } as never).mockRejectedValueOnce(new Error('Orbit down'));
+        await bridge.checkWaiting();
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(noteStates()).toEqual(['resting']);
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'left while resting', [], expect.anything());
+    });
+
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);

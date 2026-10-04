@@ -55,6 +55,8 @@ const WAITING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** How often bots with waiting messages (only those) are checked for being back. */
 const WAITING_CHECK_MS = 5 * 60 * 1000;
 const WAITING_BODY_MAX = 4000;
+/** A waiting message the bot fails to answer goes back in line this many times before the person is asked to resend it. */
+const WAITING_MAX_ATTEMPTS = 3;
 const TYPING_DELAY_MS = 800;
 /** Matrix drops "typing" after its timeout (30 s), so a long answer renews it. */
 const TYPING_REFRESH_MS = 20 * 1000;
@@ -300,7 +302,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /**
      * Answer one message, or say plainly why the bot can't. `catchUp` is a message a resting bot is answering now that
-     * it is back: it gets an answer or nothing, never a second round of notes.
+     * it is back: it gets an answer or nothing, never a second round of notes. If answering it fails, it goes back in
+     * line for the next check, and only after the last try is the person told to send it again.
      */
     private async handleMessage(event: MatrixEvent, catchUp: boolean): Promise<void> {
         const content = event.content ?? {};
@@ -319,12 +322,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (members.size !== 2 || !members.has(event.sender)) return;
 
         const language = detectLanguage(String(content.body ?? ''));
+        const couldNotAnswer = async (config?: BotConfiguration) => {
+            const attempts = Number(event.unsigned?.universe_attempts ?? 0) + 1;
+            if (catchUp && attempts < WAITING_MAX_ATTEMPTS) {
+                await this.rememberWaiting(botId, event, attempts);
+                return;
+            }
+            await this.sendNote(botId, event.room_id, 'trouble', language, config);
+        };
         let config: BotConfiguration | null;
         try {
             config = await this.deps.getBotConfig(botId, catchUp);
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not load bot ${botId}:`, error?.message ?? error);
-            if (!catchUp) await this.sendNote(botId, event.room_id, 'trouble', language);
+            await couldNotAnswer();
             return;
         }
         if (!config) {
@@ -386,7 +397,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 },
             });
             if (reply?.failed) {
-                await this.sendNote(botId, event.room_id, 'trouble', language, config);
+                await couldNotAnswer(config);
                 return;
             }
             if (reply?.text) await this.client.sendText(botUserId, event.room_id, reply.text);
@@ -398,7 +409,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             answered = true;
         } catch (error: any) {
             console.error(`[MatrixDmBridge] Bot ${botId} could not answer in ${event.room_id}:`, error?.message ?? error);
-            await this.sendNote(botId, event.room_id, 'trouble', language, config);
+            await couldNotAnswer(config);
         } finally {
             clearTimeout(typingTimer);
             clearInterval(typingRefresh);
@@ -432,8 +443,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    /** Keep the latest message in this chat for the bot to answer once it is back on. */
-    private async rememberWaiting(botId: string, event: MatrixEvent): Promise<void> {
+    /** Keep the latest message in this chat for the bot to answer once it is back on. `attempts` counts failed answers. */
+    private async rememberWaiting(botId: string, event: MatrixEvent, attempts = 0): Promise<void> {
         const content = event.content ?? {};
         const kept: Record<string, unknown> = { msgtype: content.msgtype, body: String(content.body ?? '').slice(0, WAITING_BODY_MAX) };
         if (typeof content.url === 'string') kept.url = content.url;
@@ -446,6 +457,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             origin_server_ts: event.origin_server_ts ?? Date.now(),
             type: 'm.room.message',
             content: kept,
+            ...(attempts > 0 ? { unsigned: { universe_attempts: attempts } } : {}),
         });
         if (this.deps.waiting?.hasSharedStore()) {
             await this.deps.waiting.rememberWaitingDm(botId, event.room_id, message).catch((error) =>

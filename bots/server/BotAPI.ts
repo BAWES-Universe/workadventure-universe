@@ -499,7 +499,6 @@ export class BotAPI {
             }
         });
 
-        // Get available AI providers (for bot editor UI). Signed-in only; returns metadata, no credentials
         // Bot states for the game's chat header and People list. Signed in only; it says nothing but the state of bots
         // the caller already names, never their names or rooms.
         this.app.get('/api/bots/dm-status', requireSession, async (req: Request, res: Response) => {
@@ -507,22 +506,27 @@ export class BotAPI {
                 res.status(404).json({ error: 'Direct messages are off' });
                 return;
             }
-            const ids = String(req.query.ids ?? '')
-                .split(',')
-                .map((id) => id.trim())
-                .filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id));
+            const ids = [
+                ...new Set(
+                    String(req.query.ids ?? '')
+                        .split(',')
+                        .map((id) => id.trim())
+                        .filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id))
+                ),
+            ];
             if (ids.length === 0 || ids.length > DM_STATUS_MAX_IDS) {
                 res.status(400).json({ error: `Send 1 to ${DM_STATUS_MAX_IDS} bot ids` });
                 return;
             }
             try {
-                res.json({ bots: await this.dmStatus([...new Set(ids)]) });
+                res.json({ bots: await this.dmStatus(ids) });
             } catch (error) {
                 console.error('[BotAPI] Error reading bot states:', error);
                 res.status(500).json({ error: 'Could not read bot states' });
             }
         });
 
+        // Get available AI providers (for bot editor UI). Signed-in only; returns metadata, no credentials
         this.app.get('/api/bots/ai-providers', requireSession, async (req: Request, res: Response) => {
             try {
                 const enabled = req.query.enabled === 'true' || req.query.enabled === undefined;

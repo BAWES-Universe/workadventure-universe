@@ -14,6 +14,11 @@ describe('Bot states for the game', () => {
         expect(ok.status).toBe(200);
         expect(await ok.json()).toEqual({ bots: { b1: 'resting', b2: 'resting' } });
         expect((await fetch(`${base}/api/bots/dm-status?ids=`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(400);
+        // The limit counts distinct bots, so repeats of the same few ids are fine.
+        const repeats = Array(60).fill('b1').join(',');
+        expect((await fetch(`${base}/api/bots/dm-status?ids=${repeats}`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(200);
+        const many = Array.from({ length: 51 }, (_, i) => `b${i}`).join(',');
+        expect((await fetch(`${base}/api/bots/dm-status?ids=${many}`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(400);
         const off: any = new BotAPI({} as any, admin, {} as any, []);
         const s2 = off.app.listen(0);
         expect((await fetch(`http://127.0.0.1:${s2.address().port}/api/bots/dm-status?ids=b1`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(404);
