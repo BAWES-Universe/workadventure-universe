@@ -14,6 +14,7 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { canvasSize } from "../../Stores/CoWebsiteStore";
     import { DESKTOP_LAYOUT_MIN_WIDTH } from "../../Stores/BarInViewStore";
+    import { windowInFrontStore } from "../../Stores/WindowInFrontStore";
     import { IconX, IconArrowsMaximize, IconArrowsMinimize } from "@wa-icons";
 
     /** The device asks for less motion: the panel appears and goes at once, without the blur. */
@@ -46,6 +47,17 @@
     // left of the map (on phones too). A full-screen or centred panel covers the map, so it does not count.
     $: takesSide =
         !isFullScreened && !shouldForceMobileFullScreen && (shown?.position === "right" || shown?.position === "left");
+
+    // A click on the page inside the window never reaches the game, but the game loses the focus to it: the window then
+    // comes in front of the chat, as a click on its tools does. Switching to another app also blurs the game, with the
+    // focus left wherever it was; the page then has no focus at all, and nothing changes.
+    function onWindowBlur() {
+        setTimeout(() => {
+            if (modalIframe && document.hasFocus() && document.activeElement === modalIframe) {
+                windowInFrontStore.set("window");
+            }
+        }, 0);
+    }
 
     function reposition() {
         gameManager.tryGetCurrentGameScene()?.reposition();
@@ -107,14 +119,16 @@
     $: shouldForceMobileFullScreen = isMobile && shown?.position === "center";
 </script>
 
-<svelte:window on:keydown={onKeyDown} />
+<svelte:window on:keydown={onKeyDown} on:blur={onWindowBlur} />
 
+<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
     class="menu-container fixed h-dvh w-dvw z-[2000] pointer-events-auto top-0 transition-all motion-reduce:transition-none {shouldForceMobileFullScreen
         ? 'mobile'
         : shown?.position} {isFullScreened ? 'fullscreened' : ''} {takesSide ? 'screen-blocker' : ''}"
     bind:this={mainModal}
     on:transitionend|self={reposition}
+    on:pointerdown|capture={() => windowInFrontStore.set("window")}
 >
     <div
         class="modal-panel w-full h-full bg-contrast/80 backdrop-blur rounded"
