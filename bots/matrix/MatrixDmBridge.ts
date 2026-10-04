@@ -163,8 +163,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         await this.ensureBotAccount(botId, config.name);
-        const access = await this.access(botId, event.sender, true);
         if (!(await this.joinWithRetry(botUserId, event.room_id))) return;
+        // Check after joining, so a ban that lands while the join is retried still applies.
+        const access = await this.access(botId, event.sender, true);
         if (!access.allowed) {
             await this.client.sendText(botUserId, event.room_id, REFUSAL).catch(() => undefined);
             await this.client.leaveRoom(botUserId, event.room_id).catch(() => undefined);
@@ -263,7 +264,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         try {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 onInterimMessage: async (interim) => {
-                    await this.client.sendText(botUserId, event.room_id, interim);
+                    // A lost "let me look" line must not cost the person the real answer, so it never throws.
+                    try {
+                        await this.client.sendText(botUserId, event.room_id, interim);
+                    } catch (error: any) {
+                        console.warn(`[MatrixDmBridge] Could not send an interim message in ${event.room_id}:`, error?.message ?? error);
+                    }
                     if (typing) startTyping();
                 },
             });

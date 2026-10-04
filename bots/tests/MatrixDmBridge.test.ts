@@ -147,6 +147,28 @@ describe('MatrixDmBridge', () => {
         expect(client.sendText.mock.calls.map((c) => c[2])).toEqual(['Let me look.', 'Found it.']);
     });
 
+    it('still sends the answer when the interim message fails to send', async () => {
+        deps.reply.mockImplementationOnce(async (_b: string, _p: unknown, _t: string, _a: unknown, hooks: any) => {
+            await hooks.onInterimMessage('Let me look.');
+            return { text: 'Found it.', media: [] };
+        });
+        client.sendText.mockRejectedValueOnce(new Error('timeout'));
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('find it'));
+        expect(client.sendText).toHaveBeenLastCalledWith(BOT_USER, ROOM, 'Found it.');
+    });
+
+    it('checks access only once the bot has joined, so a ban during the join still applies', async () => {
+        const order: string[] = [];
+        client.joinRoom.mockImplementation(async () => void order.push('join'));
+        deps.checkAccess.mockImplementation(async () => {
+            order.push('access');
+            return { allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } };
+        });
+        await bridge.onEvent(invite());
+        expect(order).toEqual(['join', 'access']);
+    });
+
     it('says why and leaves when the person may not reach the bot', async () => {
         deps.checkAccess.mockResolvedValue({ allowed: false, reason: 'no_room_access', user: null });
         await bridge.onEvent(invite());
@@ -294,5 +316,21 @@ describe('Matrix application service routes', () => {
         expect((await fetch(`${base}/_matrix/app/v1/users/${encodeURIComponent(BOT_USER)}`, auth)).status).toBe(200);
         expect((await fetch(`${base}/_matrix/app/v1/users/${encodeURIComponent(ALICE)}`, auth)).status).toBe(404);
         expect((await fetch(`${base}/health`)).status).toBe(200);
+    });
+});
+
+describe('DmReplyService ids', () => {
+    it('gives each person a stable negative id and forgets the least recent once full', async () => {
+        const { DmReplyService } = await import('../server/DmReplyService');
+        const service = Object.create(DmReplyService.prototype) as InstanceType<typeof DmReplyService>;
+        Object.assign(service, { playerIds: new Map(), nextPlayerId: -1 });
+        const first = service.playerIdFor('@p0:matrix.test');
+        expect(first).toBeLessThan(0);
+        expect(service.playerIdFor('@p0:matrix.test')).toBe(first);
+        for (let i = 1; i <= 10000; i++) service.playerIdFor(`@p${i}:matrix.test`);
+        const ids: Map<string, number> = (service as any).playerIds;
+        expect(ids.size).toBe(10000);
+        expect(ids.has('@p0:matrix.test')).toBe(false);
+        expect(service.playerIdFor('@p0:matrix.test')).not.toBe(first);
     });
 });

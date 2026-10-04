@@ -17,6 +17,8 @@ const DEFAULT_INSTRUCTIONS = 'You are a helpful bot.';
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
 const CONFIG_CACHE_MS = 60 * 1000;
+const MAX_TRACKED_PEOPLE = 10000;
+const MAX_CACHED_CONFIGS = 1000;
 
 export interface DmPerson {
     /** Matrix ID of the sender, e.g. @alice:matrix.bawes.net */
@@ -85,10 +87,12 @@ export class DmReplyService extends BaseBehavior {
     /** A stable negative player id per Matrix user. Map players have positive ids and tests use 999999. */
     playerIdFor(matrixUserId: string): number {
         let id = this.playerIds.get(matrixUserId);
-        if (id === undefined) {
-            id = this.nextPlayerId--;
-            this.playerIds.set(matrixUserId, id);
-        }
+        if (id === undefined) id = this.nextPlayerId--;
+        // Keep the map ordered by last use and drop the least recent once it is full. Someone dropped gets a new id
+        // next time, like a player rejoining a map; their memory follows their uuid, so nothing is lost.
+        this.playerIds.delete(matrixUserId);
+        this.playerIds.set(matrixUserId, id);
+        if (this.playerIds.size > MAX_TRACKED_PEOPLE) this.playerIds.delete(this.playerIds.keys().next().value!);
         return id;
     }
 
@@ -99,7 +103,9 @@ export class DmReplyService extends BaseBehavior {
         const cached = this.configCache.get(botId);
         if (cached && Date.now() - cached.at < CONFIG_CACHE_MS) return cached.config;
         const config = await this.botManager.getAdminApiService().getBotConfiguration(botId);
+        this.configCache.delete(botId);
         this.configCache.set(botId, { config, at: Date.now() });
+        if (this.configCache.size > MAX_CACHED_CONFIGS) this.configCache.delete(this.configCache.keys().next().value!);
         return config;
     }
 
