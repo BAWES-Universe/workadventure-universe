@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { phoneVideoLayout, PHONE_FACE_SIZE } from "../PhoneVideoLayout";
+import { phoneVideoLayout, PHONE_FACE_MAX_SIZE, PHONE_FACE_SIZE } from "../PhoneVideoLayout";
 
 // A 390px phone: the videos get 382px across.
 const W = 382;
@@ -30,8 +30,33 @@ describe("phoneVideoLayout", () => {
         expect(phoneVideoLayout(4, W, 400)).toMatchObject({ kind: "videos", shown: 4, more: 0 });
     });
 
-    it("uses one row of small videos under one row's height when everyone fits in it", () => {
-        expect(phoneVideoLayout(2, W, 70)).toMatchObject({ kind: "videos", height: 70, shown: 2, more: 0 });
+    it("uses one row of faces under one row's height, as big as the row allows", () => {
+        expect(phoneVideoLayout(2, W, 70)).toMatchObject({ kind: "faces", width: 62, shown: 2, more: 0 });
+    });
+
+    it("grows the faces with the space", () => {
+        // Seven people with the white bar at its default: two rows of four, bigger than the smallest faces.
+        expect(phoneVideoLayout(7, W, 154)).toMatchObject({ kind: "faces", width: 72, shown: 7, more: 0 });
+        // Never bigger than the biggest face.
+        expect(phoneVideoLayout(6, W, 220)).toMatchObject({ kind: "faces", width: PHONE_FACE_MAX_SIZE, shown: 6 });
+    });
+
+    it("gives a desktop a row of faces when the white bar is small, instead of cut videos", () => {
+        expect(phoneVideoLayout(7, 1430, 80)).toMatchObject({ kind: "faces", width: 72, shown: 7, more: 0 });
+        // With room for a row of videos, whole videos, at least as big as a desktop shows them today.
+        const videos = phoneVideoLayout(7, 1430, 212);
+        expect(videos.kind).toBe("videos");
+        expect(videos.width).toBeGreaterThanOrEqual(160);
+        expect(videos.shown).toBe(7);
+    });
+
+    it("never shows a screen share as a face", () => {
+        expect(phoneVideoLayout(7, W, 154, false, Infinity, false).kind).toBe("videos");
+        expect(phoneVideoLayout(3, 1430, 80, false, Infinity, false)).toMatchObject({
+            kind: "videos",
+            height: 80,
+            shown: 3,
+        });
     });
 
     it("uses one row of faces under one row's height when not everyone fits", () => {

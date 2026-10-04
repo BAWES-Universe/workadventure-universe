@@ -10,7 +10,7 @@ async function startVideo(page: Page) {
     });
 }
 
-async function expectPhoneLimit(page: Page) {
+async function expectRowsLimit(page: Page) {
     const shown = () => page.locator('#cameras-container .camera-box:not(.more-people)').evaluateAll(
         (boxes) => boxes.filter((box) => getComputedStyle(box).display !== 'none').length
     );
@@ -43,11 +43,11 @@ test.describe('Video layout tests', () => {
         // Wait for video container to go in vertical mode
         await expect(page.getByTestId('resize-handle')).toBeVisible();
 
-        // Phones held upright (PhoneVideoLayout.ts): the people that don't fit, or are over the limit, sit behind
-        // a "+N" tile instead of below a scroll (often they all fit as round faces).
+        // Rows and round faces (PhoneVideoLayout.ts: phones held upright, tablets and desktops): the people that
+        // don't fit, or are over the limit, sit behind a "+N" tile instead of below a scroll (often they all fit).
         //eslint-disable-next-line playwright/no-conditional-in-test
         if (await page.getByTestId('cameras-container').getAttribute('data-phone-layout')) {
-            await expectPhoneLimit(page);
+            await expectRowsLimit(page);
             return;
         }
 

@@ -1,26 +1,30 @@
 /**
- * How the videos are laid out on a phone held upright, in the space they get: the space above the chat sheet while
- * the chat is open, or the height set with the white bar under them while it is closed. The same space gives the
- * same layout whichever sets it. Pure, so it can be unit tested.
+ * How the videos are laid out in the space they get: on a phone held upright, the space above the chat sheet while
+ * the chat is open, or the height set with the white bar under them while it is closed; on desktops and tablets, the
+ * height set with the white bar. The same space gives the same layout whichever sets it. Pure, so it can be unit
+ * tested.
  *
- * - Whole rows of 16:9 videos, as big as the space allows (never narrower than 160px).
+ * - Whole rows of 16:9 videos, as big as the space allows (never narrower than 160px), never cut.
  * - When not everyone fits, the last spot becomes a "+N" tile, and the people shown are the ones the call ranks
  *   first (whoever is talking, then whoever spoke last).
  * - When big videos would show fewer than a row of faces could, the videos become round faces, in rows.
- * - Below one row of videos, one row of small videos if everyone fits in it, or of faces if not.
+ * - Below one row of videos, a row of round faces.
+ * - Faces grow with the space, from 56px (36px in a very short row) up to 96px.
+ * - With a screen share among them, no faces: a screen share in a circle can't be read.
  * - Never more than `max` people at once (MAX_DISPLAYED_VIDEOS), the rest behind the "+N" tile.
  * - Asked for everyone ("+N" tapped), all the videos, in a list that scrolls.
  */
 
 export const PHONE_VIDEO_GAP = 8;
 export const PHONE_VIDEO_MIN_WIDTH = 160;
-/** Faces are this big in rows, and up to this big alone in a short row. */
+/** Faces are at least this big in rows, and grow with the space. */
 export const PHONE_FACE_SIZE = 56;
+/** The biggest a face gets. */
+export const PHONE_FACE_MAX_SIZE = 96;
+/** The smallest a face gets, in a very short row. */
 const PHONE_FACE_MIN_SIZE = 36;
 /** A 16:9 video at the minimum width: one row of it needs this much height. */
 const ONE_ROW_HEIGHT = Math.round((PHONE_VIDEO_MIN_WIDTH * 9) / 16) + PHONE_VIDEO_GAP;
-/** A row of small videos under this height reads badly: faces instead. */
-const SMALL_ROW_MIN_HEIGHT = 52;
 
 export interface PhoneVideoLayout {
     kind: "videos" | "faces";
@@ -41,6 +45,14 @@ function perRow(width: number, tile: number): number {
 
 function rowsIn(height: number, tile: number): number {
     return Math.max(1, Math.floor((height + PHONE_VIDEO_GAP) / (tile + PHONE_VIDEO_GAP)));
+}
+
+/** The biggest faces, at most `largest`, that fit `count` people in whole rows; PHONE_FACE_SIZE if none do. */
+function biggestFaces(count: number, width: number, height: number, largest: number): number {
+    for (let size = Math.min(PHONE_FACE_MAX_SIZE, largest); size > PHONE_FACE_SIZE; size -= 2) {
+        if (perRow(width, size) * rowsIn(height, size) >= count) return size;
+    }
+    return Math.min(PHONE_FACE_SIZE, largest);
 }
 
 /** The largest 16:9 videos that fit `count` people in the space, in whole rows; at least the minimum width. */
@@ -69,13 +81,15 @@ export function phoneVideoLayout(
     width: number,
     height: number,
     everyone = false,
-    max = Infinity
+    max = Infinity,
+    faces = true
 ): PhoneVideoLayout {
     // No people, or a space not measured yet (NaN while the page lays out).
     if (count <= 0 || !(width > 0) || !Number.isFinite(height)) {
         return { kind: "videos", width: PHONE_VIDEO_MIN_WIDTH, height: 90, shown: 0, more: 0, scrolls: false };
     }
-    const facesPerRow = perRow(width, PHONE_FACE_SIZE);
+    // Over the limit, the spots are the people shown and the "+N" tile.
+    const spots = Math.min(count, max + 1);
 
     if (everyone) {
         const columns = Math.min(count, Math.max(1, perRow(width, PHONE_VIDEO_MIN_WIDTH)));
@@ -91,22 +105,23 @@ export function phoneVideoLayout(
     }
 
     if (height >= ONE_ROW_HEIGHT) {
-        // Over the limit, the spots are the people shown and the "+N" tile.
-        const videos = biggestVideos(Math.min(count, max + 1), width, height);
+        const videos = biggestVideos(spots, width, height);
         const fits = perRow(width, videos.width) * rowsIn(height, videos.height);
-        if (fits >= Math.min(count, facesPerRow)) {
+        if (!faces || fits >= Math.min(count, perRow(width, PHONE_FACE_SIZE))) {
             return fill("videos", videos.width, videos.height, fits, count, max);
         }
-        const faces = facesPerRow * rowsIn(height, PHONE_FACE_SIZE);
-        return fill("faces", PHONE_FACE_SIZE, PHONE_FACE_SIZE, faces, count, max);
+        const size = biggestFaces(spots, width, height, PHONE_FACE_MAX_SIZE);
+        return fill("faces", size, size, perRow(width, size) * rowsIn(height, size), count, max);
     }
 
-    // Under one row of videos: small videos if everyone fits in one row, faces if not.
+    // Under one row of videos: one row of faces, as big as the row allows.
     const rowHeight = Math.max(0, Math.floor(height));
-    const smallWidth = Math.floor((rowHeight * 16) / 9);
-    if (rowHeight >= SMALL_ROW_MIN_HEIGHT && perRow(width, smallWidth) >= count) {
-        return fill("videos", smallWidth, rowHeight, count, count, max);
+    if (!faces) {
+        // A screen share among them: one row of small whole videos instead.
+        const videoHeight = Math.max(PHONE_FACE_MIN_SIZE, rowHeight);
+        const videoWidth = Math.floor((videoHeight * 16) / 9);
+        return fill("videos", videoWidth, videoHeight, perRow(width, videoWidth), count, max);
     }
-    const face = Math.max(PHONE_FACE_MIN_SIZE, Math.min(PHONE_FACE_SIZE, rowHeight));
-    return fill("faces", face, face, perRow(width, face), count, max);
+    const size = Math.max(PHONE_FACE_MIN_SIZE, biggestFaces(spots, width, rowHeight, rowHeight - PHONE_VIDEO_GAP));
+    return fill("faces", size, size, perRow(width, size), count, max);
 }

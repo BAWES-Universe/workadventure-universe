@@ -34,7 +34,7 @@
 -->
 <script lang="ts">
     import { onDestroy, onMount, setContext } from "svelte";
-    import type { Writable } from "svelte/store";
+    import { derived, type Writable } from "svelte/store";
     import { myCameraPeerStore, type MyLocalStreamable } from "../../Stores/StreamableCollectionStore";
     import VideoBox from "../Video/VideoBox.svelte";
     import MediaBox from "../Video/MediaBox.svelte";
@@ -52,8 +52,9 @@
     import { oneLineStreamableCollectionStore } from "../../Stores/OneLineStreamableCollectionStore";
     import { chatSheetHeightStore, chatSheetLayoutStore, chatSheetSnapStore } from "../../Chat/ChatSheetStore";
     import { windowSize } from "../../Stores/CoWebsiteStore";
+    import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { phoneVideoLayout, type PhoneVideoLayout } from "./PhoneVideoLayout";
+    import { PHONE_VIDEO_GAP, phoneVideoLayout, type PhoneVideoLayout } from "./PhoneVideoLayout";
     import ResizeHandle from "./ResizeHandle.svelte";
 
     setContext("inCameraContainer", true);
@@ -77,12 +78,21 @@
     // The minimum width of a media box in pixels
     const minMediaBoxWidth = 160;
 
-    // ---- Phones held upright (PhoneVideoLayout.ts) ----
-    // The videos get the space above the chat sheet while the chat is open, or the height set with the white bar
-    // while it is closed, and follow the same rules for both. Walking with the chat closed keeps the single row.
-    $: phone = $chatSheetLayoutStore && oneLineMode === "horizontal";
-    $: sheetOpen = phone && $chatSheetHeightStore > 0;
-    $: phoneLayoutOn = phone && (!isOnOneLine || sheetOpen);
+    // ---- Rows and round faces (PhoneVideoLayout.ts): phones held upright, tablets and desktops ----
+    // On a phone held upright the videos get the space above the chat sheet while the chat is open, and everywhere
+    // the height set with the white bar; the same rules for all. Walking keeps the single row, and phones on their
+    // side keep the layout below.
+    $: phoneSheet = $chatSheetLayoutStore && oneLineMode === "horizontal";
+    $: sheetOpen = phoneSheet && $chatSheetHeightStore > 0;
+    $: phoneLayoutOn =
+        ($chatSheetLayoutStore || !$mobileLayoutStore) && oneLineMode === "horizontal" && (!isOnOneLine || sheetOpen);
+    // A screen share in a circle can't be read: with one in the rows, they stay videos. Not the one shown big.
+    $: screenShareInRows = derived(
+        $oneLineStreamableCollectionStore
+            .filter((videoBox) => videoBox !== $highlightedEmbedScreen)
+            .map((videoBox) => videoBox.streamable),
+        (streamables) => streamables.some((streamable) => streamable?.videoType.endsWith("screenSharing") ?? false)
+    );
     let cameraBlock: HTMLDivElement | undefined;
     // Room above the sheet: from the top of the videos to the top of the sheet, less a gap.
     $: spaceAboveSheet = sheetOpen
@@ -105,7 +115,8 @@
                   containerWidth,
                   phoneHeight,
                   showEveryone,
-                  maximumVideosPerPage
+                  maximumVideosPerPage,
+                  !$screenShareInRows
               )
             : undefined;
     $: shownCount = phoneLayout && phoneLayout.more > 0 ? phoneLayout.shown : Infinity;
@@ -402,6 +413,7 @@
         bind:clientWidth={containerWidth}
         bind:this={camerasContainer}
         class="gap-4 mx-1"
+        style:gap={phoneLayoutOn ? `${PHONE_VIDEO_GAP}px` : null}
         class:pointer-events-none={!grabPointerEvents}
         class:pointer-events-auto={grabPointerEvents}
         class:hidden={$highlightFullScreen && $highlightedEmbedScreen && oneLineMode !== "vertical"}
