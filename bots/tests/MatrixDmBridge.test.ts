@@ -431,6 +431,45 @@ describe('MatrixDmBridge', () => {
         expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
     });
 
+    it('a bot deleted while someone waits says goodbye to them and leaves, without waiting for another message', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false } as never);
+        await bridge.onEvent(message('Hola, ¿estás ahí?'));
+        deps.getBotConfig.mockResolvedValue(null as never);
+        await bridge.checkWaiting();
+        expect(noteStates()).toEqual(['resting', 'gone']);
+        expect(client.sendMessage.mock.calls.at(-1)[2][BOT_STATUS_KEY].lang).toBe('es');
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+        expect(deps.reply).not.toHaveBeenCalled();
+    });
+
+    it('forgets the chat when the bot is removed from it after a restart', async () => {
+        await bridge.onEvent(invite());
+        const restarted = new MatrixDmBridge(config, client as never, deps);
+        await restarted.onEvent({ type: 'm.room.member', room_id: ROOM, sender: ALICE, event_id: '$kick', state_key: BOT_USER, content: { membership: 'leave' } });
+        expect(deps.rooms!.forgetDmRoom).toHaveBeenCalledWith(ROOM);
+    });
+
+    it('a message whose room members cannot be read gets a note now, or goes back in line when it was waiting', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: false } as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true, aiProviderRef: 'p' } as never);
+        (bridge as any).roomMembers.clear();
+        client.getJoinedMembers.mockRejectedValueOnce(new Error('synapse busy'));
+        await bridge.checkWaiting();
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.get(BOT)?.size).toBe(1);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'left while resting', [], expect.anything());
+
+        (bridge as any).roomMembers.clear();
+        client.getJoinedMembers.mockRejectedValueOnce(new Error('synapse busy'));
+        await bridge.onEvent(message('live one'));
+        expect(noteStates().at(-1)).toBe('trouble');
+    });
+
     it('names a deleted bot from its Matrix profile after a restart', async () => {
         await bridge.onEvent(invite());
         const restarted = new MatrixDmBridge(config, client as never, deps);

@@ -221,7 +221,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (botId) {
             if (membership === 'invite') {
                 await this.onInvite(event, botId);
-            } else if ((membership === 'leave' || membership === 'ban') && this.roomBots.get(event.room_id) === botId) {
+            } else if ((membership === 'leave' || membership === 'ban') && (await this.botForRoom(event.room_id)) === botId) {
+                // Looked up through the store too, so a leave seen after a restart still clears the room.
                 await this.forgetRoom(event.room_id);
             }
             return;
@@ -324,16 +325,6 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (!botId) return;
         const botUserId = this.botUserId(botId);
 
-        // Someone added a third person: the room is no longer a one-to-one chat, so the bot stays quiet.
-        let members = this.roomMembers.get(event.room_id);
-        if (!members) {
-            const joined = await this.client.getJoinedMembers(botUserId, event.room_id).catch(() => null);
-            if (!joined) return;
-            members = new Set(joined);
-            this.roomMembers.set(event.room_id, members);
-        }
-        if (members.size !== 2 || !members.has(event.sender)) return;
-
         const language = detectLanguage(String(content.body ?? ''));
         const couldNotAnswer = async (config?: BotConfiguration) => {
             const attempts = attemptsOf(event) + 1;
@@ -343,6 +334,23 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             await this.sendNote(botId, event.room_id, 'trouble', language, config);
         };
+
+        // Someone added a third person: the room is no longer a one-to-one chat, so the bot stays quiet.
+        let members = this.roomMembers.get(event.room_id);
+        if (!members) {
+            const joined = await this.client.getJoinedMembers(botUserId, event.room_id).catch((error) => {
+                console.warn(`[MatrixDmBridge] Could not read the members of ${event.room_id}:`, error?.message ?? error);
+                return null;
+            });
+            if (!joined) {
+                await couldNotAnswer();
+                return;
+            }
+            members = new Set(joined);
+            this.roomMembers.set(event.room_id, members);
+        }
+        if (members.size !== 2 || !members.has(event.sender)) return;
+
         let config: BotConfiguration | null;
         try {
             config = await this.deps.getBotConfig(botId, catchUp);
@@ -502,8 +510,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const config = await this.deps.getBotConfig(botId, true).catch(() => undefined);
             if (config === undefined) continue;
             if (config === null) {
-                // Deleted: the next message closes the chat, so there is nothing to answer.
-                await this.takeWaiting(botId);
+                // Deleted: whoever left a message gets the goodbye now, and the bot leaves that chat.
+                for (const event of this.readWaiting(await this.takeWaiting(botId))) {
+                    if ((await this.botForRoom(event.room_id)) !== botId) continue;
+                    await this.closeChat(botId, event.room_id, detectLanguage(String(event.content?.body ?? '')));
+                }
             } else if (config.enabled !== false && config.aiProviderRef) {
                 await this.drain(botId);
             }
@@ -522,21 +533,26 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return [...shared, ...local];
     }
 
+    /** Kept messages less than a day old, oldest first. */
+    private readWaiting(messages: string[]): MatrixEvent[] {
+        return messages
+            .map((message) => {
+                try {
+                    return JSON.parse(message) as MatrixEvent;
+                } catch {
+                    return null;
+                }
+            })
+            .filter((event): event is MatrixEvent => !!event && Date.now() - (event.origin_server_ts ?? 0) < WAITING_MAX_AGE_MS)
+            .sort((a, b) => (a.origin_server_ts ?? 0) - (b.origin_server_ts ?? 0));
+    }
+
     /** Answer the messages left while the bot rested, oldest first, if they are less than a day old. */
     private async drain(botId: string): Promise<void> {
         if (this.draining.has(botId)) return;
         this.draining.add(botId);
         try {
-            const messages = (await this.takeWaiting(botId))
-                .map((message) => {
-                    try {
-                        return JSON.parse(message) as MatrixEvent;
-                    } catch {
-                        return null;
-                    }
-                })
-                .filter((event): event is MatrixEvent => !!event && Date.now() - (event.origin_server_ts ?? 0) < WAITING_MAX_AGE_MS)
-                .sort((a, b) => (a.origin_server_ts ?? 0) - (b.origin_server_ts ?? 0));
+            const messages = this.readWaiting(await this.takeWaiting(botId));
             for (const event of messages) {
                 let roomBot: string | null;
                 try {
