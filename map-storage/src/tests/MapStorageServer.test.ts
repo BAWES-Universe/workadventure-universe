@@ -153,6 +153,11 @@ describe("MapStorageServer edit rights", () => {
             expect(await send(create(10, 10, 20, 20), owner)).toBe("createEntityMessage");
         });
 
+        it("checks a tall object as tall, not as wide", async () => {
+            // 20 wide and 80 tall fits in the 100x100 area at (0, 10); 80 wide would stick out to the left
+            expect(await send(create(0, 10, 20, 80), owner)).toBe("createEntityMessage");
+        });
+
         it("refuses an object whose centre is in the owner's area but whose corner is outside it", async () => {
             // Centre (10, 10) is inside, but the top-left corner (-20, -20) is not, so it couldn't be deleted later
             expect(await send(create(-20, -20, 60, 60), owner)).toBe("errorCommandMessage");
