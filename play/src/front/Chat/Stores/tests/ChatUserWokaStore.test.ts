@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readable } from "svelte/store";
 import type { ChatUser } from "../../Connection/ChatConnection";
-import { indexWokasByChatId } from "../ChatUserWokaStore";
+import { indexWokasByChatId, personPicture } from "../ChatUserWokaStore";
 
 function user(chatId: string, picture: string | undefined): ChatUser {
     return {
@@ -28,5 +28,18 @@ describe("indexWokasByChatId", () => {
         let omar: string | undefined;
         wokas.get("@omar:m")?.subscribe((value) => (omar = value))();
         expect(omar).toBe("omar.png");
+    });
+});
+
+describe("personPicture", () => {
+    const live = readable("live-woka.png");
+    const account = readable("account-picture.png");
+
+    it("prefers the woka the game sees right now, then the chat account's picture", () => {
+        const wokas = new Map([["@khalid:server", live]]);
+        expect(personPicture(wokas, "@khalid:server", account)).toBe(live);
+        expect(personPicture(wokas, "@bossman:server", account)).toBe(account);
+        expect(personPicture(wokas, undefined, account)).toBe(account);
+        expect(personPicture(new Map(), "@bossman:server", undefined)).toBeUndefined();
     });
 });

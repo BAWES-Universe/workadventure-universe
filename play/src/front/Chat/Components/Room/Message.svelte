@@ -4,10 +4,10 @@
     import { derived, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import type { PictureStore } from "../../../Stores/PictureStore";
-    import { WOKA_BY_CHAT_ID_CONTEXT } from "../../Stores/ChatUserWokaStore";
+    import { WOKA_BY_CHAT_ID_CONTEXT, personPicture } from "../../Stores/ChatUserWokaStore";
     import type { ChatMessage, ChatMessageType } from "../../Connection/ChatConnection";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
-    import Avatar from "../Avatar.svelte";
+    import TopRowAvatar from "../TopRow/TopRowAvatar.svelte";
     import { selectedChatMessageToEdit } from "../../Stores/ChatStore";
     import { ProximityChatMessage } from "../../Connection/Proximity/ProximityChatRoom";
     import MessageOptions from "./MessageOptions.svelte";
@@ -28,7 +28,7 @@
 
     let messageRef: HTMLDivElement | undefined;
 
-    // Matrix users have no avatar of their own: show their woka, like the chat list does.
+    // Senders show their woka, picked the same way as in the chat list.
     const wokaByChatId: Readable<Map<string, PictureStore>> = hasContext(WOKA_BY_CHAT_ID_CONTEXT)
         ? getContext(WOKA_BY_CHAT_ID_CONTEXT)
         : readable(new Map<string, PictureStore>());
@@ -51,9 +51,7 @@
         reactions,
     } = message;
 
-    const ownPicture: PictureStore = sender?.pictureStore ?? readable(undefined);
-    $: senderPicture =
-        $ownPicture || !sender?.chatId ? sender?.pictureStore : $wokaByChatId.get(sender.chatId) ?? sender.pictureStore;
+    $: senderPicture = personPicture($wokaByChatId, sender?.chatId, sender?.pictureStore) ?? readable(undefined);
 
     const updateMessageBody = () => {
         dispatch("updateMessageBody", {
@@ -103,7 +101,7 @@
     >
         {#if (!isMyMessage || isQuotedMessage) && sender !== undefined && replyDepth === 0}
             <div class="avatar pt-1.5">
-                <Avatar pictureStore={senderPicture} fallbackName={sender?.username} />
+                <TopRowAvatar pictureStore={senderPicture} name={sender?.username ?? ""} size="xs" ring={false} />
             </div>
         {/if}
 
