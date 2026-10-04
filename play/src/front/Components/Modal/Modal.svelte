@@ -49,10 +49,13 @@
         !isFullScreened && !shouldForceMobileFullScreen && (shown?.position === "right" || shown?.position === "left");
 
     // A click on the page inside the window never reaches the game, but the game loses the focus to it: the window then
-    // comes in front of the chat, as a click on its tools does.
+    // comes in front of the chat, as a click on its tools does. Switching to another app also blurs the game, with the
+    // focus left wherever it was; the page then has no focus at all, and nothing changes.
     function onWindowBlur() {
         setTimeout(() => {
-            if (modalIframe && document.activeElement === modalIframe) windowInFrontStore.set("window");
+            if (modalIframe && document.hasFocus() && document.activeElement === modalIframe) {
+                windowInFrontStore.set("window");
+            }
         }, 0);
     }
 
