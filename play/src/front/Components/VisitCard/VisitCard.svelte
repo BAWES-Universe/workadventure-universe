@@ -5,6 +5,7 @@
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { openDirectChatRoom } from "../../Chat/Utils";
+    import { isHttpUrl } from "../../Utils/SafeUrl";
     import chat from "../images/chat.png";
 
     import ButtonClose from "../Input/ButtonClose.svelte";
@@ -19,6 +20,9 @@
     let h = 250;
     let hidden = true;
     let cvIframe: HTMLIFrameElement;
+
+    // A visit card is a web page: anything else (a javascript: link...) would run in the game's page.
+    $: safeVisitCardUrl = isHttpUrl(visitCardUrl) ? visitCardUrl : undefined;
 
     const chatConnection = gameManager.chatConnection;
     const selectPlayerChatID = get(selectedChatIDRemotePlayerStore);
@@ -62,9 +66,9 @@
         <div class={isEmbedded ? "" : "px-2 py-4"}>
             <iframe
                 title="visitCard"
-                src="{visitCardUrl}&embed={isEmbedded}"
+                src={safeVisitCardUrl ? `${safeVisitCardUrl}&embed=${isEmbedded}` : "about:blank"}
                 class="max-h-lg"
-                allow="clipboard-read; clipboard-write {visitCardUrl}"
+                allow="clipboard-read; clipboard-write {safeVisitCardUrl ?? ''}"
                 style="width: {isEmbedded ? '100%' : w}; height: {Math.min(h, maxHeigth)}px; color-scheme: dark"
                 class:hidden
                 bind:this={cvIframe}
