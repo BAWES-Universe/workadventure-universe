@@ -454,7 +454,6 @@ export class GameScene extends DirtyScene {
             console.warn("No space registry available for megaphone space management");
             return;
         }
-        const spaceRegistry = this._spaceRegistry;
         const spaces = new Map(get(megaphoneSpacesStore));
         const wanted = new Map(channels.map((channel) => [channel.scope, slugify(channel.url)]));
 
@@ -463,7 +462,8 @@ export class GameScene extends DirtyScene {
                 continue;
             }
             spaces.delete(scope);
-            spaceRegistry.leaveSpace(space).catch((e) => {
+            // Through the service, so its own list of joined spaces stays in step for destroy().
+            broadcastService.leaveSpace(space.getName()).catch((e) => {
                 console.error("Error while leaving a broadcast space", e);
                 Sentry.captureException(e);
             });
@@ -481,7 +481,7 @@ export class GameScene extends DirtyScene {
                 .then((space) => {
                     // The scene went away while this join was in flight: the next scene must not pick the space up.
                     if (this.broadcastSceneClosing) {
-                        spaceRegistry.leaveSpace(space).catch((e) => {
+                        broadcastService.leaveSpace(space.getName()).catch((e) => {
                             console.error("Error while leaving a broadcast space joined after the scene closed", e);
                             Sentry.captureException(e);
                         });
