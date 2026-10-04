@@ -188,6 +188,13 @@ export function createRingStore(now: () => number = Date.now) {
         async ring(uuid: string, name: string): Promise<boolean> {
             // Still ringing, on their way, or rung lately: one at a time.
             if (get(outgoing).has(uuid)) return false;
+            // One friend at a time, as the pusher has it: say so now rather than show two rings for a moment.
+            for (const entry of get(outgoing).values()) {
+                if (entry.state === "starting" || entry.state === "ringing") {
+                    toast("already_ringing", name);
+                    return false;
+                }
+            }
             const startedAt = now();
             const starting: OutgoingRing = { name, state: "starting", startedAt, until: startedAt + RING_MS };
             setEntry(uuid, starting);

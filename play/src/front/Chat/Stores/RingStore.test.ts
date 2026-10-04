@@ -113,6 +113,18 @@ describe("ringStore", () => {
         expect(get(store.toasts)).toEqual([]);
     });
 
+    it("rings one friend at a time", async () => {
+        const store = createRingStore();
+        const { connection, queryRing } = fakeConnection(ringing);
+        store.attach(connection, true);
+        const first = store.ring("sara", "Sara");
+        expect(await store.ring("noura", "Noura")).toBe(false);
+        expect(await first).toBe(true);
+        expect(queryRing).toHaveBeenCalledTimes(1);
+        expect(get(store.outgoing).has("noura")).toBe(false);
+        expect(get(store.toasts)[0]).toMatchObject({ kind: "already_ringing", name: "Noura" });
+    });
+
     it("says to wait a minute after too many rings", async () => {
         const store = createRingStore();
         const { connection, queryRing } = fakeConnection(ringing);
