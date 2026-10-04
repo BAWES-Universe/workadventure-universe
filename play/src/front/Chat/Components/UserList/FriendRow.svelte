@@ -9,6 +9,7 @@
     import { openDirectChatRoom } from "../../Utils";
     import { canOpenOrbit, openOrbitProfile } from "../../../external-modules/admin-api/index";
     import { adminDashboardActivatedStore } from "../../../Stores/MenuStore";
+    import { RING_MS, outgoingRingsStore, ringClockStore } from "../../Stores/RingStore";
     import PersonActionButton from "./PersonActionButton.svelte";
     import FriendAvatar from "./FriendAvatar.svelte";
     import FriendMenuButton from "./FriendMenuButton.svelte";
@@ -17,6 +18,8 @@
     import { statusLabel } from "./PersonStatus";
     import { goToPersonRoom, walkToPerson } from "./PersonNavigation";
     import { runFriendAction } from "./FriendActions";
+    import RingButton from "./RingButton.svelte";
+    import { ringLine } from "./Ring";
     import {
         IconChevronDown,
         IconDoorIn,
@@ -29,7 +32,8 @@
 
     /**
      * One friend in the Friends view: where they are (or that they hide it, or when they were last seen) and how
-     * to reach them. Walk to when they're here, Go when they're elsewhere and say where, Message otherwise.
+     * to reach them. Online: Walk to when they're here, Go when they're elsewhere and say where, and Ring to ask them
+     * over (Message moves to ⋮). Offline: Message.
      */
     export let entry: PlacedFriend;
     /** Their woka, when they are in this world. */
@@ -47,6 +51,8 @@
     $: canWalk = canReach && entry.group === "here";
     $: canGo = canReach && entry.group !== "here";
     $: canMessage = isMatrixChatEnabled && !!friend.chatId;
+    $: canRing = online;
+    $: ring = ringLine($outgoingRingsStore.get(friend.uuid), $ringClockStore, RING_MS);
     $: canViewProfile = $adminDashboardActivatedStore && canOpenOrbit();
     // Their other tabs, by room: the session to reach them at can come from the world's list, not from presence.
     $: otherSessions =
@@ -64,6 +70,10 @@
     }
 
     $: line = ((): string => {
+        if (ring) {
+            if (ring.kind === "ringing") return $LL.chat.friends.ring.ringing({ seconds: ring.seconds });
+            return $LL.chat.friends.ring[ring.kind]();
+        }
         if (!online) {
             if (presenceUnavailable) return $LL.chat.friends.statusUnavailable();
             const when = relativeTime(friend.lastSeenAt || undefined, Date.now(), $locale);
@@ -97,6 +107,9 @@
     }
 
     $: menuItems = [
+        ...(canRing && canMessage
+            ? [{ key: "message", label: $LL.chat.userList.message(), icon: IconMessage, act: message }]
+            : []),
         ...(canViewProfile
             ? [
                   {
@@ -182,7 +195,14 @@
                     <IconDoorIn font-size="20" />
                 </PersonActionButton>
             {/if}
-            {#if canMessage}
+            {#if canRing}
+                <RingButton
+                    uuid={friend.uuid}
+                    name={friend.name}
+                    status={entry.status}
+                    testId={`friend-ring-${friend.name}`}
+                />
+            {:else if canMessage}
                 <PersonActionButton
                     label={$LL.chat.userList.message()}
                     ariaLabel={$LL.chat.userList.messageUser({ userName: friend.name })}

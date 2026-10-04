@@ -84,6 +84,33 @@ describe("FriendsService", () => {
             params: { userUuid: "alice" },
         });
     });
+
+    it("asks Orbit how two players stand", async () => {
+        const http = {
+            get: vi.fn(() =>
+                Promise.resolve({
+                    data: { relationship: "friends", target: { ringFrom: "nobody", friendsSeeLocation: false } },
+                })
+            ),
+            post: vi.fn(),
+            put: vi.fn(),
+        };
+        const service = new FriendsService("https://orbit.test", "token", http);
+        await expect(service.getRelationship("alice", "bob")).resolves.toEqual({
+            relationship: "friends",
+            target: { ringFrom: "nobody", friendsSeeLocation: false },
+        });
+        expect(http.get).toHaveBeenCalledWith("https://orbit.test/api/friends/relationship", {
+            headers: { Authorization: "token" },
+            params: { userUuid: "alice", targetUuid: "bob" },
+        });
+
+        const { service: missing } = serviceRejecting(orbitError(404, { error: "player_not_found" }));
+        await expect(missing.getRelationship("alice", "nobody")).rejects.toMatchObject({
+            code: "player_not_found",
+            status: 404,
+        });
+    });
 });
 
 describe("PerSocketRateLimiter", () => {

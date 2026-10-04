@@ -9,8 +9,8 @@
     import SettingChoice from "./SettingChoice.svelte";
 
     /**
-     * Friends, in the general settings of a signed-in player: who can send friend requests, being found by name,
-     * and whether friends see where you are. Saved in Orbit, so they follow you to every world and device.
+     * Friends, in the general settings of a signed-in player: who can ring you, who can send friend requests, being
+     * found by name, and whether friends see where you are. Saved in Orbit, so they follow you to every world and device.
      * People you blocked are listed underneath, each with Unblock.
      */
     export let open = false;
@@ -77,6 +77,35 @@
         settings = value;
     }
 
+    // The page opens one choice at a time and knows this section as one: which of its two choices is open is ours.
+    let which: "ring" | "requests" = "requests";
+    function toggle(choice: "ring" | "requests") {
+        if (open && which !== choice) {
+            which = choice;
+            return;
+        }
+        which = choice;
+        onToggle();
+    }
+
+    $: ringOptions = [
+        {
+            value: "friends",
+            label: $LL.chat.friends.settings.ringFromFriends(),
+            hint: $LL.chat.friends.settings.ringFromFriendsHint(),
+        },
+        {
+            value: "nobody",
+            label: $LL.chat.friends.settings.ringFromNobody(),
+            hint: $LL.chat.friends.settings.ringFromNobodyHint(),
+        },
+    ];
+
+    function selectRingFrom(value: string) {
+        onClose();
+        save({ ringFrom: value }).catch((e) => console.error(e));
+    }
+
     function selectRequestsFrom(value: string) {
         onClose();
         save({ friendRequestsFrom: value }).catch((e) => console.error(e));
@@ -86,12 +115,21 @@
 <SettingSection title={$LL.chat.friends.settings.title()}>
     {#if settings}
         <SettingChoice
+            id="friend-ring-from"
+            label={$LL.chat.friends.settings.ringFrom()}
+            value={settings.ringFrom === "nobody" ? "nobody" : "friends"}
+            options={ringOptions}
+            open={open && which === "ring"}
+            onToggle={() => toggle("ring")}
+            onSelect={selectRingFrom}
+        />
+        <SettingChoice
             id="friend-requests-from"
             label={$LL.chat.friends.settings.requestsFrom()}
             value={settings.friendRequestsFrom}
             options={requestOptions}
-            {open}
-            {onToggle}
+            open={open && which === "requests"}
+            onToggle={() => toggle("requests")}
             onSelect={selectRequestsFrom}
         />
         <SettingSwitch

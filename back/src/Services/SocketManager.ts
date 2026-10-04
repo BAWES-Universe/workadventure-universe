@@ -697,6 +697,8 @@ export class SocketManager {
                 case "friendActionQuery":
                 case "friendSearchQuery":
                 case "friendSettingsQuery":
+                case "ringQuery":
+                case "ringReplyQuery":
                 case "searchMemberQuery":
                 case "getMemberQuery":
                 case "searchTagsQuery":

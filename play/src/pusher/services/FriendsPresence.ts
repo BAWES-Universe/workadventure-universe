@@ -250,6 +250,16 @@ export class FriendsPresence<S extends FriendsSocket> {
         );
     }
 
+    /** The most available status across a user's open tabs; UNCHANGED when they have none. */
+    statusOf(userUuid: string): AvailabilityStatus {
+        return mostAvailableStatus(this.sessionsOf(userUuid).map((session) => session.availabilityStatus));
+    }
+
+    /** Display names of one room, from the cache or Orbit; null when unknown or the lookup failed. */
+    async placeOf(playUri: string): Promise<FriendPlace | null> {
+        return (await this.resolvePlaces([playUri])).get(playUri) ?? null;
+    }
+
     /** The current presence of each friend, for a friends list. */
     async presencesOf(friends: FriendWatch[]): Promise<Map<string, FriendPresence>> {
         const playUris = friends

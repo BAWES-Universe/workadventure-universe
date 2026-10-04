@@ -35,6 +35,8 @@ import type {
     FriendSearchResult,
     FriendSettings,
     FriendSettingsUpdate,
+    RingAnswer,
+    RingReplyAnswer,
     FriendsUpdateMessage,
     PlayerDetailsUpdatedMessage as PlayerDetailsUpdatedMessageTsProto,
     PositionMessage as PositionMessageTsProto,
@@ -1695,6 +1697,28 @@ export class RoomConnection implements RoomConnection {
             throw new Error("Unexpected answer");
         }
         return answer.friendSettingsAnswer.settings;
+    }
+
+    public async queryRing(targetUuid: string): Promise<RingAnswer> {
+        const answer = await this.query({
+            $case: "ringQuery",
+            ringQuery: { targetUuid },
+        });
+        if (answer.$case !== "ringAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringAnswer;
+    }
+
+    public async queryRingReply(ringId: string, action: "stop" | "accept" | "decline"): Promise<RingReplyAnswer> {
+        const answer = await this.query({
+            $case: "ringReplyQuery",
+            ringReplyQuery: { ringId, action },
+        });
+        if (answer.$case !== "ringReplyAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringReplyAnswer;
     }
 
     public async queryEmbeddableWebsite(url: string): Promise<EmbeddableWebsiteAnswer> {

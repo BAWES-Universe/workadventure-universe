@@ -349,4 +349,19 @@ describe("FriendsPresence", () => {
         await vi.advanceTimersByTimeAsync(3000);
         expect(presencesSentTo(sent, watcher)[0]?.presence?.sessions[0]?.roomName).toBe("Room");
     });
+
+    it("answers a user's status and a room's names for rings", async () => {
+        const { presence, lookupPlaces } = setup();
+        expect(presence.statusOf("alice")).toBe(AvailabilityStatus.UNCHANGED);
+        const busyTab = new FakeSocket("alice", ROOM_A, { availabilityStatus: AvailabilityStatus.BUSY });
+        presence.track(busyTab);
+        expect(presence.statusOf("alice")).toBe(AvailabilityStatus.BUSY);
+        presence.track(new FakeSocket("alice", ROOM_B, { availabilityStatus: AvailabilityStatus.AWAY }));
+        expect(presence.statusOf("alice")).toBe(AvailabilityStatus.AWAY);
+
+        await expect(presence.placeOf(ROOM_A)).resolves.toEqual(PLACES[ROOM_A]);
+        await expect(presence.placeOf(ROOM_A)).resolves.toEqual(PLACES[ROOM_A]);
+        await expect(presence.placeOf("https://play.test/unknown")).resolves.toBeNull();
+        expect(lookupPlaces).toHaveBeenCalledTimes(2);
+    });
 });

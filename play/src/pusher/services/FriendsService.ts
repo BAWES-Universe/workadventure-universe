@@ -95,6 +95,17 @@ export type FriendPlace = z.infer<typeof FriendPlace>;
 
 const OrbitFriendPlaces = z.object({ places: z.record(z.string(), FriendPlace.nullable()) });
 
+/** How the acting user stands with another player, and the other player's choices that matter for a ring. */
+export const OrbitFriendRelationship = z.object({
+    // none | friends | request_sent | request_received | blocked_by_me | blocked_by_them
+    relationship: z.string(),
+    target: z.object({
+        ringFrom: z.string(),
+        friendsSeeLocation: z.boolean(),
+    }),
+});
+export type OrbitFriendRelationship = z.infer<typeof OrbitFriendRelationship>;
+
 const OrbitErrorBody = z.object({ error: z.string() });
 
 interface HttpClient {
@@ -168,6 +179,16 @@ export class FriendsService {
                 { headers: this.headers() }
             );
             return OrbitFriendSettingsAnswer.parse(response.data).settings;
+        });
+    }
+
+    getRelationship(userUuid: string, targetUuid: string): Promise<OrbitFriendRelationship> {
+        return this.call(async () => {
+            const response = await this.http.get(this.url("/api/friends/relationship"), {
+                headers: this.headers(),
+                params: { userUuid, targetUuid },
+            });
+            return OrbitFriendRelationship.parse(response.data);
         });
     }
 

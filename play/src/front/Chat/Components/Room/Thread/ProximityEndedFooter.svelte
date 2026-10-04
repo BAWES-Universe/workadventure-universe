@@ -13,6 +13,7 @@
     import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
     import { friendsEnabledStore, relationshipsStore } from "../../../Stores/FriendsStore";
     import { runFriendAction } from "../../UserList/FriendActions";
+    import RingButton from "../../UserList/RingButton.svelte";
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import {
         IconCheck,
@@ -146,7 +147,7 @@
     })();
 
     // "You were with": the signed-in people of this chat (only they have a chat id), each with Add friend unless you
-    // are friends already or asked. How most friendships start: you met, so you add.
+    // are friends already or asked. How most friendships start: you met, so you add. Friends can be rung back.
     $: metPeople = ((): { uuid: string; name: string }[] => {
         if (!$friendsEnabledStore) return [];
         const me = localUserStore.getLocalUser()?.uuid;
@@ -197,12 +198,22 @@
             {#each metPeople as person (person.uuid)}
                 {@const relationship = $relationshipsStore.get(person.uuid) ?? "none"}
                 <div class="flex min-h-9 items-center gap-2">
-                    <span class="min-w-0 flex-auto truncate text-sm font-bold">{person.name}</span>
+                    <span class="flex min-w-0 flex-auto items-center gap-1 text-sm font-bold">
+                        <span class="truncate">{person.name}</span>
+                        {#if relationship === "friends"}
+                            <span class="flex shrink-0 text-[#c4b5fd]" title={$LL.chat.friends.friendBadge()}>
+                                <IconUserCheck font-size="14" aria-label={$LL.chat.friends.friendBadge()} />
+                            </span>
+                        {/if}
+                    </span>
                     {#if relationship === "friends"}
-                        <span class="flex shrink-0 items-center gap-1 text-xs font-bold text-white/70">
-                            <IconUserCheck font-size="14" />
-                            {$LL.chat.friends.friendBadge()}
-                        </span>
+                        <RingButton
+                            uuid={person.uuid}
+                            name={person.name}
+                            status={undefined}
+                            variant="pill"
+                            testId="proximityRing"
+                        />
                     {:else if relationship === "request_sent"}
                         <span class="flex shrink-0 items-center gap-1 text-xs font-bold text-white/60">
                             <IconCheck font-size="14" />

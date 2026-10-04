@@ -44,6 +44,7 @@
     import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
+    import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
     import { mapEditorSideBarWidthStore } from "./MapEditor/MapEditorSideBarWidthStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
@@ -270,6 +271,8 @@
             {#if $warningMessageStore.length > 0}
                 <WarningToast />
             {/if}
+
+            <RingOverlay />
 
             <ExternalComponents zone="popup" />
             {#if $requestVisitCardsStore || $wokaMenuStore || $actionsMenuStore}

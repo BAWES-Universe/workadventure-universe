@@ -881,6 +881,22 @@ export class IoSocketController {
                                             this.sendAnswerMessage(socket, answerMessage);
                                             break;
                                         }
+                                        case "ringQuery": {
+                                            answerMessage.answer = await socketManager.handleRingQuery(
+                                                socket,
+                                                message.message.queryMessage.query.ringQuery
+                                            );
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
+                                        case "ringReplyQuery": {
+                                            answerMessage.answer = socketManager.handleRingReplyQuery(
+                                                socket,
+                                                message.message.queryMessage.query.ringReplyQuery
+                                            );
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
                                         case "searchMemberQuery": {
                                             const searchMemberAnswer = await socketManager.handleSearchMemberQuery(
                                                 socket,

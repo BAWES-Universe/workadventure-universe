@@ -19,6 +19,8 @@ import type {
     FriendSearchQuery,
     FriendSettingsQuery,
     FriendsUpdateMessage,
+    RingQuery,
+    RingReplyQuery,
     GetMemberAnswer,
     GetMemberQuery,
     JoinRoomMessage,
@@ -72,6 +74,7 @@ import type { ShortMapDescription } from "./ShortMapDescription";
 import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
 import { FriendsPresence } from "./FriendsPresence";
+import { FriendsRings } from "./FriendsRings";
 import type { OrbitFriendSettings } from "./FriendsService";
 import {
     FRIEND_SEARCH_MAX_LENGTH,
@@ -104,8 +107,16 @@ export class SocketManager implements ZoneEventListener {
         send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
         lookupPlaces: (playUris) => friendsService.getPlaces(playUris),
     });
+    public readonly friendsRings = new FriendsRings<Socket>({
+        send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
+        socketsOf: (userUuid) => this.friendsPresence.socketsOf(userUuid),
+        statusOf: (userUuid) => this.friendsPresence.statusOf(userUuid),
+        getRelationship: (userUuid, targetUuid) => friendsService.getRelationship(userUuid, targetUuid),
+        lookupPlace: (playUri) => this.friendsPresence.placeOf(playUri),
+    });
     private readonly friendActionLimiter = new PerSocketRateLimiter<Socket>(20, 60_000);
     private readonly friendSearchLimiter = new PerSocketRateLimiter<Socket>(10, 60_000);
+    private readonly ringLimiter = new PerSocketRateLimiter<Socket>(10, 60_000);
 
     constructor(private _spaceConnection = new SpaceConnection()) {
         clientEventsEmitter.registerToClientJoin((clientUUid: string, roomId: string) => {
@@ -346,6 +357,7 @@ export class SocketManager implements ZoneEventListener {
             const pusherRoom = await this.getOrCreateRoom(socketData.roomId);
             pusherRoom.join(client);
             this.friendsPresence.track(client);
+            this.friendsRings.joined(client);
         } catch (e) {
             Sentry.captureException(e);
             console.error(`An error occurred on "join_room" event`, e);
@@ -514,6 +526,13 @@ export class SocketManager implements ZoneEventListener {
         } catch (e) {
             Sentry.captureException(e);
             console.error("Error while removing the friends presence", e);
+        }
+        try {
+            // After untrack: a ring ends once its friend has no tab left.
+            this.friendsRings.closed(client);
+        } catch (e) {
+            Sentry.captureException(e);
+            console.error("Error while ending the rings of a socket", e);
         }
         try {
             // Must run before leaveSpaces: it reads which Matrix area spaces this socket is in.
@@ -1416,6 +1435,33 @@ export class SocketManager implements ZoneEventListener {
         } catch (e) {
             return this.friendsErrorAnswer("handleFriendSettingsQuery", e);
         }
+    }
+
+    async handleRingQuery(client: Socket, query: RingQuery): Promise<AnswerMessage["answer"]> {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        if (!this.ringLimiter.take(client)) {
+            return { $case: "error", error: { message: "rate_limited" } };
+        }
+        try {
+            const ringAnswer = await this.friendsRings.ring(client, query.targetUuid);
+            return { $case: "ringAnswer", ringAnswer };
+        } catch (e) {
+            return this.friendsErrorAnswer("handleRingQuery", e);
+        }
+    }
+
+    handleRingReplyQuery(client: Socket, query: RingReplyQuery): AnswerMessage["answer"] {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        return {
+            $case: "ringReplyAnswer",
+            ringReplyAnswer: this.friendsRings.reply(client, query.ringId, query.action),
+        };
     }
 
     /** Friends need an admin and a signed-in player: answers why not, or undefined when the query can go on. */

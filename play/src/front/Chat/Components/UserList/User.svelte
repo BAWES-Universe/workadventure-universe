@@ -33,6 +33,8 @@
         walkToPerson,
     } from "./PersonNavigation";
     import { friendMenuAction } from "./FriendMenuAction";
+    import type { FriendMenuAction } from "./FriendMenuAction";
+    import RingButton from "./RingButton.svelte";
     import {
         IconChevronDown,
         IconDoorIn,
@@ -122,7 +124,21 @@
         $friendsEnabledStore && !isMe && !isMine && !user.isBot && user.uuid && user.chatId
             ? friendMenuAction(relationship, user.uuid, displayName, $LL)
             : undefined;
-    $: hasMenu = showLocateInMenu || actions.viewProfile || actions.ban || friendAction !== undefined;
+    // A friend who is here can be rung over; Message then moves to ⋮ so the row keeps three buttons.
+    $: canRing = $friendsEnabledStore && isFriend && !isMe && !!user.uuid && !!$userStatus;
+    $: menuMessage =
+        canRing && actions.message !== "hidden"
+            ? ([
+                  {
+                      label: $LL.chat.userList.message(),
+                      icon: IconMessage,
+                      danger: false,
+                      act: sendMessage,
+                  },
+              ] satisfies FriendMenuAction[])
+            : [];
+    $: hasMenu =
+        showLocateInMenu || actions.viewProfile || actions.ban || friendAction !== undefined || menuMessage.length > 0;
 
     function walkTo() {
         if (choosesSession) {
@@ -330,7 +346,14 @@
                         <IconMapPin font-size="20" />
                     </PersonActionButton>
                 {/if}
-                {#if actions.message !== "hidden"}
+                {#if canRing && user.uuid}
+                    <RingButton
+                        uuid={user.uuid}
+                        name={displayName}
+                        status={$userStatus}
+                        testId={`ring-${user.username}`}
+                    />
+                {:else if actions.message !== "hidden"}
                     <PersonActionButton
                         label={$LL.chat.userList.message()}
                         ariaLabel={$LL.chat.userList.messageUser({ userName: displayName })}
@@ -351,6 +374,7 @@
                         showViewProfile={actions.viewProfile}
                         showBan={actions.ban}
                         {friendAction}
+                        extraActions={menuMessage}
                     />
                 {/if}
             </div>

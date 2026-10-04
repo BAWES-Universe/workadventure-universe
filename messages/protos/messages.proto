@@ -460,6 +460,8 @@ message QueryMessage {
     FriendActionQuery friendActionQuery = 23;
     FriendSearchQuery friendSearchQuery = 24;
     FriendSettingsQuery friendSettingsQuery = 25;
+    RingQuery ringQuery = 26;
+    RingReplyQuery ringReplyQuery = 27;
   }
 }
 
@@ -609,6 +611,12 @@ message FriendsUpdateMessage {
     FriendPresenceUpdate presence = 1;
     // Their friends or requests changed (a request arrived, was accepted, removed...): ask for the list again.
     FriendsListChanged listChanged = 2;
+    // A friend is ringing you (on every tab).
+    RingIncoming ringIncoming = 3;
+    // A ring you were shown is over: stopped, timed out, or answered on another tab.
+    RingEnded ringEnded = 4;
+    // What came of a ring you made.
+    RingResult ringResult = 5;
   }
 }
 
@@ -618,6 +626,54 @@ message FriendPresenceUpdate {
 }
 
 message FriendsListChanged {
+}
+
+// Ring a friend: they get a card for 30 seconds asking them to come over to you.
+message RingQuery {
+  string targetUuid = 1;
+}
+
+message RingAnswer {
+  // ringing | not_friends | not_allowed | offline | busy | already_ringing | too_soon
+  string outcome = 1;
+  string ringId = 2;
+  // For too_soon: when they can be rung again.
+  int32 retryAfterSeconds = 3;
+}
+
+message RingReplyQuery {
+  string ringId = 1;
+  string action = 2; // stop (the caller) | accept | decline (the friend being rung)
+}
+
+message RingReplyAnswer {
+  bool ok = 1;
+  // For accept: where the caller is, to go to them.
+  string playUri = 2;
+  string callerUuid = 3;
+}
+
+message RingIncoming {
+  string ringId = 1;
+  string fromUuid = 2;
+  string fromName = 3;
+  string playUri = 4;
+  string roomName = 5;
+  string worldName = 6;
+  string universeName = 7;
+  int32 expiresInMs = 8;
+}
+
+message RingEnded {
+  string ringId = 1;
+  string reason = 2; // stopped | expired | answered
+}
+
+message RingResult {
+  string ringId = 1;
+  string targetUuid = 2;
+  // accepted (they are on their way) | declined | no_answer | arrived (they are in your room)
+  string result = 3;
 }
 
 message SendEventQuery {
@@ -687,6 +743,8 @@ message AnswerMessage {
     FriendActionAnswer friendActionAnswer = 21;
     FriendSearchAnswer friendSearchAnswer = 22;
     FriendSettingsAnswer friendSettingsAnswer = 23;
+    RingAnswer ringAnswer = 24;
+    RingReplyAnswer ringReplyAnswer = 25;
   }
 }
 
