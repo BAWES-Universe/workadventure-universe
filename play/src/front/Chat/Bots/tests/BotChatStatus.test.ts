@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import { describe, expect, it, vi } from "vitest";
-import { botIdFromChatId, readBotStatusNote } from "../BotChatStatus";
+import { availabilityFromNote, botIdFromChatId, readBotStatusNote } from "../BotChatStatus";
 import { BotStatusCache } from "../BotStatusCache";
 
 const BOT = "0b7c1d2e-1111-4222-8333-944455556666";
@@ -84,5 +84,35 @@ describe("BotStatusCache", () => {
         await vi.waitFor(() => expect(fetchStatus).toHaveBeenCalledTimes(2));
         expect(get(a)).toBe("gone");
         stop.forEach((s) => s());
+    });
+
+    it("shows a note's state at once, unless a lookup made after the note knows better", async () => {
+        let now = 100_000;
+        const fetchStatus = vi.fn((): Promise<Record<string, string> | null> => Promise.resolve({ a: "online" }));
+        const cache = new BotStatusCache(fetchStatus, () => now);
+        const a = cache.store("a");
+        const stop = a.subscribe(() => undefined);
+        await vi.waitFor(() => expect(get(a)).toBe("online"));
+
+        // An old resting note, from before the lookup: the bot is back on, so it stays online.
+        cache.learn("a", "resting", 50_000);
+        expect(get(a)).toBe("online");
+
+        // A new note: shown at once, and no new lookup is needed for it.
+        now = 110_000;
+        cache.learn("a", "resting", 110_000);
+        expect(get(a)).toBe("resting");
+        expect(fetchStatus).toHaveBeenCalledTimes(1);
+        stop();
+    });
+});
+
+describe("availabilityFromNote", () => {
+    it("reads the bot's state from notes about the bot, not from notes about one message or one person", () => {
+        expect(availabilityFromNote("resting")).toBe("resting");
+        expect(availabilityFromNote("unready")).toBe("unready");
+        expect(availabilityFromNote("gone")).toBe("gone");
+        expect(availabilityFromNote("trouble")).toBeUndefined();
+        expect(availabilityFromNote("no_access")).toBeUndefined();
     });
 });

@@ -30,10 +30,15 @@ export class BotStatusCache {
         });
     }
 
-    /** A bot just said it is gone or resting in a note: show that now, without waiting for the next lookup. */
-    learn(botId: string, value: BotAvailability): void {
+    /**
+     * A bot said it is gone or resting in a note: show that now, without waiting for the next lookup. A note older
+     * than what the cache already knows (a lookup made after it) changes nothing, and an old one is checked again on
+     * the next look.
+     */
+    learn(botId: string, value: BotAvailability, at: number = this.now()): void {
         const entry = this.entry(botId);
-        entry.at = this.now();
+        if (at < entry.at) return;
+        entry.at = at;
         this.publish(entry, value);
     }
 

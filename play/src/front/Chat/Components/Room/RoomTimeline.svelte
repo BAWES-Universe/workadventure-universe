@@ -22,7 +22,7 @@
     import { selectedProximitySessionStore } from "../../Stores/ProximitySessionStore";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
-    import { botIdFromChatId } from "../../Bots/BotChatStatus";
+    import { availabilityFromNote, botIdFromChatId } from "../../Bots/BotChatStatus";
     import { botStatusCache } from "../../Bots/BotStatusStore";
     import BotStatusLine from "../Bots/BotStatusLine.svelte";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
@@ -132,9 +132,13 @@
     $: botClosed = botState === "gone";
     // Someone who can't reach the bot's room learns nothing more from its state, and "Online" next to "Can't chat"
     // reads like a bug: the header stays quiet while the bot's latest word is that note.
-    $: lastBotNote = partnerBotId
-        ? [...$messages].reverse().find((message) => !message.isMyMessage)?.botStatus
-        : undefined;
+    $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
+    $: lastBotNote = lastBotMessage?.botStatus;
+    // A note saying the bot is resting, not ready or gone updates the header at once, unless a later lookup knows better.
+    $: lastNoteAvailability = lastBotNote ? availabilityFromNote(lastBotNote.state) : undefined;
+    $: if (partnerBotId && lastNoteAvailability) {
+        botStatusCache.learn(partnerBotId, lastNoteAvailability, lastBotMessage?.date?.getTime());
+    }
     $: shownBotState = lastBotNote?.state === "no_access" && !botClosed ? undefined : botState;
     $: botPlaceholder =
         botState === "resting"

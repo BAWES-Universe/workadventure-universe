@@ -33,6 +33,11 @@ export function readBotStatusNote(
     return { state: note.state as BotNoteState, title: note.title, text: note.text };
 }
 
+/** The availability a note tells about, or undefined for notes about one message (trouble) or one person (no_access). */
+export function availabilityFromNote(state: BotNoteState): BotAvailability | undefined {
+    return state === "resting" || state === "unready" || state === "gone" ? state : undefined;
+}
+
 /** Status dot colours, the same as people's (Utils/AvailabilityStatus). */
 const COLOURS: Record<BotAvailability | BotNoteState, string> = {
     online: "#68e97a",
