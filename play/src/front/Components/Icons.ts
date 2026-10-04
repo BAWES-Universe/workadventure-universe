@@ -20,6 +20,8 @@ export { default as IconArrowUp } from "~icons/tabler/arrow-up";
 export { default as IconMoodSmile } from "~icons/tabler/mood-smile";
 export { default as IconPencil } from "~icons/tabler/pencil";
 export { default as IconTrash } from "~icons/tabler/trash";
+export { default as IconBan } from "~icons/tabler/ban";
+export { default as IconFlag } from "~icons/tabler/flag";
 export { default as IconSend } from "~icons/tabler/send";
 export { default as IconPhoto } from "~icons/tabler/photo";
 export { default as IconPhotoOff } from "~icons/tabler/photo-off";

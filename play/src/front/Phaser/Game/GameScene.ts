@@ -172,6 +172,7 @@ import { ProximitySpaceManager } from "../../WebRtc/ProximitySpaceManager";
 import type { SpaceRegistryInterface } from "../../Space/SpaceRegistry/SpaceRegistryInterface";
 import { WorldUserProvider } from "../../Chat/UserProvider/WorldUserProvider";
 import { ChatUserProvider } from "../../Chat/UserProvider/ChatUserProvider";
+import { startChatBlockSync } from "../../Chat/Services/ChatBlockSync";
 import { UserProviderMerger } from "../../Chat/UserProviderMerger/UserProviderMerger";
 import { AdminUserProvider } from "../../Chat/UserProvider/AdminUserProvider";
 import { ExtensionModuleStatusSynchronization } from "../../Rules/StatusRules/ExtensionModuleStatusSynchronization";
@@ -387,6 +388,7 @@ export class GameScene extends DirtyScene {
     private isLiveStreamingUnsubscriber: Unsubscriber | undefined;
     private _proximityChatRoom: ProximityChatRoom | undefined;
     private _userProviderMergerDeferred: Deferred<UserProviderMerger> = new Deferred();
+    private unsubscribeChatBlockSync: (() => void) | undefined;
     private _worldUserCounter: ForwardableStore<number> = new ForwardableStore(0);
     // Everyone in the world space (the unfiltered source behind the People tab), undefined until the space is joined
     private _allUsersInWorldStore: ForwardableStore<Map<string, SpaceUserExtended> | undefined> = new ForwardableStore<
@@ -1164,6 +1166,8 @@ export class GameScene extends DirtyScene {
     }
 
     public cleanupClosingScene(): void {
+        this.unsubscribeChatBlockSync?.();
+        this.unsubscribeChatBlockSync = undefined;
         // A person card belongs to this map: close it before the map and its players go (a reconnect, a map change).
         wokaMenuStore.clear();
         // make sure we restart own medias
@@ -1860,7 +1864,9 @@ export class GameScene extends DirtyScene {
                             userProviders.push(worldUserProvider);
                         }
 
-                        this._userProviderMergerDeferred.resolve(new UserProviderMerger(userProviders));
+                        const userProviderMerger = new UserProviderMerger(userProviders);
+                        this.unsubscribeChatBlockSync = startChatBlockSync(chatConnection, userProviderMerger);
+                        this._userProviderMergerDeferred.resolve(userProviderMerger);
                     })
                     .catch((e) => {
                         const errorMessage = "Failed to get chatConnection from gameManager : " + e;

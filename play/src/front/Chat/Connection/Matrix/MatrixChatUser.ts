@@ -2,7 +2,7 @@ import type { MatrixClient, User } from "matrix-js-sdk";
 import { SetPresence } from "matrix-js-sdk";
 import { readable, writable } from "svelte/store";
 import { AvailabilityStatus } from "@workadventure/messages";
-import type { ChatUser } from "../ChatConnection";
+import type { ChatPresence, ChatUser } from "../ChatConnection";
 
 export const chatUserFactory: (matrixChatUser: User, matrixClient: MatrixClient) => ChatUser = (
     matrixChatUser,
@@ -36,4 +36,11 @@ export function mapMatrixPresenceToAvailabilityStatus(presence: string = SetPres
             console.error(`Do not handle the status ${presence}`);
             return AvailabilityStatus.UNCHANGED;
     }
+}
+
+/** Online on chat from any app; "busy" and unavailable both read as away. */
+export function toChatPresence(presence: string | undefined): ChatPresence {
+    if (presence === SetPresence.Online) return "online";
+    if (presence === SetPresence.Unavailable || presence === "busy") return "away";
+    return "offline";
 }

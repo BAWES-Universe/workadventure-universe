@@ -23,6 +23,9 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { WOKA_BY_CHAT_ID_CONTEXT, createWokaByChatIdStore } from "../../Stores/ChatUserWokaStore";
+    import Avatar from "../Avatar.svelte";
+    import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
+    import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
     import Message from "./Message.svelte";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
@@ -30,6 +33,10 @@
     import SessionDivider from "./Thread/SessionDivider.svelte";
     import ProximityThreadTitle from "./Thread/ProximityThreadTitle.svelte";
     import ProximityEndedFooter from "./Thread/ProximityEndedFooter.svelte";
+    import RoomMenu from "./RoomMenu/RoomMenu.svelte";
+    import DirectChatTitle from "./DirectChat/DirectChatTitle.svelte";
+    import PartnerProfilePanel from "./DirectChat/PartnerProfilePanel.svelte";
+    import { directPartnerStore } from "./DirectChat/DirectPartnerStore";
     import { IconChevronLeft, IconChevronRight, IconLoader, IconLock, IconMailBox } from "@wa-icons";
 
     export let room: ChatRoom;
@@ -68,6 +75,12 @@
     $: typingMembers = room.typingMembers;
     $: isEncrypted = room.isEncrypted;
     $: proximityRoom = room instanceof ProximityChatRoom ? room : undefined;
+    $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
+    // A direct chat knows who the other person is and where they are right now (header, menu, profile).
+    $: directPartner = matrixRoom?.type === "direct" ? directPartnerStore(matrixRoom) : undefined;
+    $: profileOpen = directPartner !== undefined && $openProfileRoomIdStore === room.id;
+    $: roomMembers = matrixRoom ? matrixRoom.members : readable([]);
+    $: memberCount = $roomMembers.length;
     // The proximity chat is one timeline across every stay. The thread shows one stay at a time: the live one,
     // or an ended one from the list (read-only). With no stay selected, the whole timeline shows with dividers,
     // as it always did. Other rooms have no session markers.
@@ -193,6 +206,7 @@
     }
 
     function goBackAndClearSelectedChatMessage() {
+        openProfileRoomIdStore.set(undefined);
         selectedChatMessageToReply.set(null);
         selectedRoomStore.set(undefined);
         shouldRestoreChatStateStore.set(false);
@@ -285,16 +299,27 @@
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-    class="flex flex-col flex-auto h-full w-full max-w-full"
+    class="relative isolate flex flex-col flex-auto h-full w-full max-w-full"
     on:dragover|preventDefault
     on:drop|preventDefault|stopPropagation={onDropFiles}
 >
+    {#if profileOpen && matrixRoom && $directPartner}
+        <!-- Over the conversation, which stays as it was (draft, files, scroll) for when you come back. Above the
+             message options (z-50) and menus that live in it; "isolate" keeps all of that inside this panel. -->
+        <PartnerProfilePanel
+            room={matrixRoom}
+            partner={$directPartner}
+            on:close={() => openProfileRoomIdStore.set(undefined)}
+        />
+    {/if}
     {#if room !== undefined}
         <div class="flex flex-col gap-2">
-            <div class="p-2 flex items-center border border-solid border-x-0 border-b border-t-0 border-white/10">
+            <div
+                class="relative p-2 flex items-center gap-1 border border-solid border-x-0 border-b border-t-0 border-white/10"
+            >
                 {#if chatRoomsEnableInAdmin}
                     <button
-                        class="back-roomlist p-3 hover:bg-white/10 rounded-full aspect-square w-12"
+                        class="back-roomlist p-3 hover:bg-white/10 rounded-2xl aspect-square w-12 shrink-0"
                         data-testid="chatBackward"
                         on:click={goBackAndClearSelectedChatMessage}
                     >
@@ -304,16 +329,11 @@
                             <IconChevronLeft font-size="20" />
                         {/if}
                     </button>
-                {:else}
-                    <div class="p-3 rounded-2xl aspect-square w-12" />
                 {/if}
-                <div class="flex min-w-0 grow flex-col items-center gap-0.5">
+                <!-- Every chat's title starts right after the back arrow, so the picture never moves with the name. -->
+                <div class="flex min-w-0 grow items-center">
                     {#if proximityRoom && isEnded}
-                        <div
-                            class="flex min-w-0 max-w-full flex-col items-center"
-                            data-testid="threadNow"
-                            data-state="ended"
-                        >
+                        <div class="flex min-w-0 max-w-full flex-col" data-testid="threadNow" data-state="ended">
                             <div class="max-w-full truncate text-md font-bold leading-5" data-testid="roomName">
                                 {endedTitle}
                             </div>
@@ -323,26 +343,45 @@
                         </div>
                     {:else if proximityRoom}
                         <ProximityThreadTitle room={proximityRoom} />
+                    {:else if matrixRoom && $directPartner}
+                        <DirectChatTitle
+                            room={matrixRoom}
+                            partner={$directPartner}
+                            on:openProfile={() => openProfileRoomIdStore.set(room.id)}
+                        />
                     {:else}
-                        <div class="flex max-w-full items-center justify-center gap-1.5">
-                            <div class="text-md font-bold h-5 truncate text-center" data-testid="roomName">
-                                {$roomName}
+                        <div class="flex min-w-0 items-center gap-2.5 px-2">
+                            <Avatar pictureStore={room.pictureStore} fallbackName={$roomName} size="sm" />
+                            <div class="flex min-w-0 flex-col">
+                                <div class="flex min-w-0 items-center gap-1.5">
+                                    <div class="truncate text-md font-bold leading-5" data-testid="roomName">
+                                        {$roomName}
+                                    </div>
+                                    {#if $isEncrypted}
+                                        <span
+                                            class="shrink-0 text-white/50"
+                                            title={$LL.chat.thread.encrypted()}
+                                            data-testid="threadEncryptedLock"
+                                        >
+                                            <IconLock font-size="14" />
+                                            <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
+                                        </span>
+                                    {/if}
+                                </div>
+                                {#if memberCount > 0}
+                                    <div class="truncate text-xs text-white/60" data-testid="roomMemberCount">
+                                        {$LL.chat.directChat.members({ count: memberCount })}
+                                    </div>
+                                {/if}
                             </div>
-                            {#if $isEncrypted}
-                                <span
-                                    class="shrink-0 text-white/50"
-                                    title={$LL.chat.thread.encrypted()}
-                                    data-testid="threadEncryptedLock"
-                                >
-                                    <IconLock font-size="14" />
-                                    <span class="sr-only">{$LL.chat.thread.encrypted()}</span>
-                                </span>
-                            {/if}
                         </div>
                     {/if}
                 </div>
-
-                <div class="p-3 rounded-2xl aspect-square w-12" />
+                {#if matrixRoom}
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center">
+                        <RoomMenu room={matrixRoom} inHeader />
+                    </div>
+                {/if}
             </div>
             {#if shouldDisplayLoader}
                 <div class="flex justify-center items-center w-full pb-1 bg-transparent">
