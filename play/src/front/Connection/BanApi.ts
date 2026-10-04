@@ -55,7 +55,8 @@ export async function sendBanAppeal(roomUrl: string, text: string): Promise<BanA
     return "ok";
 }
 
-/** Whole days left until the ban ends, at least one while it lasts. */
+/** Days left until the ban ends, counted by calendar date so they match the date shown, at least one while it lasts. */
 export function banDaysLeft(expiresAt: Date, now: Date = new Date()): number {
-    return Math.max(1, Math.ceil((expiresAt.getTime() - now.getTime()) / 86_400_000));
+    const day = (date: Date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    return Math.max(1, Math.round((day(expiresAt) - day(now)) / 86_400_000));
 }

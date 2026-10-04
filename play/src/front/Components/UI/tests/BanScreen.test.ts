@@ -20,6 +20,7 @@ vi.mock("../../../Stores/ExploreStore", async () => {
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import BanScreen from "../BanScreen.svelte";
+import { banDaysLeft } from "../../../Connection/BanApi";
 
 function answer(status: number, body: unknown): Response {
     return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -61,7 +62,10 @@ describe("BanScreen", () => {
     const appealBox = () => target.querySelector<HTMLTextAreaElement>("[data-testid=banAppealText]");
 
     it("says what the admin said: world, end date, days left, reason, and offers one appeal", async () => {
-        const expiresAt = new Date(Date.now() + 5.5 * 86_400_000).toISOString();
+        const noonInSixDays = new Date();
+        noonInSixDays.setHours(12, 0, 0, 0);
+        noonInSixDays.setDate(noonInSixDays.getDate() + 6);
+        const expiresAt = noonInSixDays.toISOString();
         fetchMock.mockResolvedValueOnce(
             answer(200, { banned: true, worldName: "Office", expiresAt, reason: "Spamming links", appeal: null })
         );
@@ -142,5 +146,18 @@ describe("BanScreen", () => {
         expect(text()).toContain("You can’t enter this world right now");
         expect(text()).toContain("Go somewhere else");
         expect(appealBox()).toBeNull();
+    });
+});
+
+describe("banDaysLeft", () => {
+    it("counts calendar days, so the count matches the end date shown", () => {
+        const now = new Date(2026, 9, 4, 23, 30);
+        expect(banDaysLeft(new Date(2026, 9, 10, 0, 30), now)).toBe(6);
+        expect(banDaysLeft(new Date(2026, 9, 10, 23, 0), now)).toBe(6);
+    });
+
+    it("says at least one day while the ban lasts", () => {
+        const now = new Date(2026, 9, 4, 9, 0);
+        expect(banDaysLeft(new Date(2026, 9, 4, 18, 0), now)).toBe(1);
     });
 });

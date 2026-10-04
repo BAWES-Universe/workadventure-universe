@@ -11,6 +11,15 @@ import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
 
+/** A room URL's path, the part that names the room whatever host it was reached on. */
+function roomPath(roomId: string): string {
+    try {
+        return new URL(roomId).pathname;
+    } catch {
+        return roomId;
+    }
+}
+
 export class AdminController extends BaseHttpController {
     constructor(app: Application, private readonly GRPC_MAX_MESSAGE_SIZE: number) {
         super(app);
@@ -130,14 +139,15 @@ export class AdminController extends BaseHttpController {
             }
 
             // Only the rooms open right now: the player can't be in the others, and the back complains about each.
-            const openRooms = await this.getOpenRooms();
+            // Rooms are matched by path (/@/universe/world/room), so the admin's idea of the play host need not
+            // match the one players typed.
+            const wanted = new Set(body.roomIds.map(roomPath));
+            const openRoomIds = Object.keys(await this.getOpenRooms()).filter((roomId) => wanted.has(roomPath(roomId)));
             // A back that does not answer must not stop the others.
             const results = await Promise.allSettled(
-                body.roomIds
-                    .filter((roomId) => openRooms[roomId] !== undefined)
-                    .map((roomId) =>
-                        socketManager.emitBan(body.userUuid, body.message ?? "You have been banned", "banned", roomId)
-                    )
+                openRoomIds.map((roomId) =>
+                    socketManager.emitBan(body.userUuid, body.message ?? "You have been banned", "banned", roomId)
+                )
             );
             for (const result of results) {
                 if (result.status === "rejected") {
