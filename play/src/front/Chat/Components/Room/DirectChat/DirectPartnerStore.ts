@@ -1,5 +1,5 @@
 import type { Readable } from "svelte/store";
-import { derived, readable } from "svelte/store";
+import { derived } from "svelte/store";
 import type { AvailabilityStatus } from "@workadventure/messages";
 import type {
     ChatPresence,
@@ -7,9 +7,13 @@ import type {
     ChatRoomMembershipManagement,
     ChatUser,
 } from "../../../Connection/ChatConnection";
-import type { ProximityChatParticipant, ProximitySpaceKind } from "../../../Connection/Proximity/ProximityChatRoom";
+import type {
+    ProximityChatParticipant,
+    ProximityChatRoom,
+    ProximitySpaceKind,
+} from "../../../Connection/Proximity/ProximityChatRoom";
 import { gameManager } from "../../../../Phaser/Game/GameManager";
-import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
+import { gameSceneStore } from "../../../../Stores/GameSceneStore";
 import { localUserStore } from "../../../../Connection/LocalUserStore";
 import type { PartnerPlace } from "./PartnerPlace";
 import { findInUniverse, partnerActions, resolvePartnerPlace } from "./PartnerPlace";
@@ -29,14 +33,19 @@ export interface DirectPartner {
 
 const NO_USERS: UsersByRoom = new Map();
 
-/** Everyone in Universe by map, once the scene has its list (empty until then, and while there is no scene). */
-function usersByRoom(): Readable<UsersByRoom> {
-    return readable<UsersByRoom>(NO_USERS, (set) => {
+/**
+ * Everyone in Universe by map, from the current scene (empty while there is none). Follows the scene, so a chat opened
+ * before the map has loaded, or kept open across a map change, picks up the new list.
+ */
+const usersByRoom: Readable<UsersByRoom> = derived<typeof gameSceneStore, UsersByRoom>(
+    gameSceneStore,
+    (scene, set) => {
+        set(NO_USERS);
+        if (!scene) return;
         let unsubscribe: (() => void) | undefined;
         let stopped = false;
-        gameManager
-            .tryGetCurrentGameScene()
-            ?.userProviderMerger.then((merger) => {
+        scene.userProviderMerger
+            .then((merger) => {
                 if (!stopped) unsubscribe = merger.usersByRoomStore.subscribe(set);
             })
             .catch((error) => console.error("Failed to get the users by room", error));
@@ -44,24 +53,34 @@ function usersByRoom(): Readable<UsersByRoom> {
             stopped = true;
             unsubscribe?.();
         };
-    });
-}
+    },
+    NO_USERS
+);
 
-const NO_PARTICIPANTS = readable<ProximityChatParticipant[]>([]);
-const NO_SPACE = readable<ProximitySpaceKind>("none");
-
-function proximityStores(): {
-    participants: Readable<ProximityChatParticipant[]>;
-    spaceKind: Readable<ProximitySpaceKind>;
-} {
-    try {
-        const room = gameManager.tryGetCurrentGameScene()?.proximityChatRoom;
-        if (room) return { participants: room.participants, spaceKind: room.spaceKind };
-    } catch {
-        // No proximity chat yet: nobody is talking with you.
-    }
-    return { participants: NO_PARTICIPANTS, spaceKind: NO_SPACE };
-}
+/** Who is in your bubble or meeting right now, from the current scene. */
+const proximity: Readable<{ participants: ProximityChatParticipant[]; kind: ProximitySpaceKind }> = derived<
+    typeof gameSceneStore,
+    { participants: ProximityChatParticipant[]; kind: ProximitySpaceKind }
+>(
+    gameSceneStore,
+    (scene, set) => {
+        let room: ProximityChatRoom | undefined;
+        try {
+            room = scene?.proximityChatRoom;
+        } catch {
+            // No proximity chat yet: nobody is talking with you.
+        }
+        if (!room) {
+            set({ participants: [], kind: "none" });
+            return;
+        }
+        return derived([room.participants, room.spaceKind], ([participants, kind]) => ({
+            participants,
+            kind,
+        })).subscribe(set);
+    },
+    { participants: [], kind: "none" }
+);
 
 export function directPartnerStore(room: ChatRoomMembershipManagement): Readable<DirectPartner> {
     const myChatId = localUserStore.getChatId();
@@ -74,22 +93,19 @@ export function directPartnerStore(room: ChatRoomMembershipManagement): Readable
         (member, set) => (member ? chatConnection.userPresence(member.id).subscribe(set) : set("offline")),
         "offline"
     );
-    const { participants, spaceKind } = proximityStores();
-
     const seen = derived(
         [
             partnerMember,
-            usersByRoom(),
+            usersByRoom,
             presence,
-            participants,
-            spaceKind,
+            proximity,
             chatConnection.ignoredUsers,
             // The current map changes when the scene reloads.
-            gameSceneIsLoadedStore,
+            gameSceneStore,
         ],
-        ([member, map, chatPresence, inBubble, kind, ignored]) => {
+        ([member, map, chatPresence, { participants: inBubble, kind }, ignored, scene]) => {
             const chatId = member?.id;
-            const currentRoomUrl = gameManager.tryGetCurrentGameScene()?.roomUrl;
+            const currentRoomUrl = scene?.roomUrl;
             const found = chatId ? findInUniverse(map, chatId, currentRoomUrl) : undefined;
             const user = found?.user;
             return {
