@@ -25,10 +25,6 @@
         ? $LL.broadcast.reach.everyoneIn({ name: card.reachLabel })
         : $LL.broadcast.reach.everyone();
 
-    function onKeyDown(event: KeyboardEvent) {
-        if (event.key === "Escape") dispatch("dismiss");
-    }
-
     function togglePlay() {
         if (!player) return;
         if (playing) player.pause();
@@ -71,8 +67,6 @@
         node.play().catch((e) => console.warn("Broadcast: the voice note did not autoplay", e));
     }
 </script>
-
-<svelte:window on:keydown={onKeyDown} />
 
 <div
     class="u-surface rounded-2xl text-white p-4 flex flex-col gap-3 pointer-events-auto"

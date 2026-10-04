@@ -1007,8 +1007,14 @@ export class SocketManager implements ZoneEventListener {
         }
 
         const clientRoomUrl = socketData.roomId;
+        // Only the three known reaches route; anything else falls back the way an old client would.
+        const requested = playGlobalMessageEvent.broadcast?.reach;
         const reach =
-            playGlobalMessageEvent.broadcast?.reach ?? (playGlobalMessageEvent.broadcastToWorld ? "world" : "room");
+            requested === "room" || requested === "world" || requested === "universe"
+                ? requested
+                : playGlobalMessageEvent.broadcastToWorld
+                ? "world"
+                : "room";
         let tabUrlRooms: string[];
 
         if (reach === "universe") {

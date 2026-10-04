@@ -54,16 +54,25 @@
     let sending = false;
     let fileInput: HTMLInputElement;
 
-    async function startRecording() {
+    let opening = false;
+
+    /** @param keepReview "Record again": the review (and its recording) stays on screen until the microphone is granted. */
+    async function startRecording(keepReview = false) {
+        if (opening) return;
+        opening = true;
         error = undefined;
-        state = "starting";
+        if (!keepReview) state = "starting";
         let started: VoiceRecorder;
         try {
             started = await startVoiceRecorder();
         } catch (e) {
             console.warn("Broadcast: the microphone could not be opened for a voice note", e);
-            state = "blocked";
+            if (keepReview) error = $LL.broadcast.voice.micBlocked();
+            else state = "blocked";
             return;
+        } finally {
+            // eslint-disable-next-line require-atomic-updates
+            opening = false;
         }
         // The card closed while the browser was asking for the microphone: let it go again.
         if (destroyed) {
@@ -105,7 +114,7 @@
 
     async function recordAgain() {
         if (player) player.pause();
-        await startRecording();
+        await startRecording(true);
     }
 
     function pickFile() {

@@ -42,7 +42,12 @@
             (channel) => channel.canStream && isBroadcastReach(channel.scope) && channel.scope === candidate
         )
     );
-    const messageReaches = REACH_ORDER.filter((candidate) => candidate === "ROOM" || roomGroup !== null);
+    // The universe row waits for Orbit's answer: a room served without Orbit has a group but no universe.
+    $: messageReaches = REACH_ORDER.filter(
+        (candidate) =>
+            candidate === "ROOM" ||
+            (roomGroup !== null && (candidate !== "UNIVERSE" || $broadcastReachInfoStore.universeName !== undefined))
+    );
 
     function reachesFor(chosen: BroadcastKind): BroadcastReach[] {
         return chosen === "live" ? liveReaches : messageReaches;

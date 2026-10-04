@@ -1,7 +1,16 @@
 <script lang="ts">
-    import { broadcastInboxStore } from "../../Stores/BroadcastStore";
+    import { broadcastInboxStore, broadcastPanelOpenStore } from "../../Stores/BroadcastStore";
     import BroadcastReceivedCard from "./BroadcastReceivedCard.svelte";
+
+    // Escape dismisses the newest card only, one per press; while the Broadcast card is open, Escape closes that.
+    function onKeyDown(event: KeyboardEvent) {
+        if (event.key !== "Escape" || $broadcastPanelOpenStore) return;
+        const newest = $broadcastInboxStore[0];
+        if (newest) broadcastInboxStore.dismiss(newest.id);
+    }
 </script>
+
+<svelte:window on:keydown={onKeyDown} />
 
 {#if $broadcastInboxStore.length > 0}
     <!-- Received broadcasts stack at the top of the screen (under the Live pill when you are live yourself), the
