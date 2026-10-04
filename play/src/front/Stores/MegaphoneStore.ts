@@ -1,6 +1,7 @@
 import type { Readable } from "svelte/store";
 import { derived, writable } from "svelte/store";
 import type { MegaphoneChannel } from "@workadventure/messages";
+import { slugify } from "@workadventure/shared-utils/src/Jitsi/slugify";
 import type { SpaceInterface } from "../Space/SpaceInterface";
 import { isSpeakerStore, requestedCameraState, requestedMicrophoneState } from "./MediaStore";
 import { requestedScreenSharingState } from "./ScreenSharingStore";
@@ -19,6 +20,21 @@ export const megaphoneChannelsStore = writable<MegaphoneChannel[]>([]);
 
 /** The spaces joined for those channels, by scope ("ROOM", "WORLD", "UNIVERSE"). */
 export const megaphoneSpacesStore = writable<Map<string, SpaceInterface>>(new Map());
+
+/**
+ * The server took this player out of a space (a kick): if it was a broadcast channel's space, forget it, so a live
+ * broadcast on that channel ends and the channel is joined again on the next sync.
+ */
+export function forgetMegaphoneSpace(spaceName: string): void {
+    const name = slugify(spaceName);
+    megaphoneSpacesStore.update((spaces) => {
+        const next = new Map(spaces);
+        for (const [scope, space] of spaces) {
+            if (space.getName() === name) next.delete(scope);
+        }
+        return next;
+    });
+}
 
 export interface LiveBroadcast {
     /** "ROOM", "WORLD" or "UNIVERSE". */

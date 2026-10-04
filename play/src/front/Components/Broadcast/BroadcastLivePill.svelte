@@ -2,7 +2,7 @@
     import { onDestroy } from "svelte";
     import { fly } from "svelte/transition";
     import LL from "../../../i18n/i18n-svelte";
-    import { currentLiveStreamingSpaceStore, liveBroadcastStore } from "../../Stores/MegaphoneStore";
+    import { liveBroadcastStore, megaphoneSpacesStore } from "../../Stores/MegaphoneStore";
     import { requestedCameraState, requestedMicrophoneState } from "../../Stores/MediaStore";
     import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
     import { endLiveBroadcast } from "./live";
@@ -16,12 +16,13 @@
     }, 500);
     onDestroy(() => clearInterval(ticker));
 
-    // The server (a kick, a lost connection) or a speaker zone can end the stream underneath us: the pill goes with it.
+    // The channel's space can go underneath us (a kick, the room's broadcast settings changed): the pill goes with it.
+    // Only the broadcast's own space counts; walking through a Podium or Audience area while live changes nothing.
     // Turning the mic, camera and screen all off while live ends the broadcast too, as the megaphone always did:
     // nothing is sent any more, so the listeners' tile and the pill must not stay.
     $: if (
         $liveBroadcastStore &&
-        ($currentLiveStreamingSpaceStore === undefined ||
+        (!$megaphoneSpacesStore.has($liveBroadcastStore.scope) ||
             (!$requestedMicrophoneState && !$requestedCameraState && !$requestedScreenSharingState))
     ) {
         endLiveBroadcast();

@@ -101,7 +101,7 @@ import { chatZoneLiveStore } from "../Stores/ChatStore";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
 import { followRoleStore, followUsersStore } from "../Stores/FollowStore";
 import { isSpeakerStore, requestedMicrophoneState, requestedCameraState } from "../Stores/MediaStore";
-import { currentLiveStreamingSpaceStore } from "../Stores/MegaphoneStore";
+import { currentLiveStreamingSpaceStore, forgetMegaphoneSpace } from "../Stores/MegaphoneStore";
 import {
     inviteUserActivated,
     mapEditorActivated,
@@ -467,6 +467,7 @@ export class RoomConnection implements RoomConnection {
 
                                         isSpeakerStore.set(false);
                                         currentLiveStreamingSpaceStore.set(undefined);
+                                        forgetMegaphoneSpace(subMessage.kickOffMessage.spaceName);
                                         const scene = gameManager.getCurrentGameScene();
                                         scene.broadcastService
                                             .leaveSpace(subMessage.kickOffMessage.spaceName)
