@@ -182,8 +182,10 @@ export class BotRegistry {
         if (!this.redis?.isOpen) return [];
         const key = `bots:matrix:dm-waiting:${botId}`;
         const taken: string[] = [];
-        for (const [roomId, message] of Object.entries(await this.redis.hGetAll(key))) {
-            if ((await this.redis.hDel(key, roomId)) === 1) taken.push(message);
+        for (const roomId of await this.redis.hKeys(key)) {
+            // Read and delete in one transaction, so a newer message written meanwhile is the one taken, never lost.
+            const [message, deleted] = await this.redis.multi().hGet(key, roomId).hDel(key, roomId).exec();
+            if (Number(deleted) === 1 && typeof message === 'string') taken.push(message);
         }
         if ((await this.redis.hLen(key)) === 0) await this.redis.sRem('bots:matrix:dm-waiting', botId);
         return taken;
