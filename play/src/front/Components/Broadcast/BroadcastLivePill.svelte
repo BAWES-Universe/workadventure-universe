@@ -3,6 +3,8 @@
     import { fly } from "svelte/transition";
     import LL from "../../../i18n/i18n-svelte";
     import { currentLiveStreamingSpaceStore, liveBroadcastStore } from "../../Stores/MegaphoneStore";
+    import { requestedCameraState, requestedMicrophoneState } from "../../Stores/MediaStore";
+    import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
     import { endLiveBroadcast } from "./live";
     import { formatDuration } from "./voiceRecorder";
     import { isBroadcastReach, reachTitle } from "./reach";
@@ -15,7 +17,13 @@
     onDestroy(() => clearInterval(ticker));
 
     // The server (a kick, a lost connection) or a speaker zone can end the stream underneath us: the pill goes with it.
-    $: if ($liveBroadcastStore && $currentLiveStreamingSpaceStore === undefined) {
+    // Turning the mic, camera and screen all off while live ends the broadcast too, as the megaphone always did:
+    // nothing is sent any more, so the listeners' tile and the pill must not stay.
+    $: if (
+        $liveBroadcastStore &&
+        ($currentLiveStreamingSpaceStore === undefined ||
+            (!$requestedMicrophoneState && !$requestedCameraState && !$requestedScreenSharingState))
+    ) {
         endLiveBroadcast();
     }
 
