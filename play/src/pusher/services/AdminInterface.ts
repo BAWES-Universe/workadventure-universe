@@ -9,6 +9,7 @@ import type {
     Capabilities,
 } from "@workadventure/messages";
 import type { AdminBannedData, FetchMemberDataByUuidResponse } from "./AdminApi";
+import type { BanAppealResult, BanDetailsData } from "./BanDetails";
 import type { ShortMapDescriptionList } from "./ShortMapDescription";
 import type { UniverseRoomsData } from "./UniverseRooms";
 import type { WorldChatMembersData } from "./WorldChatMembersData";
@@ -151,4 +152,14 @@ export interface AdminInterface {
     refreshOauthToken(token: string, provider?: string, userIdentifier?: string): Promise<OauthRefreshToken>;
 
     getIceServers(userId: number, userIdentifier: string, roomUrl: string): Promise<IceServer[]>;
+
+    /**
+     * The player's ban from the world of a room, for the ban screen.
+     */
+    getBanDetails(userIdentifier: string, playUri: string): Promise<BanDetailsData>;
+
+    /**
+     * Sends the player's one appeal against their ban from the world of a room.
+     */
+    sendBanAppeal(userIdentifier: string, playUri: string, text: string): Promise<BanAppealResult>;
 }

@@ -6,6 +6,7 @@ import Debug from "debug";
 import { apiClientRepository } from "../services/ApiClientRepository";
 import { adminToken } from "../middlewares/AdminToken";
 import { validatePostQuery } from "../services/QueryValidator";
+import { socketManager } from "../services/SocketManager";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -21,6 +22,132 @@ export class AdminController extends BaseHttpController {
         this.getRoomsList();
         this.dispatchGlobalEvent();
         this.dispatchExternalModuleEvent();
+        this.banKickUser();
+    }
+
+    /**
+     * The rooms open on the backs, with the number of users in each. Takes at most 1 second: a back that does not
+     * answer by then is left out.
+     */
+    private async getOpenRooms(): Promise<Record<string, number>> {
+        const roomClients = await apiClientRepository.getAllClients(this.GRPC_MAX_MESSAGE_SIZE);
+
+        const promises: Promise<RoomsList>[] = [];
+        for (const roomClient of roomClients) {
+            promises.push(
+                new Promise<RoomsList>((resolve, reject) => {
+                    roomClient.getRooms(
+                        {},
+                        new Metadata(),
+                        {
+                            deadline: Date.now() + 1000,
+                        },
+                        (error, result) => {
+                            if (error) {
+                                reject(error);
+                            } else {
+                                resolve(result);
+                            }
+                        }
+                    );
+                })
+            );
+        }
+
+        // Note: this call will take at most 1 second because we won't wait more for all the promises to resolve.
+        const roomsListsResult = await Promise.allSettled(promises);
+
+        const rooms: Record<string, number> = {};
+
+        for (const roomsListResult of roomsListsResult) {
+            if (roomsListResult.status === "fulfilled") {
+                for (const room of roomsListResult.value.roomDescription) {
+                    rooms[room.roomId] = room.nbUsers;
+                }
+            } else {
+                console.warn(
+                    "One back server did not respond within one second to the call to 'getRooms': ",
+                    roomsListResult.reason
+                );
+            }
+        }
+
+        return rooms;
+    }
+
+    /**
+     * @openapi
+     * /user/ban-kick:
+     *   post:
+     *     description: Sends a player just banned from a world to the ban screen, in each of the world's rooms they may
+     *       be in. The request must be authenticated with the "admin-token" header.
+     *     tags:
+     *      - Admin endpoint
+     *     parameters:
+     *      - name: "authorization"
+     *        in: "header"
+     *        required: true
+     *        type: "string"
+     *        description: The token to be allowed to access this API (in ADMIN_API_TOKEN environment variable)
+     *      - name: "userUuid"
+     *        in: "body"
+     *        description: "The UUID of the banned player"
+     *        required: true
+     *        type: "string"
+     *      - name: "roomIds"
+     *        in: "body"
+     *        description: The rooms (full URLs) of the world, at most 500
+     *        required: true
+     *        type: array
+     *        items:
+     *          type: string
+     *          example: "https://play.workadventu.re/@/foo/bar/baz"
+     *      - name: "message"
+     *        in: "body"
+     *        description: "The message sent along the ban"
+     *        required: false
+     *        type: "string"
+     *     responses:
+     *       200:
+     *         description: Will always return "ok".
+     *         example: "ok"
+     */
+    banKickUser(): void {
+        this.app.post("/user/ban-kick", [adminToken], async (req: Request, res: Response) => {
+            debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
+            const body = validatePostQuery(
+                req,
+                res,
+                z.object({
+                    userUuid: z.string().min(1),
+                    roomIds: z.array(z.string()).max(500),
+                    message: z.string().optional(),
+                })
+            );
+
+            if (body === undefined) {
+                return;
+            }
+
+            // Only the rooms open right now: the player can't be in the others, and the back complains about each.
+            const openRooms = await this.getOpenRooms();
+            // A back that does not answer must not stop the others.
+            const results = await Promise.allSettled(
+                body.roomIds
+                    .filter((roomId) => openRooms[roomId] !== undefined)
+                    .map((roomId) =>
+                        socketManager.emitBan(body.userUuid, body.message ?? "You have been banned", "banned", roomId)
+                    )
+            );
+            for (const result of results) {
+                if (result.status === "rejected") {
+                    console.warn("Could not send the ban to one room: ", result.reason);
+                }
+            }
+
+            res.send("ok");
+            return;
+        });
     }
 
     /**
@@ -202,47 +329,7 @@ export class AdminController extends BaseHttpController {
     getRoomsList(): void {
         this.app.get("/rooms", [adminToken], async (req: Request, res: Response) => {
             debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
-            const roomClients = await apiClientRepository.getAllClients(this.GRPC_MAX_MESSAGE_SIZE);
-
-            const promises: Promise<RoomsList>[] = [];
-            for (const roomClient of roomClients) {
-                promises.push(
-                    new Promise<RoomsList>((resolve, reject) => {
-                        roomClient.getRooms(
-                            {},
-                            new Metadata(),
-                            {
-                                deadline: Date.now() + 1000,
-                            },
-                            (error, result) => {
-                                if (error) {
-                                    reject(error);
-                                } else {
-                                    resolve(result);
-                                }
-                            }
-                        );
-                    })
-                );
-            }
-
-            // Note: this call will take at most 1 second because we won't wait more for all the promises to resolve.
-            const roomsListsResult = await Promise.allSettled(promises);
-
-            const rooms: Record<string, number> = {};
-
-            for (const roomsListResult of roomsListsResult) {
-                if (roomsListResult.status === "fulfilled") {
-                    for (const room of roomsListResult.value.roomDescription) {
-                        rooms[room.roomId] = room.nbUsers;
-                    }
-                } else {
-                    console.warn(
-                        "One back server did not respond within one second to the call to 'getRooms': ",
-                        roomsListResult.reason
-                    );
-                }
-            }
+            const rooms = await this.getOpenRooms();
 
             res.setHeader("Content-Type", "application/json").send(JSON.stringify(rooms));
             return;
