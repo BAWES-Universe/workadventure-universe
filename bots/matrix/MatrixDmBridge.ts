@@ -27,6 +27,8 @@ export interface MatrixDmBridgeDeps {
 }
 
 const ACCESS_CACHE_MS = 60 * 1000;
+/** Most person-and-bot pairs whose access is cached; the oldest are dropped first. */
+const ACCESS_CACHE_MAX = 5000;
 const REFUSAL_REPEAT_MS = 10 * 60 * 1000;
 const TYPING_DELAY_MS = 800;
 const MAX_OUTGOING_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -46,6 +48,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** Joined members per room, kept current from membership events so a reply needs no extra homeserver call. */
     private roomMembers = new Map<string, Set<string>>();
     private handledOrder: string[] = [];
+    /** Waits between join attempts when the homeserver refuses or times out. */
+    private joinRetryDelaysMs = [1000, 4000];
 
     constructor(
         private config: MatrixAppServiceConfig,
@@ -111,7 +115,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const cached = this.accessCache.get(key);
         if (!fresh && cached && Date.now() - cached.at < ACCESS_CACHE_MS) return cached.result;
         const result = await this.deps.checkAccess(botId, chatId);
+        // Re-insert so the map stays ordered oldest first, then drop the oldest once it is full.
+        this.accessCache.delete(key);
         this.accessCache.set(key, { result, at: Date.now() });
+        if (this.accessCache.size > ACCESS_CACHE_MAX) {
+            this.accessCache.delete(this.accessCache.keys().next().value!);
+        }
         return result;
     }
 
@@ -155,7 +164,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         await this.ensureBotAccount(botId, config.name);
         const access = await this.access(botId, event.sender, true);
-        await this.client.joinRoom(botUserId, event.room_id);
+        if (!(await this.joinWithRetry(botUserId, event.room_id))) return;
         if (!access.allowed) {
             await this.client.sendText(botUserId, event.room_id, REFUSAL).catch(() => undefined);
             await this.client.leaveRoom(botUserId, event.room_id).catch(() => undefined);
@@ -170,6 +179,27 @@ export class MatrixDmBridge implements MatrixEventHandler {
         for (const earlier of missed) {
             if (earlier.type === 'm.room.message' && earlier.sender === event.sender && (earlier.origin_server_ts ?? 0) >= inviteTs) {
                 await this.onMessage({ ...earlier, room_id: event.room_id });
+            }
+        }
+    }
+
+    /**
+     * Joins, retrying a brief homeserver failure. Synapse sends the invite only once, so a failed join would leave the
+     * bot invited and silent; if every attempt fails the bot declines the invite instead, and the person can invite it
+     * again.
+     */
+    private async joinWithRetry(botUserId: string, roomId: string): Promise<boolean> {
+        for (let attempt = 0; ; attempt++) {
+            try {
+                await this.client.joinRoom(botUserId, roomId);
+                return true;
+            } catch (error: any) {
+                if (attempt >= this.joinRetryDelaysMs.length) {
+                    console.error(`[MatrixDmBridge] ${botUserId} could not join ${roomId}:`, error?.message ?? error);
+                    await this.client.leaveRoom(botUserId, roomId).catch(() => undefined);
+                    return false;
+                }
+                await new Promise((resolve) => setTimeout(resolve, this.joinRetryDelaysMs[attempt]));
             }
         }
     }

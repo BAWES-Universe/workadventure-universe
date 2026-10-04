@@ -164,6 +164,33 @@ describe('MatrixDmBridge', () => {
         expect(deps.checkAccess).not.toHaveBeenCalled();
     });
 
+    it('retries a failed join and then answers as usual', async () => {
+        (bridge as any).joinRetryDelaysMs = [0, 0];
+        client.joinRoom.mockRejectedValueOnce(new Error('502')).mockRejectedValueOnce(new Error('timeout'));
+        await bridge.onEvent(invite());
+        expect(client.joinRoom).toHaveBeenCalledTimes(3);
+        await bridge.onEvent(message('hello'));
+        expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Hello Alice!');
+    });
+
+    it('declines the invite when every join attempt fails, so it is not left hanging', async () => {
+        (bridge as any).joinRetryDelaysMs = [0, 0];
+        client.joinRoom.mockRejectedValue(new Error('down'));
+        await bridge.onEvent(invite());
+        expect(client.joinRoom).toHaveBeenCalledTimes(3);
+        expect(client.leaveRoom).toHaveBeenCalledWith(BOT_USER, ROOM);
+        expect(deps.rooms!.rememberDmRoom).not.toHaveBeenCalled();
+    });
+
+    it('keeps the access cache bounded, dropping the oldest pairs first', async () => {
+        const access = (chatId: string) => (bridge as any).access(BOT, chatId);
+        for (let i = 0; i <= 5000; i++) await access(`@p${i}:matrix.test`);
+        const cache: Map<string, unknown> = (bridge as any).accessCache;
+        expect(cache.size).toBe(5000);
+        expect(cache.has(`${BOT}|@p0:matrix.test`)).toBe(false);
+        expect(cache.has(`${BOT}|@p5000:matrix.test`)).toBe(true);
+    });
+
     it('stays quiet once a third person is in the room, and ignores other bots and edits', async () => {
         await bridge.onEvent(invite());
         client.getJoinedMembers.mockResolvedValueOnce([ALICE, BOT_USER, '@carol:matrix.test']);
