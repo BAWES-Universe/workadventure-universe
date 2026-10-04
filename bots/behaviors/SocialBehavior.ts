@@ -42,6 +42,8 @@ export interface SocialBehaviorConfig extends BehaviorConfig {
     loop?: boolean;
     /** Seconds to pause at each stop, for moves = 'route'. */
     pauseAtWaypoints?: number;
+    /** Walking speed along the route, for moves = 'route' (the route's own speed setting). */
+    speed?: number;
 }
 
 export class SocialBehavior extends BaseBehavior {
@@ -2434,7 +2436,7 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        const reached = await this.walkTowards(stop, config.wanderSpeed);
+        const reached = await this.walkTowards(stop, config.speed ?? config.wanderSpeed);
         if (reached === 'failed') {
             this.routeStopFailures++;
             if (this.routeStopFailures >= this.MAX_STOP_FAILURES) {

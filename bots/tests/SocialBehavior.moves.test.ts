@@ -222,6 +222,17 @@ describe('SocialBehavior moves', () => {
             expect((behavior as any).routeIndex).toBe(2);
         });
 
+        it("walks the route at the route's own speed", async () => {
+            const bot = createBot({ x: 0, y: 0 });
+            bot.hasPathfinding.mockReturnValue(false);
+            const behavior = new SocialBehavior(createConfig({ moves: 'route', waypoints: route, speed: 70, wanderSpeed: 50 }));
+            behavior.setBot(bot as any);
+            (behavior as any).routeIndex = 1;
+            await move(behavior);
+            const [x] = bot.moveTo.mock.calls[0];
+            expect(x).toBeCloseTo(70 * 0.016);
+        });
+
         it('stays on its spot while the route has no stops', async () => {
             const bot = createBot({ x: 100, y: 0 });
             const behavior = new SocialBehavior(createConfig({ moves: 'route', waypoints: [], assignedSpace: { center: { x: 0, y: 0 }, radius: 0 } }));
