@@ -322,10 +322,10 @@ export class MapEditorModeManager {
                 break;
             }
             case "r": {
-                if (!mapEditorModeActivated) break;
-                if (event.ctrlKey || event.metaKey || event.altKey) return false;
-                turnPlacingPreview();
-                break;
+                // R turns the object being placed. With nothing to turn (looking around, or editing without
+                // placing), the key stays the game's: it turns the player.
+                if (!mapEditorModeActivated || event.ctrlKey || event.metaKey || event.altKey) return false;
+                return turnPlacingPreview();
             }
             case "z": {
                 if (!mapEditorModeActivated) break;

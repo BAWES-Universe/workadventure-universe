@@ -6,6 +6,7 @@ import { v4 as uuid } from "uuid";
 import { openModal } from "svelte-modals";
 import type { MapEditorAreaToolMode } from "../../../../Stores/MapEditorStore";
 import { mapEditorAreaModeStore, mapEditorSelectedAreaPreviewStore } from "../../../../Stores/MapEditorStore";
+import { editAreaDraftStore } from "../../../../Stores/EditModeStore";
 import { AreaPreview, AreaPreviewEvent } from "../../../Components/MapEditor/AreaPreview";
 import { SizeAlteringSquare } from "../../../Components/MapEditor/SizeAlteringSquare";
 import type { CopyAreaEventData } from "../../GameMap/EntitiesManager";
@@ -95,6 +96,8 @@ export class AreaEditorTool extends MapEditorTool {
         this.wasAreaMoved = false;
         this.drawinNewAreaStartPos = undefined;
         mapEditorSelectedAreaPreviewStore.set(undefined);
+        // A "New area" box left on the map goes with the tool: the next time the tool opens, it starts clean.
+        editAreaDraftStore.set(undefined);
         this.setAreaPreviewsVisibility(false);
         this.scene.input.setDefaultCursor("auto");
         this.unbindEventHandlers();

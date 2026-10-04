@@ -60,16 +60,17 @@ export interface PickedVariant {
 }
 export const editPickedVariantStore = writable<PickedVariant | undefined>(undefined);
 
-/** Turn the object being placed to its next side (R on a keyboard, "Turn" in the placing bar). */
-export function turnPlacingPreview(): void {
+/** Turn the object being placed to its next side (R on a keyboard, "Turn" in the placing bar). True when it turned. */
+export function turnPlacingPreview(): boolean {
     const picked = get(editPickedVariantStore);
     const current = get(mapEditorSelectedEntityPrefabStore);
-    if (!picked || !current) return;
+    if (!picked || !current) return false;
     const sides = picked.variant.getEntityPrefabsPositions(picked.color);
-    if (sides.length < 2) return;
+    if (sides.length < 2) return false;
     const index = sides.findIndex((side) => side.id === current.id);
     const next = sides[(index + 1) % sides.length];
     mapEditorSelectedEntityPrefabStore.set(next);
+    return true;
 }
 
 /** Change the colour of the object being placed, keeping its side when that colour has it. */
