@@ -693,6 +693,10 @@ export class SocketManager {
                 case "roomTagsQuery":
                 case "roomsFromSameWorldQuery":
                 case "roomsFromSameUniverseQuery":
+                case "friendsListQuery":
+                case "friendActionQuery":
+                case "friendSearchQuery":
+                case "friendSettingsQuery":
                 case "searchMemberQuery":
                 case "getMemberQuery":
                 case "searchTagsQuery":

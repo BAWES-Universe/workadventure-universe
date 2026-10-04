@@ -852,6 +852,35 @@ export class IoSocketController {
                                             );
                                             break;
                                         }
+                                        case "friendsListQuery": {
+                                            answerMessage.answer = await socketManager.handleFriendsListQuery(socket);
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
+                                        case "friendActionQuery": {
+                                            answerMessage.answer = await socketManager.handleFriendActionQuery(
+                                                socket,
+                                                message.message.queryMessage.query.friendActionQuery
+                                            );
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
+                                        case "friendSearchQuery": {
+                                            answerMessage.answer = await socketManager.handleFriendSearchQuery(
+                                                socket,
+                                                message.message.queryMessage.query.friendSearchQuery
+                                            );
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
+                                        case "friendSettingsQuery": {
+                                            answerMessage.answer = await socketManager.handleFriendSettingsQuery(
+                                                socket,
+                                                message.message.queryMessage.query.friendSettingsQuery
+                                            );
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
                                         case "searchMemberQuery": {
                                             const searchMemberAnswer = await socketManager.handleSearchMemberQuery(
                                                 socket,

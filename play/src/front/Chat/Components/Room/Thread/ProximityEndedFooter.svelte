@@ -11,7 +11,19 @@
     import { goToPersonRoom, walkToPerson } from "../../UserList/PersonNavigation";
     import { analyticsClient } from "../../../../Administration/AnalyticsClient";
     import { gameSceneIsLoadedStore } from "../../../../Stores/GameSceneStore";
-    import { IconCopy, IconDoorIn, IconMessage, IconSearch, IconWalk } from "@wa-icons";
+    import { friendsEnabledStore, relationshipsStore } from "../../../Stores/FriendsStore";
+    import { runFriendAction } from "../../UserList/FriendActions";
+    import { localUserStore } from "../../../../Connection/LocalUserStore";
+    import {
+        IconCheck,
+        IconCopy,
+        IconDoorIn,
+        IconMessage,
+        IconSearch,
+        IconUserCheck,
+        IconUserPlus,
+        IconWalk,
+    } from "@wa-icons";
 
     /**
      * What replaces the composer once a proximity chat has ended: nothing can be sent to it any more, so the
@@ -132,6 +144,30 @@
         }
         return ways.slice(0, 4);
     })();
+
+    // "You were with": the signed-in people of this chat (only they have a chat id), each with Add friend unless you
+    // are friends already or asked. How most friendships start: you met, so you add.
+    $: metPeople = ((): { uuid: string; name: string }[] => {
+        if (!$friendsEnabledStore) return [];
+        const me = localUserStore.getLocalUser()?.uuid;
+        const seen = new Set<string>();
+        const people: { uuid: string; name: string }[] = [];
+        session.participantIds.forEach((spaceUserId, index) => {
+            const user = $worldUsers?.get(spaceUserId);
+            if (!user?.uuid || !user.chatID || user.uuid === me || seen.has(user.uuid)) return;
+            seen.add(user.uuid);
+            people.push({ uuid: user.uuid, name: user.name || session.participants[index] || "" });
+        });
+        return people;
+    })();
+    let adding = new Set<string>();
+    async function addFriend(person: { uuid: string; name: string }) {
+        adding = new Set(adding).add(person.uuid);
+        const action = $relationshipsStore.get(person.uuid) === "request_received" ? "accept" : "request";
+        await runFriendAction(person.uuid, person.name, action);
+        adding.delete(person.uuid);
+        adding = new Set(adding);
+    }
 </script>
 
 <div
@@ -155,6 +191,44 @@
         </div>
     {/if}
     <p class="m-0 text-xs text-white/60">{$LL.chat.session.endedFooter()}</p>
+    {#if metPeople.length > 0}
+        <div class="u-glass flex flex-col gap-1 rounded-[14px] px-3 py-2" data-testid="proximityMetPeople">
+            <span class="u-eyebrow">{$LL.chat.session.youWereWith()}</span>
+            {#each metPeople as person (person.uuid)}
+                {@const relationship = $relationshipsStore.get(person.uuid) ?? "none"}
+                <div class="flex min-h-9 items-center gap-2">
+                    <span class="min-w-0 flex-auto truncate text-sm font-bold">{person.name}</span>
+                    {#if relationship === "friends"}
+                        <span class="flex shrink-0 items-center gap-1 text-xs font-bold text-white/70">
+                            <IconUserCheck font-size="14" />
+                            {$LL.chat.friends.friendBadge()}
+                        </span>
+                    {:else if relationship === "request_sent"}
+                        <span class="flex shrink-0 items-center gap-1 text-xs font-bold text-white/60">
+                            <IconCheck font-size="14" />
+                            {$LL.chat.friends.requestSent()}
+                        </span>
+                    {:else if relationship === "none" || relationship === "request_received"}
+                        <button
+                            type="button"
+                            class="u-cta-secondary m-0 flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-bold text-white disabled:opacity-60"
+                            aria-label={relationship === "request_received"
+                                ? $LL.chat.friends.acceptFrom({ userName: person.name })
+                                : $LL.chat.friends.addUserAsFriend({ userName: person.name })}
+                            disabled={adding.has(person.uuid)}
+                            data-testid="proximityAddFriend"
+                            on:click={() => addFriend(person)}
+                        >
+                            <IconUserPlus font-size="14" />
+                            {relationship === "request_received"
+                                ? $LL.chat.friends.accept()
+                                : $LL.chat.friends.addFriend()}
+                        </button>
+                    {/if}
+                </div>
+            {/each}
+        </div>
+    {/if}
     {#if waysBack.length > 0}
         <div class="flex flex-wrap gap-2">
             {#each waysBack as way (way.key)}

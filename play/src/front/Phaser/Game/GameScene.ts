@@ -146,6 +146,7 @@ import { openChat } from "../../Chat/openChat";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
 import { exploreStore } from "../../Stores/ExploreStore";
+import { friendsStore } from "../../Chat/Stores/FriendsStore";
 import { inExternalServiceStore, myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
 import type { GameStateEvent } from "../../Api/Events/GameStateEvent";
 import { currentPlayerWokaStore } from "../../Stores/CurrentPlayerWokaStore";
@@ -1811,6 +1812,7 @@ export class GameScene extends DirtyScene {
                 }
                 this.connection = onConnect.connection;
                 exploreStore.load(this.connection);
+                friendsStore.attach(this.connection, localUserStore.isLogged());
 
                 // Initialize TURN credentials manager
                 iceServersManager.init(this.connection, this.abortController.signal);

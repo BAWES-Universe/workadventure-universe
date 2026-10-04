@@ -21,10 +21,12 @@
     import { videoBandwidthStore } from "../../Stores/MediaStore";
     import { screenShareBandwidthStore } from "../../Stores/ScreenSharingStore";
     import { volumeProximityDiscussionStore } from "../../Stores/PeerStore";
+    import { friendsEnabledStore } from "../../Chat/Stores/FriendsStore";
     import SettingSection from "./Settings/SettingSection.svelte";
     import SettingSwitch from "./Settings/SettingSwitch.svelte";
     import SettingChoice from "./Settings/SettingChoice.svelte";
     import SettingLink from "./Settings/SettingLink.svelte";
+    import FriendsSettings from "./Settings/FriendsSettings.svelte";
     import { IconMute, IconPlayFilled, IconUnMute } from "@wa-icons";
 
     /**
@@ -343,6 +345,13 @@
                     onChange={changeIgnoreFollowRequests}
                 />
             </SettingSection>
+            {#if $friendsEnabledStore}
+                <FriendsSettings
+                    open={openChoice === "friend-requests-from"}
+                    onToggle={() => toggleChoice("friend-requests-from")}
+                    onClose={() => (openChoice = undefined)}
+                />
+            {/if}
             <SettingSection title={$LL.menu.settings.sections.away()}>
                 <SettingSwitch
                     id="cam-toggle"
