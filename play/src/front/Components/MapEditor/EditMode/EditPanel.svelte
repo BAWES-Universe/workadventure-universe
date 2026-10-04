@@ -29,11 +29,13 @@
     }
 </script>
 
+<!-- The panel slides in but closes at once (in:, not transition:). While a panel slides out, Svelte treats every
+     update inside it as a full redraw, and the area's tag inputs then feed each other values without end. -->
 <div
     id="map-editor-right"
     class="map-editor em-panel u-surface pointer-events-auto {tool}"
     style={$mobileLayoutStore ? "" : `width: ${width}px`}
-    transition:fly={{ x: 40, duration: 200 }}
+    in:fly={{ x: 40, duration: 200 }}
     data-testid="edit-panel"
 >
     {#if !$mobileLayoutStore}
