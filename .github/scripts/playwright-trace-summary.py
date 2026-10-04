@@ -36,6 +36,7 @@ def summarize(trace_path):
     actions = {}  # callId -> "method params"
     logs = {}  # callId -> last log messages
     rows = []  # (time, text)
+    requests = []  # every other request, kept for the window before a failure
     for event in events_of(trace_path):
         kind = event.get("type")
         if kind == "before":
@@ -57,15 +58,24 @@ def summarize(trace_path):
             rows.append((event.get("time", 0), f"console  {event['messageType']}: {event.get('text', '')[:300]}"))
         elif kind == "event":
             method = str(event.get("method", ""))
-            if any(word in method.lower() for word in ("navigat", "error", "crash", "close", "dialog")) or method == "page":
+            if any(word in method.lower() for word in ("navigat", "error", "crash", "close", "dialog", "frame")) or method == "page":
                 rows.append((event.get("time", 0), f"event    {method} {json.dumps(event.get('params', {}))[:200]}"))
         elif kind == "resource-snapshot":
             snapshot = event.get("snapshot", {})
             request = snapshot.get("request", {})
             url = request.get("url", "")
-            if KEY_URLS.search(url):
-                status = snapshot.get("response", {}).get("status")
-                rows.append((snapshot.get("_monotonicTime", 0), f"request  {request.get('method', '')} {url[:160]} -> {status}"))
+            status = snapshot.get("response", {}).get("status")
+            resource_type = snapshot.get("_resourceType", "")
+            time = snapshot.get("_monotonicTime", 0)
+            if resource_type == "document" or KEY_URLS.search(url):
+                frame = "" if resource_type != "document" else f" ({snapshot.get('_frameref', 'frame')})"
+                rows.append((time, f"request  {request.get('method', '')} {url[:160]} -> {status}{frame}"))
+            else:
+                requests.append((time, f"request  {resource_type} {request.get('method', '')} {url[:160]} -> {status}"))
+    # Every request in the half minute before the first failure, so a hang shows what was in flight.
+    first_failure = min((t for t, text in rows if text.startswith("FAILED")), default=None)
+    if first_failure is not None:
+        rows.extend((t, text) for t, text in requests if first_failure - 30000 <= t <= first_failure + 1000)
     rows.sort(key=lambda row: row[0] or 0)
     start = rows[0][0] if rows else 0
     return [f"{((t or 0) - (start or 0)) / 1000:8.1f}s {text}" for t, text in rows]
