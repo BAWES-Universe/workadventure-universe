@@ -114,9 +114,11 @@
 
     function editRoom() {
         // Leaves "Look around" for the editor's objects tool, the same as Menu > Edit this room.
-        const mapEditorModeManager = gameManager.getCurrentGameScene().getMapEditorModeManager();
         lookAroundPlacesOpenStore.set(false);
         mapExplorationObjectSelectedStore.set(undefined);
+        // Between two maps there is no scene and no editor to open: the panel just closes.
+        const mapEditorModeManager = gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager();
+        if (!mapEditorModeManager) return;
         analyticsClient.toggleMapEditor(true);
         if (!$mapEditorModeStore) mapEditorModeStore.switchMode(true);
         mapEditorModeManager.equipTool(EditorToolName.EntityEditor);

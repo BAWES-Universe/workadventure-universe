@@ -1,14 +1,14 @@
 <script lang="ts">
-    import { fly } from "svelte/transition";
+    import { slide } from "svelte/transition";
     import { onMount } from "svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { LL } from "../../../i18n/i18n-svelte";
+    import { IconChevronDown, IconExternalLink } from "@wa-icons";
 
     let gameScene = gameManager.getCurrentGameScene();
 
-    let expandedMapCopyright = false;
-    let expandedTilesetCopyright = false;
-    let expandedAudioCopyright = false;
+    /** The one credit that is open, if any. */
+    let openCredit: string | undefined = undefined;
 
     let mapName = "";
     let mapLink = "";
@@ -61,107 +61,60 @@
             }
         }
     });
+
+    $: credits = [
+        { id: "map", title: $LL.menu.about.copyrights.map.title(), texts: [mapCopyright], empty: "" },
+        {
+            id: "tileset",
+            title: $LL.menu.about.copyrights.tileset.title(),
+            texts: tilesetCopyright,
+            empty: $LL.menu.about.copyrights.tileset.empty(),
+        },
+        {
+            id: "audio",
+            title: $LL.menu.about.copyrights.audio.title(),
+            texts: audioCopyright,
+            empty: $LL.menu.about.copyrights.audio.empty(),
+        },
+    ];
 </script>
 
-<div class="about-room-main text-center py-8" transition:fly={{ x: -700, duration: 250 }}>
-    <h2 class="h4 light">{$LL.menu.about.mapInfo()}</h2>
-    <section class="container-overflow p-0">
-        <h3 class="h5 text-white/50">{mapName}</h3>
-        <p class="whitespace-pre-line italic text-white/50">{mapDescription}</p>
-        {#if mapLink}
-            <a href={mapLink} class="btn btn-sm btn-secondary uppercase inline-block" target="_blank"
-                >{$LL.menu.about.mapLink()}</a
-            >
+<!-- Map credits: what the map file says about itself, then its three credits as rows that open underneath. -->
+<div class="u-set-section" data-testid="settings-map-credits">
+    {#if mapName || mapDescription}
+        <div class="u-set-row" style="cursor: default">
+            <span class="u-set-text">
+                {#if mapName}<span class="u-set-label">{mapName}</span>{/if}
+                {#if mapDescription}<span class="u-set-hint whitespace-pre-line">{mapDescription}</span>{/if}
+            </span>
+        </div>
+    {/if}
+    {#if mapLink}
+        <a href={mapLink} class="u-set-row u-set-link no-underline" target="_blank" rel="noopener noreferrer">
+            <span class="u-set-text"><span class="u-set-label">{$LL.menu.about.mapLink()}</span></span>
+            <IconExternalLink class="u-set-chevron" font-size="16" />
+        </a>
+    {/if}
+
+    {#each credits as credit (credit.id)}
+        <button
+            type="button"
+            class="u-set-row u-set-choice-head"
+            aria-expanded={openCredit === credit.id}
+            data-testid="map-credit-{credit.id}"
+            on:click={() => (openCredit = openCredit === credit.id ? undefined : credit.id)}
+        >
+            <span class="u-set-text"><span class="u-set-label">{credit.title}</span></span>
+            <IconChevronDown class="u-set-chevron {openCredit === credit.id ? 'is-open' : ''}" font-size="16" />
+        </button>
+        {#if openCredit === credit.id}
+            <div class="u-set-credit" transition:slide={{ duration: 150 }}>
+                {#each credit.texts as text (text)}
+                    <p class="whitespace-pre-line">{text}</p>
+                {:else}
+                    <p>{credit.empty}</p>
+                {/each}
+            </div>
         {/if}
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div
-            class="mt-4 text-lg font-bold flex items-center py-4 px-8 border-y border-x-0 border-solid border-white/20 {expandedMapCopyright
-                ? 'bg-secondary'
-                : 'bg-contrast/50 hover:bg-contrast'}"
-            on:click={() => (expandedMapCopyright = !expandedMapCopyright)}
-        >
-            <div class="grow text-left">{$LL.menu.about.copyrights.map.title()}</div>
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class={expandedMapCopyright ? "rotate-180" : ""}
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                stroke-width="1.5"
-                stroke="#ffffff"
-                fill="none"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                <path d="M6 9l6 6l6 -6" />
-            </svg>
-        </div>
-        <p class="whitespace-pre-line" hidden={!expandedMapCopyright}>{mapCopyright}</p>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div
-            class="text-lg font-bold flex items-center py-4 px-8 border-y-0 border-x-0 border-b border-solid border-white/20 {expandedTilesetCopyright
-                ? 'bg-secondary'
-                : 'bg-contrast/50 hover:bg-contrast'}"
-            on:click={() => (expandedTilesetCopyright = !expandedTilesetCopyright)}
-        >
-            <div class="grow text-left">{$LL.menu.about.copyrights.tileset.title()}</div>
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class={expandedTilesetCopyright ? "rotate-180" : ""}
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                stroke-width="1.5"
-                stroke="#ffffff"
-                fill="none"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                <path d="M6 9l6 6l6 -6" />
-            </svg>
-        </div>
-        <section hidden={!expandedTilesetCopyright}>
-            {#each tilesetCopyright as copyright (copyright)}
-                <p class="whitespace-pre-line">{copyright}</p>
-            {:else}
-                <p>{$LL.menu.about.copyrights.tileset.empty()}</p>
-            {/each}
-        </section>
-        <!-- svelte-ignore a11y-click-events-have-key-events -->
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
-        <div
-            class="text-lg font-bold flex items-center py-4 px-8 border-y-0 border-x-0 border-b border-solid border-white/20 {expandedAudioCopyright
-                ? 'bg-secondary'
-                : 'bg-contrast/50 hover:bg-contrast'}"
-            on:click={() => (expandedAudioCopyright = !expandedAudioCopyright)}
-        >
-            <div class="grow text-left">{$LL.menu.about.copyrights.audio.title()}</div>
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class={expandedAudioCopyright ? "rotate-180" : ""}
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                stroke-width="1.5"
-                stroke="#ffffff"
-                fill="none"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-                <path d="M6 9l6 6l6 -6" />
-            </svg>
-        </div>
-        <section hidden={!expandedAudioCopyright}>
-            {#each audioCopyright as copyright (copyright)}
-                <p class="whitespace-pre-line">{copyright}</p>
-            {:else}
-                <p>{$LL.menu.about.copyrights.audio.empty()}</p>
-            {/each}
-        </section>
-    </section>
+    {/each}
 </div>
