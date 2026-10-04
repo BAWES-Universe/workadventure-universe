@@ -22,6 +22,23 @@ const report: BaseTranslation = {
         report: "Report",
         noSelect: "ERROR : There is no action selected.",
     },
+    popup: {
+        close: "Close",
+        thisWorld: "this world",
+        block: {
+            title: "Block",
+            content: "You won’t see or hear {userName}, and they can’t message you. Only you, and you can undo it.",
+            block: "Block {userName}",
+            unblock: "Unblock {userName}",
+        },
+        report: {
+            title: "Report to the admins of {worldName}",
+            content: "They see what you write, your name, and the room you’re in.",
+            placeholder: "What happened?",
+            send: "Send report",
+            sent: "Report sent to the admins of {worldName}",
+        },
+    },
 };
 
 export default report;

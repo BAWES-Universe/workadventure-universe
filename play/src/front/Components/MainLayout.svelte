@@ -49,6 +49,7 @@
     import HelpNotificationSettingsPopup from "./HelpSettings/HelpNotificationSettingPopup.svelte";
     import Menu from "./Menu/Menu.svelte";
     import ReportMenu from "./ReportMenu/ReportMenu.svelte";
+    import ReportSentToast from "./ReportMenu/ReportSentToast.svelte";
     import VisitCard from "./VisitCard/VisitCard.svelte";
     import WarningBanner from "./WarningContainer/WarningBanner.svelte";
     import BanMessageContainer from "./TypeMessage/BanMessageContainer.svelte";
@@ -199,6 +200,7 @@
             {#if $showReportScreenStore !== userReportEmpty}
                 <ReportMenu />
             {/if}
+            <ReportSentToast />
 
             {#if $helpNotificationSettingsVisibleStore}
                 <HelpNotificationSettingsPopup />
