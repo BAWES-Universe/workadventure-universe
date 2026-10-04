@@ -64,6 +64,12 @@
         }
         if (!preview) return;
         properties = structuredClone(preview.getProperties());
+        // The open page keeps showing the area's current copy of its setting: the server completes some of them
+        // after they are added (a chat room gets its id), and the page is where that completion shows.
+        if (openProperty) {
+            const openId = openProperty.id;
+            openProperty = properties.find((p) => p.id === openId);
+        }
         areaName = preview.getAreaData().name;
         const description = preview.getProperties().find((p) => p.type === "areaDescriptionProperties");
         if (description === undefined) {
