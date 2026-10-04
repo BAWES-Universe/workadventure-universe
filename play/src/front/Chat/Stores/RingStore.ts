@@ -147,6 +147,9 @@ export function createRingStore(now: () => number = Date.now) {
                 } else if (result === "accepted") {
                     setEntry(uuid, { ...entry, state: "accepted", until: now() + ON_THE_WAY_MS });
                     toast("accepted", name);
+                } else if (entry.state === "stopped") {
+                    // You stopped it, though the stop may not have reached the pusher: no "didn't answer" after that.
+                    return;
                 } else if (result === "declined" || result === "no_answer") {
                     endUnanswered(uuid, entry, result);
                     toast(result, name);
@@ -194,7 +197,9 @@ export function createRingStore(now: () => number = Date.now) {
             } catch (e) {
                 console.error("Ring: could not ring", e);
                 if (get(outgoing).get(uuid) === starting) setEntry(uuid, undefined);
-                toast(e instanceof Error && e.message === "rate_limited" ? "too_soon" : "failed", name);
+                // Too many rings in a minute: the limit lifts within a minute.
+                if (e instanceof Error && e.message === "rate_limited") toast("too_soon", name, 1);
+                else toast("failed", name);
                 return false;
             }
             if (get(outgoing).get(uuid) !== starting) return false;
