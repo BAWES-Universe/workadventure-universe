@@ -101,6 +101,10 @@ export class CameraManager extends Phaser.Events.EventEmitter {
     private explorerFocusOn: { x: number; y: number } = { x: 0, y: 0 };
     // If set, the camera will move toward this target.
     private explorerFocusOnTarget: { x: number; y: number; zoom: number } | undefined;
+    // True while a drag on the map, while editing, holds the camera off the player.
+    private freedByDrag = false;
+    // The player-moved listener that drag set, so that following resumes once and the listener can be dropped.
+    private dragListener: { player: Player | RemotePlayer; handler: () => void } | undefined;
     private focusTargetSpeed = 0.2;
 
     // The tween for the camera offset
@@ -298,6 +302,8 @@ export class CameraManager extends Phaser.Events.EventEmitter {
         duration = 0,
         targetZoomLevel: number | undefined = undefined
     ): void {
+        this.freedByDrag = false;
+        this.clearDragListener();
         this.playerToFollow = player;
         this.setCameraMode(CameraMode.Follow);
         if (duration === 0) {
@@ -981,6 +987,44 @@ export class CameraManager extends Phaser.Events.EventEmitter {
 
     stopSpeed() {
         this.cameraSpeed = undefined;
+    }
+
+    /**
+     * A drag on the map while editing. The camera lets go of the player for it, from where it is now, and takes the
+     * player up again as soon as they move or the editor closes. A drag during the glide back to the player takes
+     * the camera over from the glide.
+     */
+    dragCamera(x: number, y: number): void {
+        if (this.playerToFollow && (this.cameraMode === CameraMode.Follow || this.startFollowTween)) {
+            const player = this.playerToFollow;
+            this.setExplorationMode();
+            this.freedByDrag = true;
+            // One listener at a time: a drag in a later editing session must not inherit an earlier session's.
+            this.clearDragListener();
+            const handler = () => {
+                this.dragListener = undefined;
+                this.startFollowPlayer(player, 1000);
+            };
+            this.dragListener = { player, handler };
+            player.once(hasMovedEventName, handler);
+        }
+        this.scrollCamera(x, y);
+    }
+
+    /** The editor closed: a camera that a drag took off the player glides back to them. */
+    endDragFreedom(): void {
+        if (!this.freedByDrag || !this.playerToFollow) {
+            return;
+        }
+        this.startFollowPlayer(this.playerToFollow, 1000);
+    }
+
+    private clearDragListener(): void {
+        if (!this.dragListener) {
+            return;
+        }
+        this.dragListener.player.off(hasMovedEventName, this.dragListener.handler);
+        this.dragListener = undefined;
     }
 
     scrollCamera(x: number, y: number): void {

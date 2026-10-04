@@ -576,6 +576,8 @@ export class AreaPreview extends Phaser.GameObjects.Rectangle {
     // Play text on the Image entity
     public playText() {
         if (this.speechDomElement) this.destroyText();
+        // Two updates in a row (a name and a description, say) show one label, not one per update.
+        if (this.playTextTimeout) clearTimeout(this.playTextTimeout);
         this.playTextTimeout = setTimeout(() => {
             this.playTextTimeout = null;
             if (!this.scene || !this.scene.sys) return;

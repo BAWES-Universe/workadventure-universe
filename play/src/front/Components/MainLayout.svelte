@@ -27,8 +27,7 @@
     import { popupStore } from "../Stores/PopupStore";
     import {
         mapEditorAskToClaimPersonalAreaStore,
-        mapEditorSelectedToolStore,
-        mapEditorVisibilityStore,
+        mapEditorToolbarInUseStore,
         mapExplorationModeStore,
     } from "../Stores/MapEditorStore";
     import { warningMessageStore } from "../Stores/ErrorStore";
@@ -40,11 +39,10 @@
         chatSidebarWidthStore,
         hideActionBarStoreBecauseOfChatBar,
     } from "../Chat/ChatSidebarWidthStore";
-    import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
-    import { mapEditorSideBarWidthStore } from "./MapEditor/MapEditorSideBarWidthStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
+    import EditMode from "./MapEditor/EditMode/EditMode.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
     import HelpNotificationSettingsPopup from "./HelpSettings/HelpNotificationSettingPopup.svelte";
     import Menu from "./Menu/Menu.svelte";
@@ -120,14 +118,8 @@
     // keep their layout: what is beside the chat starts where it ends.
     $: desktop = $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH;
     $: marginLeft = $chatVisibilityStore && !desktop ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
-    // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
-    // "Look around the map" has no side bar: it draws over the game and the bar keeps its width.
-    $: marginRight =
-        $mapEditorVisibilityStore &&
-        $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor &&
-        $mapEditorSelectedToolStore !== EditorToolName.ExploreTheRoom
-            ? $mapEditorSideBarWidthStore
-            : 0;
+    // The room editor floats over the map on the right, like a window: nothing moves for it.
+    const marginRight = 0;
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
     $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
 </script>
@@ -246,7 +238,13 @@
                 <LookAround />
             {/if}
 
-            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar)}
+            <!-- "Editing a room" floats over the game under the bar, so the bar's menus open over it, and over the zoom
+                 column. "Look around the map" runs on the same engine but shows none of its toolbar. -->
+            {#if $mapEditorToolbarInUseStore}
+                <EditMode />
+            {/if}
+
+            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}
                 <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
                      it grows, instead of the column floating over the website. Above "Look around the map", so its
                      Places panel never covers the column. -->

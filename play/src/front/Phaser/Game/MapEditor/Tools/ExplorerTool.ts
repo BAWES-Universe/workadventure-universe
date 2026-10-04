@@ -307,6 +307,10 @@ export class ExplorerTool implements MapEditorTool {
     public subscribeToGameMapFrontWrapperEvents(gameMapFrontWrapper: GameMapFrontWrapper): void {
         logger("subscribeToGameMapFrontWrapperEvents => Method not implemented.");
     }
+    public canDragToLookAround(pointer: Phaser.Input.Pointer): boolean {
+        return false;
+    }
+
     public handleKeyDownEvent(event: KeyboardEvent): void {
         logger("handleKeyDownEvent => Method not implemented.");
     }

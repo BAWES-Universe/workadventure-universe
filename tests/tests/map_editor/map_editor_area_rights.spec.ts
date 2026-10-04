@@ -299,6 +299,7 @@ await page.pause();
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.x,
       AreaAccessRights.mouseCoordinatesToClickOnEntityInsideArea.y
     );
+    await EntityEditor.openSettings(page2);
     await expect(
       page2.getByTestId("openWebsite")
     ).toBeAttached();
@@ -336,7 +337,9 @@ await page.pause();
 
     await page2.keyboard.press("e");
 
-    await expect(page2.locator("#map-editor-container")).toBeVisible();
+    // Without editing rights, "e" only looks around the map: no editing toolbar, no area or object tool.
+    await expect(page2.getByTestId("look-around")).toBeVisible();
+    await expect(page2.locator("#map-editor-container")).toBeHidden();
     await expect(page2.locator("#AreaEditor")).toBeHidden();
     await expect(page2.locator("#EntityEditor")).toBeHidden();
 
