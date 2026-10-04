@@ -183,8 +183,8 @@ export function createRingStore(now: () => number = Date.now) {
         },
         /** Rings a friend. A refusal shows a toast; resolves whether it is ringing. */
         async ring(uuid: string, name: string): Promise<boolean> {
-            const current = get(outgoing).get(uuid);
-            if (current && current.state !== "accepted") return false;
+            // Still ringing, on their way, or rung lately: one at a time.
+            if (get(outgoing).has(uuid)) return false;
             const startedAt = now();
             const starting: OutgoingRing = { name, state: "starting", startedAt, until: startedAt + RING_MS };
             setEntry(uuid, starting);

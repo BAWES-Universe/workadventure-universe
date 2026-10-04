@@ -21,6 +21,8 @@ export type RingButton =
     | { kind: "busy" }
     /** Rung lately without them coming: Ring again in a few minutes. */
     | { kind: "wait"; minutes: number }
+    /** They said they are coming. */
+    | { kind: "onTheWay" }
     | { kind: "starting" };
 
 export function ringButton(
@@ -30,6 +32,7 @@ export function ringButton(
 ): RingButton {
     if (entry?.state === "ringing") return { kind: "stop" };
     if (entry?.state === "starting") return { kind: "starting" };
+    if (entry?.state === "accepted") return { kind: "onTheWay" };
     if (entry?.retryAt !== undefined && entry.retryAt > now) {
         return { kind: "wait", minutes: Math.max(1, Math.ceil((entry.retryAt - now) / 60_000)) };
     }

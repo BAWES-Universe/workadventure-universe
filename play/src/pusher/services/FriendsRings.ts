@@ -131,7 +131,7 @@ export class FriendsRings<S extends RingsSocket> {
         if (targetSockets.length === 0) {
             return refusal("offline");
         }
-        if (this.ringByTarget.has(targetUuid)) {
+        if (BUSY_STATUSES.includes(this.deps.statusOf(targetUuid)) || this.ringByTarget.has(targetUuid)) {
             return refusal("busy");
         }
 

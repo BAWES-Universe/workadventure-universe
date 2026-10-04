@@ -15,6 +15,7 @@ describe("ringButton", () => {
         expect(ringButton(undefined, AvailabilityStatus.DO_NOT_DISTURB, NOW)).toEqual({ kind: "busy" });
         expect(ringButton(undefined, AvailabilityStatus.BACK_IN_A_MOMENT, NOW)).toEqual({ kind: "busy" });
         expect(ringButton(entry("ringing"), AvailabilityStatus.ONLINE, NOW)).toEqual({ kind: "stop" });
+        expect(ringButton(entry("accepted"), AvailabilityStatus.ONLINE, NOW)).toEqual({ kind: "onTheWay" });
     });
 
     it("waits after a ring they didn't come for, then rings again", () => {

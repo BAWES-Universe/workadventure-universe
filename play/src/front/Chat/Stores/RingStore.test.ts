@@ -58,12 +58,15 @@ describe("ringStore", () => {
 
     it("says on the way, then that they came over", async () => {
         const store = createRingStore();
-        const { connection, updates } = fakeConnection(ringing);
+        const { connection, updates, queryRing } = fakeConnection(ringing);
         store.attach(connection, true);
         await store.ring("sara", "Sara");
 
         updates.next(result("accepted"));
         expect(get(store.outgoing).get("sara")?.state).toBe("accepted");
+        // While they are on the way, Ring isn't sent again.
+        expect(await store.ring("sara", "Sara")).toBe(false);
+        expect(queryRing).toHaveBeenCalledTimes(1);
         updates.next(result("arrived"));
         expect(get(store.outgoing).has("sara")).toBe(false);
         expect(get(store.toasts).map((t) => t.kind)).toEqual(["arrived"]);

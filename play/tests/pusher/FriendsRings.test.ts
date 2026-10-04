@@ -35,13 +35,14 @@ function setup() {
     const sockets = new Map<string, FakeSocket[]>();
     const statuses = new Map<string, AvailabilityStatus>();
     const getRelationship = vi.fn((_userUuid: string, _targetUuid: string) => Promise.resolve(friends()));
+    const lookupPlace = vi.fn((playUri: string) => Promise.resolve<FriendPlace | null>(PLACES[playUri] ?? null));
     let nextId = 0;
     const rings = new FriendsRings<FakeSocket>({
         send: (socket, message) => sent.push({ socket, message }),
         socketsOf: (userUuid) => sockets.get(userUuid) ?? [],
         statusOf: (userUuid) => statuses.get(userUuid) ?? AvailabilityStatus.ONLINE,
         getRelationship,
-        lookupPlace: (playUri) => Promise.resolve(PLACES[playUri] ?? null),
+        lookupPlace,
         newId: () => `ring-${++nextId}`,
     });
     const connect = (userUuid: string, roomId: string): FakeSocket => {
@@ -61,7 +62,7 @@ function setup() {
     };
     const updatesTo = (socket: FakeSocket) =>
         sent.filter((entry) => entry.socket === socket).map((entry) => entry.message.update);
-    return { rings, sent, sockets, statuses, getRelationship, connect, close, updatesTo };
+    return { rings, sent, sockets, statuses, getRelationship, lookupPlace, connect, close, updatesTo };
 }
 
 describe("FriendsRings", () => {
@@ -169,6 +170,24 @@ describe("FriendsRings", () => {
 
         statuses.set("bob", AvailabilityStatus.AWAY);
         expect((await rings.ring(alice, "bob")).outcome).toBe("ringing");
+    });
+
+    it("says busy for a friend who turned busy while the room was looked up", async () => {
+        const { rings, connect, statuses, lookupPlace, updatesTo } = setup();
+        const alice = connect("alice", ROOM_A);
+        const bob = connect("bob", ROOM_B);
+        let answer: (place: FriendPlace | null) => void = () => undefined;
+        lookupPlace.mockReturnValueOnce(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        const ringing = rings.ring(alice, "bob");
+        await vi.waitFor(() => expect(lookupPlace).toHaveBeenCalled());
+        statuses.set("bob", AvailabilityStatus.DO_NOT_DISTURB);
+        answer(PLACES[ROOM_A]);
+        expect((await ringing).outcome).toBe("busy");
+        expect(updatesTo(bob)).toEqual([]);
     });
 
     it("says busy for a friend someone else is already ringing", async () => {

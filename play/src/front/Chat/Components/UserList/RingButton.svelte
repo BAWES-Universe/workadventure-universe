@@ -7,8 +7,8 @@
     import { IconBell, IconBellOff, IconBellRinging, IconX } from "@wa-icons";
 
     /**
-     * Ring a friend: they get a card asking them to come over. While it rings this is Stop; when they are busy, or
-     * were just rung without coming, it is greyed out and says why.
+     * Ring a friend: they get a card asking them to come over. While it rings this is Stop; when they are busy, on
+     * their way, or were just rung without coming, it is greyed out and says why.
      */
     export let uuid: string;
     export let name: string;
@@ -25,16 +25,18 @@
             ? $LL.chat.friends.ring.busy()
             : state.kind === "wait"
             ? $LL.chat.friends.ring.ringAgainIn({ minutes: state.minutes })
+            : state.kind === "onTheWay"
+            ? $LL.chat.friends.ring.onTheWay()
             : $LL.chat.friends.ring.ring();
     $: ariaLabel =
         state.kind === "stop"
             ? $LL.chat.friends.ring.stopRinging({ userName: name })
             : state.kind === "busy"
             ? $LL.chat.friends.ring.busyUser({ userName: name })
-            : state.kind === "wait"
+            : state.kind === "wait" || state.kind === "onTheWay"
             ? `${$LL.chat.friends.ring.ringUser({ userName: name })}. ${label}`
             : $LL.chat.friends.ring.ringUser({ userName: name });
-    $: disabled = state.kind === "busy" || state.kind === "wait" || state.kind === "starting";
+    $: disabled = state.kind !== "ring" && state.kind !== "stop";
 
     function click() {
         if (state.kind === "stop") {
