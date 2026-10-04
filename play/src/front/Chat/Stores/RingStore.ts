@@ -138,12 +138,12 @@ export function createRingStore(now: () => number = Date.now) {
                 const found = findByRingId(ringId);
                 const uuid = found?.[0] ?? targetUuid;
                 const entry = found?.[1] ?? get(outgoing).get(uuid);
-                const name = entry?.name ?? "";
+                // Nothing to say about a ring this tab no longer knows (another tab's, or one already cleared).
+                if (!entry) return;
+                const name = entry.name;
                 if (result === "arrived") {
                     setEntry(uuid, undefined);
                     toast("arrived", name);
-                } else if (!entry) {
-                    return;
                 } else if (result === "accepted") {
                     setEntry(uuid, { ...entry, state: "accepted", until: now() + ON_THE_WAY_MS });
                     toast("accepted", name);

@@ -70,6 +70,11 @@ describe("ringStore", () => {
         updates.next(result("arrived"));
         expect(get(store.outgoing).has("sara")).toBe(false);
         expect(get(store.toasts).map((t) => t.kind)).toEqual(["arrived"]);
+
+        // Arriving after "on the way" was cleared says nothing (there is no name to say it with).
+        vi.advanceTimersByTime(10_000);
+        updates.next(result("arrived"));
+        expect(get(store.toasts)).toEqual([]);
     });
 
     it("tells why a ring was refused, and how long to wait when it was too soon", async () => {
