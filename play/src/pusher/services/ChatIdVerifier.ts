@@ -118,13 +118,23 @@ export function verifyChatId(
 
     const checkOne = async (token: string): Promise<void> => {
         const chatId = await verifier.getMatrixUserIdForAccessToken(token);
-        queue.lastAnswered = token;
         if (!chatId || socketData.disconnecting || chatId === socketData.chatID) {
             // Refused, gone, or already the chat ID we have on file: nothing changes.
+            queue.lastAnswered = token;
             return;
         }
+        const previousChatId = socketData.chatID;
         socketData.chatID = chatId;
-        await apply(chatId);
+        try {
+            await apply(chatId);
+        } catch (e) {
+            // Not saved or not shown to the others: go back, so that sending the same token again retries.
+            // Checks run one after the other, so nothing else changed the chat ID while we waited.
+            // eslint-disable-next-line require-atomic-updates
+            socketData.chatID = previousChatId;
+            throw e;
+        }
+        queue.lastAnswered = token;
     };
 
     const verification = (async () => {

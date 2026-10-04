@@ -252,6 +252,29 @@ describe("verifyChatId, many tokens", () => {
     });
 });
 
+describe("verifyChatId, when showing the chat ID fails", () => {
+    it("goes back to the previous chat ID, and the same token can be sent again", async () => {
+        const data = {
+            isLogged: true,
+            chatID: "@old:matrix.test" as string | undefined,
+            chatIdVerification: undefined as Promise<void> | undefined,
+            disconnecting: false,
+        };
+        const lookup = vi.fn(() => Promise.resolve("@alice:matrix.test"));
+        const apply = vi
+            .fn<(chatId: string) => Promise<void>>()
+            .mockRejectedValueOnce(new Error("back unreachable"))
+            .mockResolvedValueOnce(undefined);
+
+        await verifyChatId(data, "syt_alice", { getMatrixUserIdForAccessToken: lookup }, apply);
+        expect(data.chatID).toBe("@old:matrix.test");
+
+        await verifyChatId(data, "syt_alice", { getMatrixUserIdForAccessToken: lookup }, apply);
+        expect(apply).toHaveBeenCalledTimes(2);
+        expect(data.chatID).toBe("@alice:matrix.test");
+    });
+});
+
 describe("chat IDs sent by the browser", () => {
     it("keeps a player details chat ID only when it is the checked one", () => {
         expect(withoutUncheckedChatId({ chatID: "@bob:matrix.test" }, "@alice:matrix.test").chatID).toBe("");
