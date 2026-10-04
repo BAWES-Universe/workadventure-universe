@@ -3980,10 +3980,10 @@ ${escapedMessage}
         errorScreenStore.setError(
             ErrorScreenMessage.fromPartial({
                 type: "error",
+                // The ban screen shows this code; the text is for anything that shows the screen as a plain error.
                 code: "USER_BANNED",
-                title: "BANNED",
-                subtitle: "You were banned from WorkAdventure",
-                details: "If you want more information, you may contact us at: hello@workadventu.re",
+                title: "Banned",
+                subtitle: "An admin of this world banned you.",
             })
         );
 
