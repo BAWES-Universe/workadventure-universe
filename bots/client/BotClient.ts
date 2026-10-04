@@ -269,6 +269,13 @@ export class BotClient {
     }
 
     /**
+     * The behavior running this bot, if any
+     */
+    getBehavior(): BaseBehavior | null {
+        return this.behavior ?? null;
+    }
+
+    /**
      * Set behavior for this bot
      */
     setBehavior(behavior: BaseBehavior): void {

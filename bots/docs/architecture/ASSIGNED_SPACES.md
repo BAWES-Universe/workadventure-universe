@@ -6,7 +6,7 @@
 - **Center (X, Y)**: The bot's spawn position and operational center
 - **Radius**: How far the bot can move from the center
 
-When a bot moves outside its assigned space or finishes a conversation, it will automatically return to its assigned area.
+The assigned space is part of the bot's **leash**: its spot, its circle or its route (see [Behavior model](BEHAVIORS.md#behavior-model)). Whenever a bot finds itself off its leash, after a chat or a summon, it walks back to the nearest place on it.
 
 ## Configuration
 
@@ -25,31 +25,31 @@ const behavior = new SocialBehavior({
 
 ### Radius Behavior by Bot Type
 
-- **Idle bots**: `radius = 0` means the bot will not move (stationary). The bot spawns at `center` and stays there.
-- **Social bots**: `radius` defines how far the bot can wander from the center while seeking conversations.
-- **Patrol bots**: `radius` defines the boundary. If the bot strays outside, it returns to the assigned space.
+- **Stays put** (idle): `radius = 0` means the bot will not move (stationary). The bot spawns at `center`, and walks back to it after stepping away.
+- **Wanders an area** (social): `radius` defines how far the bot can wander from the center. A bot that ends up outside the circle walks back in to the nearest point inside it; one that is still inside carries on from where it is.
+- **Walks a route** (patrol): the radius is not used. Stops can be anywhere on the map, and the route itself is the leash: a bot pulled off it rejoins at the nearest stop.
 
 ## How It Works
 
 ### 1. Space Assignment
 
 When a bot is configured with an `assignedSpace`:
-- The bot's wander/patrol area is constrained to the assigned space
-- The bot will not seek conversations outside its assigned space
-- After conversations end, the bot returns to its assigned space
+- A wandering bot's area is constrained to the assigned space
+- A bot only looks for someone new while it is on its leash
+- After conversations end, the bot walks back onto its leash
 
 ### 2. Automatic Return
 
 When a bot leaves a conversation (space), the `onSpaceLeft()` method is called:
-- The bot checks if it's outside its assigned space
-- If outside, it calculates a path back to the assigned space
-- The bot moves back to within the assigned radius
+- A bot that stays put walks back to its spot
+- A wandering bot outside its circle walks back in to the nearest point inside it
+- A route bot rejoins its route at the nearest stop
 
 ### 3. Constraint Enforcement
 
 During normal behavior:
 - **SocialBehavior**: Only looks for conversations within assigned space
-- **PatrolBehavior**: Waypoints should be within assigned space
+- **PatrolBehavior**: Waypoints can be anywhere; the radius doesn't limit them
 - **IdleBehavior**: Bot stays at assigned position
 
 ## Example Use Cases

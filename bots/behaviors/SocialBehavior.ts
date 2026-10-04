@@ -11,6 +11,8 @@ import { movementLogger } from '../utils/MovementLogger';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
+import type { BehaviorMoves } from './behaviorModel';
+import { distance, distanceToRoute, nearestPointInCircle, nearestStopIndex, nextStop } from './leash';
 import {
     buildBotInitiatedGreetingPrompt,
     isAvailableForApproach,
@@ -30,6 +32,16 @@ export interface SocialBehaviorConfig extends BehaviorConfig {
     wanderCenter: { x: number; y: number };
     wanderSpeed: number; // Movement speed
     approachDistance: number; // How close to get before starting conversation
+    /** Where the bot moves between conversations. Defaults to 'wander' (what social bots always did). */
+    moves?: BehaviorMoves;
+    /** Whether the bot walks over to people it notices. Defaults to true (what social bots always did). */
+    goesToPeople?: boolean;
+    /** The route's stops, for moves = 'route'. */
+    waypoints?: Array<{ x: number; y: number }>;
+    /** Route direction: true loops 1, 2, 3, 1; false goes back and forth 1, 2, 3, 2, 1. */
+    loop?: boolean;
+    /** Seconds to pause at each stop, for moves = 'route'. */
+    pauseAtWaypoints?: number;
 }
 
 export class SocialBehavior extends BaseBehavior {
@@ -48,6 +60,18 @@ export class SocialBehavior extends BaseBehavior {
     private wanderInProgress: boolean = false; // Prevent multiple concurrent calls
     private readonly WANDER_FAILURE_COOLDOWN = 2000; // 2 seconds before retrying after failure
     private currentSpaceName: string | null = null; // Track current space to prevent wandering
+    // Walking a route (moves = 'route') and walking back to the leash
+    private routeIndex: number = 0;
+    private routeDirection: 1 | -1 = 1;
+    private routePauseUntil: number = 0;
+    private routeStopFailures: number = 0;
+    private leashMoveInProgress: boolean = false;
+    private lastLeashMoveFailure: number = 0;
+    private readonly ROUTE_STOP_REACHED = 32; // A path ends on a tile centre, up to half a tile's diagonal off
+    private readonly SPOT_REACHED = 24;
+    private readonly OFF_ROUTE_DISTANCE = 48; // Further than this from the route means rejoining at the nearest stop
+    private readonly MAX_STOP_FAILURES = 3; // Skip a stop the bot can't find a path to
+    private readonly LEASH_RETRY_DELAY = 1000; // Matches the pathfinder's pause after a path ends
 
     constructor(config: SocialBehaviorConfig) {
         super(config);
@@ -276,9 +300,9 @@ export class SocialBehavior extends BaseBehavior {
                 console.error(`[SocialBehavior] Error approaching player:`, error);
             });
         } else {
-            // Wander (async, but we don't await - it will handle pathfinding internally)
-            this.wander(config, deltaTime).catch(error => {
-                console.error(`[SocialBehavior] Error wandering:`, error);
+            // Move the way this bot moves: stay on its spot, wander its area or walk its route
+            this.moveOnLeash(config, deltaTime).catch(error => {
+                console.error(`[SocialBehavior] Error moving:`, error);
             });
         }
         
@@ -1964,9 +1988,14 @@ export class SocialBehavior extends BaseBehavior {
             return;
         }
 
-        // Only look for conversations if within assigned space (or no assigned space)
+        // Bots with "goes to people" off only talk to people who walk up to them
+        if (config.goesToPeople === false) {
+            return;
+        }
+
+        // Only look for conversations while on the leash (its spot, area or route)
         // BUT: Allow if bot is summoned (can leave assigned space when summoned)
-        if (!this.isSummoned && !this.isWithinAssignedSpace()) {
+        if (!this.isSummoned && !this.isOnLeash(config)) {
             return;
         }
 
@@ -2030,13 +2059,31 @@ export class SocialBehavior extends BaseBehavior {
         if (config.respectPlayerStatus && !isAvailableForApproach(player.availabilityStatus)) return false;
         if (isInOtherBubble(this.bot.getBubbleUserIds(playerId), playerId, this.bot.getUserId())) return false;
         if (this.isSummoned) return true;
-        const area = this.config.assignedSpace ?? { center: config.wanderCenter, radius: config.wanderRadius };
+        const noticeRange = config.conversationRadius || 100;
+        const moves = config.moves ?? 'wander';
+        if (moves === 'route') {
+            // A route bot leaves its route by at most how far it notices people
+            const stops = config.waypoints ?? [];
+            if (stops.length > 0 && distanceToRoute(player.position, stops, config.loop !== false) > noticeRange) {
+                return false;
+            }
+            return !shouldAbandonApproach({
+                now: currentTime,
+                approachStartedAt: this.approachStartedAt,
+                targetPosition: player.position,
+                leashMargin: noticeRange,
+            });
+        }
+        const area =
+            moves === 'stay'
+                ? { center: this.homeSpot(), radius: 0 }
+                : this.config.assignedSpace ?? { center: config.wanderCenter, radius: config.wanderRadius };
         return !shouldAbandonApproach({
             now: currentTime,
             approachStartedAt: this.approachStartedAt,
             targetPosition: player.position,
             area: area?.center ? area : undefined,
-            leashMargin: config.conversationRadius || 100,
+            leashMargin: noticeRange,
         });
     }
 
@@ -2290,6 +2337,199 @@ export class SocialBehavior extends BaseBehavior {
         const dx = pos1.x - pos2.x;
         const dy = pos1.y - pos2.y;
         return Math.sqrt(dx * dx + dy * dy) < threshold;
+    }
+
+    /** The bot's spot: the centre of its assigned space, else where it spawned. */
+    private homeSpot(): PositionInterface {
+        const center = this.config.assignedSpace?.center;
+        if (center) return { x: center.x, y: center.y };
+        if (this.spawnPosition) return { x: this.spawnPosition.x, y: this.spawnPosition.y };
+        return this.bot ? this.bot.getState().getPosition() : { x: 0, y: 0 };
+    }
+
+    /**
+     * Whether the bot is where it belongs: near its spot, inside its area, or on its route.
+     * A bot only looks for someone new while it is on its leash.
+     */
+    private isOnLeash(config: SocialBehaviorConfig): boolean {
+        if (!this.bot) return false;
+        const pos = this.bot.getState().getPosition();
+        const moves = config.moves ?? 'wander';
+        if (moves === 'stay') {
+            return distance(pos, this.homeSpot()) <= Math.max(64, config.approachDistance || 50);
+        }
+        if (moves === 'route') {
+            const stops = config.waypoints ?? [];
+            return stops.length === 0 || distanceToRoute(pos, stops, config.loop !== false) <= (config.conversationRadius || 100);
+        }
+        return this.isWithinAssignedSpace();
+    }
+
+    /**
+     * Move between conversations the way this bot moves.
+     */
+    private async moveOnLeash(config: SocialBehaviorConfig, deltaTime: number): Promise<void> {
+        const moves = config.moves ?? 'wander';
+        if (moves === 'stay') {
+            await this.holdSpot(config);
+        } else if (moves === 'route') {
+            await this.followRoute(config);
+        } else {
+            await this.wander(config, deltaTime);
+        }
+    }
+
+    /**
+     * Stay on the bot's spot, walking back to it when the bot has stepped away.
+     */
+    private async holdSpot(config: SocialBehaviorConfig): Promise<void> {
+        if (!this.bot) return;
+        if (this.currentSpaceName || this.engagedWithUsers.size > 0) return;
+        const spot = this.homeSpot();
+        if (distance(this.bot.getState().getPosition(), spot) <= this.SPOT_REACHED) {
+            if (this.bot.getState().isMoving()) this.bot.stop();
+            return;
+        }
+        await this.walkTowards(spot, config.wanderSpeed);
+    }
+
+    /**
+     * Walk the route stop to stop, pausing at each stop. A bot that finds itself off the route (after a
+     * chat or a summon) rejoins it at the nearest stop instead of walking back to where it left off.
+     */
+    private async followRoute(config: SocialBehaviorConfig): Promise<void> {
+        if (!this.bot) return;
+        if (this.currentSpaceName || this.engagedWithUsers.size > 0) return;
+        const stops = config.waypoints ?? [];
+        if (stops.length === 0) {
+            // A route with no stops yet: stay on the spot until one is drawn
+            await this.holdSpot(config);
+            return;
+        }
+        const now = Date.now();
+        if (now < this.routePauseUntil) return;
+
+        const pos = this.bot.getState().getPosition();
+        if (this.routeIndex >= stops.length) this.routeIndex = 0;
+        if (distanceToRoute(pos, stops, config.loop !== false) > this.OFF_ROUTE_DISTANCE) {
+            const nearest = nearestStopIndex(pos, stops);
+            if (nearest !== this.routeIndex) {
+                this.routeIndex = nearest;
+                this.routeStopFailures = 0;
+            }
+        }
+
+        const stop = stops[this.routeIndex];
+        if (distance(pos, stop) <= this.ROUTE_STOP_REACHED) {
+            if (this.bot.getState().isMoving()) this.bot.stop();
+            const pauseSeconds = config.pauseAtWaypoints ?? 0;
+            if (pauseSeconds > 0) this.routePauseUntil = now + pauseSeconds * 1000;
+            this.advanceRoute(config, stops.length);
+            return;
+        }
+
+        const reached = await this.walkTowards(stop, config.wanderSpeed);
+        if (reached === 'failed') {
+            this.routeStopFailures++;
+            if (this.routeStopFailures >= this.MAX_STOP_FAILURES) {
+                if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
+                    console.warn(`[SocialBehavior] Can't reach stop ${this.routeIndex + 1}, skipping it`);
+                }
+                this.advanceRoute(config, stops.length);
+            }
+        } else if (reached === 'walking') {
+            this.routeStopFailures = 0;
+        }
+    }
+
+    private advanceRoute(config: SocialBehaviorConfig, count: number): void {
+        const next = nextStop(this.routeIndex, this.routeDirection, count, config.loop !== false);
+        this.routeIndex = next.index;
+        this.routeDirection = next.direction;
+        this.routeStopFailures = 0;
+    }
+
+    /**
+     * Start walking to a point: a path for anything further than a short step, a direct step when it is close
+     * (the pathfinder skips targets under 50px) or when there is no pathfinding.
+     * Resolves 'walking' when the bot is on its way, 'waiting' when a walk is already being planned or a
+     * recent attempt failed, and 'failed' when no way there was found.
+     */
+    private async walkTowards(target: PositionInterface, speed: number): Promise<'walking' | 'waiting' | 'failed'> {
+        if (!this.bot) return 'failed';
+        if (this.leashMoveInProgress || this.bot.getIsFollowingPath()) return 'waiting';
+        const now = Date.now();
+        if (this.lastLeashMoveFailure > 0 && now - this.lastLeashMoveFailure < this.LEASH_RETRY_DELAY) {
+            return 'waiting';
+        }
+        const pos = this.bot.getState().getPosition();
+        const dx = target.x - pos.x;
+        const dy = target.y - pos.y;
+        const far = Math.sqrt(dx * dx + dy * dy) >= 50;
+
+        if (far && this.bot.hasPathfinding()) {
+            this.leashMoveInProgress = true;
+            let success = false;
+            try {
+                success = await this.bot.moveToWithPathfinding(target.x, target.y);
+            } finally {
+                this.leashMoveInProgress = false;
+            }
+            if (success && this.targetPlayerId !== null && this.bot.getIsFollowingPath()) {
+                // Someone to talk to was spotted while this path was being computed: go to them instead
+                this.bot.cancelPathfinding();
+                return 'waiting';
+            }
+            if (success) {
+                this.lastLeashMoveFailure = 0;
+                return 'walking';
+            }
+            this.lastLeashMoveFailure = now;
+            return 'failed';
+        }
+
+        // Close to the target, or no pathfinding: take one direct step, never into a wall
+        const effectiveSpeed = speed > 75 ? speed * 0.5 : speed;
+        const angle = Math.atan2(dy, dx);
+        const step = Math.min(effectiveSpeed * 0.016, Math.sqrt(dx * dx + dy * dy));
+        const next = { x: pos.x + Math.cos(angle) * step, y: pos.y + Math.sin(angle) * step };
+        if (this.bot.hasPathfinding() && !this.bot.isWalkable(next)) {
+            this.lastLeashMoveFailure = now;
+            return 'failed';
+        }
+        let direction = PositionMessage_Direction.DOWN;
+        if (Math.abs(dx) > Math.abs(dy)) {
+            direction = dx > 0 ? PositionMessage_Direction.RIGHT : PositionMessage_Direction.LEFT;
+        } else {
+            direction = dy > 0 ? PositionMessage_Direction.DOWN : PositionMessage_Direction.UP;
+        }
+        this.bot.moveTo(next.x, next.y, direction);
+        return 'walking';
+    }
+
+    /**
+     * After a chat, walk back onto the leash. A wanderer that is still inside its circle carries on from
+     * where it is (it used to walk back to the centre every time); one outside walks back in to the nearest
+     * point. A bot that stays put walks back to its spot. A route bot rejoins at the nearest stop on its
+     * own, in followRoute.
+     */
+    protected returnToAssignedSpace(): void {
+        if (!this.bot) return;
+        const config = this.config as SocialBehaviorConfig;
+        const moves = config.moves ?? 'wander';
+        if (moves === 'route') return;
+        if (moves === 'stay') {
+            void this.holdSpot(config);
+            return;
+        }
+        const space = this.config.assignedSpace;
+        if (!space || space.radius <= 0) {
+            super.returnToAssignedSpace();
+            return;
+        }
+        const pos = this.bot.getState().getPosition();
+        if (distance(pos, space.center) <= space.radius) return;
+        void this.walkTowards(nearestPointInCircle(pos, space.center, space.radius), config.wanderSpeed);
     }
 
     private cleanupConversations(config: SocialBehaviorConfig, currentTime: number): void {
