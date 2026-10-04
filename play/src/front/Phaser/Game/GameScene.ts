@@ -291,6 +291,8 @@ export class GameScene extends DirtyScene {
     private initPosition?: PositionInterface;
     private playersPositionInterpolator = new PlayersPositionInterpolator();
     private connectionAnswerPromiseDeferred: Deferred<RoomJoinedMessageInterface>;
+    // The last Matrix token handed to the server to check this player's chat ID.
+    private chatIdProofSent: string | undefined;
     // A promise that will resolve when the "create" method is called (signaling loading is ended)
     private createPromiseDeferred: Deferred<void>;
     // A promise that will resolve when the scene is ready to start (all assets have been loaded and the connection to the room is established)
@@ -1021,16 +1023,11 @@ export class GameScene extends DirtyScene {
                 errorScreenStore.setException(e);
             });
 
-        gameManager
-            .getChatConnection()
+        // A first login only gets its Matrix token once the chat is connected: send it then (the server ignores a
+        // token it already checked).
+        Promise.all([gameManager.getChatConnection(), this.connectionAnswerPromiseDeferred.promise])
             .then(() => {
-                const connection = this.connection;
-                const chatId = localUserStore.getChatId();
-                const email: string | null = localUserStore.getLocalUser()?.email || null;
-                if (email && chatId && connection) {
-                    connection.emitUpdateChatId(email, chatId);
-                    connection.emitPlayerChatID(chatId);
-                }
+                this.sendChatIdProof();
             })
             .catch((e) => {
                 console.error(e);
@@ -1753,6 +1750,25 @@ export class GameScene extends DirtyScene {
     }
 
     /**
+     * Asks the server to check this player's chat ID with the Matrix server. Sent as soon as the room is joined
+     * when the browser already has a Matrix login, so that the chat ID is ready before the player walks into an
+     * area chat, and again once the chat is connected (a first login only gets its token then).
+     */
+    private sendChatIdProof(): void {
+        const matrixAccessToken = localUserStore.getMatrixAccessToken();
+        if (
+            !this.connection ||
+            !matrixAccessToken ||
+            !localUserStore.getChatId() ||
+            matrixAccessToken === this.chatIdProofSent
+        ) {
+            return;
+        }
+        this.chatIdProofSent = matrixAccessToken;
+        this.connection.emitUpdateChatId(matrixAccessToken);
+    }
+
+    /**
      * Initializes the connection to Pusher.
      */
     private connect(): void {
@@ -1792,6 +1808,8 @@ export class GameScene extends DirtyScene {
                     return;
                 }
                 this.connection = onConnect.connection;
+                // A new connection has not checked any chat ID yet.
+                this.chatIdProofSent = undefined;
                 exploreStore.load(this.connection);
 
                 // Initialize TURN credentials manager
@@ -2167,6 +2185,7 @@ export class GameScene extends DirtyScene {
                 // });
 
                 this.connectionAnswerPromiseDeferred.resolve(onConnect.room);
+                this.sendChatIdProof();
                 // Analyze tags to find if we are admin. If yes, show console.
 
                 const error = get(errorScreenStore);

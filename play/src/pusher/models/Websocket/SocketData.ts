@@ -56,7 +56,10 @@ export type SocketData = {
     pusherRoom: PusherRoom | undefined;
     spaces: Set<SpaceName>;
     joinSpacesPromise: Map<SpaceName, Promise<void>>;
+    // Only ever a checked ID: the one Orbit has on file, one the Matrix server confirmed, or a bot's own account.
     chatID?: string;
+    // Set while the server checks a chat ID the player just sent proof for (see SocketManager.handleUpdateChatId).
+    chatIdVerification?: Promise<void>;
     world: string;
     currentChatRoomArea: string[];
     roomName: string;
