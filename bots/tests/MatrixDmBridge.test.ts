@@ -365,6 +365,38 @@ describe('MatrixDmBridge', () => {
         expect(deps.reply).toHaveBeenCalledWith(BOT, expect.anything(), 'left while resting', [], expect.anything());
     });
 
+    it('a waiting message keeps its failed tries when the bot rests again', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        deps.reply.mockResolvedValue({ text: '', media: [], failed: true });
+        await bridge.checkWaiting();
+        const kept = () => JSON.parse([...(bridge as any).localWaiting.get(BOT).values()][0].message);
+        expect(kept().unsigned).toEqual({ universe_attempts: 1 });
+        deps.getBotConfig.mockResolvedValueOnce({ ...resting, enabled: true } as never).mockResolvedValueOnce(resting as never);
+        await bridge.checkWaiting();
+        expect(kept().unsigned).toEqual({ universe_attempts: 1 });
+    });
+
+    it('a waiting message stays in line when the room store is unreachable, and is dropped once the chat is closed', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent(message('left while resting'));
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        (bridge as any).roomBots.clear();
+        deps.rooms.getDmRoomBot.mockRejectedValueOnce(new Error('redis down'));
+        await bridge.checkWaiting();
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.get(BOT)?.size).toBe(1);
+
+        // The person left before the store came back: the message is dropped, not answered into an empty room.
+        deps.rooms.getDmRoomBot.mockResolvedValueOnce(null);
+        await bridge.checkWaiting();
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect((bridge as any).localWaiting.has(BOT)).toBe(false);
+    });
+
     it('a bot with no AI provider leaves one "not ready" note instead of silence', async () => {
         await bridge.onEvent(invite());
         deps.getBotConfig.mockResolvedValue({ botId: BOT, name: 'Guide', enabled: true } as never);

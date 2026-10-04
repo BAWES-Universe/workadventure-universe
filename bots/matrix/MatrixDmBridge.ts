@@ -57,6 +57,11 @@ const WAITING_CHECK_MS = 5 * 60 * 1000;
 const WAITING_BODY_MAX = 4000;
 /** A waiting message the bot fails to answer goes back in line this many times before the person is asked to resend it. */
 const WAITING_MAX_ATTEMPTS = 3;
+
+/** How many times answering this waiting message has already failed. */
+function attemptsOf(event: MatrixEvent): number {
+    return Number(event.unsigned?.universe_attempts ?? 0);
+}
 const TYPING_DELAY_MS = 800;
 /** Matrix drops "typing" after its timeout (30 s), so a long answer renews it. */
 const TYPING_REFRESH_MS = 20 * 1000;
@@ -176,12 +181,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
         await this.deps.rooms?.forgetDmRoom(roomId).catch(() => undefined);
     }
 
-    private async botForRoom(roomId: string): Promise<string | null> {
+    /** The bot in this DM room, or null for a room it never joined or has left. `strict` throws when the store can't be read. */
+    private async botForRoom(roomId: string, strict = false): Promise<string | null> {
         const known = this.roomBots.get(roomId);
         if (known) return known;
-        const stored = await this.deps.rooms?.getDmRoomBot(roomId).catch(() => null);
+        let stored: string | null;
+        try {
+            stored = (await this.deps.rooms?.getDmRoomBot(roomId)) ?? null;
+        } catch (error: any) {
+            if (strict) throw error;
+            console.warn(`[MatrixDmBridge] Could not look up the bot for ${roomId}:`, error?.message ?? error);
+            return null;
+        }
         if (stored) this.roomBots.set(roomId, stored);
-        return stored ?? null;
+        return stored;
     }
 
     private async access(botId: string, chatId: string, fresh = false): Promise<DmAccessResult> {
@@ -323,7 +336,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
         const language = detectLanguage(String(content.body ?? ''));
         const couldNotAnswer = async (config?: BotConfiguration) => {
-            const attempts = Number(event.unsigned?.universe_attempts ?? 0) + 1;
+            const attempts = attemptsOf(event) + 1;
             if (catchUp && attempts < WAITING_MAX_ATTEMPTS) {
                 await this.rememberWaiting(botId, event, attempts);
                 return;
@@ -351,7 +364,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             return;
         }
         if (config.enabled === false) {
-            await this.rememberWaiting(botId, event);
+            // Resting again is not a failed answer, so a message already tried keeps its count.
+            await this.rememberWaiting(botId, event, attemptsOf(event));
             if (!catchUp) await this.sayResting(botId, event, config, language);
             return;
         }
@@ -524,6 +538,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 .filter((event): event is MatrixEvent => !!event && Date.now() - (event.origin_server_ts ?? 0) < WAITING_MAX_AGE_MS)
                 .sort((a, b) => (a.origin_server_ts ?? 0) - (b.origin_server_ts ?? 0));
             for (const event of messages) {
+                let roomBot: string | null;
+                try {
+                    roomBot = await this.botForRoom(event.room_id, true);
+                } catch {
+                    // The room store is unreachable right now, so the message waits for the next check.
+                    await this.rememberWaiting(botId, event, attemptsOf(event));
+                    continue;
+                }
+                if (roomBot !== botId) {
+                    // The person left (and the bot with them) or the bot was deleted: nobody is there to answer.
+                    console.info(`[MatrixDmBridge] Dropping a waiting message for bot ${botId}: the chat in ${event.room_id} is closed`);
+                    continue;
+                }
                 await this.handleMessage(event, true).catch((error) =>
                     console.warn(`[MatrixDmBridge] Could not answer a waiting message for bot ${botId}:`, error?.message ?? error)
                 );
