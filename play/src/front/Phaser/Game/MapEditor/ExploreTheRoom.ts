@@ -1,5 +1,11 @@
 import { get } from "svelte/store";
-import { mapEditorModeStore, mapExplorationModeStore } from "../../../Stores/MapEditorStore";
+import { lookAroundNormalZoomStore, lookAroundPlacesOpenStore } from "../../../Stores/LookAroundStore";
+import {
+    mapEditorModeStore,
+    mapExplorationAreasStore,
+    mapExplorationModeStore,
+    mapExplorationObjectSelectedStore,
+} from "../../../Stores/MapEditorStore";
 import { gameManager } from "../GameManager";
 import { EditorToolName, type MapEditorModeManager } from "./MapEditorModeManager";
 
@@ -32,10 +38,26 @@ export function enterExploreTheRoom(): void {
 export function leaveExploreTheRoom(): void {
     // Equip the close tool first: it turns the mode off itself, so the editor does not remember
     // "Look around" as the tool to reopen with.
-    gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager()?.equipTool(EditorToolName.CloseMapEditor);
+    const mapEditorModeManager = gameManager.tryGetCurrentGameScene()?.getMapEditorModeManager();
+    if (mapEditorModeManager) {
+        mapEditorModeManager.equipTool(EditorToolName.CloseMapEditor);
+    } else {
+        // Between two maps there is no scene and no tool to clear the looking-around state: clear it here, or the
+        // "Look around" overlay and what it showed would linger until the old scene is destroyed.
+        clearLookAroundStores();
+    }
     if (get(mapEditorModeStore)) {
         mapEditorModeStore.switchMode(false);
     }
+}
+
+/** Forget everything "Look around" showed: the tool calls this when it closes, and leaving between two maps too. */
+export function clearLookAroundStores(): void {
+    mapExplorationObjectSelectedStore.set(undefined);
+    mapExplorationModeStore.set(false);
+    mapExplorationAreasStore.set(undefined);
+    lookAroundPlacesOpenStore.set(false);
+    lookAroundNormalZoomStore.set(undefined);
 }
 
 /** True while "Look around the map" is open. */
