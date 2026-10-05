@@ -523,6 +523,7 @@ const mapEditor: BaseTranslation = {
             wrongSize:
                 "This picture is {width} × {height} px; every side must be {expectedWidth} × {expectedHeight} px like the front.",
             uploading: "Adding…",
+            gone: "This upload was removed meanwhile, so nothing was added.",
         },
         upload: {
             title: "Add your own",
