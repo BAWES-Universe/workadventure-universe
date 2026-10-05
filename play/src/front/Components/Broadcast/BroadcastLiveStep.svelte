@@ -38,6 +38,8 @@
     $: name = reachName(reach, $broadcastReachInfoStore);
 
     function toggleMic() {
+        // The player chose a mic state here: leaving keeps that choice, whatever this step did on arrival.
+        micTurnedOnHere = false;
         if ($requestedMicrophoneState) requestedMicrophoneState.disableMicrophone();
         else requestedMicrophoneState.enableMicrophone();
     }
@@ -50,7 +52,8 @@
         else requestedScreenSharingState.enableScreenSharing();
     }
 
-    // The step turns the mic on for the preview; leaving without going live turns it back off.
+    // The step turns the mic on for the preview; leaving without going live, and without the player having
+    // touched the mic, turns it back off.
     let micTurnedOnHere = false;
     let wentLive = false;
 

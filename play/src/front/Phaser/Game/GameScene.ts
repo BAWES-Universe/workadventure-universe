@@ -447,7 +447,8 @@ export class GameScene extends DirtyScene {
     private broadcastSceneClosing = false;
     /** Failed joins per scope and space name, so a broadcast space that could not be joined is tried again, a few times. */
     private readonly broadcastJoinFailures = new Map<string, number>();
-    private readonly broadcastJoinRetryTimers = new Set<ReturnType<typeof setTimeout>>();
+    /** One pending retry per scope and space name: a new failure replaces the timer instead of adding a second. */
+    private readonly broadcastJoinRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     /**
      * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
@@ -548,11 +549,17 @@ export class GameScene extends DirtyScene {
         const failureKey = `${scope} ${spaceName}`;
         const failures = (this.broadcastJoinFailures.get(failureKey) ?? 0) + 1;
         this.broadcastJoinFailures.set(failureKey, failures);
+        // A channel change during a failed join asks again at once; if that fails too, the earlier timer goes.
+        const pending = this.broadcastJoinRetryTimers.get(failureKey);
+        if (pending !== undefined) {
+            clearTimeout(pending);
+            this.broadcastJoinRetryTimers.delete(failureKey);
+        }
         if (failures > GameScene.BROADCAST_JOIN_RETRIES) {
             return;
         }
         const timer = setTimeout(() => {
-            this.broadcastJoinRetryTimers.delete(timer);
+            this.broadcastJoinRetryTimers.delete(failureKey);
             if (
                 this.broadcastSceneClosing ||
                 get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB ||
@@ -562,7 +569,7 @@ export class GameScene extends DirtyScene {
             }
             this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
         }, GameScene.BROADCAST_JOIN_RETRY_MS * 2 ** (failures - 1));
-        this.broadcastJoinRetryTimers.add(timer);
+        this.broadcastJoinRetryTimers.set(failureKey, timer);
     }
     private static readonly BROADCAST_JOIN_RETRIES = 3;
     private static readonly BROADCAST_JOIN_RETRY_MS = 5_000;
@@ -1305,7 +1312,7 @@ export class GameScene extends DirtyScene {
         this.broadcastSceneClosing = true;
         this.pendingBroadcastJoins.clear();
         this.latestBroadcastChannels = [];
-        for (const timer of this.broadcastJoinRetryTimers) {
+        for (const timer of this.broadcastJoinRetryTimers.values()) {
             clearTimeout(timer);
         }
         this.broadcastJoinRetryTimers.clear();
