@@ -351,7 +351,13 @@ describe("holdMatrixMedia with an encrypted file", () => {
         const createObjectURL = vi.fn(() => "blob:https://play.test/tampered");
         URL.createObjectURL = createObjectURL;
 
-        expect(await resolveMatrixMediaUrl(fakeClient(), file)).toBeUndefined();
+        const client = fakeClient();
+        expect(await resolveMatrixMediaUrl(client, file)).toBeUndefined();
         expect(createObjectURL).not.toHaveBeenCalled();
+
+        // It may have been a cut-off download: shown again, it's fetched again.
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, file);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });

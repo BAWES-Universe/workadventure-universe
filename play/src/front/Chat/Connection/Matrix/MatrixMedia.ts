@@ -222,10 +222,14 @@ async function fetchEncryptedMatrixMedia(
             return undefined;
         }
         const encrypted = await response.arrayBuffer();
-        // A file that doesn't match the hash its sender gave isn't shown.
+        // A file that doesn't match the hash its sender gave isn't shown. It may be a cut-off download, so it's
+        // fetched again the next time it's shown.
         if (file.hashes?.sha256) {
             const digest = await crypto.subtle.digest("SHA-256", encrypted);
-            if (bytesToUnpaddedBase64(digest) !== file.hashes.sha256.replace(/=+$/, "")) return undefined;
+            if (bytesToUnpaddedBase64(digest) !== file.hashes.sha256.replace(/=+$/, "")) {
+                forget();
+                return undefined;
+            }
         }
         const key = await crypto.subtle.importKey(
             "jwk",
