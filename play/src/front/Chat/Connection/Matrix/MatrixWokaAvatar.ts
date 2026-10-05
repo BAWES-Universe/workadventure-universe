@@ -8,6 +8,8 @@ export interface SavedWokaAvatar {
     hash: string;
     /** The profile picture it became. */
     mxc: string;
+    /** The picture Universe saved before it, until the new one is set on the profile. */
+    previous?: string;
 }
 
 /** The size of the saved picture: the 32px woka scaled 4× with sharp pixels. */
@@ -16,7 +18,7 @@ export const WOKA_AVATAR_SIZE = 128;
 const MAX_WOKA_SIDE = 64;
 
 /**
- * Whether to save the woka as the profile picture. The woka replaces no picture or the one Universe saved before; a
+ * Whether to save the woka as the profile picture. The woka replaces no picture or one Universe saved before; a
  * picture the person chose in another chat app (Element) stays.
  */
 export function shouldSaveWokaAvatar(
@@ -25,14 +27,17 @@ export function shouldSaveWokaAvatar(
     wokaHash: string
 ): boolean {
     if (!currentAvatar) return true;
-    if (!saved || currentAvatar !== saved.mxc) return false;
-    return saved.hash !== wokaHash;
+    if (!saved) return false;
+    if (currentAvatar === saved.mxc) return saved.hash !== wokaHash;
+    // The last save was cut off before the profile picture was set: it still shows the one Universe saved before.
+    return currentAvatar === saved.previous;
 }
 
 export function parseSavedWokaAvatar(content: unknown): SavedWokaAvatar | undefined {
     if (typeof content !== "object" || content === null) return undefined;
-    const { hash, mxc } = content as Record<string, unknown>;
-    return typeof hash === "string" && typeof mxc === "string" ? { hash, mxc } : undefined;
+    const { hash, mxc, previous } = content as Record<string, unknown>;
+    if (typeof hash !== "string" || typeof mxc !== "string") return undefined;
+    return typeof previous === "string" ? { hash, mxc, previous } : { hash, mxc };
 }
 
 export async function hashWoka(wokaDataUrl: string): Promise<string> {
@@ -84,8 +89,10 @@ export async function saveWokaAvatar(client: MatrixClient, wokaDataUrl: string):
     const picture = await renderWokaAvatar(wokaDataUrl);
     if (!picture) return;
     const { content_uri: mxc } = await client.uploadContent(picture, { name: "woka.png", type: "image/png" });
+    // Remembered before the profile changes, so a save cut off in between is recognised as Universe's own next time.
+    const record: SavedWokaAvatar = profile.avatar_url ? { hash, mxc, previous: profile.avatar_url } : { hash, mxc };
+    await client.setAccountData(WOKA_AVATAR_ACCOUNT_DATA as never, record as never);
     await client.setAvatarUrl(mxc);
-    await client.setAccountData(WOKA_AVATAR_ACCOUNT_DATA as never, { hash, mxc } as never);
 }
 
 /** After a failed save (offline, server busy), it's tried again after these waits, then left until the woka changes. */

@@ -26,6 +26,11 @@ describe("shouldSaveWokaAvatar", () => {
         expect(shouldSaveWokaAvatar("mxc://x/woka", saved, "old")).toBe(false);
     });
 
+    it("finishes a save that was cut off before the profile picture was set", () => {
+        const cutOff = { hash: "new", mxc: "mxc://x/new-woka", previous: "mxc://x/woka" };
+        expect(shouldSaveWokaAvatar("mxc://x/woka", cutOff, "new")).toBe(true);
+    });
+
     it("keeps a picture they chose in another chat app", () => {
         expect(shouldSaveWokaAvatar("mxc://x/photo", saved, "new")).toBe(false);
         expect(shouldSaveWokaAvatar("mxc://x/photo", undefined, "new")).toBe(false);
@@ -35,6 +40,11 @@ describe("shouldSaveWokaAvatar", () => {
 describe("parseSavedWokaAvatar", () => {
     it("reads only a complete record", () => {
         expect(parseSavedWokaAvatar({ hash: "h", mxc: "mxc://x/y" })).toEqual({ hash: "h", mxc: "mxc://x/y" });
+        expect(parseSavedWokaAvatar({ hash: "h", mxc: "mxc://x/y", previous: "mxc://x/p" })).toEqual({
+            hash: "h",
+            mxc: "mxc://x/y",
+            previous: "mxc://x/p",
+        });
         expect(parseSavedWokaAvatar({ hash: "h" })).toBeUndefined();
         expect(parseSavedWokaAvatar(undefined)).toBeUndefined();
     });
