@@ -880,6 +880,31 @@ describe('MCPConnector', () => {
             warnSpy.mockRestore();
         });
 
+        it('gives the retry after a failed call only the time left of Patience', async () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            mockedAxios.post
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                // The first call fails after 10 s without reaching the server: the session is dropped, so it retries
+                .mockImplementationOnce(
+                    () => new Promise((_resolve, reject) => setTimeout(() => reject(makeAxiosError(502)), 10_000))
+                )
+                .mockResolvedValueOnce(MOCK_INIT_RESPONSE)
+                .mockImplementationOnce(hangUntilAborted);
+
+            let result: any;
+            void MCPConnector.executeToolCall('s', URL_, 'render', {}, 'none', undefined, undefined, 'p-5', undefined, 15_000)
+                .then((r) => (result = r));
+
+            await vi.advanceTimersByTimeAsync(14_999);
+            expect(result).toBeUndefined();
+            await vi.advanceTimersByTimeAsync(1);
+            expect(result?.error).toContain('Tool unavailable');
+            expect(mockedAxios.post).toHaveBeenCalledTimes(4);
+            warnSpy.mockRestore();
+            errorSpy.mockRestore();
+        });
+
         it('keeps the default timeout when the bot has no Patience set', async () => {
             const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
             mockedAxios.post.mockResolvedValueOnce(MOCK_INIT_RESPONSE).mockImplementationOnce(hangUntilAborted);
