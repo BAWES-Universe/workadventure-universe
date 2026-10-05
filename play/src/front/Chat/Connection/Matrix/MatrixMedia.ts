@@ -82,14 +82,16 @@ export function holdMatrixMedia(client: MatrixClient, source: unknown, mimetype?
     }
     let kept = keptFiles.get(mxcUrl);
     if (!kept) {
-        const forget = () => keptFiles.delete(mxcUrl);
-        kept = {
-            url: encrypted
-                ? fetchEncryptedMatrixMedia(client, encrypted, mimetype, forget)
-                : fetchMatrixMedia(client, mxcUrl, forget),
-            holders: 0,
+        const file: KeptFile = { url: Promise.resolve(undefined), holders: 0 };
+        // Only this fetch's own entry: after a release and a new fetch, a late failure mustn't drop the new one.
+        const forget = () => {
+            if (keptFiles.get(mxcUrl) === file) keptFiles.delete(mxcUrl);
         };
-        keptFiles.set(mxcUrl, kept);
+        keptFiles.set(mxcUrl, file);
+        file.url = encrypted
+            ? fetchEncryptedMatrixMedia(client, encrypted, mimetype, forget)
+            : fetchMatrixMedia(client, mxcUrl, forget);
+        kept = file;
     }
     kept.holders++;
     const held = kept;

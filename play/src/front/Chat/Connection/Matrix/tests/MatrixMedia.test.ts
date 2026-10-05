@@ -233,6 +233,37 @@ describe("resolveMatrixMediaUrl", () => {
 
         await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:https://play.test/let-go"));
     });
+
+    it("a late failure of a released file's old fetch keeps the new one", async () => {
+        let failFirst: (error: Error) => void = () => undefined;
+        fetchMock.mockImplementationOnce(
+            () =>
+                new Promise((_, reject) => {
+                    failFirst = reject;
+                })
+        );
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/late");
+        URL.revokeObjectURL = vi.fn();
+        const client = fakeClient();
+
+        const first = resolveMatrixMediaUrl(client, "mxc://matrix.test/late");
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/late-${i}`)
+            )
+        );
+        // Released and shown again: a second fetch replaces the first.
+        const hold = holdMatrixMedia(client, "mxc://matrix.test/late");
+        await hold.url;
+        failFirst(new TypeError("Failed to fetch"));
+        await first;
+
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/late");
+        expect(fetchMock).not.toHaveBeenCalled();
+        hold.release();
+    });
 });
 
 describe("matrixAvatarStore", () => {
