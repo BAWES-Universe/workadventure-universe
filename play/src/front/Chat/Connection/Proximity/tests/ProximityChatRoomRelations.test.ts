@@ -167,6 +167,23 @@ describe("Nearby chat reactions and replies", () => {
         expect(get(last().canReply)).toBe(true);
     });
 
+    it("shows a message sent twice once, but still shows someone else's message that reuses its id", () => {
+        const sara = { sender: "room_3", spaceMessage: { message: "hi", name: "Sara", id: SARA_MESSAGE_ID } };
+        fake.emit("spaceMessage", sara);
+        fake.emit("spaceMessage", sara);
+        expect(conversation()).toHaveLength(1);
+
+        fake.emit("spaceMessage", {
+            sender: "room_4",
+            spaceMessage: { message: "fake", name: "Omar", id: SARA_MESSAGE_ID },
+        });
+        expect(conversation()).toHaveLength(2);
+        expect(conversation()[0].id).toBe(SARA_MESSAGE_ID);
+        expect(get(conversation()[0].content).body).toBe("hi");
+        expect(last().id).not.toBe(SARA_MESSAGE_ID);
+        expect(get(last().canReact)).toBe(false);
+    });
+
     it("takes no reactions on a message that came without a usable id (bots, older games)", () => {
         fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "beep", name: "Bot" } });
         expect(get(last().canReact)).toBe(false);

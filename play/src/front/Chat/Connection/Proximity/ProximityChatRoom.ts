@@ -609,6 +609,15 @@ export class ProximityChatRoom implements ChatRoom {
             return;
         }
 
+        // The same message from the same sender again (a resend) is already here. Someone else reusing that id still
+        // gets their message shown, under a local id below, so they can't hide or take over the original.
+        if (isUsableSharedId(sharedId)) {
+            const existing = this.messages.get(sharedId);
+            if (existing?.sender?.spaceUserId === senderUserId) {
+                return;
+            }
+        }
+
         // Determine message type from media
         let messageType: ChatMessageType = "proximity";
         const hasGallery = galleryUrls && galleryUrls.length > 0;
