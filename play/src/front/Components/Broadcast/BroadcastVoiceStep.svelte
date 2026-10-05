@@ -159,8 +159,10 @@
             return;
         }
         error = undefined;
+        // The take being saved reads `chosen` before this pick counts, so it is dropped instead of shown first.
+        const stopping = recorder ? stopRecording(false) : undefined;
         const mine = ++chosen;
-        if (recorder) await stopRecording(false);
+        if (stopping) await stopping;
         try {
             const { levels, duration } = await describeAudioFile(file);
             // Another file was picked while this one decoded: the later pick wins.
