@@ -113,7 +113,8 @@
             </div>
         {/if}
 
-        {#if $streamableCollectionStore.size > 0 && $highlightedEmbedScreen && !$playerMovedInTheLast10Seconds}
+        <!-- Over the phone's chat sheet there is no room to show anyone big: they stay in the rows above it. -->
+        {#if $streamableCollectionStore.size > 0 && $highlightedEmbedScreen && !$playerMovedInTheLast10Seconds && !sheetOpen}
             <div
                 id="highlighted-media"
                 class="md:mb-0"

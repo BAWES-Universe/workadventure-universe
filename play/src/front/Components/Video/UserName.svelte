@@ -16,16 +16,16 @@
     export let position = "";
     export let grayscale = false;
     export let isBlocked = false;
-    /** A small round face (phones): the Woka alone when the camera is off, nothing over the video when it's on. */
+    /** A small video: the Woka alone when the camera is off, nothing over the video when it's on. */
     export let pictureOnly = false;
 </script>
 
 {#if pictureOnly}
-    <!-- No name on a face, but screen readers still say who it is. -->
+    <!-- No name on a small video, but screen readers still say who it is. -->
     <span class="sr-only">{name}</span>
     {#if isCameraDisabled || isBlocked}
         <div class="absolute inset-0 z-30 flex items-center justify-center" style="image-rendering:pixelated">
-            <div class="w-2/3">
+            <div class="h-2/3 aspect-square">
                 <Woka src={$picture ?? ""} customWidth="100%" {grayscale} />
             </div>
         </div>
