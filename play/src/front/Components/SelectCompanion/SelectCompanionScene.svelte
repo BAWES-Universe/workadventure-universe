@@ -64,15 +64,22 @@
     function confirm() {
         if (saving) return;
         saving = true;
+        // A save that fails leaves the screen usable, so Continue can be pressed again.
         if (selected) {
             analyticsClient.selectCompanion();
             companionScene()
                 .selectCompanion(selected.id)
-                .catch((e) => console.error(e));
+                .catch((e) => {
+                    console.error(e);
+                    saving = false;
+                });
         } else {
             companionScene()
                 .noCompagnion()
-                .catch((e) => console.error(e));
+                .catch((e) => {
+                    console.error(e);
+                    saving = false;
+                });
         }
     }
 
