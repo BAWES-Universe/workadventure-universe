@@ -12,7 +12,12 @@
     import { chatFloatInsetStore, chatSidebarWidthStore, chatCarriesItsCloseStore } from "./ChatSidebarWidthStore";
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
-    import { chatSheetHeightStore, chatSheetLayoutStore, chatSheetSnapStore } from "./ChatSheetStore";
+    import {
+        chatSheetHeightStore,
+        chatSheetLayoutStore,
+        chatSheetSnapStore,
+        keepChatSheetRest,
+    } from "./ChatSheetStore";
     import {
         CHAT_SHEET_CLOSE_DISTANCE,
         CHAT_SHEET_SIZES,
@@ -264,12 +269,12 @@
         const kept = clampHeight(height, $windowSize.height, CHAT_SHEET_SIZES);
         sheetDragHeight = undefined;
         leaveBubbleHeight();
-        chatSheetSnapStore.set(kept / $windowSize.height);
+        keepChatSheetRest(kept / $windowSize.height);
     }
 
     function onSheetTap() {
         leaveBubbleHeight();
-        chatSheetSnapStore.set(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
+        keepChatSheetRest(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }
 </script>
 

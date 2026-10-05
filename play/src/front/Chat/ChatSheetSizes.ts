@@ -49,3 +49,13 @@ export function chatSheetFitHeight(
     const { full } = getSnapHeights(viewportHeight, CHAT_SHEET_SIZES);
     return Math.min(Math.max(current, current + missing), Math.max(current, full));
 }
+
+/**
+ * Reads where the sheet was left on this device (kept in the browser), or undefined when nothing usable is kept.
+ * "peek" is never kept: only the video layout lowers the sheet that far, and the chat should open readable.
+ */
+export function parseChatSheetRest(stored: string | null): ChatSheetRest | undefined {
+    if (stored === "half" || stored === "full") return stored;
+    const share = Number(stored);
+    return stored !== null && stored !== "" && Number.isFinite(share) && share > 0 && share <= 1 ? share : undefined;
+}

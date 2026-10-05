@@ -7,6 +7,7 @@ import {
     CHAT_SHEET_TOP_GAP,
     chatSheetFitHeight,
     chatSheetRestingHeight,
+    parseChatSheetRest,
 } from "../../../Chat/ChatSheetSizes";
 
 const sizes: SheetSizes = { peek: () => 64, topGap: 96 };
@@ -62,5 +63,15 @@ describe("BottomSheet", () => {
         expect(chatSheetFitHeight(287, 150, 200, 844)).toBe(287 + 200 + CHAT_SHEET_FIT_MARGIN - 150);
         // Never past full.
         expect(chatSheetFitHeight(287, 150, 2000, 844)).toBe(844 - CHAT_SHEET_TOP_GAP);
+    });
+
+    it("reads where the chat sheet was left on this device, ignoring anything unusable", () => {
+        expect(parseChatSheetRest("0.42")).toBe(0.42);
+        expect(parseChatSheetRest("full")).toBe("full");
+        expect(parseChatSheetRest("peek")).toBeUndefined();
+        expect(parseChatSheetRest(null)).toBeUndefined();
+        expect(parseChatSheetRest("")).toBeUndefined();
+        expect(parseChatSheetRest("7")).toBeUndefined();
+        expect(parseChatSheetRest("abc")).toBeUndefined();
     });
 });
