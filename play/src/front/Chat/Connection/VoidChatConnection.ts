@@ -9,6 +9,7 @@ import type {
     ConnectionStatus,
     ChatUser,
     ChatRoomMembershipManagement,
+    ChatPresence,
 } from "./ChatConnection";
 
 export class VoidChatConnection implements ChatConnectionInterface {
@@ -25,6 +26,15 @@ export class VoidChatConnection implements ChatConnectionInterface {
     folders: Readable<RoomFolder[]> = writable([]);
     shouldRetrySendingEvents: Readable<boolean> = writable(false);
     retrySendingEvents: () => Promise<void> = () => Promise.resolve();
+    ignoredUsers: Readable<string[]> = readable([]);
+
+    userPresence(): Readable<ChatPresence> {
+        return readable("offline");
+    }
+
+    setUserIgnored(): Promise<void> {
+        return Promise.resolve();
+    }
 
     createRoom(roomOptions: CreateRoomOptions): Promise<{ room_id: string }> {
         throw new Error("VoidChatConnection: createRoom is not implemented.");

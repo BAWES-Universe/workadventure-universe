@@ -1,5 +1,5 @@
 import type { Readable, Unsubscriber, Writable } from "svelte/store";
-import { derived, get, writable } from "svelte/store";
+import { derived, get, readable, writable } from "svelte/store";
 import type {
     EmittedEvents,
     ICreateRoomOpts,
@@ -36,6 +36,7 @@ import { canAcceptVerificationRequest } from "matrix-js-sdk/lib/crypto-api";
 import { asError } from "catch-unknown";
 import type {
     ChatConnectionInterface,
+    ChatPresence,
     ChatRoom,
     ChatRoomMembershipManagement,
     ChatUser,
@@ -51,7 +52,7 @@ import { MatrixChatRoom } from "./MatrixChatRoom";
 import type { MatrixSecurity } from "./MatrixSecurity";
 import { matrixSecurity as defaultMatrixSecurity } from "./MatrixSecurity";
 import { MatrixRoomFolder } from "./MatrixRoomFolder";
-import { chatUserFactory, mapMatrixPresenceToAvailabilityStatus } from "./MatrixChatUser";
+import { chatUserFactory, mapMatrixPresenceToAvailabilityStatus, toChatPresence } from "./MatrixChatUser";
 
 const CLIENT_NOT_INITIALIZED_ERROR_MSG = "MatrixClient not yet initialized";
 export const defaultWoka =
@@ -88,6 +89,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     >();
     folders: Readable<MatrixRoomFolder[]>;
     directRoomsUsers: Readable<ChatUser[]>;
+    private readonly _ignoredUsers = writable<string[]>([]);
+    readonly ignoredUsers: Readable<string[]> = { subscribe: this._ignoredUsers.subscribe };
     clientPromise: Promise<MatrixClient>;
     shouldRetrySendingEvents: Readable<boolean>;
 
@@ -259,6 +262,7 @@ export class MatrixChatConnection implements ChatConnectionInterface {
                 case SyncState.Prepared:
                     this.connectionStatus.set("ONLINE");
                     this.isClientReady = true;
+                    this._ignoredUsers.set(this.client.getIgnoredUsers());
                     break;
                 case SyncState.Error:
                     this.connectionStatus.set("ON_ERROR");
@@ -395,6 +399,9 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     }
 
     private onAccountDataEvent(event: MatrixEvent) {
+        if (event.getType() === EventType.IgnoredUserList) {
+            this._ignoredUsers.set(this.client?.getIgnoredUsers() ?? []);
+        }
         if (event.getType() === "m.push_rules") {
             const content = event.getContent();
 
@@ -960,6 +967,31 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             .map((room) => room);
         if (directRooms.length > 0) return directRooms[0];
         return undefined;
+    }
+
+    userPresence(userChatId: string): Readable<ChatPresence> {
+        return readable<ChatPresence>(toChatPresence(this.client?.getUser(userChatId)?.presence), (set) => {
+            const client = this.client;
+            if (!client) return;
+            set(toChatPresence(client.getUser(userChatId)?.presence));
+            const onPresence = (_event: MatrixEvent | undefined, user: User) => {
+                if (user.userId === userChatId) set(toChatPresence(user.presence));
+            };
+            client.on(UserEvent.Presence, onPresence);
+            return () => {
+                client.off(UserEvent.Presence, onPresence);
+            };
+        });
+    }
+
+    async setUserIgnored(userChatId: string, ignored: boolean): Promise<void> {
+        if (!this.client) throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
+        const current = this.client.getIgnoredUsers();
+        const next = ignored
+            ? Array.from(new Set([...current, userChatId]))
+            : current.filter((userId) => userId !== userChatId);
+        await this.client.setIgnoredUsers(next);
+        this._ignoredUsers.set(next);
     }
 
     async searchChatUsers(searchText: string, limit = 20) {
