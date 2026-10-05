@@ -4,6 +4,7 @@ import { areaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceNa
 import {
     checkSpaceJoin,
     SpaceJoinRefusedError,
+    toServerSpaceName,
     toWorldSpaceName,
     WORLD_SPACE_NAME,
 } from "../../src/pusher/services/SpaceJoinPolicy";
@@ -20,7 +21,7 @@ function socketData(
     granted: string[] = [],
     megaphoneChannels: Map<string, boolean> | undefined = new Map([[MEGAPHONE, true]])
 ) {
-    return { grantedBubbleSpaces: new Set(granted), megaphoneChannels, roomId: ROOM };
+    return { grantedBubbleSpaces: new Set(granted), megaphoneChannels };
 }
 
 function join(localSpaceName: string, filterType = FilterType.ALL_USERS, propertiesToSync: string[] = []) {
@@ -111,15 +112,8 @@ describe("checkSpaceJoin", () => {
         it.each([
             ["a meeting room", areaSpaceName("Meeting room", ROOM), FilterType.ALL_USERS],
             ["a speaker zone", areaSpaceName("Stage", ROOM), FilterType.LIVE_STREAMING_USERS],
-        ])("lets a player into %s of their room", (_label, name, filterType) => {
+        ])("lets a player into %s", (_label, name, filterType) => {
             expect(() => checkSpaceJoin(join(name, filterType, MEDIA), socketData())).not.toThrow();
-        });
-
-        it.each([
-            ["a meeting room", areaSpaceName("Meeting room", PRIVATE_ROOM), FilterType.ALL_USERS],
-            ["a speaker zone", areaSpaceName("Stage", PRIVATE_ROOM), FilterType.LIVE_STREAMING_USERS],
-        ])("refuses %s of another room", (_label, name, filterType) => {
-            expect(() => checkSpaceJoin(join(name, filterType, MEDIA), socketData())).toThrow(/in another room/);
         });
     });
 
@@ -142,5 +136,35 @@ describe("checkSpaceJoin", () => {
 describe("toWorldSpaceName", () => {
     it("prefixes the name with the world, as the pusher names spaces", () => {
         expect(toWorldSpaceName("my-world", BUBBLE)).toBe(`my-world.${BUBBLE}`);
+    });
+});
+
+describe("toServerSpaceName", () => {
+    const inRoom = { world: "team~world", roomId: ROOM };
+    const inPrivateRoom = { world: "team~world", roomId: PRIVATE_ROOM };
+
+    it("puts the world in front of the spaces every room of the world shares", () => {
+        expect(toServerSpaceName(inRoom, WORLD_SPACE_NAME)).toBe(toWorldSpaceName("team~world", WORLD_SPACE_NAME));
+        expect(toServerSpaceName(inRoom, "my-script-space")).toBe(toServerSpaceName(inPrivateRoom, "my-script-space"));
+    });
+
+    it("keeps meeting rooms and speaker zones in the player's own room", () => {
+        const privateStage = areaSpaceName("Stage", PRIVATE_ROOM);
+        // A player in ROOM asking for the private room's stage by its exact name still lands in a space of ROOM.
+        expect(toServerSpaceName(inRoom, privateStage)).not.toBe(toServerSpaceName(inPrivateRoom, privateStage));
+    });
+
+    it("gives every player of a room the same meeting room", () => {
+        const stage = areaSpaceName("Stage", ROOM);
+        expect(toServerSpaceName(inRoom, stage)).toBe(toServerSpaceName({ ...inRoom }, stage));
+        expect(toServerSpaceName(inRoom, stage).startsWith("team~world.area__")).toBe(true);
+    });
+
+    it("never gives a meeting room the name of another space", () => {
+        const stage = areaSpaceName("Stage", ROOM);
+        const serverName = toServerSpaceName(inRoom, stage);
+        const localPart = serverName.slice("team~world.".length);
+        // Sending the server name's own local part does not reach the same space: the room is added again.
+        expect(toServerSpaceName(inRoom, localPart)).not.toBe(serverName);
     });
 });
