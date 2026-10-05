@@ -55,7 +55,10 @@
     let fileInput: HTMLInputElement;
 
     let opening = false;
-    /** Bumped when a file is chosen, so a microphone granted after that is let go instead of replacing the file. */
+    /**
+     * Bumped when a file is chosen or a recording starts, so whichever came last wins: a microphone granted after a
+     * file was picked is let go, and a file decoded after "Record again" is dropped instead of covering a live take.
+     */
     let chosen = 0;
 
     /** @param keepReview "Record again": the review (and its recording) stays on screen until the microphone is granted. */
@@ -64,7 +67,7 @@
         opening = true;
         error = undefined;
         if (!keepReview) state = "starting";
-        const mine = chosen;
+        const mine = ++chosen;
         let started: VoiceRecorder;
         try {
             started = await startVoiceRecorder();
