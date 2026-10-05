@@ -7,7 +7,7 @@
         type McpServerTestResult,
     } from "../services/BotApiService";
     import PageButton from "./page/PageButton.svelte";
-    import { IconPlus, IconTool } from "@wa-icons";
+    import { IconChevronDown, IconPlus, IconTool } from "@wa-icons";
 
     export let botId: string;
     /** Told the servers after every load, so the Tools group can say what the bot has. */
@@ -39,6 +39,8 @@
 
     // Test connection state
     let testingServerId: string | null = null;
+    /** The server opened to show its tools and actions; one at a time. */
+    let openServerId: string | null = null;
     let testError: Record<string, string> = {};
 
     // Remove confirmation state
@@ -602,20 +604,20 @@
         }
     }
 
+    /** One line under a server's name: what it gives the bot, or why it doesn't. */
+    function statusLine(server: McpServer): string {
+        const result = server.lastTestResult;
+        if (server.authType === "oauth" && !server.oauthConnected) return "Needs you to connect it";
+        if (!result) return "Not tested yet";
+        if (!result.success) return testError[server.id] || result.error || "Can't connect";
+        const count = result.toolCount ?? 0;
+        return `${count} tool${count !== 1 ? "s" : ""} · Connected`;
+    }
+
     function getStatusDot(server: McpServer): string {
         const result = server.lastTestResult;
         if (!result) return "untested";
         return result.success ? "ok" : "failed";
-    }
-
-    function getToolCount(server: McpServer): string {
-        const result = server.lastTestResult;
-        if (!result) return "";
-        if (result.success) {
-            const count = result.toolCount ?? 0;
-            return `${count} tool${count !== 1 ? "s" : ""}`;
-        }
-        return testError[server.id] || result.error || "Error";
     }
 </script>
 
@@ -636,98 +638,95 @@
             <span class="mcp-ico"><IconTool font-size="20" /></span>
             <div class="mcp-tx">
                 <div class="mcp-t">No tools yet</div>
-                <div class="mcp-m">Tools let it look things up or make things</div>
+                <div class="mcp-m mcp-wrap">Tools let it look things up or make things</div>
             </div>
             <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
         </div>
     {:else}
+        <!-- The list's own heading carries Add, so it sits where the list starts rather than after it -->
+        <div class="mcp-head">
+            <span class="mcp-label">{servers.length === 1 ? "1 tool server" : `${servers.length} tool servers`}</span>
+            <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
+        </div>
         {#each servers as server (server.id)}
-            <div class="mcp-server">
-                <div class="mcp-row">
+            {@const expanded = openServerId === server.id}
+            <div class="mcp-server" class:expanded>
+                <button
+                    type="button"
+                    class="mcp-row mcp-toggle"
+                    aria-expanded={expanded}
+                    on:click={() => (openServerId = expanded ? null : server.id)}
+                >
                     <span class="mcp-ico">
                         <IconTool font-size="20" />
-                        <i
-                            class="mcp-dot {getStatusDot(server)}"
-                            title={server.lastTestResult?.success
-                                ? "Connected"
-                                : server.lastTestResult
-                                ? "Error"
-                                : "Untested"}
-                        />
+                        <i class="mcp-dot {getStatusDot(server)}" />
                     </span>
-                    <div class="mcp-tx">
-                        <div class="mcp-t">{server.name}</div>
-                        {#if server.lastTestResult && !server.lastTestResult.success}
-                            <div class="mcp-m mcp-bad" title={testError[server.id] || server.lastTestResult.error}>
-                                {getToolCount(server)}
-                            </div>
-                        {:else}
-                            <div class="mcp-m">
-                                {server.lastTestResult?.success ? `${getToolCount(server)} · ` : ""}{server.serverUrl}
+                    <span class="mcp-tx">
+                        <span class="mcp-t">{server.name}</span>
+                        <span class="mcp-m" class:mcp-bad={getStatusDot(server) === "failed"}>{statusLine(server)}</span
+                        >
+                    </span>
+                    <span class="mcp-chev"><IconChevronDown font-size="18" /></span>
+                </button>
+                {#if expanded}
+                    <div class="mcp-body">
+                        <div class="mcp-url" title={server.serverUrl}>{server.serverUrl}</div>
+                        {#if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
+                            <div class="mcp-tools" aria-label="Available tools">
+                                {#each server.lastTestResult.toolNames as toolName (toolName)}
+                                    <span>{toolName}</span>
+                                {/each}
                             </div>
                         {/if}
-                    </div>
-                </div>
-                <div class="mcp-actions">
-                    {#if server.authType !== "none"}
-                        <span class="mcp-tag">{server.authType}</span>
-                    {/if}
-                    <!-- Test Connection button — hidden for OAuth servers until connected -->
-                    {#if server.authType !== "oauth" || server.oauthConnected}
-                        <button
-                            type="button"
-                            class="mcp-chip"
-                            on:click={() => handleTestConnection(server.id)}
-                            disabled={testingServerId === server.id}
-                        >
-                            {testingServerId === server.id ? "Testing..." : "Test"}
-                        </button>
-                    {/if}
-                    <!-- OAuth Connect button — hidden after connected -->
-                    {#if server.authType === "oauth" && !server.oauthConnected}
-                        <button
-                            type="button"
-                            class="mcp-chip mcp-good"
-                            on:click={() => handleOAuthConnect(server.id)}
-                            disabled={oauthConnectingServerId !== null}
-                        >
-                            {oauthConnectingServerId === server.id ? "Connecting..." : "Connect OAuth"}
-                        </button>
-                    {/if}
-                    {#if server.authType === "oauth" && server.oauthConnected}
-                        <span class="mcp-tag mcp-good">Connected ✓</span>
-                    {/if}
-                    <button type="button" class="mcp-chip" on:click={() => openEditModal(server)}>Edit</button>
-                    <!-- Remove with inline confirmation -->
-                    {#if removingServerId === server.id}
-                        <span class="mcp-m">Remove {server.name}?</span>
-                        <button
-                            type="button"
-                            class="mcp-chip mcp-bad"
-                            on:click={() => handleRemoveServer(server.id)}
-                            disabled={removingLoading}
-                        >
-                            Yes
-                        </button>
-                        <button type="button" class="mcp-chip" on:click={() => (removingServerId = null)}>No</button>
-                    {:else}
-                        <button type="button" class="mcp-chip mcp-bad" on:click={() => (removingServerId = server.id)}>
-                            Remove
-                        </button>
-                    {/if}
-                </div>
-                {#if server.lastTestResult?.success && server.lastTestResult?.toolNames?.length > 0}
-                    <div class="mcp-tools" aria-label="Available tools">
-                        {#each server.lastTestResult.toolNames as toolName (toolName)}
-                            <span>{toolName}</span>
-                        {/each}
+                        <div class="mcp-actions">
+                            {#if server.authType !== "oauth" || server.oauthConnected}
+                                <button
+                                    type="button"
+                                    class="mcp-chip"
+                                    on:click={() => handleTestConnection(server.id)}
+                                    disabled={testingServerId === server.id}
+                                >
+                                    {testingServerId === server.id ? "Testing..." : "Test"}
+                                </button>
+                            {/if}
+                            {#if server.authType === "oauth" && !server.oauthConnected}
+                                <button
+                                    type="button"
+                                    class="mcp-chip mcp-good"
+                                    on:click={() => handleOAuthConnect(server.id)}
+                                    disabled={oauthConnectingServerId !== null}
+                                >
+                                    {oauthConnectingServerId === server.id ? "Connecting..." : "Connect"}
+                                </button>
+                            {/if}
+                            <button type="button" class="mcp-chip" on:click={() => openEditModal(server)}>Edit</button>
+                            {#if removingServerId === server.id}
+                                <span class="mcp-m">Remove {server.name}?</span>
+                                <button
+                                    type="button"
+                                    class="mcp-chip mcp-bad"
+                                    on:click={() => handleRemoveServer(server.id)}
+                                    disabled={removingLoading}
+                                >
+                                    Yes
+                                </button>
+                                <button type="button" class="mcp-chip" on:click={() => (removingServerId = null)}
+                                    >No</button
+                                >
+                            {:else}
+                                <button
+                                    type="button"
+                                    class="mcp-chip mcp-bad"
+                                    on:click={() => (removingServerId = server.id)}
+                                >
+                                    Remove
+                                </button>
+                            {/if}
+                        </div>
                     </div>
                 {/if}
             </div>
         {/each}
-        <div class="mcp-add">
-            <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
-        </div>
     {/if}
 </div>
 
@@ -1046,11 +1045,28 @@
         flex-direction: column;
         gap: 6px;
     }
+    /* The list's heading: how many, and Add */
+    .mcp-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 0 0 0 8px;
+    }
+    .mcp-label {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    /* A server is one row; tapping it shows its tools and what you can do with it */
     .mcp-server {
         display: flex;
         flex-direction: column;
-        gap: 6px;
-        padding-bottom: 6px;
+        border-radius: 12px;
+    }
+    .mcp-server.expanded {
+        background: rgba(255, 255, 255, 0.06);
+        padding-bottom: 10px;
     }
     .mcp-row {
         display: flex;
@@ -1059,8 +1075,46 @@
         padding: 6px 8px;
         border-radius: 12px;
     }
-    .mcp-server .mcp-row {
-        background: rgba(255, 255, 255, 0.08);
+    .mcp-toggle {
+        width: 100%;
+        margin: 0;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        color: #fff;
+        text-align: start;
+        cursor: pointer;
+    }
+    @media (hover: hover) {
+        .mcp-server:not(.expanded) .mcp-toggle:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+    }
+    .mcp-toggle:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: -2px;
+    }
+    .mcp-chev {
+        flex: none;
+        display: grid;
+        color: rgba(255, 255, 255, 0.5);
+        transition: transform 150ms ease;
+    }
+    .expanded .mcp-chev {
+        transform: rotate(180deg);
+    }
+    .mcp-body {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 2px 10px 0 50px;
+    }
+    .mcp-url {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        color: rgba(244, 242, 250, 0.5);
     }
     /* Plain white icon, like the menu: no tile behind it. */
     .mcp-ico {
@@ -1091,6 +1145,8 @@
         background: #ff705c;
     }
     .mcp-tx {
+        display: flex;
+        flex-direction: column;
         flex: 1;
         min-width: 0;
     }
@@ -1099,6 +1155,9 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+    }
+    .mcp-tx .mcp-wrap {
+        white-space: normal;
     }
     .mcp-t {
         font-size: 14px;
@@ -1120,7 +1179,6 @@
         flex-wrap: wrap;
         align-items: center;
         gap: 6px;
-        padding-left: 50px;
     }
     .mcp-chip {
         display: inline-flex;
@@ -1159,24 +1217,10 @@
         outline: 2px solid #a78bfa;
         outline-offset: 2px;
     }
-    .mcp-tag {
-        font-size: 10.5px;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: rgba(244, 242, 250, 0.42);
-    }
-    .mcp-tag.mcp-good {
-        color: #6ee7b7;
-        text-transform: none;
-        letter-spacing: 0;
-        font-size: 12.5px;
-    }
     .mcp-tools {
         display: flex;
         flex-wrap: wrap;
         gap: 4px;
-        padding-left: 50px;
     }
     .mcp-tools span {
         padding: 2px 8px;
@@ -1184,10 +1228,6 @@
         background: rgba(52, 211, 153, 0.1);
         font-size: 11px;
         color: rgba(110, 231, 183, 0.85);
-    }
-    .mcp-add {
-        display: flex;
-        justify-content: flex-end;
     }
     .mcp-loading .mcp-tx {
         display: flex;
