@@ -11,6 +11,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
+    import { showUndoToast } from "../../../Stores/EditModeStore";
     import type { AreaPreview } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
     import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
@@ -106,7 +107,9 @@
 
     function refresh() {
         if (!preview) return;
-        properties = preview.getProperties();
+        // A copy, as in the store subscription above: a setting page binds its fields to the open property, and
+        // updateProperty must see the area's live data unchanged to snapshot the old state for undo.
+        properties = structuredClone(preview.getProperties());
     }
 
     function tool(): AreaEditorTool | undefined {
@@ -209,8 +212,10 @@
 
     function deleteArea() {
         if (!preview) return;
+        const name = preview.getAreaData().name || $LL.mapEditor.edit.deleteTool.area();
         tool()?.handleDeleteAreaFrontCommandExecution(preview.getId());
         tool()?.deselectArea?.();
+        showUndoToast($LL.mapEditor.edit.deleteTool.removed({ name }));
     }
 </script>
 
