@@ -184,9 +184,17 @@ export class AreaEditorTool extends MapEditorTool {
      * Removes the area and shows the "removed · Undo" toast, but only once it really goes: a personal area with
      * objects inside asks first, and a cancelled ask removes nothing and shows nothing.
      */
-    public handleDeleteAreaFrontCommandExecution(areaId: string, editorTool?: AreaEditorTool | TrashEditorTool): void {
+    /** @param onRemoved Runs once the area is really gone, so a removal that asks first and is cancelled leaves everything as it was. */
+    public handleDeleteAreaFrontCommandExecution(
+        areaId: string,
+        editorTool?: AreaEditorTool | TrashEditorTool,
+        onRemoved?: () => void
+    ): void {
         const name = this.getAreaPreviewConfig(areaId)?.name || get(LL).mapEditor.edit.deleteTool.area();
-        const removed = () => showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
+        const removed = () => {
+            showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
+            onRemoved?.();
+        };
         const isPersonalArea = this.getIsPersonalArea(areaId);
         const deleteAreaCommand = new DeleteAreaFrontCommand(
             this.scene.getGameMap(),
