@@ -31,9 +31,12 @@ export const AUDIO_MESSAGE_ID_REGEX = new RegExp(
 
 // Browsers derive the MIME type of a picked file from its extension, and some
 // of them report these containers as video even when they only hold audio.
+const OGG_MIME_TYPES = ["video/ogg", "application/ogg"];
 const EXTRA_MIME_TYPES: Partial<Record<AudioExtension, string[]>> = {
   webm: ["video/webm"],
-  ogg: ["video/ogg", "application/ogg"],
+  ogg: OGG_MIME_TYPES,
+  oga: OGG_MIME_TYPES,
+  opus: OGG_MIME_TYPES,
 };
 
 export function getAudioExtension(

@@ -32,6 +32,8 @@ describe("validateAudioMessage", () => {
     ["voice.ogg", "audio/ogg", SAMPLES.ogg, "ogg"],
     ["voice.ogg", "video/ogg", SAMPLES.ogg, "ogg"],
     ["voice.oga", "audio/ogg", SAMPLES.ogg, "oga"],
+    ["voice.oga", "application/ogg", SAMPLES.ogg, "oga"],
+    ["voice.opus", "video/ogg", SAMPLES.ogg, "opus"],
     ["voice.opus", "audio/opus", SAMPLES.ogg, "opus"],
     ["voice.flac", "audio/flac", SAMPLES.flac, "flac"],
     ["voice.m4a", "audio/x-m4a", SAMPLES.m4a, "m4a"],
