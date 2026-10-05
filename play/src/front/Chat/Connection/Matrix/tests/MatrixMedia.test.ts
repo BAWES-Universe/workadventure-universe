@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MatrixClient } from "matrix-js-sdk";
-import { MAX_KEPT_MEDIA, resolveMatrixMediaUrl } from "../MatrixMedia";
+import { MAX_KEPT_MEDIA, holdMatrixMedia, resolveMatrixMediaUrl } from "../MatrixMedia";
 
 function fakeClient(accessToken: string | null = "token"): MatrixClient {
     return {
@@ -147,5 +147,54 @@ describe("resolveMatrixMediaUrl", () => {
         fetchMock.mockClear();
         await resolveMatrixMediaUrl(client, "mxc://matrix.test/recent-kept");
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("never releases a file that is still shown", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/held");
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        const client = fakeClient();
+
+        const hold = holdMatrixMedia(client, "mxc://matrix.test/held");
+        await hold.url;
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/other");
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA + 5 }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/held-other-${i}`)
+            )
+        );
+        await Promise.resolve();
+        expect(revoke).not.toHaveBeenCalledWith("blob:https://play.test/held");
+
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/held");
+        expect(fetchMock).not.toHaveBeenCalled();
+        hold.release();
+    });
+
+    it("releases a file once it is no longer shown and the limit is reached", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/let-go");
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        const client = fakeClient();
+
+        const hold = holdMatrixMedia(client, "mxc://matrix.test/let-go");
+        await hold.url;
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/other");
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/let-go-other-${i}`)
+            )
+        );
+        hold.release();
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/let-go-later-${i}`)
+            )
+        );
+
+        await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:https://play.test/let-go"));
     });
 });
