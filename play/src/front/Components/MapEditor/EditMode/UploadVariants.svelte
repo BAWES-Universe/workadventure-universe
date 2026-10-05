@@ -120,8 +120,11 @@
 
     async function add(files: FileList | null) {
         const file = files?.item(0);
-        // The upload as it is now: someone else may delete it while the picture is being read.
+        // The upload, colour and side as they are now: someone else may delete the upload, and the chips stay
+        // live, while the picture is being read.
         const upload = first;
+        const chosenColor = selectedColor;
+        const side = SIDES.find((each) => each.direction === targetDirection) ?? SIDES[0];
         if (!file || !upload) return;
         if (!ENTITY_UPLOAD_SUPPORTED_FORMATS_FRONT.includes(file.type) || file.type.trim() === "") {
             error = $LL.mapEditor.entityEditor.uploadEntity.errorOnFileFormat();
@@ -156,14 +159,13 @@
             });
             return;
         }
-        const side = SIDES.find((each) => each.direction === targetDirection) ?? SIDES[0];
         const id = uuidv4();
         const buffer = await file.arrayBuffer();
         if (first?.id !== upload.id) {
             error = $LL.mapEditor.edit.variants.gone();
             return;
         }
-        busy = { color: selectedColor, direction: side.direction };
+        busy = { color: chosenColor, direction: side.direction };
         previewDirection = side.direction;
         mapEditorEntityUploadEventStore.set({
             id,
@@ -174,7 +176,7 @@
             imagePath: `${id}-${file.name}`,
             collisionGrid: upload.collisionGrid,
             depthOffset: upload.depthOffset,
-            color: selectedColor,
+            color: chosenColor,
             variantOf: upload.id,
         });
     }
