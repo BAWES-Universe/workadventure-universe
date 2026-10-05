@@ -1,116 +1,337 @@
 <script lang="ts">
+    import { onDestroy, onMount } from "svelte";
+    import type { CompanionTexture } from "@workadventure/messages";
     import { LL } from "../../../i18n/i18n-svelte";
     import type { Game } from "../../Phaser/Game/Game";
     import type { SelectCompanionScene } from "../../Phaser/Login/SelectCompanionScene";
     import { SelectCompanionSceneName } from "../../Phaser/Login/SelectCompanionScene";
-    import { collectionsSizeStore, selectedCollection } from "../../Stores/SelectCharacterSceneStore";
+    import { gameManager } from "../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
-    import { IconChevronLeft, IconChevronRight } from "@wa-icons";
+    import { localUserStore } from "../../Connection/LocalUserStore";
+    import { companionCollectionsStore } from "../../Stores/SelectCompanionStore";
+    import MyWoka from "../Join/MyWoka.svelte";
+    import SheetSprite from "../Join/SheetSprite.svelte";
+    import { getWokaTextureUrl } from "../Woka/WokaData";
+    import { IconBan, IconCheck, IconPaw, IconX } from "@wa-icons";
 
     export let game: Game;
 
-    const selectCompanionScene = game.scene.getScene(SelectCompanionSceneName) as SelectCompanionScene;
+    // The scene may not exist yet when the screen opens from the menu: look it up when a button needs it
+    function companionScene(): SelectCompanionScene {
+        return game.scene.getScene(SelectCompanionSceneName) as SelectCompanionScene;
+    }
+    // Opened from the game's menu: the round close leads back into the room with the companion unchanged
+    const canGoBack = gameManager.canResumeGame;
 
-    /*function selectLeft() {
-        selectCompanionScene.moveToLeft();
+    $: collections = $companionCollectionsStore ?? [];
+
+    function findCompanion(id: string | null): { collectionIndex: number; texture: CompanionTexture } | undefined {
+        if (!id) return undefined;
+        for (const [collectionIndex, collection] of collections.entries()) {
+            const texture = collection.textures.find((t) => t.id === id);
+            if (texture) return { collectionIndex, texture };
+        }
+        return undefined;
     }
 
-    function selectRight() {
-        selectCompanionScene.moveToRight();
-    }*/
+    let collectionIndex = 0;
+    let selected: CompanionTexture | null = null;
+    let initialised = false;
 
-    function noCompanion() {
-        selectCompanionScene.noCompagnion().catch((e) => console.error(e));
+    // Opens on the companion you have (or None) once the catalog is in; it is no longer cleared when the screen opens
+    $: if (!initialised && $companionCollectionsStore) {
+        initialised = true;
+        const current = findCompanion(localUserStore.getCompanionTextureId());
+        collectionIndex = current?.collectionIndex ?? 0;
+        selected = current?.texture ?? null;
+    }
+    let saving = false;
+
+    // The walkers and tiles are drawn at whole multiples of 32px so the pixels stay crisp
+    const desktopQuery = window.matchMedia("(min-width: 768px)");
+    let isDesktop = desktopQuery.matches;
+    $: walkerSize = isDesktop ? 128 : 96;
+    $: tileSpriteSize = isDesktop ? 64 : 56;
+
+    $: textures = collections[collectionIndex]?.textures ?? [];
+    // None, then the collection's companions: what the arrow keys walk through
+    $: choices = [null, ...textures] as (CompanionTexture | null)[];
+
+    function choose(texture: CompanionTexture | null) {
+        selected = texture;
     }
 
-    function selectCompanion() {
-        selectCompanionScene.selectCompanion().catch((e) => console.error(e));
+    function confirm() {
+        if (saving) return;
+        saving = true;
+        if (selected) {
+            analyticsClient.selectCompanion();
+            companionScene()
+                .selectCompanion(selected.id)
+                .catch((e) => console.error(e));
+        } else {
+            companionScene()
+                .noCompagnion()
+                .catch((e) => console.error(e));
+        }
     }
 
-    function selectLeftCollection() {
-        selectCompanionScene.selectPreviousCompanionCollection();
+    function back() {
+        companionScene().closeScene();
     }
 
-    function selectRightCollection() {
-        selectCompanionScene.selectNextCompanionCollection();
+    function columns(): number {
+        return isDesktop ? 4 : 3;
     }
+
+    let enterPressed = false;
+
+    function onKeyDown(event: KeyboardEvent) {
+        if (event.target instanceof HTMLInputElement) return;
+        const index = choices.findIndex((choice) => choice?.id === selected?.id);
+        let next = index;
+        // Your companion is in another collection: the arrows start on this collection's first companion,
+        // rather than landing on None
+        if (index === -1 && event.key.startsWith("Arrow")) next = Math.min(1, choices.length - 1);
+        else if (event.key === "ArrowLeft") next = Math.max(index - 1, 0);
+        else if (event.key === "ArrowRight") next = Math.min(index + 1, choices.length - 1);
+        else if (event.key === "ArrowUp") next = Math.max(index - columns(), 0);
+        else if (event.key === "ArrowDown") next = Math.min(index + columns(), choices.length - 1);
+        else if (event.key === "Enter") {
+            enterPressed = true;
+            return;
+        } else if (event.key === "Escape" && canGoBack) {
+            back();
+            return;
+        } else return;
+        event.preventDefault();
+        if (next !== index) {
+            choose(choices[next]);
+            document.getElementById(`companion-${choices[next]?.id ?? "none"}`)?.focus();
+        }
+    }
+
+    function onKeyUp(event: KeyboardEvent) {
+        // On key up, so the Enter that saves does not reach the next screen
+        if (event.key === "Enter" && enterPressed) {
+            enterPressed = false;
+            confirm();
+        }
+    }
+
+    onMount(() => {
+        document.addEventListener("keydown", onKeyDown);
+        document.addEventListener("keyup", onKeyUp);
+    });
+
+    onDestroy(() => {
+        document.removeEventListener("keydown", onKeyDown);
+        document.removeEventListener("keyup", onKeyUp);
+    });
 </script>
 
-<section class="text-center absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[calc(50%+20vh)] h-16">
-    <span class="text-white text-lg bold">
-        {$LL.companion.select.title()}
-    </span>
-</section>
-<section class="category flex flex-row justify-center">
-    {#if $collectionsSizeStore > 1 && $selectedCollection}
-        <button class="light mr-2 selectCharacterButton" on:click|preventDefault={selectLeftCollection}>
-            <IconChevronLeft />
-        </button>
-        <strong class="category-text">{$selectedCollection}</strong>
-        <button class="outline ml-2 selectCharacterButton" on:click|preventDefault={selectRightCollection}>
-            <IconChevronRight />
-        </button>
-    {/if}
-</section>
+<div class="fixed inset-0 z-10 companion-backdrop" />
+
 <div
-    class="fixed bottom-0 w-full bg-contrast/80 backdrop-blur-md border border-solid border-t border-b-0 border-x-0 border-white/10"
+    class="selectCompanionScene pointer-events-auto relative z-30 min-h-dvh flex md:items-center md:justify-center md:p-6"
 >
-    <section
-        class="action container m-auto p-4 flex flex-col-reverse md:flex-row items-center space-y-2 md:space-y-0 md:space-x-4 justify-between"
+    <div
+        class="u-join-card w-full md:w-[1000px] md:max-w-full min-h-dvh md:min-h-0 !rounded-none md:!rounded-[24px] flex flex-col"
     >
-        <button
-            class="btn btn-light btn-lg btn-ghost w-full md:w-1/2 block selectCompanionSceneFormBack"
-            on:click|preventDefault={noCompanion}>{$LL.companion.select.any()}</button
+        {#if canGoBack}
+            <button
+                type="button"
+                class="u-close u-join-x selectCompanionSceneClose !top-3.5 !right-3 md:!top-4 md:!right-4"
+                aria-label={$LL.companion.select.close()}
+                title={$LL.companion.select.close()}
+                on:click={back}
+            >
+                <IconX font-size="20" />
+            </button>
+        {/if}
+
+        <div
+            class="flex flex-col md:flex-row gap-3 md:gap-7 px-4 pt-[18px] md:px-7 md:pt-7 pb-28 md:pb-0 flex-1 min-h-0"
         >
-        <button
-            type="submit"
-            class="btn btn-secondary btn-lg w-full md:w-1/2 block selectCompanionSceneFormSubmit"
-            on:click|preventDefault={() => analyticsClient.selectCompanion()}
-            on:click|preventDefault={selectCompanion}>{$LL.companion.select.continue()}</button
-        >
-    </section>
+            <header class="flex flex-col gap-1 md:hidden {canGoBack ? 'pe-12' : ''}">
+                <span class="u-eyebrow">{$LL.companion.select.eyebrow()}</span>
+                <h2 class="u-join-title">{$LL.companion.select.heading()}</h2>
+            </header>
+
+            <!-- Your WOKA and the companion, walking -->
+            <div class="flex flex-col gap-3 md:w-[380px] md:flex-none">
+                <div class="u-join-room h-[200px] md:h-[300px]">
+                    <div class="u-join-room-wall" />
+                    <div class="u-join-room-floor" />
+                    <div class="companion-walkers absolute left-1/2 -translate-x-1/2 bottom-[16%] flex items-end">
+                        {#if selected}
+                            <SheetSprite
+                                url={getWokaTextureUrl(selected.url)}
+                                size={Math.round(walkerSize * 0.8)}
+                                row={2}
+                                walking
+                            />
+                        {/if}
+                        <MyWoka size={walkerSize} direction={2} />
+                    </div>
+                </div>
+                <div class="hidden md:flex items-center gap-2.5">
+                    <span class="companion-badge">
+                        {#if selected}<IconPaw font-size="22" />{:else}<IconBan font-size="22" />{/if}
+                    </span>
+                    <div class="grid gap-px min-w-0">
+                        <b class="text-[17px] text-white truncate">{selected?.name ?? $LL.companion.select.none()}</b>
+                        <span class="u-join-hint !text-[13px]"
+                            >{selected ? $LL.companion.select.follows() : $LL.companion.select.noneHint()}</span
+                        >
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-2 min-w-0 flex-1 md:pe-10">
+                <header class="hidden md:flex flex-col gap-1.5">
+                    <span class="u-eyebrow">{$LL.companion.select.eyebrow()}</span>
+                    <h2 class="u-join-title">{$LL.companion.select.heading()}</h2>
+                </header>
+                {#if collections.length > 1}
+                    <div class="flex gap-1.5 overflow-x-auto md:mt-1.5 companion-pills" role="tablist">
+                        {#each collections as collection, index (collection.name)}
+                            <button
+                                type="button"
+                                role="tab"
+                                class="u-join-pill"
+                                aria-selected={index === collectionIndex}
+                                on:click={() => (collectionIndex = index)}
+                            >
+                                {collection.name}
+                                <b class="companion-count">{collection.textures.length}</b>
+                            </button>
+                        {/each}
+                    </div>
+                {/if}
+                <div
+                    class="grid grid-cols-3 md:grid-cols-4 gap-2 md:mt-3"
+                    role="radiogroup"
+                    aria-label={$LL.companion.select.heading()}
+                >
+                    <button
+                        type="button"
+                        role="radio"
+                        id="companion-none"
+                        class="u-join-tile selectCompanionSceneFormBack"
+                        aria-checked={selected === null}
+                        on:click={() => choose(null)}
+                    >
+                        <span class="flex flex-col items-center gap-0.5 text-white/60 text-xs font-bold">
+                            <IconBan font-size="28" />
+                            {$LL.companion.select.none()}
+                        </span>
+                        {#if selected === null}<span class="u-join-tile-check"><IconCheck font-size="12" /></span>{/if}
+                    </button>
+                    {#each textures as texture (texture.id)}
+                        <button
+                            type="button"
+                            role="radio"
+                            id="companion-{texture.id}"
+                            class="u-join-tile !pb-[18px]"
+                            aria-checked={selected?.id === texture.id}
+                            aria-label={texture.name}
+                            on:click={() => choose(texture)}
+                        >
+                            <SheetSprite url={getWokaTextureUrl(texture.url)} size={tileSpriteSize} />
+                            <span class="companion-name">{texture.name}</span>
+                            {#if selected?.id === texture.id}
+                                <span class="u-join-tile-check"><IconCheck font-size="12" /></span>
+                            {/if}
+                        </button>
+                    {/each}
+                </div>
+            </div>
+        </div>
+
+        <footer class="companion-footer">
+            <span class="u-join-hint hidden md:inline-flex items-center gap-1 me-auto">
+                <span class="u-join-kbd">←</span>
+                <span class="u-join-kbd">→</span>
+                {$LL.companion.select.browse()} ·
+                <span class="u-join-kbd">Enter</span>
+                {$LL.companion.select.continueHint()}
+            </span>
+            <button
+                type="button"
+                class="u-join-btn u-cta w-full md:w-auto md:min-w-[180px] selectCompanionSceneFormSubmit"
+                disabled={saving}
+                on:click={confirm}
+            >
+                <span class="md:hidden"
+                    >{selected
+                        ? $LL.companion.select.continueWith({ name: selected.name })
+                        : $LL.companion.select.continue()}</span
+                >
+                <span class="hidden md:inline">{$LL.companion.select.continue()}</span>
+            </button>
+        </footer>
+    </div>
 </div>
 
-<!--<form class="selectCompanionScene">-->
-<!--    <section class="text-center">-->
-<!--        <h2 class="text-white text-2xl">{$LL.companion.select.title()}</h2>-->
-<!--        {#if $collectionsSizeStore > 1 && $selectedCollection}-->
-<!--            <button-->
-<!--                class="outline mr-2 selectCompanionCollectionButton selectCharacterButtonLeft"-->
-<!--                on:click|preventDefault={selectLeftCollection}-->
-<!--            >-->
-<!--                &lt;-->
-<!--            </button>-->
-<!--            <strong class="category-text">{$selectedCollection}</strong>-->
-<!--            <button-->
-<!--                class="outline ml-2 selectCompanionCollectionButton selectCompanionButtonRight"-->
-<!--                on:click|preventDefault={selectRightCollection}-->
-<!--            >-->
-<!--                &gt;-->
-<!--            </button>-->
-<!--        {/if}-->
-<!--        <button class="outline selectCharacterButton selectCharacterButtonLeft" on:click|preventDefault={selectLeft}>-->
-<!--            &lt;-->
-<!--        </button>-->
-<!--        <button class="outline selectCharacterButton selectCharacterButtonRight" on:click|preventDefault={selectRight}>-->
-<!--            &gt;-->
-<!--        </button>-->
-<!--    </section>-->
-<!--    <section class="action flex flex-row justify-center">-->
-<!--        <button class="outline mr-2 selectCompanionSceneFormBack" on:click|preventDefault={noCompanion}-->
-<!--            >{$LL.companion.select.any()}</button-->
-<!--        >-->
-<!--        <button-->
-<!--            type="submit"-->
-<!--            class="light ml-2 selectCompanionSceneFormSubmit"-->
-<!--            on:click|preventDefault={() => analyticsClient.selectWoka()}-->
-<!--            on:click|preventDefault={selectCompanion}>{$LL.companion.select.continue()}</button-->
-<!--        >-->
-<!--    </section>-->
+<svelte:window on:resize={() => (isDesktop = desktopQuery.matches)} />
 
-<!--</form>-->
 <style lang="scss">
-    button {
-        pointer-events: auto;
+    .companion-backdrop {
+        background: radial-gradient(ellipse at 50% 0%, rgba(134, 41, 252, 0.18), transparent 60%), #000;
+    }
+    /* A plain white icon, as in the menu: no box, so it does not read as a button */
+    .companion-badge {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 1.5rem;
+        color: #fff;
+    }
+    .companion-name {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 6px;
+        overflow: hidden;
+        padding: 0 4px;
+        text-align: center;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.75);
+    }
+    .companion-count {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.55);
+    }
+    .u-join-pill[aria-selected="true"] .companion-count {
+        color: rgba(255, 255, 255, 0.85);
+    }
+    .companion-pills {
+        scrollbar-width: none;
+    }
+    .companion-footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.625rem;
+        padding: 1.125rem 1.75rem;
+        margin-top: 1rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    @media (max-width: 767px) {
+        .companion-footer {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 4;
+            margin: 0;
+            padding: 0.75rem 1rem 1.375rem;
+            border-top: 0;
+            background: linear-gradient(180deg, rgb(20 18 30 / 0), rgb(20 18 30 / 0.96) 26%);
+        }
     }
 </style>
