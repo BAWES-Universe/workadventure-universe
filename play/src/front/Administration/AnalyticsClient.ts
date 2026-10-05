@@ -421,14 +421,6 @@ class AnalyticsClient {
             .catch((e) => console.error(e));
     }
 
-    menuContact(): void {
-        this.posthogPromise
-            ?.then((posthog) => {
-                posthog.capture("wa_menu_contact");
-            })
-            .catch((e) => console.error(e));
-    }
-
     inviteCopyLink(): void {
         this.posthogPromise
             ?.then((posthog) => {

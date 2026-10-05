@@ -61,7 +61,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         calmMap: "安静地图（无动画）",
         pictureInPicture: "画中画",
         mapCredits: "地图版权信息",
-        contact: "联系",
         report: "报告问题",
         back: "返回",
         close: "关闭",
@@ -111,17 +110,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         error: "未选择文件。发送前必须上传一个文件。",
         errorUpload: "上传文件错误。 请检查您的文件，然后重试。 如果问题仍然存在，请联系管理员。",
     },
-    contact: {
-        gettingStarted: {
-            title: "开始",
-            description:
-                "Universe使你能够创建一个在线空间，与他们自然地交流。这都从创建你自己的空间开始。从我们的团队预制的大量选项中选择一个地图。",
-        },
-        createMap: {
-            title: "创建地图",
-            description: "你也可以跟随文档中的步骤创建你自己的地图。",
-        },
-    },
     about: {
         mapInfo: "地图信息",
         mapLink: "地图链接",
@@ -146,7 +134,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "邀请",
         credit: "信用",
         globalMessages: "全局消息",
-        contact: "联系",
         report: "Report Issues",
     },
 };

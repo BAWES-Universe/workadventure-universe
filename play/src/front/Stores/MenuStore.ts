@@ -6,7 +6,6 @@ import { connectionManager } from "../Connection/ConnectionManager";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import {
-    CONTACT_URL,
     ENABLE_OPENID,
     ENABLE_REPORT_ISSUES_MENU,
     OPID_PROFILE_SCREEN_PROVIDER,
@@ -62,7 +61,6 @@ export enum SubMenusInterface {
     invite = "invite",
     aboutRoom = "credit",
     globalMessages = "globalMessages",
-    contact = "contact",
     report = "report",
     chat = "chat",
     shortcuts = "shortcuts",
@@ -95,7 +93,6 @@ export const screenSharingActivatedStore = writable(true);
 export const mapEditorActivatedForCurrentArea = writable(false);
 export const mapEditorActivatedForThematics = writable(false);
 export const roomListActivated = writable(true);
-export const contactPageStore = writable<string | undefined>(CONTACT_URL);
 
 const alwaysVisible = writable(true);
 
@@ -125,11 +122,6 @@ function createSubMenusStore() {
             type: "translated",
             key: SubMenusInterface.chat,
             visible: isMatrixChatEnabledStore,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.contact,
-            visible: derived(contactPageStore, ($contactPageStore) => $contactPageStore !== undefined),
         },
         {
             type: "translated",

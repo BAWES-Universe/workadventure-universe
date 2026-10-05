@@ -99,7 +99,6 @@ const menu: BaseTranslation = {
         calmMap: "Calm map (no animations)",
         pictureInPicture: "Picture in picture",
         mapCredits: "Map credits",
-        contact: "Contact",
         report: "Report a problem",
         back: "Back",
         close: "Close",
@@ -126,17 +125,6 @@ const menu: BaseTranslation = {
         errorUpload:
             "Uploading file error. Please check your file and try again. If the problem persists, contact the administrator.",
         dragAndDrop: "Drag and drop or click here to upload your file 🎧",
-    },
-    contact: {
-        gettingStarted: {
-            title: "Getting started",
-            description:
-                "Universe allows you to create an online space to communicate spontaneously with others. And it all starts with creating your own space. Choose from a large selection of prefabricated maps by our team.",
-        },
-        createMap: {
-            title: "Create your map",
-            description: "You can also create your own custom map by following the step of the documentation.",
-        },
     },
     about: {
         mapInfo: "Information on the map",
@@ -175,7 +163,6 @@ const menu: BaseTranslation = {
         invite: "Share",
         credit: "Credit",
         globalMessages: "Global Messages",
-        contact: "Contact",
         report: "Report Issues",
         chat: "Chat",
         help: "Help & tutorials",

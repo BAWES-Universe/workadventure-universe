@@ -63,7 +63,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         calmMap: "خريطة هادئة (بدون حركة)",
         pictureInPicture: "صورة داخل صورة",
         mapCredits: "حقوق الخريطة",
-        contact: "تواصل معنا",
         report: "الإبلاغ عن مشكلة",
         back: "رجوع",
         close: "إغلاق",
@@ -127,17 +126,6 @@ const menu: DeepPartial<Translation["menu"]> = {
             "خطأ في رفع الملف. يرجى التحقق من ملفك والمحاولة مرة أخرى. إذا استمرت المشكلة، يرجى الاتصال بالمسؤول.", // Error uploading file. Please check your file and try again. If the problem persists, contact the administrator.
         dragAndDrop: "اسحب الملف هنا أو انقر لرفعه 🎧", // Drag and drop file here or click to upload 🎧
     },
-    contact: {
-        gettingStarted: {
-            title: "البدء", // Getting started
-            description:
-                "مع Universe يمكنك إنشاء عالم عبر الإنترنت حيث يمكنك الاجتماع والتحدث مع الآخرين بشكل عفوي. ابدأ بإنشاء خريطتك الخاصة. يتوفر لك مجموعة كبيرة من الخرائط الجاهزة من فريقنا.", // With Universe you can create an online world where you can meet and talk to others spontaneously. Start by creating your own map. A large selection of ready-made maps from our team is available to you.
-        },
-        createMap: {
-            title: "إنشاء خريطة خاصة", // Create your own map
-            description: "يمكنك أيضًا إنشاء خريطتك الخاصة. اتبع دليلنا خطوة بخطوة.", // You can also create your own map. Follow our step-by-step guide.
-        },
-    },
     chat: {
         matrixIDLabel: "معرّف Matrix الخاص بك",
         settings: "الإعدادات",
@@ -175,7 +163,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "دعوة", // Invite
         credit: "حول هذه الخريطة", // About this map
         globalMessages: "رسائل عالمية", // Global messages
-        contact: "اتصال", // Contact
         report: "الإبلاغ عن خطأ", // Report an error
         chat: "الدردشة",
         help: "مساعدة وشروحات",
