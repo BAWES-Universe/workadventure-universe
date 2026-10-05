@@ -24,6 +24,11 @@ const say: DeepPartial<Translation["say"]> = {
         loweredByModerator: "أنزل أحد المشرفين يدك",
         lowerSomeone: "أنزل اليد",
         lowerAll: "أنزل كل الأيدي",
+        handUpOf: "رفع {name} يده، رقم {position} في الدور",
+        raisedCount: "{count} مرفوعة",
+        listTitle: "الأيدي المرفوعة",
+        listOpen: "عرض الأيدي المرفوعة",
+        you: "أنت",
     },
     express: {
         button: "عبّر عن نفسك",

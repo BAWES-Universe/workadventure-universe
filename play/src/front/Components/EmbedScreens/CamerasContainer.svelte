@@ -54,6 +54,7 @@
     import { windowSize } from "../../Stores/CoWebsiteStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import { LL } from "../../../i18n/i18n-svelte";
+    import RaisedHandsPill from "../Video/RaisedHandsPill.svelte";
     import { PHONE_VIDEO_GAP, phoneVideoLayout, type PhoneVideoLayout } from "./PhoneVideoLayout";
     import ResizeHandle from "./ResizeHandle.svelte";
 
@@ -492,6 +493,13 @@
             </div>
         {/if}
     </div>
+    {#if oneLineMode === "horizontal" && !sheetOpen && !($highlightFullScreen && $highlightedEmbedScreen)}
+        <!-- Under the videos, left of the white bar: who is waiting to speak. With the phone's chat sheet open it is in
+             the chat's header instead (ProximityThreadTitle). -->
+        <div class="raised-hands-anchor">
+            <div class="raised-hands-spot pointer-events-none"><RaisedHandsPill /></div>
+        </div>
+    {/if}
     <!-- With the chat sheet open, its handle sizes the videos instead. -->
     {#if !isOnOneLine && !sheetOpen}
         <ResizeHandle
@@ -515,6 +523,20 @@
 
 <!-- && !$megaphoneEnabledStore TODO HUGO -->
 <style lang="scss">
+    .raised-hands-anchor {
+        position: relative;
+        height: 0;
+    }
+    /* Left of the white bar (160px wide, centred under the videos), so it stays with the videos on any width. */
+    .raised-hands-spot {
+        position: absolute;
+        top: 4px;
+        left: 8px;
+        right: calc(50% + 92px);
+        z-index: 50;
+        display: flex;
+        justify-content: flex-end;
+    }
     .hidden {
         display: none !important;
     }

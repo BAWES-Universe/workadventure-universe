@@ -12,7 +12,7 @@
     import type { StreamOriginCategory } from "../../Stores/StreamableCollectionStore";
     import RangeSlider from "../Input/RangeSlider.svelte";
     import { raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
-    import { IconAlertTriangle, IconHandStop, IconUser, IconMute, IconUnMute } from "@wa-icons";
+    import { IconAlertTriangle, IconUser, IconMute, IconUnMute } from "@wa-icons";
 
     export let spaceUser: SpaceUserExtended;
     export let videoEnabled: boolean;
@@ -168,7 +168,7 @@
             data-testid="lower-hand-user"
             on:click|preventDefault|stopPropagation={() => lowerHand(spaceUser)}
         >
-            <IconHandStop class="w-4 h-4 text-white flex-shrink-0" />
+            <span class="hand-emoji" aria-hidden="true">✊</span>
             {$LL.say.raiseHand.lowerSomeone()}
         </button>
     {/if}
@@ -180,7 +180,7 @@
             data-testid="lower-all-hands"
             on:click|preventDefault|stopPropagation={() => lowerAllHands(spaceUser)}
         >
-            <IconHandStop class="w-4 h-4 text-white flex-shrink-0" />
+            <span class="hand-emoji" aria-hidden="true">✊</span>
             {$LL.say.raiseHand.lowerAll()}
         </button>
     {/if}
@@ -282,3 +282,15 @@
         {$LL.camera.menu.blockOrReportUser()}
     </button>
 </div>
+
+<style>
+    /* The hand emojis match the ✋ button: ✊ is a lowered hand. */
+    .hand-emoji {
+        display: inline-flex;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 1rem;
+        font-size: 0.875rem;
+        line-height: 1rem;
+    }
+</style>

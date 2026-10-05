@@ -24,6 +24,11 @@ const say: BaseTranslation = {
         loweredByModerator: "A moderator lowered your hand",
         lowerSomeone: "Lower hand",
         lowerAll: "Lower all hands",
+        handUpOf: "{name} raised their hand, number {position:number} in line",
+        raisedCount: "{count:number} raised",
+        listTitle: "Raised hands",
+        listOpen: "Show raised hands",
+        you: "You",
     },
     express: {
         button: "Express yourself",

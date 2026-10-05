@@ -7,6 +7,8 @@
     import { oneLineStreamableCollectionStore } from "../../Stores/OneLineStreamableCollectionStore";
     import { playerMovedInTheLast10Seconds } from "../../Stores/VideoLayoutStore";
     import LL from "../../../i18n/i18n-svelte";
+    import { raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+    import { localUserStore } from "../../Connection/LocalUserStore";
     import { IconMicrophoneOff } from "@wa-icons";
 
     export let videoBox: VideoBox;
@@ -31,6 +33,18 @@
     $: hasAudioStore = $streamable?.hasAudio;
     $: muted = face && mutedStore && hasAudioStore ? $mutedStore && $hasAudioStore : false;
     $: name = videoBox.spaceUser.name;
+    // A raised hand shows on the person's camera (ours is "-1"), not on their screen share: a gold edge, unless they
+    // are talking (blue wins), and their place in line on the top-left corner, like on the ✋ button.
+    // Our own camera is made before we know our uuid: read it when the hands change.
+    // The box is passed in so the position follows a new videoBox too.
+    const handUuid = (box: VideoBox): string | undefined =>
+        box.uniqueId === "-1"
+            ? localUserStore.getLocalUser()?.uuid
+            : box.uniqueId === box.spaceUser.spaceUserId
+            ? box.spaceUser.uuid
+            : undefined;
+    $: handPosition = $raisedHandsStore.find((hand) => hand.uuid !== "" && hand.uuid === handUuid(videoBox))?.position;
+    $: speaking = voiceStore ? $voiceStore : false;
 
     const streamable = videoBox.streamable;
     const orderStore = videoBox.displayOrder;
@@ -58,9 +72,21 @@
         class:aspect-video={videoHeight === undefined}
         class:video-face={face}
         class:talking
+        class:hand-up={handPosition !== undefined && !speaking}
         class:behind-more={$orderStore >= shownCount}
     >
         <MediaBox {videoBox} />
+        {#if handPosition !== undefined}
+            <span
+                class="hand-chip"
+                role="img"
+                aria-label={$LL.say.raiseHand.handUpOf({ name, position: handPosition })}
+                data-testid="video-hand-position"
+                ><span class="hand-chip-emoji" aria-hidden="true">✋</span>{#if handPosition > 0}<span
+                        aria-hidden="true">{handPosition}</span
+                    >{/if}</span
+            >
+        {/if}
         {#if face}
             <!-- Shown on hover (desktop). Drawn from the attribute: screen readers and searches already find the name
                  once, in the face. -->
@@ -82,7 +108,7 @@
         border-radius: 9999px;
         overflow: visible !important;
     }
-    .video-face > :global(*:not(.face-name):not(.face-muted)) {
+    .video-face > :global(*:not(.face-name):not(.face-muted):not(.hand-chip)) {
         clip-path: inset(0 round 9999px);
     }
     .face-muted {
@@ -152,6 +178,53 @@
         border-radius: inherit;
         box-shadow: inset 0 0 0 3px #4156f6;
         pointer-events: none;
+    }
+    /* A raised hand: the gold of the ✋ button, drawn over the picture like the talking ring. */
+    .hand-up {
+        position: relative;
+    }
+    .hand-up::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 30;
+        border-radius: 0.5rem;
+        box-shadow: inset 0 0 0 3px #f5c451;
+        pointer-events: none;
+    }
+    .video-face.hand-up::after {
+        border-radius: inherit;
+    }
+    /* The ✋ and the place in line, in the map badge's ink and gold (✋ is yellow: on gold it would vanish). */
+    .hand-chip {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        z-index: 35;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 22px;
+        padding: 0 7px 0 5px;
+        border-radius: 9999px;
+        background: rgb(var(--u-ink) / 0.92);
+        box-shadow: inset 0 0 0 1px rgba(245, 196, 81, 0.85);
+        color: #f5c451;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        pointer-events: none;
+    }
+    .hand-chip-emoji {
+        font-size: 13px;
+    }
+    /* On a face, bottom-left, opposite the mute badge: the row's top edge would cut it. */
+    .video-face .hand-chip {
+        top: auto;
+        bottom: 0;
+        left: -2px;
+        height: 20px;
+        padding: 0 6px 0 4px;
     }
     .behind-more {
         display: none;
