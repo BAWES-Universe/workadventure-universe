@@ -2,7 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import { get } from "svelte/store";
     import LL from "../../../i18n/i18n-svelte";
-    import { editPanelBackStore, editPlacingBarStore } from "../../Stores/EditModeStore";
+    import { editPanelBackStore, editPlacingBarStore, type PlacingBar } from "../../Stores/EditModeStore";
     import { mapEditorVisibilityStore } from "../../Stores/MapEditorStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
     import BotList from "./components/BotList.svelte";
@@ -31,7 +31,7 @@
     import { routeStops } from "./behaviorModel";
     import { getBotEditorTool } from "./phaser/BotEditorTool";
     import { botApiService } from "./services/BotApiService";
-    import { IconArrowBackUp, IconRoute } from "@wa-icons";
+    import { IconArrowBackUp, IconMapPin, IconRoute } from "@wa-icons";
 
     let detailView: BotDetailView | undefined;
     let botEditorTool = getBotEditorTool();
@@ -42,7 +42,6 @@
     let currentMode: BotEditorMode = "list";
     let selectedBot: BotData | null = null;
     let bots: BotData[] = [];
-    let isPlacing = false;
 
     const unsubscribeMode = botEditorModeStore.subscribe((mode) => {
         currentMode = mode;
@@ -249,8 +248,6 @@
 
     let previousPlacingBot: BotData | undefined = undefined;
     const unsubscribePlacing = placingBotStore.subscribe((bot) => {
-        isPlacing = !!bot;
-
         // Capture the previous bot before updating
         const capturedPreviousBot = previousPlacingBot;
         previousPlacingBot = bot;
@@ -605,24 +602,35 @@
             : undefined
     );
 
-    // Editing a route: the bar at the bottom says whose route it is and how many stops it has, with Undo and Done,
-    // and a line at the top says how to add, move and remove stops. The panel tucks away to show the map.
-    let routeBarShown = false;
-    $: syncRouteBar(currentMode === "waypoint-edit" ? selectedBot : null, $routeUndoCountStore, $mobileLayoutStore);
+    // Editing a route or placing a new bot: the panel tucks away to show the map, and the bar at the bottom says
+    // what is going on with its actions (route: whose route and how many stops, with Undo and Done; placing: whose
+    // spot to tap, with Cancel). A line at the top of the map says what to do.
+    let bottomBarShown = false;
+    $: syncBottomBar(
+        currentMode === "waypoint-edit" && selectedBot
+            ? routeBar(selectedBot, $routeUndoCountStore, $mobileLayoutStore)
+            : $placingBotStore
+            ? placeBar($placingBotStore, $mobileLayoutStore)
+            : undefined
+    );
 
-    function syncRouteBar(bot: BotData | null, undoCount: number, phone: boolean) {
-        if (!bot) {
-            hideRouteBar();
+    function syncBottomBar(bar: PlacingBar | undefined) {
+        if (!bar) {
+            hideBottomBar();
             return;
         }
-        if (!routeBarShown) {
-            routeBarShown = true;
+        if (!bottomBarShown) {
+            bottomBarShown = true;
             mapEditorVisibilityStore.set(false);
         }
+        editPlacingBarStore.set(bar);
+    }
+
+    function routeBar(bot: BotData, undoCount: number, phone: boolean): PlacingBar {
         const page = $LL.mapEditor.edit.bots.page;
         const stops = routeStops(bot).length;
         const loops = bot.behaviorConfig.loop !== false;
-        editPlacingBarStore.set({
+        return {
             title: page.route.title({ name: bot.name || "" }),
             subtitle: `${page.moves.stops({ count: stops })} · ${
                 loops ? page.moves.loops() : page.moves.backAndForthBrief()
@@ -640,18 +648,37 @@
                 },
                 { label: page.route.done(), kind: "primary", testId: "bot-route-done", onClick: stopWaypointEditing },
             ],
-        });
+        };
     }
 
-    function hideRouteBar() {
-        if (!routeBarShown) return;
-        routeBarShown = false;
+    // A new bot waits for its spot: the map must stay visible, so the panel never covers it (on a phone it did)
+    function placeBar(bot: BotData, phone: boolean): PlacingBar {
+        const page = $LL.mapEditor.edit.bots.page;
+        return {
+            title: page.place.title({ name: bot.name || "" }),
+            subtitle: phone ? page.place.tap() : page.place.click(),
+            icon: IconMapPin,
+            hint: phone ? page.place.hintPhone() : page.place.hintDesktop(),
+            actions: [
+                {
+                    label: page.place.cancel(),
+                    kind: "secondary",
+                    testId: "bot-place-cancel",
+                    onClick: handleCancelPlacement,
+                },
+            ],
+        };
+    }
+
+    function hideBottomBar() {
+        if (!bottomBarShown) return;
+        bottomBarShown = false;
         editPlacingBarStore.set(undefined);
         mapEditorVisibilityStore.set(true);
     }
 
     onDestroy(() => {
-        hideRouteBar();
+        hideBottomBar();
         editPanelBackStore.set(undefined);
     });
 </script>
@@ -675,37 +702,6 @@
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2" />
                 <p class="text-white/70 text-sm">Loading bots...</p>
             </div>
-        </div>
-    {:else if isPlacing}
-        <!-- Placement Mode UI -->
-        <div class="placement-mode p-4 text-center">
-            <div class="bg-blue-500/20 border border-blue-500/50 rounded-lg p-4 mb-4">
-                <svg class="w-12 h-12 mx-auto mb-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-                    />
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-                    />
-                </svg>
-                <h3 class="text-lg font-semibold text-white mb-2">Place Your Bot</h3>
-                <p class="text-sm text-white/70 mb-4">Click on the map to place the bot at your desired location.</p>
-                <p class="text-xs text-white/50">
-                    Hold <kbd class="px-1 py-0.5 bg-white/10 rounded">Shift</kbd> to snap to grid
-                </p>
-            </div>
-            <button
-                class="px-4 py-2 bg-white/10 text-white rounded hover:bg-white/20 transition-colors"
-                on:click={handleCancelPlacement}
-            >
-                Cancel Placement
-            </button>
         </div>
     {:else if currentMode === "list" || currentMode === "placing"}
         <BotList {bots} onSelectBot={handleSelectBot} onCreateBot={handleCreateBot} />
@@ -731,9 +727,5 @@
 <style>
     .bot-editor {
         color: white;
-    }
-
-    kbd {
-        font-family: monospace;
     }
 </style>
