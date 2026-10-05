@@ -11,7 +11,6 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { AreaEditorTool } from "../../../Phaser/Game/MapEditor/Tools/AreaEditorTool";
     import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
-    import { showUndoToast } from "../../../Stores/EditModeStore";
     import type { AreaPreview } from "../../../Phaser/Components/MapEditor/AreaPreview";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
     import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
@@ -222,10 +221,9 @@
 
     function deleteArea() {
         if (!preview) return;
-        const name = preview.getAreaData().name || $LL.mapEditor.edit.deleteTool.area();
+        // The tool shows the "removed · Undo" toast itself, once the area really goes (a personal area with objects asks first).
         tool()?.handleDeleteAreaFrontCommandExecution(preview.getId());
         tool()?.deselectArea?.();
-        showUndoToast($LL.mapEditor.edit.deleteTool.removed({ name }));
     }
 </script>
 
