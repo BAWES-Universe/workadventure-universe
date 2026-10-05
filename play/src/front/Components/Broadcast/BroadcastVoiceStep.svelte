@@ -153,6 +153,24 @@
         const file = input.files?.[0];
         input.value = "";
         if (!file) return;
+        await useFile(file);
+    }
+
+    // A sound file dropped on the step is taken like one picked with "Use a file", as the old upload did.
+    function onDragOver(event: DragEvent) {
+        if (!event.dataTransfer?.types.includes("Files")) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+    }
+
+    function onDrop(event: DragEvent) {
+        const file = event.dataTransfer?.files[0];
+        if (!file) return;
+        event.preventDefault();
+        useFile(file).catch((e) => console.error(e));
+    }
+
+    async function useFile(file: File) {
         const looksLikeAudio = FILE_TYPES.includes(file.type) || /\.(mp3|wav|ogg|oga|m4a|aac|webm)$/i.test(file.name);
         if (!looksLikeAudio || file.size > MAX_FILE_BYTES) {
             error = $LL.broadcast.voice.wrongFile();
@@ -225,131 +243,135 @@
     data-testid="broadcast-voice-file"
 />
 
-{#if state === "starting" || state === "recording"}
-    <div class="flex flex-col items-center gap-2 py-2">
-        <div class="text-3xl font-bold tabular-nums leading-none">{formatDuration(seconds)}</div>
-        <WaveBars levels={liveLevels} height={36} />
-        <button
-            type="button"
-            class="u-cta-coral rounded-full grid place-items-center w-[88px] h-[88px] mt-1"
-            on:click={() => stopRecording().catch((e) => console.error(e))}
-            disabled={state !== "recording"}
-            aria-label={$LL.broadcast.voice.recording()}
-            data-testid="broadcast-voice-stop"
-        >
-            <span class="block w-6 h-6 rounded-[4px] bg-white" aria-hidden="true" />
-        </button>
-        <p class="m-0 text-sm text-white/60">{$LL.broadcast.voice.recording()}</p>
-    </div>
-    <div class="flex items-center justify-between gap-3">
-        <span class="text-sm text-white/60">{$LL.broadcast.voice.haveFile()}</span>
-        <button
-            type="button"
-            class="u-cta-secondary rounded-full px-4 py-2.5 text-sm font-bold flex items-center gap-2"
-            on:click={pickFile}
-        >
-            <IconCloudUpload font-size="18" aria-hidden="true" />
-            {$LL.broadcast.voice.useFile()}
-        </button>
-    </div>
-{:else if state === "blocked"}
-    <div class="flex flex-col items-center text-center gap-3 py-4">
-        <span class="grid place-items-center w-14 h-14 rounded-2xl bg-white/5 text-white/60" aria-hidden="true">
-            <IconMicrophone font-size="28" />
-        </span>
-        <p class="m-0 text-sm text-white/70">{$LL.broadcast.voice.micBlocked()}</p>
-        <div class="flex gap-2">
+<!-- Takes the steps' place in the card's column (display: contents) so a file can be dropped on any part of it. -->
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="contents" on:dragover={onDragOver} on:drop={onDrop} data-testid="broadcast-voice-drop">
+    {#if state === "starting" || state === "recording"}
+        <div class="flex flex-col items-center gap-2 py-2">
+            <div class="text-3xl font-bold tabular-nums leading-none">{formatDuration(seconds)}</div>
+            <WaveBars levels={liveLevels} height={36} />
             <button
                 type="button"
-                class="u-cta-secondary rounded-full px-4 py-2.5 text-sm font-bold"
-                on:click={recordAgain}
+                class="u-cta-coral rounded-full grid place-items-center w-[88px] h-[88px] mt-1"
+                on:click={() => stopRecording().catch((e) => console.error(e))}
+                disabled={state !== "recording"}
+                aria-label={$LL.broadcast.voice.recording()}
+                data-testid="broadcast-voice-stop"
             >
-                {$LL.broadcast.voice.recordAgain()}
+                <span class="block w-6 h-6 rounded-[4px] bg-white" aria-hidden="true" />
             </button>
+            <p class="m-0 text-sm text-white/60">{$LL.broadcast.voice.recording()}</p>
+        </div>
+        <div class="flex items-center justify-between gap-3">
+            <span class="text-sm text-white/60">{$LL.broadcast.voice.haveFile()}</span>
             <button
                 type="button"
-                class="u-cta rounded-full px-4 py-2.5 text-sm font-bold flex items-center gap-2"
+                class="u-cta-secondary rounded-full px-4 py-2.5 text-sm font-bold flex items-center gap-2"
                 on:click={pickFile}
             >
                 <IconCloudUpload font-size="18" aria-hidden="true" />
                 {$LL.broadcast.voice.useFile()}
             </button>
         </div>
-    </div>
-{:else if state === "review" && audio}
-    <h3 class="m-0 text-base font-semibold">{$LL.broadcast.voice.listen()}</h3>
-    <div class="flex items-center gap-3 rounded-2xl bg-white/5 border border-white/10 p-3">
-        <button
-            type="button"
-            class="u-cta rounded-full grid place-items-center w-12 h-12 flex-none"
-            on:click={togglePlay}
-            aria-label={playing ? $LL.broadcast.received.pause() : $LL.broadcast.received.play()}
-            data-testid="broadcast-voice-play"
-        >
-            {#if playing}
-                <IconPauseFilled font-size="20" />
-            {:else}
-                <IconPlayFilled font-size="20" />
-            {/if}
-        </button>
-        <WaveBars levels={audio.levels} height={32} classList="flex-1 min-w-0 overflow-hidden" />
-        <span class="text-sm text-white/60 tabular-nums flex-none">{formatDuration(audio.duration)}</span>
-        <audio
-            src={audioUrl}
-            bind:this={player}
-            on:play={() => (playing = true)}
-            on:pause={() => (playing = false)}
-            on:ended={() => (playing = false)}
+    {:else if state === "blocked"}
+        <div class="flex flex-col items-center text-center gap-3 py-4">
+            <span class="grid place-items-center w-14 h-14 rounded-2xl bg-white/5 text-white/60" aria-hidden="true">
+                <IconMicrophone font-size="28" />
+            </span>
+            <p class="m-0 text-sm text-white/70">{$LL.broadcast.voice.micBlocked()}</p>
+            <div class="flex gap-2">
+                <button
+                    type="button"
+                    class="u-cta-secondary rounded-full px-4 py-2.5 text-sm font-bold"
+                    on:click={recordAgain}
+                >
+                    {$LL.broadcast.voice.recordAgain()}
+                </button>
+                <button
+                    type="button"
+                    class="u-cta rounded-full px-4 py-2.5 text-sm font-bold flex items-center gap-2"
+                    on:click={pickFile}
+                >
+                    <IconCloudUpload font-size="18" aria-hidden="true" />
+                    {$LL.broadcast.voice.useFile()}
+                </button>
+            </div>
+        </div>
+    {:else if state === "review" && audio}
+        <h3 class="m-0 text-base font-semibold">{$LL.broadcast.voice.listen()}</h3>
+        <div class="flex items-center gap-3 rounded-2xl bg-white/5 border border-white/10 p-3">
+            <button
+                type="button"
+                class="u-cta rounded-full grid place-items-center w-12 h-12 flex-none"
+                on:click={togglePlay}
+                aria-label={playing ? $LL.broadcast.received.pause() : $LL.broadcast.received.play()}
+                data-testid="broadcast-voice-play"
+            >
+                {#if playing}
+                    <IconPauseFilled font-size="20" />
+                {:else}
+                    <IconPlayFilled font-size="20" />
+                {/if}
+            </button>
+            <WaveBars levels={audio.levels} height={32} classList="flex-1 min-w-0 overflow-hidden" />
+            <span class="text-sm text-white/60 tabular-nums flex-none">{formatDuration(audio.duration)}</span>
+            <audio
+                src={audioUrl}
+                bind:this={player}
+                on:play={() => (playing = true)}
+                on:pause={() => (playing = false)}
+                on:ended={() => (playing = false)}
+            />
+        </div>
+        <div class="flex gap-2">
+            <button
+                type="button"
+                class="u-cta-secondary rounded-full flex-1 py-2.5 text-sm font-bold flex items-center justify-center gap-2"
+                on:click={recordAgain}
+            >
+                <IconMicrophone font-size="18" aria-hidden="true" />
+                {$LL.broadcast.voice.recordAgain()}
+            </button>
+            <button
+                type="button"
+                class="u-cta-secondary rounded-full flex-1 py-2.5 text-sm font-bold flex items-center justify-center gap-2"
+                on:click={pickFile}
+            >
+                <IconCloudUpload font-size="18" aria-hidden="true" />
+                {$LL.broadcast.voice.useFile()}
+            </button>
+        </div>
+        <input
+            type="text"
+            class="u-field"
+            placeholder={$LL.broadcast.voice.caption()}
+            maxlength="200"
+            bind:value={caption}
+            data-testid="broadcast-voice-caption"
         />
-    </div>
-    <div class="flex gap-2">
         <button
             type="button"
-            class="u-cta-secondary rounded-full flex-1 py-2.5 text-sm font-bold flex items-center justify-center gap-2"
-            on:click={recordAgain}
+            class="u-cta rounded-full w-full py-3.5 text-base font-bold flex items-center justify-center gap-2"
+            on:click={send}
+            disabled={sending}
+            data-testid="broadcast-send"
         >
-            <IconMicrophone font-size="18" aria-hidden="true" />
-            {$LL.broadcast.voice.recordAgain()}
+            <IconSpeakerPhone font-size="18" aria-hidden="true" />
+            {$LL.broadcast.reach.sendTo({ reach: reachTitle($LL, reach) })}
         </button>
-        <button
-            type="button"
-            class="u-cta-secondary rounded-full flex-1 py-2.5 text-sm font-bold flex items-center justify-center gap-2"
-            on:click={pickFile}
-        >
-            <IconCloudUpload font-size="18" aria-hidden="true" />
-            {$LL.broadcast.voice.useFile()}
-        </button>
-    </div>
-    <input
-        type="text"
-        class="u-field"
-        placeholder={$LL.broadcast.voice.caption()}
-        maxlength="200"
-        bind:value={caption}
-        data-testid="broadcast-voice-caption"
-    />
-    <button
-        type="button"
-        class="u-cta rounded-full w-full py-3.5 text-base font-bold flex items-center justify-center gap-2"
-        on:click={send}
-        disabled={sending}
-        data-testid="broadcast-send"
-    >
-        <IconSpeakerPhone font-size="18" aria-hidden="true" />
-        {$LL.broadcast.reach.sendTo({ reach: reachTitle($LL, reach) })}
-    </button>
-{/if}
+    {/if}
 
-{#if error}
-    <div class="u-error-line" role="alert">
-        <span class="flex-1">{error}</span>
-        <button
-            type="button"
-            class="u-chip-remove"
-            on:click={() => (error = undefined)}
-            aria-label={$LL.broadcast.close()}
-        >
-            <IconX font-size="14" />
-        </button>
-    </div>
-{/if}
+    {#if error}
+        <div class="u-error-line" role="alert">
+            <span class="flex-1">{error}</span>
+            <button
+                type="button"
+                class="u-chip-remove"
+                on:click={() => (error = undefined)}
+                aria-label={$LL.broadcast.close()}
+            >
+                <IconX font-size="14" />
+            </button>
+        </div>
+    {/if}
+</div>
