@@ -26,6 +26,7 @@
     import Avatar from "../Avatar.svelte";
     import { MatrixChatRoom } from "../../Connection/Matrix/MatrixChatRoom";
     import { openProfileRoomIdStore } from "../../Stores/PartnerProfileStore";
+    import { chatCarriesItsCloseStore } from "../../ChatSidebarWidthStore";
     import Message from "./Message.svelte";
     import MessageInputBar from "./MessageInputBar.svelte";
     import MessageSystem from "./MessageSystem.svelte";
@@ -381,6 +382,11 @@
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center">
                         <RoomMenu room={matrixRoom} inHeader />
                     </div>
+                    <!-- When the chat carries its own close, it sits at this end of the header: keep its place free so
+                         it never covers the menu. -->
+                    {#if $chatCarriesItsCloseStore}
+                        <div class="h-12 w-12 shrink-0" aria-hidden="true" />
+                    {/if}
                 {/if}
             </div>
             {#if shouldDisplayLoader}

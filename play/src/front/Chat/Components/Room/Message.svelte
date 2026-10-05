@@ -365,6 +365,14 @@
             user-select: none;
             -webkit-touch-callout: none;
         }
+
+        /* Except the field you edit a message in: you type, select and move the cursor there. */
+        #message.top-level > .message-grid :global([contenteditable="true"]),
+        #message.top-level > .message-grid :global([contenteditable="true"] *) {
+            -webkit-user-select: text;
+            user-select: text;
+            -webkit-touch-callout: default;
+        }
     }
 
     .swipe-reply {

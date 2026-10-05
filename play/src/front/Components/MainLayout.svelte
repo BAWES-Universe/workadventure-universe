@@ -39,6 +39,7 @@
         hideActionBarStoreBecauseOfChatBar,
     } from "../Chat/ChatSidebarWidthStore";
     import { chatSheetLayoutStore } from "../Chat/ChatSheetStore";
+    import { incomingRingStore } from "../Chat/Stores/RingStore";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
     import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
@@ -128,14 +129,28 @@
     $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
     // Otherwise the chat and the window take turns where they overlap: the one opened or clicked last is in front.
     $: windowOverChat = $modalVisibilityStore && $chatVisibilityStore && $windowInFrontStore === "window";
+    // On a phone the chat is a sheet over the game: a card that asks something of you (a person's card, Block or
+    // report, a follow request, a ring) comes in front of it, as it showed beside the chat before the sheet.
+    $: cardOverChatSheet =
+        $chatVisibilityStore &&
+        $chatSheetLayoutStore &&
+        ($requestVisitCardsStore !== null ||
+            $wokaMenuStore !== undefined ||
+            $actionsMenuStore !== undefined ||
+            $showReportScreenStore !== userReportEmpty ||
+            $popupStore.some((popup) => popup.uuid === "popupFollow") ||
+            $incomingRingStore !== undefined);
+    $: inFrontOfChat = windowMaximised || windowOverChat || cardOverChatSheet;
 </script>
 
 <!-- Components ordered by z-index -->
 <div
     id="main-layout"
-    class="@container/main-layout absolute h-full w-full pointer-events-none {windowMaximised || windowOverChat
-        ? 'z-[2001]'
-        : 'z-10'} {[...$coWebsites.values()].length === 0 ? 'not-cowebsite' : ''}"
+    class="@container/main-layout absolute h-full w-full pointer-events-none {inFrontOfChat ? 'z-[2001]' : 'z-10'} {[
+        ...$coWebsites.values(),
+    ].length === 0
+        ? 'not-cowebsite'
+        : ''}"
     style="padding-inline-start : {marginLeft}px; padding-inline-end: {marginRight}px;"
 >
     <!-- Only a centred window dims the map. A side panel leaves the map beside it in plain view, as the chat does. -->

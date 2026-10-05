@@ -70,6 +70,9 @@ export function messageGestures(
 
     function onPointerDown(event: PointerEvent) {
         if (options.disabled || event.pointerType === "mouse" || !event.isPrimary) return;
+        // In the field you edit a message in, holding selects text and moves the cursor, as in any other field.
+        if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']"))
+            return;
         pointerId = event.pointerId;
         startX = event.clientX;
         startY = event.clientY;
