@@ -42,15 +42,16 @@ export function isImageUrl(url: string): boolean {
  */
 export function getSaveableFiles(type: ChatMessageType, content: ChatMessageContent): SaveableFile[] {
     if (!MEDIA_TYPES.has(type)) return [];
-    const urls = [content.url, ...(content.urls ?? [])].filter(
-        (url, index, all): url is string => !!url && all.indexOf(url) === index
-    );
-    return urls.map((url, index) => {
+    const files: SaveableFile[] = [];
+    // A URL listed twice is saved once. Names stay paired by position in the full list, as the gallery shows them.
+    [content.url, ...(content.urls ?? [])].forEach((url, index, all) => {
+        if (!url || all.indexOf(url) !== index) return;
         let knownName = content.fileNames?.[index] ?? (index === 0 ? content.filename : undefined);
         // A Matrix file has no filename field: its body is the file name and its URL has no extension.
         if (!knownName && index === 0 && looksLikeFileName(content.body ?? "")) knownName = content.body.trim();
-        return { url, name: knownName && knownName.trim() !== "" ? knownName : fileNameFromUrl(url) };
+        files.push({ url, name: knownName && knownName.trim() !== "" ? knownName : fileNameFromUrl(url) });
     });
+    return files;
 }
 
 function looksLikeFileName(text: string): boolean {
