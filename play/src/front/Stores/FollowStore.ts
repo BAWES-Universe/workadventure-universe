@@ -142,6 +142,10 @@ function createFollowUsersStore() {
             return;
         }
         reset();
+        if (asked.some((person) => person.answer === "following")) {
+            // Someone said yes and stopped again before the others answered: nobody said no, so no note.
+            return;
+        }
         if (asked.length === 1) {
             showNote({ kind: asked[0].answer === "declined" ? "saidNo" : "noAnswer", person: asked[0] });
         } else {
@@ -225,7 +229,10 @@ function createFollowUsersStore() {
             }
             update((followers) => followers.filter((id) => id !== user));
             if (get(followStateStore) === "requesting") {
-                setAnswer(user, "declined");
+                // A yes that stopped again stays a yes: they did not say no.
+                if (!get(followAskedStore).some((person) => person.userId === user && person.answer === "following")) {
+                    setAnswer(user, "declined");
+                }
                 closeWindowIfEveryoneAnswered();
             } else if (get({ subscribe }).length === 0) {
                 reset();
@@ -318,6 +325,10 @@ export function askToFollow(): void {
         userId,
         name: gameScene.MapPlayersByKey.get(userId)?.playerName ?? "",
     }));
+    if (asked.length === 0) {
+        // Nobody else is in the bubble: there is no one to ask.
+        return;
+    }
     gameScene.connection?.emitFollowRequest();
     followUsersStore.startRequest(asked);
 }
