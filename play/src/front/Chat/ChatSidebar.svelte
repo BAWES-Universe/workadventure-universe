@@ -213,7 +213,6 @@
         stopWatchingLatestMessage();
     }
 
-
     function watchLatestMessage() {
         stopWatchingLatestMessage();
         latestMessageObserver = new MutationObserver(scheduleFit);
