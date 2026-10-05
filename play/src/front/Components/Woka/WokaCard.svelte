@@ -244,7 +244,7 @@
                 </div>
 
                 <!-- Choices -->
-                <div class="flex flex-col gap-2 min-w-0 min-h-0 flex-1 md:pe-10">
+                <div class="flex flex-col gap-2 min-w-0 min-h-0 flex-1 md:pe-10 md:pb-4">
                     <header class="hidden md:flex flex-col gap-1.5">
                         <span class="u-eyebrow">{eyebrow}</span>
                         <h2 class="u-join-title">{title}</h2>
