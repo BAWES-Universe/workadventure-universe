@@ -64,6 +64,21 @@ describe("FollowStore", () => {
             expect(get(followUsersStore)).toEqual([bossman.userId]);
         });
 
+        it("keeps a yes that stopped again, and shows no note when nobody is left", () => {
+            followUsersStore.startRequest([bossman, sara]);
+            followUsersStore.addFollower(bossman);
+
+            followUsersStore.removeFollower(bossman.userId);
+
+            expect(get(followStateStore)).toBe("requesting");
+            expect(get(followAskedStore).map((person) => person.answer)).toEqual(["following", "waiting"]);
+
+            vi.advanceTimersByTime(FOLLOW_REQUEST_TIMEOUT_MS);
+
+            expect(get(followStateStore)).toBe("off");
+            expect(get(followNoteStore)).toBeUndefined();
+        });
+
         it("says who said no when the only one asked declines", () => {
             followUsersStore.startRequest([bossman]);
 
