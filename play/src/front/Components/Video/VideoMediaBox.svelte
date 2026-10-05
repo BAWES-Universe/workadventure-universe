@@ -4,7 +4,7 @@
     //STYLE: Classes factorizing tailwind's ones are defined in video-ui.scss
 
     import { getContext, hasContext, onDestroy } from "svelte";
-    import { readable, type Readable } from "svelte/store";
+    import { get, readable, type Readable } from "svelte/store";
     import SoundMeterWidget from "../SoundMeterWidget.svelte";
     import { highlightedEmbedScreen } from "../../Stores/HighlightedEmbedScreenStore";
     import type { VideoBox } from "../../Space/Space";
@@ -16,6 +16,7 @@
     import { showFloatingUi } from "../../Utils/svelte-floatingui-show";
     import { userActivationManager } from "../../Stores/UserActivationStore";
     import { chatSheetOpenStore } from "../../Chat/ChatSheetStore";
+    import { chatVisibilityStore } from "../../Stores/ChatStore";
     import ActionMediaBox from "./ActionMediaBox.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
@@ -128,6 +129,8 @@
     });
 
     function highlightPeer(videoBox: VideoBox) {
+        // Over the phone's chat sheet there is no room to show a video big: the chat closes to make room.
+        if (get(chatSheetOpenStore)) chatVisibilityStore.set(false);
         highlightedEmbedScreen.highlight(videoBox);
         analyticsClient.pinMeetingAction();
         window.focus();
@@ -286,8 +289,8 @@
         {/if}
     </div>
 
-    <!-- Shows the video big. Not over the phone's chat sheet, where there is no room for it (VideoBox.svelte). -->
-    {#if inCameraContainer && videoEnabled && $isBlockedStore === false && !$chatSheetOpenStore}
+    <!-- Shows the video big. -->
+    {#if inCameraContainer && videoEnabled && $isBlockedStore === false}
         {#await userActivationManager.waitForUserActivation()}
             <!-- Waiting for user activation; nothing to show -->
         {:then value}
