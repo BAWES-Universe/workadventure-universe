@@ -10,6 +10,8 @@ const video: DeepPartial<Translation["video"]> = {
     exit_fullscreen: "Quitter le plein écran",
     click_to_unmute: "Cliquez pour activer le son",
     click_and_drag_to_resize: "Cliquez et faites glisser pour redimensionner",
+    showEveryone: "Afficher tout le monde ({count} de plus)",
+    more: "de plus",
 };
 
 export default video;
