@@ -69,6 +69,12 @@
     $: filled = sides.filter((side) => side.prefab !== undefined);
     $: preview = variant?.getPrefab(selectedColor, previewDirection) ?? filled[0]?.prefab;
     $: if (busy && variant?.getPrefab(busy.color, busy.direction)) busy = undefined;
+    // The upload is over (the event is cleared once its command ran) but the picture never arrived: free the side
+    // and say so, so the buttons do not stay off until the page is reloaded.
+    $: if (busy && $mapEditorEntityUploadEventStore === undefined && !variant?.getPrefab(busy.color, busy.direction)) {
+        busy = undefined;
+        error = $LL.mapEditor.edit.variants.uploadFailed();
+    }
     $: if (variant && busy === undefined && $mapEditorEntityUploadEventStore === undefined) {
         // Nothing is uploading: a colour with a picture is no longer pending.
         if (pendingColor !== undefined && variant.colors.includes(pendingColor)) pendingColor = undefined;

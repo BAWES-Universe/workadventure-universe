@@ -522,6 +522,7 @@ const mapEditor: BaseTranslation = {
             uploading: "Adding…",
             gone: "This upload was removed meanwhile, so nothing was added.",
             frontUnreadable: "The front picture could not be read, so nothing was added.",
+            uploadFailed: "The picture could not be added. Try again.",
         },
         upload: {
             title: "Add your own",
