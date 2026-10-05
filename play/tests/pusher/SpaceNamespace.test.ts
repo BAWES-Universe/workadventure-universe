@@ -4,7 +4,7 @@ import { toWorldSpaceName, WORLD_SPACE_NAME } from "../../src/pusher/services/Sp
 
 describe("worldSpaceNamespace", () => {
     it("puts the universe in front of the world for Orbit rooms", () => {
-        expect(worldSpaceNamespace("https://play.example.com/@/acme/office/lobby", "office")).toBe("acme~office");
+        expect(worldSpaceNamespace("https://play.example.com/@/acme/office/lobby", "office")).toBe("@acme/office");
     });
 
     it("keeps same-named worlds of two universes apart", () => {
@@ -34,5 +34,15 @@ describe("worldSpaceNamespace", () => {
 
     it("never makes a name that looks like a server-only space", () => {
         expect(worldSpaceNamespace("https://play.example.com/@/acme/office/lobby", "office")).not.toContain(":");
+    });
+
+    it("cannot be faked by slugs with separator characters", () => {
+        const orbit = worldSpaceNamespace("https://play.example.com/@/acme/office/lobby", "office");
+        expect(worldSpaceNamespace("https://play.example.com/_/global/map.tmj", "@acme/office")).not.toBe(orbit);
+        expect(worldSpaceNamespace("https://play.example.com/_/global/map.tmj", "acme~office")).not.toBe(orbit);
+        expect(worldSpaceNamespace("https://play.example.com/@/a~b/c/lobby", "c")).not.toBe(
+            worldSpaceNamespace("https://play.example.com/@/a/b~c/lobby", "b~c")
+        );
+        expect(worldSpaceNamespace("https://play.example.com/@/a/b.c/lobby", "b.c")).not.toContain(".");
     });
 });
