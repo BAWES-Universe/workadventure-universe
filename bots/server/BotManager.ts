@@ -673,10 +673,11 @@ export class BotManager {
             }
         }
 
-        // Handle AI configuration updates (aiProviderRef, chatInstructions)
+        // Handle AI configuration updates (aiProviderRef, chatInstructions, toolTimeoutSeconds)
         // Check if any AI config fields are present in the updates (including empty strings)
         const aiConfigUpdated = 'aiProviderRef' in updates || 
-                               'chatInstructions' in updates;
+                               'chatInstructions' in updates ||
+                               'toolTimeoutSeconds' in updates;
         
         if (aiConfigUpdated) {
             // Update stored config (allow empty strings to clear values)
@@ -685,6 +686,9 @@ export class BotManager {
             }
             if ('chatInstructions' in updates) {
                 instance.config.chatInstructions = updates.chatInstructions;
+            }
+            if ('toolTimeoutSeconds' in updates) {
+                instance.config.toolTimeoutSeconds = updates.toolTimeoutSeconds;
             }
             
             // Update BotClient's fullConfig so behaviors get the new config immediately
