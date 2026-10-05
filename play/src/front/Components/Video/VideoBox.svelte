@@ -8,6 +8,7 @@
     import { playerMovedInTheLast10Seconds } from "../../Stores/VideoLayoutStore";
     import LL from "../../../i18n/i18n-svelte";
     import { raisedHandsStore } from "../../Space/RaiseHand/RaiseHandStore";
+    import { localUserStore } from "../../Connection/LocalUserStore";
     import { IconMicrophoneOff } from "@wa-icons";
 
     export let videoBox: VideoBox;
@@ -34,10 +35,14 @@
     $: name = videoBox.spaceUser.name;
     // A raised hand shows on the person's camera (ours is "-1"), not on their screen share: a gold edge, unless they
     // are talking (blue wins), and their place in line on the top-left corner, like on the ✋ button.
-    $: isCamera = videoBox.uniqueId === "-1" || videoBox.uniqueId === videoBox.spaceUser.spaceUserId;
-    $: handPosition = isCamera
-        ? $raisedHandsStore.find((hand) => hand.uuid === videoBox.spaceUser.uuid)?.position
-        : undefined;
+    // Our own camera is made before we know our uuid: read it when the hands change.
+    const handUuid = (): string | undefined =>
+        videoBox.uniqueId === "-1"
+            ? localUserStore.getLocalUser()?.uuid
+            : videoBox.uniqueId === videoBox.spaceUser.spaceUserId
+            ? videoBox.spaceUser.uuid
+            : undefined;
+    $: handPosition = $raisedHandsStore.find((hand) => hand.uuid !== "" && hand.uuid === handUuid())?.position;
     $: speaking = voiceStore ? $voiceStore : false;
 
     const streamable = videoBox.streamable;
@@ -212,9 +217,13 @@
     .hand-chip-emoji {
         font-size: 13px;
     }
+    /* On a face, bottom-left, opposite the mute badge: the row's top edge would cut it. */
     .video-face .hand-chip {
-        top: -4px;
-        left: -4px;
+        top: auto;
+        bottom: 0;
+        left: -2px;
+        height: 20px;
+        padding: 0 6px 0 4px;
     }
     .behind-more {
         display: none;

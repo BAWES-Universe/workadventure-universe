@@ -8,6 +8,9 @@
     import type { SpaceUserExtended } from "../../Space/SpaceInterface";
     import RaisedHandWoka from "./RaisedHandWoka.svelte";
 
+    /** In the phone's chat sheet header: "✋ 2", and the list opens downwards, from the right. */
+    export let compact = false;
+
     const myUuid = localUserStore.getLocalUser()?.uuid ?? "";
 
     let open = false;
@@ -19,7 +22,7 @@
     $: if (hands.length === 0) open = false;
 
     function toggle() {
-        if (!open && root) {
+        if (!open && root && !compact) {
             upwards = root.getBoundingClientRect().bottom > window.innerHeight / 2;
         }
         open = !open;
@@ -61,18 +64,20 @@
         <button
             type="button"
             class="raised-pill"
+            class:compact
             aria-expanded={open}
             aria-label={$LL.say.raiseHand.listOpen()}
             data-testid="raised-hands-pill"
             on:click={toggle}
         >
             <span class="raised-pill-emoji" aria-hidden="true">✋</span>
-            {$LL.say.raiseHand.raisedCount({ count: hands.length })}
+            {compact ? hands.length : $LL.say.raiseHand.raisedCount({ count: hands.length })}
         </button>
         {#if open}
             <div
                 class="raised-list"
                 class:upwards
+                class:compact
                 role="dialog"
                 aria-label={$LL.say.raiseHand.listTitle()}
                 data-testid="raised-hands-list"
@@ -165,6 +170,15 @@
         -webkit-backdrop-filter: blur(18px);
         box-shadow: inset 0 0 0 1px var(--u-surface-edge), 0 16px 40px rgba(0, 0, 0, 0.55);
         color: #fff;
+    }
+    .raised-pill.compact {
+        height: 32px;
+        padding: 0 10px 0 8px;
+        gap: 4px;
+    }
+    .raised-list.compact {
+        left: auto;
+        right: 0;
     }
     .raised-list.upwards {
         top: auto;
