@@ -1,5 +1,6 @@
+import { createHash } from "crypto";
 import { FilterType } from "@workadventure/messages";
-import { isAreaSpaceName, isAreaSpaceOfRoom } from "@workadventure/shared-utils/src/Space/areaSpaceName";
+import { AREA_SPACE_PREFIX, isAreaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import type { SocketData } from "../models/Websocket/SocketData";
 
 /**
@@ -10,7 +11,8 @@ import type { SocketData } from "../models/Websocket/SocketData";
  * - proximity bubbles (names containing "#", made by the back's Group): only the members the back asked to join;
  * - the world space ("allWorldUser"): everyone in the world, as a plain user list without audio or video;
  * - the room's megaphone space: everyone, but only as a live streaming space (going live is checked in Space);
- * - meeting rooms and speaker zones (names starting with AREA_SPACE_PREFIX): only from the room they are in.
+ * - meeting rooms and speaker zones (names starting with AREA_SPACE_PREFIX): only from the room they are in, because
+ *   toServerSpaceName puts the player's own room in their server name.
  * Map script spaces are unchanged. Members-only areas inside a room are still only enforced by the browser.
  */
 
@@ -31,6 +33,20 @@ export function toWorldSpaceName(world: string, localSpaceName: string): string 
     return `${world}.${localSpaceName}`;
 }
 
+/**
+ * The name a space has on the servers, from the name the front gives it and the player's own socket.
+ * Meeting rooms and speaker zones also get the player's room (as a SHA-256 of its URL), so whatever name a browser
+ * sends, it can only reach the meeting rooms and speaker zones of the room it is in. The room part has a fixed
+ * length and no other space starts with AREA_SPACE_PREFIX, so two different rooms or areas never share a name.
+ */
+export function toServerSpaceName(socketData: Pick<SocketData, "world" | "roomId">, localSpaceName: string): string {
+    if (isAreaSpaceName(localSpaceName)) {
+        const roomKey = createHash("sha256").update(socketData.roomId).digest("hex");
+        return toWorldSpaceName(socketData.world, `${AREA_SPACE_PREFIX}${roomKey}.${localSpaceName}`);
+    }
+    return toWorldSpaceName(socketData.world, localSpaceName);
+}
+
 /** Bubble spaces are named `${roomId}#${groupId}#${time}` by the back. No other space the front makes has a "#". */
 export function isBubbleSpaceName(localSpaceName: string): boolean {
     return localSpaceName.includes("#");
@@ -47,7 +63,7 @@ export interface SpaceJoinRequest {
  */
 export function checkSpaceJoin(
     request: SpaceJoinRequest,
-    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneSpaceName" | "roomId">
+    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneSpaceName">
 ): void {
     const { localSpaceName, filterType, propertiesToSync } = request;
 
@@ -70,10 +86,6 @@ export function checkSpaceJoin(
             throw new SpaceJoinRefusedError(localSpaceName, `the world space does not sync "${otherProperty}"`);
         }
         return;
-    }
-
-    if (isAreaSpaceName(localSpaceName) && !isAreaSpaceOfRoom(localSpaceName, socketData.roomId)) {
-        throw new SpaceJoinRefusedError(localSpaceName, "this meeting room or speaker zone is in another room");
     }
 
     if (

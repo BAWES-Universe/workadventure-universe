@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { slugify } from "../../src/Jitsi/slugify";
-import { areaSpaceName, isAreaSpaceName, isAreaSpaceOfRoom } from "../../src/Space/areaSpaceName";
+import { areaSpaceName, isAreaSpaceName } from "../../src/Space/areaSpaceName";
 
 const ROOM = "https://play.example.com/@/universe/world/room";
 const OTHER_ROOM = "https://play.example.com/@/universe/world/private-room";
@@ -16,9 +16,8 @@ describe("areaSpaceName", () => {
         expect(areaSpaceName("  Stage ", ROOM)).toBe(areaSpaceName("Stage", ROOM));
     });
 
-    it("tells the area spaces of a room from those of another room", () => {
-        expect(isAreaSpaceOfRoom(areaSpaceName("Stage", ROOM), ROOM)).toBe(true);
-        expect(isAreaSpaceOfRoom(areaSpaceName("Stage", OTHER_ROOM), ROOM)).toBe(false);
+    it("names the same area differently in another room", () => {
+        expect(areaSpaceName("Stage", ROOM)).not.toBe(areaSpaceName("Stage", OTHER_ROOM));
     });
 
     it("keeps its name when slugified again, as speaker zones are", () => {
