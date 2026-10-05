@@ -12,6 +12,18 @@ interface KeptFile {
 const keptFiles = new Map<string, KeptFile>();
 export const MAX_KEPT_MEDIA = 200;
 
+function revoke(url: Promise<string | undefined>): void {
+    url.then((resolved) => {
+        if (resolved?.startsWith("blob:")) URL.revokeObjectURL(resolved);
+    }).catch(() => undefined);
+}
+
+/** Drops every downloaded file, for when the chat signs out: the next person never sees the files of the last. */
+export function clearMatrixMedia(): void {
+    for (const kept of keptFiles.values()) revoke(kept.url);
+    keptFiles.clear();
+}
+
 function releaseOldFiles(): void {
     let unheld = 0;
     for (const kept of keptFiles.values()) if (kept.holders === 0) unheld++;
@@ -20,11 +32,7 @@ function releaseOldFiles(): void {
         if (kept.holders > 0) continue;
         keptFiles.delete(mxcUrl);
         unheld--;
-        kept.url
-            .then((url) => {
-                if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
-            })
-            .catch(() => undefined);
+        revoke(kept.url);
     }
 }
 
