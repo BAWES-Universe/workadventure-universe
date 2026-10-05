@@ -137,12 +137,22 @@
         } finally {
             URL.revokeObjectURL(url);
         }
-        if (front && (size.width !== front.width || size.height !== front.height)) {
+        // The front may still be measuring (or failed to): measure it here rather than skip the size check.
+        let expected = measuredId === upload.id ? front : undefined;
+        if (!expected) {
+            try {
+                expected = await measure(upload.imagePath);
+            } catch {
+                error = $LL.mapEditor.edit.variants.frontUnreadable();
+                return;
+            }
+        }
+        if (size.width !== expected.width || size.height !== expected.height) {
             error = $LL.mapEditor.edit.variants.wrongSize({
                 width: size.width,
                 height: size.height,
-                expectedWidth: front.width,
-                expectedHeight: front.height,
+                expectedWidth: expected.width,
+                expectedHeight: expected.height,
             });
             return;
         }

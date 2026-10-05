@@ -524,6 +524,7 @@ const mapEditor: BaseTranslation = {
                 "This picture is {width} × {height} px; every side must be {expectedWidth} × {expectedHeight} px like the front.",
             uploading: "Adding…",
             gone: "This upload was removed meanwhile, so nothing was added.",
+            frontUnreadable: "The front picture could not be read, so nothing was added.",
         },
         upload: {
             title: "Add your own",
