@@ -86,10 +86,18 @@
         ) {
             const clampedX = Math.min(Math.max(centre.x, 80), bounds.width - 80);
             const clampedY = Math.min(Math.max(centre.y, 120), bounds.height - 160);
-            if (centre.x < 0) youTab = { side: "left", x: 0, y: clampedY };
-            else if (centre.x > bounds.width) youTab = { side: "right", x: 0, y: clampedY };
-            else if (centre.y < 0) youTab = { side: "top", x: clampedX, y: 0 };
-            else youTab = { side: "bottom", x: clampedX, y: 0 };
+            // Off-screen in two directions at once (far above, a little to the left): the tab goes on the edge you
+            // are furthest beyond, which is the direction the tab's arrow should point.
+            const beyond = {
+                left: -centre.x,
+                right: centre.x - bounds.width,
+                top: -centre.y,
+                bottom: centre.y - bounds.height,
+            };
+            const side = (Object.keys(beyond) as (keyof typeof beyond)[]).reduce((best, each) =>
+                beyond[each] > beyond[best] ? each : best
+            );
+            youTab = side === "left" || side === "right" ? { side, x: 0, y: clampedY } : { side, x: clampedX, y: 0 };
         } else {
             youTab = undefined;
         }
