@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { getContext } from "svelte";
     import {
         globalMessageVisibleStore,
         mapManagerActivated,
@@ -19,6 +20,9 @@
     import { botEditorAvailableStore, openBotEditorFromMenu } from "../../../external-modules/bots/index";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
     import { IconMapEditor, IconRobot, IconSpeakerPhone, IconZoomOutArea } from "@wa-icons";
+
+    // On a phone these tools sit inside the profile menu rather than in their own Tools menu.
+    const inProfileMenu = getContext("profileMenu");
 
     function openBotEditorMenu() {
         closeMapMenu();
@@ -69,8 +73,9 @@
         gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.ExploreTheRoom);
     }
 
+    /** Closes the menu these tools are listed in, whichever one hosts them, so it never stays open behind the tool. */
     function closeMapMenu() {
-        openedMenuStore.close("mapMenu");
+        openedMenuStore.close(inProfileMenu ? "profileMenu" : "mapMenu");
     }
 </script>
 
