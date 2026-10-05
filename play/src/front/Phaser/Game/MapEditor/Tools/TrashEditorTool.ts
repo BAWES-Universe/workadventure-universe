@@ -26,6 +26,8 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
     /** What the current press started on: a click or a tap is a press and a release on the same item. */
     private pressed: Entity | AreaPreview | undefined;
     private lastMark: DeleteMark | undefined;
+    /** The item the published mark belongs to: two items of the same size on the same spot must not share a mark. */
+    private lastMarkTarget: Entity | AreaPreview | undefined;
 
     constructor(mapEditorModeManager: MapEditorModeManager, private areaEditorTool: AreaEditorTool) {
         super(mapEditorModeManager);
@@ -308,7 +310,8 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
         if (this.marked === target) this.marked = undefined;
         if (this.hovered === target) this.hovered = undefined;
         target.delete();
-        showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
+        // An area's toast comes from the area tool, once the area really goes (a personal one with objects asks first).
+        if (target instanceof Entity) showUndoToast(get(LL).mapEditor.edit.deleteTool.removed({ name }));
         this.publishMark();
     }
 
@@ -326,6 +329,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
         if (!target || !target.scene) {
             if (this.lastMark) {
                 this.lastMark = undefined;
+                this.lastMarkTarget = undefined;
                 editDeleteMarkStore.set(undefined);
             }
             return;
@@ -347,6 +351,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
         const last = this.lastMark;
         if (
             last &&
+            this.lastMarkTarget === target &&
             last.x === next.x &&
             last.y === next.y &&
             last.width === next.width &&
@@ -356,6 +361,7 @@ export class TrashEditorTool extends EntityRelatedEditorTool {
             return;
         }
         this.lastMark = next;
+        this.lastMarkTarget = target;
         editDeleteMarkStore.set(next);
     }
 

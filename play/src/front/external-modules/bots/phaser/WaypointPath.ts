@@ -12,7 +12,7 @@ const WAYPOINT_LABEL = "#ffffff";
 const ARROW_SIZE = 10;
 const DASH = 10;
 const GAP = 7;
-const WAYPOINT_DEPTH = 1002;
+const WAYPOINT_DEPTH = 100002; // just above the bots (BotPreview's depth)
 // A press that moves less than this before release is a tap (which removes the stop), not a drag
 const TAP_MAX_DISTANCE = 6;
 

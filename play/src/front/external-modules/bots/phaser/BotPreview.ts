@@ -3,7 +3,9 @@ import type { BotData } from "../types";
 import { botModel, noticeRange } from "../behaviorModel";
 
 const TILE_SIZE = 32;
-const BOT_DEPTH = 1000;
+// Above every placed object (their depth is their bottom edge on the map), so the bot and its radius handle win the
+// tap over an object underneath while the bot editor is open; below area previews (100000 + 1) and the UI.
+const BOT_DEPTH = 100000;
 // How far the pointer may move between press and release for it to still count as a click
 const CLICK_MAX_DISTANCE = 4;
 
