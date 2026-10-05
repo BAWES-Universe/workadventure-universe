@@ -19,7 +19,6 @@ const actionbar: BaseTranslation = {
     test: "Test my settings",
     editCamMic: "Edit cam / mic",
     allSettings: "All settings",
-    keepBarInView: "Keep the bar in view",
     lockConversation: "Lock",
     unlockConversation: "Unlock",
     globalMessage: "Send global message",

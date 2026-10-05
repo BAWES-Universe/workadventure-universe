@@ -41,10 +41,10 @@
     }
 </script>
 
-<!-- The zoom column, in the bar's ink: + and − (desktops and tablets; phones pinch), then the map overview. On a phone
-     it is smaller, so Express stays the main button below it, and holds "Explore {Universe}" on top, which has no room
-     in the phone's bar. Tooltips show on hover and keyboard focus, to the left. -->
-<div class="explorer-pill pointer-events-auto" class:compact={$mobileLayoutStore} data-testid="actions-explorer">
+<!-- The zoom column, in the bar's ink: + and − (desktops and tablets; phones pinch), then the map overview. It is always
+     smaller than Express below it, so Express stays the main button. On a phone it holds "Explore {Universe}" on top,
+     which has no room in the phone's bar. Tooltips show on hover and keyboard focus, to the left. -->
+<div class="explorer-pill pointer-events-auto" data-testid="actions-explorer">
     {#if $mobileLayoutStore && $roomListActivated}
         <button
             type="button"
@@ -102,25 +102,40 @@
 </div>
 
 <style>
-    /* The bar's ink pill (u-surface-flat), round, with its violet edge. */
+    /* The bar's ink pill (u-surface-flat), round, with its violet edge. It is sized from Express below it, on every
+       screen: the buttons are 5/8 of Express and the pill 3/4, so Express always stays the bigger, main button.
+       Express is 64px, 56px between 640px and 1280px wide on a computer, and 64px on any touch screen. */
     .explorer-pill {
+        --explorer-btn: 40px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 4px;
-        padding: 8px;
+        gap: 2px;
+        padding: 4px;
+        /* Held 8px further up off Express than the column's gap. */
+        margin-bottom: 8px;
         border-radius: 9999px;
         background: linear-gradient(180deg, rgb(31 28 47 / 0.92), rgb(20 18 30 / 0.94));
         box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
         backdrop-filter: blur(18px) saturate(140%);
         -webkit-backdrop-filter: blur(18px) saturate(140%);
     }
+    @media (min-width: 640px) and (max-width: 1279.98px) {
+        .explorer-pill {
+            --explorer-btn: 35px;
+        }
+    }
+    @media (pointer: coarse) {
+        .explorer-pill {
+            --explorer-btn: 40px;
+        }
+    }
     .explorer-btn {
         position: relative;
         display: grid;
         place-items: center;
-        width: 48px;
-        height: 48px;
+        width: var(--explorer-btn);
+        height: var(--explorer-btn);
         padding: 0;
         border: 0;
         border-radius: 9999px;
@@ -129,6 +144,10 @@
         cursor: pointer;
         transition: background-color 150ms ease;
         -webkit-tap-highlight-color: transparent;
+    }
+    .explorer-btn :global(svg) {
+        width: 18px;
+        height: 18px;
     }
     @media (hover: hover) {
         .explorer-btn:hover {
@@ -147,34 +166,16 @@
         box-shadow: inset 0 0 0 2px #fff;
     }
     .explorer-divider {
-        width: 28px;
-        height: 1px;
-        margin: 4px 0;
-        background: rgba(255, 255, 255, 0.1);
-    }
-    /* Phones: 40px buttons in a 48px pill, on Express's right edge, held 8px further up off it. */
-    .explorer-pill.compact {
-        gap: 2px;
-        padding: 4px;
-        margin-bottom: 8px;
-    }
-    .compact .explorer-btn {
-        width: 40px;
-        height: 40px;
-    }
-    .compact .explorer-btn :global(svg) {
-        width: 18px;
-        height: 18px;
-    }
-    .compact .explorer-divider {
         width: 22px;
+        height: 1px;
         margin: 2px 0;
+        background: rgba(255, 255, 255, 0.1);
     }
     /* The ink tooltip, to the left of the button. */
     .explorer-tip {
         position: absolute;
         top: 50%;
-        right: 60px;
+        right: calc(var(--explorer-btn) + 12px);
         transform: translateY(-50%);
         padding: 6px 10px;
         border-radius: 10px;

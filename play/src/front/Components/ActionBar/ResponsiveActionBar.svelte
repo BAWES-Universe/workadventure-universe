@@ -9,7 +9,7 @@
 
     const logger = debug("responsive-action-bar");
 
-    // With "Keep the bar in view" on, a side window (Orbit) opens under the bar: the bar, and the menus that open from
+    // On desktops a side window (Orbit) opens under the bar: the bar, and the menus that open from
     // it, stay above the window. Maximised, the window takes the whole screen, bar included.
     $: aboveSideWindow =
         $barInViewStore &&

@@ -4,7 +4,7 @@ import { windowSize } from "../Stores/CoWebsiteStore";
 import { localUserStore } from "../Connection/LocalUserStore";
 import { mapEditorSideBarWidthStore } from "../Components/MapEditor/MapEditorSideBarWidthStore";
 import { mapEditorModeStore } from "../Stores/MapEditorStore";
-import { barInViewStore, DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
+import { DESKTOP_LAYOUT_MIN_WIDTH } from "../Stores/BarInViewStore";
 
 export const chatSidebarWidthStore = writable(localUserStore.getChatSideBarWidth());
 
@@ -22,6 +22,33 @@ export const chatFloatInsetStore = derived(windowSize, ($windowSize) =>
     $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH ? CHAT_FLOAT_INSET : 0
 );
 
+/** Below this much room beside the chat and the map editor, the bar and the zoom column are hidden. */
+export const MIN_ROOM_FOR_ACTION_BAR = 285;
+
+/**
+ * Whether the chat (or the map editor) leaves too little room for the bar. On a desktop the chat floats over the game
+ * under the bar and never pushes it, so however wide it is, the bar, Express and the zoom column stay where they are
+ * (it may cover the column; closing or narrowing the chat shows it again). Only phones and small windows, where what is
+ * beside the chat starts where it ends, count the chat's width.
+ */
+export function chatLeavesNoRoomForBar(
+    windowWidth: number,
+    chatVisible: boolean,
+    chatWidth: number,
+    chatFloatInset: number,
+    mapEditorMode: boolean,
+    mapEditorWidth: number
+): boolean {
+    if (!chatVisible && !mapEditorMode) {
+        return false;
+    }
+    const chatPushesGame = chatVisible && windowWidth < DESKTOP_LAYOUT_MIN_WIDTH;
+    return (
+        windowWidth - (chatPushesGame ? chatWidth + chatFloatInset : 0) - (mapEditorMode ? mapEditorWidth : 0) <
+        MIN_ROOM_FOR_ACTION_BAR
+    );
+}
+
 export const hideActionBarStoreBecauseOfChatBar = derived(
     [
         chatVisibilityStore,
@@ -38,25 +65,19 @@ export const hideActionBarStoreBecauseOfChatBar = derived(
         $mapEditorWidthStore,
         $mapEditorModeStore,
         $chatFloatInsetStore,
-    ]) => {
-        if (!$chatVisibilityStore && !$mapEditorModeStore) {
-            return false;
-        }
-        return (
-            $windowSize.width -
-                ($chatVisibilityStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0) -
-                ($mapEditorModeStore ? $mapEditorWidthStore : 0) <
-            285
-        );
-    }
+    ]) =>
+        chatLeavesNoRoomForBar(
+            $windowSize.width,
+            $chatVisibilityStore,
+            $chatSidebarWidthStore,
+            $chatFloatInsetStore,
+            $mapEditorModeStore,
+            $mapEditorWidthStore
+        )
 );
 
 /**
- * The chat shows its own close button: when the bar is hidden because the chat leaves no room for it, and on a
- * desktop where the chat opens over the bar (the "Keep the bar in view" switch is off), covering the bar's close.
+ * The chat shows its own close button when the bar is hidden because the chat leaves no room for it. On desktops the
+ * chat opens under the bar, so the bar's own close stays in reach.
  */
-export const chatCarriesItsCloseStore = derived(
-    [hideActionBarStoreBecauseOfChatBar, chatVisibilityStore, windowSize, barInViewStore],
-    ([$hideActionBar, $chatVisibilityStore, $windowSize, $barInView]) =>
-        $hideActionBar || ($chatVisibilityStore && $windowSize.width >= DESKTOP_LAYOUT_MIN_WIDTH && !$barInView)
-);
+export const chatCarriesItsCloseStore = derived(hideActionBarStoreBecauseOfChatBar, ($hideActionBar) => $hideActionBar);
