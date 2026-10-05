@@ -8,6 +8,8 @@ export interface SavedWokaAvatar {
     hash: string;
     /** The profile picture it became. */
     mxc: string;
+    /** The picture Universe saved before it, until the new one is set on the profile. */
+    previous?: string;
 }
 
 /** The size of the saved picture: the 32px woka scaled 4× with sharp pixels. */
@@ -16,7 +18,7 @@ export const WOKA_AVATAR_SIZE = 128;
 const MAX_WOKA_SIDE = 64;
 
 /**
- * Whether to save the woka as the profile picture. The woka replaces no picture or the one Universe saved before; a
+ * Whether to save the woka as the profile picture. The woka replaces no picture or one Universe saved before; a
  * picture the person chose in another chat app (Element) stays.
  */
 export function shouldSaveWokaAvatar(
@@ -25,14 +27,17 @@ export function shouldSaveWokaAvatar(
     wokaHash: string
 ): boolean {
     if (!currentAvatar) return true;
-    if (!saved || currentAvatar !== saved.mxc) return false;
-    return saved.hash !== wokaHash;
+    if (!saved) return false;
+    if (currentAvatar === saved.mxc) return saved.hash !== wokaHash;
+    // The last save was cut off before the profile picture was set: it still shows the one Universe saved before.
+    return currentAvatar === saved.previous;
 }
 
 export function parseSavedWokaAvatar(content: unknown): SavedWokaAvatar | undefined {
     if (typeof content !== "object" || content === null) return undefined;
-    const { hash, mxc } = content as Record<string, unknown>;
-    return typeof hash === "string" && typeof mxc === "string" ? { hash, mxc } : undefined;
+    const { hash, mxc, previous } = content as Record<string, unknown>;
+    if (typeof hash !== "string" || typeof mxc !== "string") return undefined;
+    return typeof previous === "string" ? { hash, mxc, previous } : { hash, mxc };
 }
 
 export async function hashWoka(wokaDataUrl: string): Promise<string> {
@@ -84,6 +89,50 @@ export async function saveWokaAvatar(client: MatrixClient, wokaDataUrl: string):
     const picture = await renderWokaAvatar(wokaDataUrl);
     if (!picture) return;
     const { content_uri: mxc } = await client.uploadContent(picture, { name: "woka.png", type: "image/png" });
+    // Remembered before the profile changes, so a save cut off in between is recognised as Universe's own next time.
+    const record: SavedWokaAvatar = profile.avatar_url ? { hash, mxc, previous: profile.avatar_url } : { hash, mxc };
+    await client.setAccountData(WOKA_AVATAR_ACCOUNT_DATA as never, record as never);
     await client.setAvatarUrl(mxc);
-    await client.setAccountData(WOKA_AVATAR_ACCOUNT_DATA as never, { hash, mxc } as never);
+}
+
+/** After a failed save (offline, server busy), it's tried again after these waits, then left until the woka changes. */
+export const WOKA_AVATAR_RETRY_DELAYS = [5_000, 30_000, 120_000];
+
+/** Saves the latest woka as the chat picture: one save at a time, retried when it fails. */
+export class WokaAvatarSaver {
+    private saving: Promise<void> = Promise.resolve();
+    private latest: string | undefined;
+    private retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    constructor(private readonly client: MatrixClient, private readonly save = saveWokaAvatar) {}
+
+    update(woka: string): void {
+        this.latest = woka;
+        clearTimeout(this.retryTimer);
+        this.queue(woka, 0);
+    }
+
+    stop(): void {
+        this.latest = undefined;
+        clearTimeout(this.retryTimer);
+    }
+
+    /** Resolves once the saves queued so far are done. */
+    get settled(): Promise<void> {
+        return this.saving;
+    }
+
+    private queue(woka: string, attempt: number): void {
+        // One save at a time, so a quick woka change can't race the previous upload; an older woka is skipped.
+        this.saving = this.saving
+            .then(() => (this.latest === woka ? this.save(this.client, woka) : undefined))
+            .catch((error) => {
+                console.warn("Could not save the woka as the chat picture", error);
+                const delay = WOKA_AVATAR_RETRY_DELAYS[attempt];
+                if (delay === undefined || this.latest !== woka) return;
+                this.retryTimer = setTimeout(() => {
+                    if (this.latest === woka) this.queue(woka, attempt + 1);
+                }, delay);
+            });
+    }
 }

@@ -8,7 +8,8 @@ import type { ChatMessage, ChatMessageContent, ChatMessageType, ChatUser } from 
 import { chatUserFactory } from "./MatrixChatUser";
 import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { MatrixChatRelation } from "./MatrixChatRelation";
-import { resolveMatrixMediaUrl } from "./MatrixMedia";
+import type { MatrixMediaHold } from "./MatrixMedia";
+import { holdMatrixMedia } from "./MatrixMedia";
 
 export class MatrixChatMessage implements ChatMessage {
     id: string;
@@ -26,6 +27,8 @@ export class MatrixChatMessage implements ChatMessage {
     readonly canDelete: Writable<boolean>;
     readonly canReact = writable(true);
     readonly canReply = writable(true);
+    private isShown = false;
+    private mediaHold: MatrixMediaHold | undefined;
 
     constructor(private event: MatrixEvent, private room: Room, isQuotedMessage?: boolean) {
         this.id = event.getId() ?? uuidv4();
@@ -79,9 +82,16 @@ export class MatrixChatMessage implements ChatMessage {
     }
 
     private initMessageContent(): Writable<ChatMessageContent> {
-        // The file is only downloaded once the message is shown.
-        return writable(this.getMessageContent(), () => {
+        // The file is only downloaded once the message is shown, and kept while it is.
+        return writable(this.getMessageContent(), (set, update) => {
+            this.isShown = true;
             this.loadMediaUrl();
+            return () => {
+                this.isShown = false;
+                this.releaseMedia();
+                // Its URL may be released from now on: shown again, the message waits for a fresh one.
+                update((content) => (content.url === undefined ? content : { ...content, url: undefined }));
+            };
         });
     }
 
@@ -94,14 +104,30 @@ export class MatrixChatMessage implements ChatMessage {
 
     /** Files need the access token to download (authenticated media): the URL arrives once fetched. */
     private loadMediaUrl() {
-        if (this.type === "text" || this.event.isDecryptionFailure()) return;
-        const mxcUrl: unknown = this.event.getOriginalContent().url;
-        resolveMatrixMediaUrl(this.room.client, mxcUrl)
+        this.releaseMedia();
+        if (!this.isShown || this.type === "text" || this.event.isDecryptionFailure()) return;
+        const content = this.event.getOriginalContent();
+        // In an encrypted chat, files sent by other apps (Element) are encrypted too: they come as `file`, not `url`.
+        const info: unknown = content.info;
+        const mimetype =
+            typeof info === "object" && info !== null ? (info as Record<string, unknown>).mimetype : undefined;
+        const hold = holdMatrixMedia(
+            this.room.client,
+            content.url ?? content.file,
+            typeof mimetype === "string" ? mimetype : undefined
+        );
+        this.mediaHold = hold;
+        hold.url
             .then((url) => {
-                if (url === undefined || mxcUrl !== this.event.getOriginalContent().url) return;
+                if (url === undefined || this.mediaHold !== hold) return;
                 this.content.update((content) => ({ ...content, url }));
             })
             .catch((error) => console.error(error));
+    }
+
+    private releaseMedia() {
+        this.mediaHold?.release();
+        this.mediaHold = undefined;
     }
 
     private getMessageContent(): ChatMessageContent {

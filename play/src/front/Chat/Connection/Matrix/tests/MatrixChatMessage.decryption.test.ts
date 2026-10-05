@@ -3,15 +3,16 @@ import { get } from "svelte/store";
 import type { MatrixEvent, Room } from "matrix-js-sdk";
 import { MatrixEventEvent } from "matrix-js-sdk";
 
+const release = vi.fn();
 vi.mock("../MatrixMedia", () => ({
-    resolveMatrixMediaUrl: vi.fn(() => Promise.resolve("blob:https://play.test/image")),
+    holdMatrixMedia: vi.fn(() => ({ url: Promise.resolve("blob:https://play.test/image"), release })),
 }));
 vi.mock("../MatrixChatUser", () => ({
     chatUserFactory: () => undefined,
 }));
 
 import { MatrixChatMessage } from "../MatrixChatMessage";
-import { resolveMatrixMediaUrl } from "../MatrixMedia";
+import { holdMatrixMedia } from "../MatrixMedia";
 
 /** An event of an encrypted room whose keys arrive after it is shown. */
 function fakeEncryptedEvent() {
@@ -63,8 +64,28 @@ describe("MatrixChatMessage decrypted after it is shown", () => {
         await Promise.resolve();
 
         expect(message.type).toBe("image");
-        expect(resolveMatrixMediaUrl).toHaveBeenCalledWith(expect.anything(), "mxc://matrix.test/photo");
+        expect(holdMatrixMedia).toHaveBeenCalledWith(expect.anything(), "mxc://matrix.test/photo", undefined);
         expect(get(message.content).url).toBe("blob:https://play.test/image");
         unsubscribe();
+    });
+
+    it("lets the file go once it's no longer shown, and fetches it again when shown again", async () => {
+        const { event, decrypt } = fakeEncryptedEvent();
+        decrypt({ msgtype: "m.image", body: "photo.png", url: "mxc://matrix.test/photo" });
+        const message = new MatrixChatMessage(event, fakeRoom());
+        vi.mocked(holdMatrixMedia).mockClear();
+        release.mockClear();
+
+        let shown: string | undefined;
+        const unsubscribe = message.content.subscribe((content) => (shown = content.url));
+        await vi.waitFor(() => expect(shown).toBe("blob:https://play.test/image"));
+        unsubscribe();
+        expect(release).toHaveBeenCalledTimes(1);
+
+        // Shown again: it starts without the old URL and asks for the file again.
+        const again = message.content.subscribe((content) => (shown = content.url));
+        expect(shown).toBeUndefined();
+        expect(holdMatrixMedia).toHaveBeenCalledTimes(2);
+        again();
     });
 });

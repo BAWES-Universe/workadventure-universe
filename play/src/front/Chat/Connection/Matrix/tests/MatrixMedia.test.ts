@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MatrixClient } from "matrix-js-sdk";
-import { get } from "svelte/store";
-import { MAX_KEPT_MEDIA, matrixAvatarStore, resolveMatrixMediaUrl } from "../MatrixMedia";
+import { get, writable } from "svelte/store";
+import {
+    MAX_KEPT_MEDIA,
+    changingMatrixAvatarStore,
+    clearMatrixMedia,
+    holdMatrixMedia,
+    matrixAvatarStore,
+    resolveMatrixMediaUrl,
+} from "../MatrixMedia";
 
 function fakeClient(accessToken: string | null = "token"): MatrixClient {
     return {
@@ -184,6 +191,104 @@ describe("resolveMatrixMediaUrl", () => {
         await resolveMatrixMediaUrl(client, "mxc://matrix.test/picture-kept", 48);
         expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    it("never releases a file that is still shown", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/held");
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        const client = fakeClient();
+
+        const hold = holdMatrixMedia(client, "mxc://matrix.test/held");
+        await hold.url;
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/other");
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA + 5 }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/held-other-${i}`)
+            )
+        );
+        await Promise.resolve();
+        expect(revoke).not.toHaveBeenCalledWith("blob:https://play.test/held");
+
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/held");
+        expect(fetchMock).not.toHaveBeenCalled();
+        hold.release();
+    });
+
+    it("releases a file once it is no longer shown and the limit is reached", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/let-go");
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        const client = fakeClient();
+
+        const hold = holdMatrixMedia(client, "mxc://matrix.test/let-go");
+        await hold.url;
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/other");
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/let-go-other-${i}`)
+            )
+        );
+        hold.release();
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/let-go-later-${i}`)
+            )
+        );
+
+        await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:https://play.test/let-go"));
+    });
+
+    it("a late failure of a released file's old fetch keeps the new one", async () => {
+        let failFirst: (error: Error) => void = () => undefined;
+        fetchMock.mockImplementationOnce(
+            () =>
+                new Promise((_, reject) => {
+                    failFirst = reject;
+                })
+        );
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/late");
+        URL.revokeObjectURL = vi.fn();
+        const client = fakeClient();
+
+        const first = resolveMatrixMediaUrl(client, "mxc://matrix.test/late");
+        await Promise.all(
+            Array.from({ length: MAX_KEPT_MEDIA }, (_, i) =>
+                resolveMatrixMediaUrl(client, `mxc://matrix.test/late-${i}`)
+            )
+        );
+        // Released and shown again: a second fetch replaces the first.
+        const hold = holdMatrixMedia(client, "mxc://matrix.test/late");
+        await hold.url;
+        failFirst(new TypeError("Failed to fetch"));
+        await first;
+
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/late");
+        expect(fetchMock).not.toHaveBeenCalled();
+        hold.release();
+    });
+
+    it("drops every file when the chat signs out", async () => {
+        fetchMock.mockImplementation(() => Promise.resolve(new Response(new Blob(["png"]), { status: 200 })));
+        URL.createObjectURL = vi.fn(() => "blob:https://play.test/signed-out");
+        const revoke = vi.fn();
+        URL.revokeObjectURL = revoke;
+        const client = fakeClient();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out");
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out-picture", 48);
+
+        clearMatrixMedia();
+
+        await vi.waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:https://play.test/signed-out"));
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out");
+        await resolveMatrixMediaUrl(client, "mxc://matrix.test/signed-out-picture", 48);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe("matrixAvatarStore", () => {
@@ -202,7 +307,110 @@ describe("matrixAvatarStore", () => {
         expect(values[0]).toBeUndefined();
     });
 
+    it("follows a new picture, keeping the old one until the new one is ready", async () => {
+        let created = 0;
+        URL.createObjectURL = vi.fn(() => `blob:https://play.test/changing-${created++}`);
+        let finishNew: (response: Response) => void = () => undefined;
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(new Response(new Blob(["old"]), { status: 200 }))
+            .mockImplementationOnce(
+                () =>
+                    new Promise<Response>((resolve) => {
+                        finishNew = resolve;
+                    })
+            );
+        vi.stubGlobal("fetch", fetchMock);
+        const mxc = writable<string | undefined>("mxc://matrix.test/changing-old");
+        const values: (string | undefined)[] = [];
+        const unsubscribe = changingMatrixAvatarStore(fakeClient(), mxc, 48).subscribe((value) => values.push(value));
+        await vi.waitFor(() => expect(values.at(-1)).toBe("blob:https://play.test/changing-0"));
+
+        mxc.set("mxc://matrix.test/changing-new");
+        await Promise.resolve();
+        expect(values.at(-1)).toBe("blob:https://play.test/changing-0");
+
+        finishNew(new Response(new Blob(["new"]), { status: 200 }));
+        await vi.waitFor(() => expect(values.at(-1)).toBe("blob:https://play.test/changing-1"));
+        unsubscribe();
+    });
+
     it("stays empty without a picture", () => {
         expect(get(matrixAvatarStore(fakeClient(), undefined, 24))).toBeUndefined();
+    });
+});
+
+describe("holdMatrixMedia with an encrypted file", () => {
+    const fetchMock = vi.fn();
+
+    beforeEach(() => vi.stubGlobal("fetch", fetchMock));
+    afterEach(() => {
+        fetchMock.mockReset();
+        vi.unstubAllGlobals();
+    });
+
+    function toBase64(bytes: ArrayBuffer | Uint8Array): string {
+        return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/=+$/, "");
+    }
+
+    /** Encrypts like Element does for an attachment in an encrypted chat. */
+    async function encryptLikeElement(text: string, mxcUrl: string) {
+        const key = await crypto.subtle.generateKey({ name: "AES-CTR", length: 256 }, true, ["encrypt", "decrypt"]);
+        const iv = new Uint8Array(16);
+        crypto.getRandomValues(iv.subarray(0, 8));
+        const ciphertext = await crypto.subtle.encrypt(
+            { name: "AES-CTR", counter: iv, length: 64 },
+            key,
+            new TextEncoder().encode(text)
+        );
+        const jwk = await crypto.subtle.exportKey("jwk", key);
+        const sha256 = toBase64(await crypto.subtle.digest("SHA-256", ciphertext));
+        return {
+            ciphertext,
+            file: { url: mxcUrl, key: { ...jwk, k: jwk.k ?? "" }, iv: toBase64(iv), hashes: { sha256 }, v: "v2" },
+        };
+    }
+
+    it("downloads and decrypts it", async () => {
+        const { ciphertext, file } = await encryptLikeElement("hello photo", "mxc://matrix.test/encrypted");
+        fetchMock.mockResolvedValue(new Response(ciphertext, { status: 200 }));
+        let shown: Blob | undefined;
+        URL.createObjectURL = vi.fn((blob: Blob) => {
+            shown = blob;
+            return "blob:https://play.test/decrypted";
+        });
+
+        const hold = holdMatrixMedia(fakeClient(), file, "image/png");
+
+        expect(await hold.url).toBe("blob:https://play.test/decrypted");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://matrix.test/_matrix/client/v1/media/download/matrix.test/encrypted",
+            { headers: { Authorization: "Bearer token" } }
+        );
+        expect(shown?.type).toBe("image/png");
+        // jsdom's Blob has no text(): read it with a FileReader.
+        const text = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+            reader.readAsText(shown as Blob);
+        });
+        expect(text).toBe("hello photo");
+        hold.release();
+    });
+
+    it("doesn't show a file that doesn't match its hash", async () => {
+        const { file } = await encryptLikeElement("hello", "mxc://matrix.test/tampered");
+        fetchMock.mockResolvedValue(new Response(new TextEncoder().encode("not the same"), { status: 200 }));
+        const createObjectURL = vi.fn(() => "blob:https://play.test/tampered");
+        URL.createObjectURL = createObjectURL;
+
+        const client = fakeClient();
+        expect(await resolveMatrixMediaUrl(client, file)).toBeUndefined();
+        expect(createObjectURL).not.toHaveBeenCalled();
+
+        // It may have been a cut-off download: shown again, it's fetched again.
+        fetchMock.mockClear();
+        await resolveMatrixMediaUrl(client, file);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });

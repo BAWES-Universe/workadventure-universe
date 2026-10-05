@@ -1,4 +1,5 @@
 import type { Readable, Unsubscriber, Writable } from "svelte/store";
+import { defaultWoka } from "@workadventure/shared-utils";
 import { derived, get, readable, writable } from "svelte/store";
 import type {
     EmittedEvents,
@@ -53,19 +54,20 @@ import { MatrixChatRoom } from "./MatrixChatRoom";
 import type { MatrixSecurity } from "./MatrixSecurity";
 import { matrixSecurity as defaultMatrixSecurity } from "./MatrixSecurity";
 import { MatrixRoomFolder } from "./MatrixRoomFolder";
+import { clearMatrixMedia } from "./MatrixMedia";
 import { chatUserFactory, mapMatrixPresenceToAvailabilityStatus, toChatPresence } from "./MatrixChatUser";
-import { saveWokaAvatar } from "./MatrixWokaAvatar";
+import { WokaAvatarSaver } from "./MatrixWokaAvatar";
 
 const CLIENT_NOT_INITIALIZED_ERROR_MSG = "MatrixClient not yet initialized";
-export const defaultWoka =
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABcAAAAdCAYAAABBsffGAAAB/ElEQVRIia1WMW7CQBC8EAoqFy74AD1FqNzkAUi09DROwwN4Ag+gMQ09dcQXXNHQIucBPAJFc2Iue+dd40QZycLc7c7N7d7u+cU9wXw+ryyL0+n00eU9tCZIOp1O/f/ZbBbmzuczX6uuRVTlIAYpCSeTScumaZqw0OVyURd47SIGaZ7n6s4wjmc0Grn7/e6yLFtcr9dPaaOGhcTEeDxu2dxut2hXUJ9ioKmW0IidMg6/NPmD1EmqtojTBWAvE26SW8r+YhfIu87zbyB5BiRerVYtikXxXuLRuK058HABMyz/AX8UHwXgV0NRaEXzDKzaw+EQCioo1yrsLfvyjwZrTvK0yp/xh/o+JwbFhFYgFRNqzGEIB1ZhH2INkXJZoShn2WNSgJRNS/qoYSHxer1+qkhChnC320ULRI1LEsNhv99HISBkLmhP/7L8OfqhiKC6SzEJtSTLHMkGFhK6XC79L89rmtC6rv0YfjXV9COPDwtVQxEc2ZflIu7R+WADQrkA7eCH5BdFwQRXQ8bKxXejeWFoYZGCQM7Yh7BAkcw0DEnEEPHhbjBPQfCDvwzlEINlWZq3OAiOx2O0KwAKU8gehXfzu2Wz2VQMTXqCeLZZSNvtVv20MFsu48gQpDvjuHYxE+ZHESBPSJ/x3sqBvhe0hc5vRXkfypBY4xGcc9+lcFxartG6LgAAAABJRU5ErkJggg==";
+// The one default woka (shared with the game), so the chat never mistakes it for a chosen woka.
+export { defaultWoka };
 export const defaultColor = "#626262";
 
 export class MatrixChatConnection implements ChatConnectionInterface {
     private readonly roomList: MapStore<string, MatrixChatRoom>;
     private client: MatrixClient | undefined;
     private wokaAvatarUnsubscriber: Unsubscriber | undefined;
-    private wokaAvatarSaving: Promise<void> = Promise.resolve();
+    private wokaAvatarSaver: WokaAvatarSaver | undefined;
     private handleRoom: (room: Room) => void;
     private handleDeleteRoom: (roomId: string) => void;
     private handleMyMembership: (room: Room, membership: string, prevMembership: string | undefined) => void;
@@ -1205,19 +1207,21 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     /** Keeps the chat profile picture in step with the woka, so other chat apps and offline lists show it too. */
     private startSavingWokaAsAvatar(): void {
         if (this.wokaAvatarUnsubscriber) return;
+        const client = this.client;
+        if (!client) return;
+        const saver = new WokaAvatarSaver(client);
+        this.wokaAvatarSaver = saver;
         this.wokaAvatarUnsubscriber = currentPlayerWokaStore.subscribe((woka) => {
-            const client = this.client;
-            if (!client || !woka || woka === defaultWoka) return;
-            // One save at a time, so a quick woka change can't race the previous upload.
-            this.wokaAvatarSaving = this.wokaAvatarSaving
-                .then(() => saveWokaAvatar(client, woka))
-                .catch((error) => console.warn("Could not save the woka as the chat picture", error));
+            if (!woka || woka === defaultWoka) return;
+            saver.update(woka);
         });
     }
 
     clearListener() {
         this.wokaAvatarUnsubscriber?.();
         this.wokaAvatarUnsubscriber = undefined;
+        this.wokaAvatarSaver?.stop();
+        this.wokaAvatarSaver = undefined;
         this.roomList.forEach((room) => {
             this.roomList.delete(room.id);
         });
@@ -1229,8 +1233,10 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         this.client?.off(UserEvent.Presence, this.handleUserPresence);
         this.client?.off(CryptoEvent.VerificationRequestReceived, this.handleVerificationRequestReceived);
         if (this.statusUnsubscriber) this.statusUnsubscriber();
+        clearMatrixMedia();
     }
     async destroy(): Promise<void> {
+        clearMatrixMedia();
         await this.client?.logout(true);
     }
 }

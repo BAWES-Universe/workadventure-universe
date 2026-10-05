@@ -51,7 +51,7 @@ import { MatrixChatMessageReaction } from "./MatrixChatMessageReaction";
 import { matrixSecurity } from "./MatrixSecurity";
 import { MatrixChatRoomMember } from "./MatrixChatRoomMember";
 import { isInvitationGoneError } from "./isInvitationGoneError";
-import { matrixAvatarStore } from "./MatrixMedia";
+import { changingMatrixAvatarStore } from "./MatrixMedia";
 
 /** How long leaving waits for pending invitations to be withdrawn before it leaves anyway. */
 const INVITE_WITHDRAWAL_DEADLINE_MS = 3000;
@@ -69,6 +69,7 @@ export class MatrixChatRoom
     readonly hasUnreadMessages: Writable<boolean>;
     readonly unreadNotificationCount: Writable<number>;
     pictureStore: PictureStore;
+    private readonly pictureMxc: Writable<string | undefined>;
     messages: SearchableArrayStore<string, MatrixChatMessage>;
     members: Writable<MatrixChatRoomMember[]>;
     myMembership: Writable<ChatRoomMembership>;
@@ -111,11 +112,9 @@ export class MatrixChatRoom
         this.hasUnreadMessages = writable(matrixRoom.getUnreadNotificationCount() > 0);
         this.unreadNotificationCount = writable(matrixRoom.getUnreadNotificationCount());
         // The room's own picture, or for a direct chat the other person's (their woka, which Universe saves there).
-        this.pictureStore = matrixAvatarStore(
-            matrixRoom.client,
-            matrixRoom.getMxcAvatarUrl() ?? matrixRoom.getAvatarFallbackMember()?.getMxcAvatarUrl(),
-            96
-        );
+        // It follows changes: a new room picture, or the other person saving a new woka.
+        this.pictureMxc = writable(this.currentPictureMxc());
+        this.pictureStore = changingMatrixAvatarStore(matrixRoom.client, this.pictureMxc, 96);
         this.messages = new SearchableArrayStore((item: MatrixChatMessage) => item.id);
         this.sendMessage = this.sendMessage.bind(this);
         this.myMembership = writable(matrixRoom.getMyMembership());
@@ -239,7 +238,26 @@ export class MatrixChatRoom
     private onRoomNewMember(event: MatrixEvent, state: RoomState, member: RoomMember) {
         this.members.update((members) => [...members, new MatrixChatRoomMember(member, this.matrixRoom.client)]);
     }
+    private currentPictureMxc(): string | undefined {
+        return (
+            this.matrixRoom.getMxcAvatarUrl() ??
+            this.matrixRoom.getAvatarFallbackMember()?.getMxcAvatarUrl() ??
+            undefined
+        );
+    }
+
     private onRoomStateEvent(event: MatrixEvent, state: RoomState, lastStateEvent: MatrixEvent | null) {
+        const eventType = event.getType();
+        if (eventType === EventType.RoomAvatar || eventType === EventType.RoomMember) {
+            const mxc = this.currentPictureMxc();
+            if (mxc !== get(this.pictureMxc)) this.pictureMxc.set(mxc);
+            if (eventType === EventType.RoomMember) {
+                const userId = event.getStateKey();
+                get(this.members)
+                    .find((member) => member.id === userId)
+                    ?.refreshPicture();
+            }
+        }
         if (get(this.isEncrypted)) return;
         const isEncrypted = !!state.getStateEvents(EventType.RoomEncryption)[0];
         if (isEncrypted) this.isEncrypted.set(isEncrypted);
