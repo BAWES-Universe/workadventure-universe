@@ -99,6 +99,7 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         this.touchPreviewWaiting = false;
         this.touchDraggingPreview = false;
         this.touchDownOnPreview = false;
+        this.mouseDownPlacing = false;
         editTouchPreviewStore.set(undefined);
     }
 
@@ -253,7 +254,7 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         this.pointerDownEventHandler = (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) =>
             this.handlePointerDownEvent(pointer, gameObjects);
         this.scene.input.on(Phaser.Input.Events.POINTER_DOWN, this.pointerDownEventHandler);
-        this.scene.input.on(Phaser.Input.Events.POINTER_UP, this.touchPointerUpHandler);
+        this.scene.input.on(Phaser.Input.Events.POINTER_UP, this.pointerUpHandler);
 
         this.shiftKey?.on(Phaser.Input.Keyboard.Events.DOWN, () => {
             this.changePreviewTint();
@@ -376,6 +377,8 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
     private touchPreviewWaiting = false;
     private touchDraggingPreview = false;
     private touchDownOnPreview = false;
+    /** A left press with a mouse while placing: the release places unless the press dragged the map. */
+    private mouseDownPlacing = false;
 
     /** Where the waiting preview is on screen, for the "Tap again to place" pill. */
     private publishTouchPreview(): void {
@@ -446,8 +449,17 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         this.placePreview();
     }
 
-    private readonly touchPointerUpHandler = (pointer: Phaser.Input.Pointer) => {
-        if (!pointer.wasTouch) return;
+    private readonly pointerUpHandler = (pointer: Phaser.Input.Pointer) => {
+        if (!pointer.wasTouch) {
+            const placing = this.mouseDownPlacing;
+            this.mouseDownPlacing = false;
+            if (!placing || !this.entityPrefabPreview || !this.entityPrefab) return;
+            // A press that dragged the map is not a click: nothing is placed.
+            if (this.mapEditorModeManager.isDraggingToLookAround) return;
+            if (!this.canEntityBePlaced()) return;
+            this.placePreview();
+            return;
+        }
         const wasDraggingPreview = this.touchDraggingPreview;
         const downOnPreview = this.touchDownOnPreview;
         this.touchDraggingPreview = false;
@@ -518,15 +530,13 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
             return;
         }
 
-        if (!this.canEntityBePlaced()) {
-            return;
-        }
-
         if (pointer.rightButtonDown()) {
             this.cleanPreview();
             return;
         }
-        this.placePreview();
+        // Nothing is placed on the way down with a mouse either: the same press may turn into a drag that pans the
+        // map, and an object must not be left where the drag started. The release places (pointerUpHandler).
+        this.mouseDownPlacing = pointer.leftButtonDown();
     }
 
     /** Create the object where the preview is, and keep placing. */
@@ -589,7 +599,7 @@ export class EntityEditorTool extends EntityRelatedEditorTool {
         this.shiftKey?.off(Phaser.Input.Keyboard.Events.DOWN);
         this.shiftKey?.off(Phaser.Input.Keyboard.Events.UP);
         this.scene.input.off(Phaser.Input.Events.POINTER_DOWN, this.pointerDownEventHandler);
-        this.scene.input.off(Phaser.Input.Events.POINTER_UP, this.touchPointerUpHandler);
+        this.scene.input.off(Phaser.Input.Events.POINTER_UP, this.pointerUpHandler);
         this.touchPreviewWaiting = false;
         this.touchDraggingPreview = false;
         editTouchPreviewStore.set(undefined);
