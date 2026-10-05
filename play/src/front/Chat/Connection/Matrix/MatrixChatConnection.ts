@@ -47,12 +47,14 @@ import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import LL from "../../../../i18n/i18n-svelte";
 import type { RequestedStatus } from "../../../Rules/StatusRules/statusRules";
 import { MATRIX_ADMIN_USER, MATRIX_DOMAIN } from "../../../Enum/EnvironmentVariable";
+import { currentPlayerWokaStore } from "../../../Stores/CurrentPlayerWokaStore";
 import { MatrixRateLimiter } from "../../Services/MatrixRateLimiter";
 import { MatrixChatRoom } from "./MatrixChatRoom";
 import type { MatrixSecurity } from "./MatrixSecurity";
 import { matrixSecurity as defaultMatrixSecurity } from "./MatrixSecurity";
 import { MatrixRoomFolder } from "./MatrixRoomFolder";
 import { chatUserFactory, mapMatrixPresenceToAvailabilityStatus, toChatPresence } from "./MatrixChatUser";
+import { saveWokaAvatar } from "./MatrixWokaAvatar";
 
 const CLIENT_NOT_INITIALIZED_ERROR_MSG = "MatrixClient not yet initialized";
 export const defaultWoka =
@@ -62,6 +64,8 @@ export const defaultColor = "#626262";
 export class MatrixChatConnection implements ChatConnectionInterface {
     private readonly roomList: MapStore<string, MatrixChatRoom>;
     private client: MatrixClient | undefined;
+    private wokaAvatarUnsubscriber: Unsubscriber | undefined;
+    private wokaAvatarSaving: Promise<void> = Promise.resolve();
     private handleRoom: (room: Room) => void;
     private handleDeleteRoom: (roomId: string) => void;
     private handleMyMembership: (room: Room, membership: string, prevMembership: string | undefined) => void;
@@ -263,6 +267,7 @@ export class MatrixChatConnection implements ChatConnectionInterface {
                     this.connectionStatus.set("ONLINE");
                     this.isClientReady = true;
                     this._ignoredUsers.set(this.client.getIgnoredUsers());
+                    this.startSavingWokaAsAvatar();
                     break;
                 case SyncState.Error:
                     this.connectionStatus.set("ON_ERROR");
@@ -1197,7 +1202,22 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         }
     };
 
+    /** Keeps the chat profile picture in step with the woka, so other chat apps and offline lists show it too. */
+    private startSavingWokaAsAvatar(): void {
+        if (this.wokaAvatarUnsubscriber) return;
+        this.wokaAvatarUnsubscriber = currentPlayerWokaStore.subscribe((woka) => {
+            const client = this.client;
+            if (!client || !woka || woka === defaultWoka) return;
+            // One save at a time, so a quick woka change can't race the previous upload.
+            this.wokaAvatarSaving = this.wokaAvatarSaving
+                .then(() => saveWokaAvatar(client, woka))
+                .catch((error) => console.warn("Could not save the woka as the chat picture", error));
+        });
+    }
+
     clearListener() {
+        this.wokaAvatarUnsubscriber?.();
+        this.wokaAvatarUnsubscriber = undefined;
         this.roomList.forEach((room) => {
             this.roomList.delete(room.id);
         });

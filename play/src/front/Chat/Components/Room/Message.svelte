@@ -121,6 +121,9 @@
         setTimeout(() => target.classList.remove("quote-flash"), 1600);
     }
 
+    // An encrypted Matrix message only learns whether it is an image, a file… once decrypted, which updates its content.
+    $: contentType = $content ? message.type : type;
+
     const reactionsWithUsers = derived(
         [reactions, ...Array.from(reactions.values()).map((reaction) => reaction.users)],
         ([$reactions, ...$users]) => {
@@ -205,10 +208,14 @@
                 {/if}
 
                 {#if !notSent}
-                    <svelte:component this={messageType[type]} on:updateMessageBody={updateMessageBody} {content} />
+                    <svelte:component
+                        this={messageType[contentType]}
+                        on:updateMessageBody={updateMessageBody}
+                        {content}
+                    />
                 {:else if $content.body.trim() !== ""}
                     <div class="opacity-70">
-                        <svelte:component this={messageType[type]} {content} />
+                        <svelte:component this={messageType[contentType]} {content} />
                     </div>
                 {/if}
                 {#if notSent}
