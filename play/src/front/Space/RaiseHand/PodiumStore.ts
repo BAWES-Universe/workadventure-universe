@@ -149,8 +149,10 @@ function bindPodiumSpace(space: SpaceInterface): () => void {
     return () => {
         subscriptions.forEach((subscription) => subscription.unsubscribe());
         unsubscribers.forEach((unsubscriber) => unsubscriber());
-        // Leaving the podium ends everything that happened on it.
+        // Leaving the podium ends everything that happened on it. Leaving its zone usually leaves the space too, but
+        // stop streaming in case we are still in it. The listener state stays with the zone that set it.
         if (get(speakingFromAudienceStore)) {
+            space.stopStreaming();
             speakingFromAudienceStore.set(undefined);
             isSpeakerStore.set(false);
         }
