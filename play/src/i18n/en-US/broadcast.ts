@@ -63,6 +63,7 @@ const broadcast: BaseTranslation = {
         wrongFile: "That isn't an audio file. Use an MP3, WAV or OGG.",
         tooLong: "Keep it under {minutes:number} minutes, or use a file.",
         uploadFailed: "The voice note could not be sent. Try again.",
+        recordingFailed: "The recording could not be saved. Try again.",
         notSupported: "Recording isn't supported in this browser. Use a file.",
     },
     live: {

@@ -93,13 +93,30 @@
         }, 100);
     }
 
-    async function stopRecording() {
+    /** @param restart With no take to fall back on, open the microphone again when this one can't be saved. */
+    async function stopRecording(restart = true) {
         if (!recorder) return;
         const current = recorder;
         recorder = undefined;
         if (ticker) clearInterval(ticker);
         ticker = undefined;
-        const { blob, samples, sampleRate } = await current.stop();
+        let stopped: Awaited<ReturnType<VoiceRecorder["stop"]>>;
+        try {
+            stopped = await current.stop();
+        } catch (e) {
+            console.warn("Broadcast: the voice note could not be saved", e);
+            if (destroyed) return;
+            // The take is lost: the one reviewed before stays, else the card goes back to recording.
+            if (audio) {
+                state = "review";
+            } else {
+                state = "starting";
+                if (restart) startRecording().catch((err) => console.error(err));
+            }
+            error = $LL.broadcast.voice.recordingFailed();
+            return;
+        }
+        const { blob, samples, sampleRate } = stopped;
         setAudio(blob, "voice-note.wav", waveShape(samples), samples.length / sampleRate);
     }
 
@@ -136,7 +153,7 @@
         }
         error = undefined;
         const mine = ++chosen;
-        if (recorder) await stopRecording();
+        if (recorder) await stopRecording(false);
         try {
             const { levels, duration } = await describeAudioFile(file);
             // Another file was picked while this one decoded: the later pick wins.
