@@ -440,6 +440,9 @@ export class GameScene extends DirtyScene {
     private readonly pendingBroadcastJoins = new Set<string>();
     /** Set once the scene is closing: a join that lands after that must not touch the destroyed registry. */
     private broadcastSceneClosing = false;
+    /** Failed joins per scope, so a broadcast space that could not be joined is tried again, a few times. */
+    private readonly broadcastJoinFailures = new Map<string, number>();
+    private readonly broadcastJoinRetryTimers = new Set<ReturnType<typeof setTimeout>>();
 
     /**
      * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
@@ -487,6 +490,7 @@ export class GameScene extends DirtyScene {
                         });
                         return;
                     }
+                    this.broadcastJoinFailures.delete(scope);
                     // The tiles of whoever goes live here get the live ring, and sit first in the strip.
                     space.setMetadata(
                         new Map<string, unknown>([
@@ -514,6 +518,7 @@ export class GameScene extends DirtyScene {
                 .catch((e) => {
                     console.error(e);
                     Sentry.captureException(e);
+                    this.retryBroadcastJoinLater(scope, broadcastService);
                 })
                 .finally(() => {
                     this.pendingBroadcastJoins.delete(scope);
@@ -524,6 +529,36 @@ export class GameScene extends DirtyScene {
                 });
         }
     }
+
+    /**
+     * A join that failed (the network dropped, the pusher timed out) is tried again after a while, as long as the
+     * scene is open and the channel is still wanted: the channels only re-sync when they change, so without this a
+     * passing failure would keep the player out of that broadcast for good. Three tries, each waiting twice as long.
+     */
+    private retryBroadcastJoinLater(scope: string, broadcastService: BroadcastService): void {
+        if (this.broadcastSceneClosing || this.abortController.signal.aborted) {
+            return;
+        }
+        const failures = (this.broadcastJoinFailures.get(scope) ?? 0) + 1;
+        this.broadcastJoinFailures.set(scope, failures);
+        if (failures > GameScene.BROADCAST_JOIN_RETRIES) {
+            return;
+        }
+        const timer = setTimeout(() => {
+            this.broadcastJoinRetryTimers.delete(timer);
+            if (
+                this.broadcastSceneClosing ||
+                get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB ||
+                !this.latestBroadcastChannels.some((c) => c.scope === scope)
+            ) {
+                return;
+            }
+            this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
+        }, GameScene.BROADCAST_JOIN_RETRY_MS * 2 ** (failures - 1));
+        this.broadcastJoinRetryTimers.add(timer);
+    }
+    private static readonly BROADCAST_JOIN_RETRIES = 3;
+    private static readonly BROADCAST_JOIN_RETRY_MS = 5_000;
 
     public get broadcastService(): BroadcastService {
         if (this._broadcastService === undefined) {
@@ -1263,6 +1298,11 @@ export class GameScene extends DirtyScene {
         this.broadcastSceneClosing = true;
         this.pendingBroadcastJoins.clear();
         this.latestBroadcastChannels = [];
+        for (const timer of this.broadcastJoinRetryTimers) {
+            clearTimeout(timer);
+        }
+        this.broadcastJoinRetryTimers.clear();
+        this.broadcastJoinFailures.clear();
         // A person card belongs to this map: close it before the map and its players go (a reconnect, a map change).
         wokaMenuStore.clear();
         // make sure we restart own medias
