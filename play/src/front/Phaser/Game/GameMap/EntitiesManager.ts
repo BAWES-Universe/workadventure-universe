@@ -382,14 +382,10 @@ export class EntitiesManager extends Phaser.Events.EventEmitter {
                 return;
             }
 
-            // If the entity is not editable and the entity editor tool is not active, switch automatically to entity editor tool
-            if (
-                get(mapEditorModeStore) &&
-                get(mapEditorSelectedToolStore) != EditorToolName.ExploreTheRoom &&
-                this.isEntityEditorToolActive() == false
-            ) {
-                // Activate entity editor tool
-                this.scene.getMapEditorModeManager().equipTool(EditorToolName.EntityEditor);
+            // Each tool only acts on its own things: with Areas, Bots or any other tool open, a tap on a placed
+            // object neither picks it up nor switches to the Objects tool.
+            if (get(mapEditorModeStore) && !this.isEntityEditorToolActive() && !this.isExplorerToolActive()) {
+                return;
             }
 
             if (get(mapEditorModeStore) && !get(mapEditorSelectedEntityPrefabStore)) {
