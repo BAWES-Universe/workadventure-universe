@@ -36,20 +36,54 @@ export interface MatrixMediaHold {
     release(): void;
 }
 
+/** A file sent in an end-to-end encrypted chat by another app (Element): its content is encrypted too. */
+export interface EncryptedMatrixFile {
+    url: string;
+    key: { k: string };
+    iv: string;
+    hashes?: { sha256?: string };
+}
+
+export function parseEncryptedMatrixFile(value: unknown): EncryptedMatrixFile | undefined {
+    if (typeof value !== "object" || value === null) return undefined;
+    const { url, key, iv, hashes } = value as Record<string, unknown>;
+    if (typeof url !== "string" || !url.startsWith("mxc://") || typeof iv !== "string") return undefined;
+    if (typeof key !== "object" || key === null || typeof (key as Record<string, unknown>).k !== "string") {
+        return undefined;
+    }
+    const sha256 =
+        typeof hashes === "object" && hashes !== null ? (hashes as Record<string, unknown>).sha256 : undefined;
+    return {
+        url,
+        key: { k: (key as { k: string }).k },
+        iv,
+        hashes: { sha256: typeof sha256 === "string" ? sha256 : undefined },
+    };
+}
+
 /**
- * Returns a URL the browser can show for a Matrix file (mxc://…), kept valid until `release()` is called.
+ * Returns a URL the browser can show for a Matrix file, kept valid until `release()` is called. The file is either
+ * an mxc:// URL or, in an encrypted chat, an encrypted file (`file` in the message), decrypted here.
  *
  * Synapse 1.120+ serves new uploads only from the authenticated media endpoints, which need the access token in an
  * Authorization header. An <img>, <video> or download link can't send it, so the file is fetched here and shown from
  * a blob: URL. Servers without authenticated media keep the legacy URL.
  */
-export function holdMatrixMedia(client: MatrixClient, mxcUrl: unknown): MatrixMediaHold {
+export function holdMatrixMedia(client: MatrixClient, source: unknown, mimetype?: string): MatrixMediaHold {
+    const encrypted = parseEncryptedMatrixFile(source);
+    const mxcUrl = encrypted?.url ?? source;
     if (typeof mxcUrl !== "string" || !mxcUrl.startsWith("mxc://")) {
         return { url: Promise.resolve(undefined), release: () => undefined };
     }
     let kept = keptFiles.get(mxcUrl);
     if (!kept) {
-        kept = { url: fetchMatrixMedia(client, mxcUrl), holders: 0 };
+        const forget = () => keptFiles.delete(mxcUrl);
+        kept = {
+            url: encrypted
+                ? fetchEncryptedMatrixMedia(client, encrypted, mimetype, forget)
+                : fetchMatrixMedia(client, mxcUrl, forget),
+            holders: 0,
+        };
         keptFiles.set(mxcUrl, kept);
     }
     kept.holders++;
@@ -77,7 +111,8 @@ export function resolveMatrixMediaUrl(client: MatrixClient, mxcUrl: unknown): Pr
     return hold.url;
 }
 
-async function fetchMatrixMedia(client: MatrixClient, mxcUrl: string): Promise<string | undefined> {
+/** `forget` drops the cached answer, so the file is fetched again the next time it's shown. */
+async function fetchMatrixMedia(client: MatrixClient, mxcUrl: string, forget: () => void): Promise<string | undefined> {
     const legacyUrl = client.mxcUrlToHttp(mxcUrl) ?? undefined;
     const authenticatedUrl = client.mxcUrlToHttp(mxcUrl, undefined, undefined, undefined, false, true, true);
     const accessToken = client.getAccessToken();
@@ -90,7 +125,7 @@ async function fetchMatrixMedia(client: MatrixClient, mxcUrl: string): Promise<s
             // Older servers don't know the authenticated endpoint (404/405/400); the legacy one is all they have.
             // Anything else (server error, rate limit, expired token) may pass next time the file is shown.
             if (!ENDPOINT_UNKNOWN_STATUSES.includes(response.status)) {
-                keptFiles.delete(mxcUrl);
+                forget();
             }
             return legacyUrl;
         }
@@ -98,7 +133,65 @@ async function fetchMatrixMedia(client: MatrixClient, mxcUrl: string): Promise<s
     } catch (error) {
         console.error("Could not load a chat file", error);
         // A network blip: try again the next time the file is shown.
-        keptFiles.delete(mxcUrl);
+        forget();
         return legacyUrl;
+    }
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+    const standard = base64.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(standard.padEnd(Math.ceil(standard.length / 4) * 4, "="));
+    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function bytesToUnpaddedBase64(bytes: ArrayBuffer): string {
+    return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/=+$/, "");
+}
+
+/** Downloads an encrypted file and decrypts it (AES-CTR, as the Matrix spec sets for attachments). */
+async function fetchEncryptedMatrixMedia(
+    client: MatrixClient,
+    file: EncryptedMatrixFile,
+    mimetype: string | undefined,
+    forget: () => void
+): Promise<string | undefined> {
+    const legacyUrl = client.mxcUrlToHttp(file.url) ?? undefined;
+    const authenticatedUrl = client.mxcUrlToHttp(file.url, undefined, undefined, undefined, false, true, true);
+    const accessToken = client.getAccessToken();
+    try {
+        let response =
+            authenticatedUrl && accessToken
+                ? await fetch(authenticatedUrl, { headers: { Authorization: `Bearer ${accessToken}` } })
+                : undefined;
+        if ((!response || ENDPOINT_UNKNOWN_STATUSES.includes(response.status)) && legacyUrl) {
+            response = await fetch(legacyUrl);
+        }
+        if (!response?.ok) {
+            forget();
+            return undefined;
+        }
+        const encrypted = await response.arrayBuffer();
+        // A file that doesn't match the hash its sender gave isn't shown.
+        if (file.hashes?.sha256) {
+            const digest = await crypto.subtle.digest("SHA-256", encrypted);
+            if (bytesToUnpaddedBase64(digest) !== file.hashes.sha256.replace(/=+$/, "")) return undefined;
+        }
+        const key = await crypto.subtle.importKey(
+            "jwk",
+            { kty: "oct", k: file.key.k, alg: "A256CTR", ext: true, key_ops: ["encrypt", "decrypt"] },
+            { name: "AES-CTR" },
+            false,
+            ["decrypt"]
+        );
+        const decrypted = await crypto.subtle.decrypt(
+            { name: "AES-CTR", counter: base64ToBytes(file.iv), length: 64 },
+            key,
+            encrypted
+        );
+        return URL.createObjectURL(new Blob([decrypted], mimetype ? { type: mimetype } : undefined));
+    } catch (error) {
+        console.error("Could not load an encrypted chat file", error);
+        forget();
+        return undefined;
     }
 }

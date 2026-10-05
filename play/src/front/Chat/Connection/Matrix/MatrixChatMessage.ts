@@ -104,7 +104,16 @@ export class MatrixChatMessage implements ChatMessage {
     private loadMediaUrl() {
         this.releaseMedia();
         if (!this.isShown || this.type === "text" || this.event.isDecryptionFailure()) return;
-        const hold = holdMatrixMedia(this.room.client, this.event.getOriginalContent().url);
+        const content = this.event.getOriginalContent();
+        // In an encrypted chat, files sent by other apps (Element) are encrypted too: they come as `file`, not `url`.
+        const info: unknown = content.info;
+        const mimetype =
+            typeof info === "object" && info !== null ? (info as Record<string, unknown>).mimetype : undefined;
+        const hold = holdMatrixMedia(
+            this.room.client,
+            content.url ?? content.file,
+            typeof mimetype === "string" ? mimetype : undefined
+        );
         this.mediaHold = hold;
         hold.url
             .then((url) => {
