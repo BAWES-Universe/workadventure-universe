@@ -91,8 +91,8 @@
     $: turnedOn = properties.filter((p) => p.type !== "areaDescriptionProperties");
     $: size = data
         ? $LL.mapEditor.edit.areas.tiles({
-              width: Math.max(1, Math.round(data.width / TILE)),
-              height: Math.max(1, Math.round(data.height / TILE)),
+              width: Math.round((data.width / TILE) * 10) / 10,
+              height: Math.round((data.height / TILE) * 10) / 10,
           })
         : "";
 
