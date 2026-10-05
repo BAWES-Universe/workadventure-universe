@@ -184,6 +184,42 @@ describe("Nearby chat reactions and replies", () => {
         expect(get(last().canReact)).toBe(false);
     });
 
+    it("stops taking reactions on messages carried to the next map, but keeps their reactions and replies", async () => {
+        fake.emit("spaceMessage", {
+            sender: "room_3",
+            spaceMessage: { message: "hi", name: "Sara", id: SARA_MESSAGE_ID },
+        });
+        await last().addReaction("👍");
+        room.stashHistoryForNextScene();
+
+        const nextMap = new ProximityChatRoom(
+            "room_1",
+            { joinSpace: vi.fn(), leaveSpace: vi.fn() } as unknown as SpaceRegistryInterface,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+        try {
+            const carried = Array.from(get(nextMap.messages)).find((message) => message.id === SARA_MESSAGE_ID);
+            expect(carried).toBeDefined();
+            expect(get(carried!.canReact)).toBe(false);
+            expect(get(carried!.canReply)).toBe(true);
+            expect(carried!.reactions.get("👍")).toBeDefined();
+
+            const sentBefore = sentEvents("spaceMessageReaction").length;
+            await carried!.addReaction("🎉");
+            expect(sentEvents("spaceMessageReaction")).toHaveLength(sentBefore);
+            expect(carried!.reactions.get("🎉")).toBeUndefined();
+            // Tapping the reaction already on it doesn't take it back either.
+            carried!.reactions.get("👍")!.react();
+            expect(sentEvents("spaceMessageReaction")).toHaveLength(sentBefore);
+            expect(carried!.reactions.get("👍")).toBeDefined();
+        } finally {
+            nextMap.destroy();
+        }
+    });
+
     it("takes no reactions on a message that came without a usable id (bots, older games)", () => {
         fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "beep", name: "Bot" } });
         expect(get(last().canReact)).toBe(false);

@@ -169,6 +169,11 @@ export class ProximityChatMessage implements ChatMessage {
         this.options.react?.(this, reaction);
         return Promise.resolve();
     }
+
+    /** No more reactions, for a message carried to the next map: the people it was sent to aren't in its chat. */
+    stopReactions(): void {
+        this.canReact.set(false);
+    }
 }
 
 type SoundManager = Pick<GameScene, "playBubbleInSound" | "playBubbleOutSound">;
@@ -305,6 +310,10 @@ export class ProximityChatRoom implements ChatRoom {
         // The chats you had on the previous map, when the scene handed them over.
         const stash = takeProximityHistory();
         if (stash) {
+            // Reactions on them would go to this map's bubbles, where nobody has those messages. Replies still quote them.
+            for (const message of stash.messages) {
+                if (message instanceof ProximityChatMessage) message.stopReactions();
+            }
             this.messages.push(...stash.messages);
             this._unreadBySession.set(stash.unreadBySession);
             this._unsentDrafts.set(stash.unsentDrafts);
@@ -742,7 +751,7 @@ export class ProximityChatRoom implements ChatRoom {
 
     /** Toggles this tab's reaction on a nearby message, here and for the others. */
     private readonly reactToMessage = (message: ProximityChatMessage, key: string): void => {
-        if (!isUsableReaction(key) || this.messages.get(message.id) !== message) return;
+        if (!isUsableReaction(key) || !get(message.canReact) || this.messages.get(message.id) !== message) return;
         const add = !message.reactions.get(key)?.users.has(this._spaceUserId);
         const spaceUser = this.users?.get(this._spaceUserId);
         const me = spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser;
