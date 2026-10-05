@@ -19,16 +19,3 @@ function createLookAroundDraggedStore() {
     };
 }
 export const lookAroundDraggedStore = createLookAroundDraggedStore();
-
-/** The one-time note next to the map button, until "Look around" has been opened once. */
-function createLookAroundNoteSeenStore() {
-    const { subscribe, set } = writable<boolean>(localUserStore.getLookAroundNoteSeen());
-    return {
-        subscribe,
-        set: (value: boolean) => {
-            if (value) localUserStore.setLookAroundNoteSeen(true);
-            set(value);
-        },
-    };
-}
-export const lookAroundNoteSeenStore = createLookAroundNoteSeenStore();

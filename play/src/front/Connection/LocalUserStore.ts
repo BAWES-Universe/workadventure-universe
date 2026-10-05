@@ -60,7 +60,6 @@ const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
 const lookAroundHintSeenKey = "lookAroundHintSeen";
-const lookAroundNoteSeenKey = "lookAroundNoteSeen";
 const editHintSeenKey = "editHintSeen";
 const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
@@ -465,15 +464,6 @@ class LocalUserStore {
 
     getLookAroundHintSeen(): boolean {
         return localStorage.getItem(lookAroundHintSeenKey) === "true";
-    }
-
-    /** The one-time note by the map button has been seen (Look around was opened once). */
-    setLookAroundNoteSeen(value: boolean): void {
-        localStorage.setItem(lookAroundNoteSeenKey, value.toString());
-    }
-
-    getLookAroundNoteSeen(): boolean {
-        return localStorage.getItem(lookAroundNoteSeenKey) === "true";
     }
 
     /** The "Pick a tool on the right" hint of the room editor has been seen (a tool was picked once). */
