@@ -15,9 +15,20 @@
 
     function pick(tool: EditorToolName) {
         editHintSeenStore.set(true);
+        const manager = gameManager.getCurrentGameScene().getMapEditorModeManager();
+        // The lit tool tapped again: its panel closes and the tool is put down, like the bar's buttons. On a phone
+        // the panel hides on its own while placing, so there the first tap brings it back and the second closes.
+        if (
+            $mapEditorSelectedToolStore === tool &&
+            ($mapEditorVisibilityStore || tool === EditorToolName.TrashEditor)
+        ) {
+            mapEditorVisibilityStore.set(false);
+            manager.equipTool(undefined);
+            return;
+        }
         analyticsClient.openMapEditorTool(tool);
         mapEditorVisibilityStore.set(true);
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(tool);
+        manager.equipTool(tool);
     }
 
     function pickExternal(onSelect: () => void) {

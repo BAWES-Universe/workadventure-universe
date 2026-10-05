@@ -469,8 +469,6 @@ const mapEditor: BaseTranslation = {
         hint: {
             phone: "Pick a tool on the right. Drag to move around, pinch to zoom.",
             desktop: "Click to place · R to turn · Esc to stop · Ctrl+Z to undo",
-            tuck: "Tuck the panel away",
-            untuck: "Show the panel",
         },
         objects: {
             title: "Objects",
