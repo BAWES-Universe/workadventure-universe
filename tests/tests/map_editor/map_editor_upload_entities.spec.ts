@@ -280,7 +280,8 @@ test.describe("Map editor @oidc @nomobile @nowebkit", () => {
         await expect(page.getByTestId("variant-side-Left")).toHaveCount(1, { timeout: 30000 });
         await expect(page.getByTestId("variant-error")).toHaveCount(0);
 
-        // The other page still lists one object, not two
+        // The other page lists the upload as one object, not two
+        await page2.getByPlaceholder("Search").fill(EntityEditor.getTestAssetName());
         await expect(page2.getByTestId("entity-item")).toHaveCount(1, { timeout: 30000 });
 
         // The "Sides and colours" page covers the list: back shows the list with one object, and the upload is
