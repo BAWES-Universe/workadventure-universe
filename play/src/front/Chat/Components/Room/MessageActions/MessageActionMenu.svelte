@@ -147,8 +147,11 @@
     }
 
     onMount(() => {
-        position().catch((error) => console.error(error));
-        root.querySelector<HTMLElement>("[data-menu-first]")?.focus({ preventScroll: true });
+        // Focus the first button (a quick reaction, else the first menu item) once placed: hidden buttons can't take it.
+        position()
+            .then(() => tick())
+            .then(() => root?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true }))
+            .catch((error) => console.error(error));
     });
 
     onDestroy(() => {
@@ -178,10 +181,9 @@
             aria-label={$LL.chat.messageActions.addReaction()}
             transition:scale={{ duration: 160, start: 0.85, opacity: 0 }}
         >
-            {#each QUICK_REACTIONS as emoji, index (emoji)}
+            {#each QUICK_REACTIONS as emoji (emoji)}
                 <button
                     class="reaction"
-                    data-menu-first={index === 0 ? "" : undefined}
                     aria-label={$LL.chat.messageActions.reactWith({ emoji })}
                     on:click={() => run(() => reactTo(message, emoji))}
                     data-testid={`quickReaction_${emoji}`}>{emoji}</button
@@ -209,12 +211,7 @@
         transition:scale={{ duration: 160, start: 0.9, opacity: 0 }}
     >
         {#if $actions.reply}
-            <button
-                role="menuitem"
-                data-menu-first={$actions.react ? undefined : ""}
-                on:click={() => run(() => replyTo(message))}
-                data-testid="menuReplyButton"
-            >
+            <button role="menuitem" on:click={() => run(() => replyTo(message))} data-testid="menuReplyButton">
                 <span>{$LL.chat.messageActions.reply()}</span><IconArrowBackUp font-size={18} />
             </button>
         {/if}
