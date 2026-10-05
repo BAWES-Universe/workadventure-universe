@@ -1,5 +1,5 @@
 <script lang="ts">
-    // Mind: which AI the bot thinks with. A provider whose model can look at pictures says so.
+    // Mind: which AI the bot thinks with. A provider whose model has vision (can look at pictures) says so.
     import { onMount } from "svelte";
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";

@@ -4,9 +4,9 @@
 </script>
 
 <script lang="ts">
-    // The bot page, laid out like a person: the bot on top (its WOKA in a circle, its name and its on/off switch), then
-    // Identity, Body, Companion, Mind, Personality, Behavior and Skills, then who made it and Delete. Changes save on
-    // their own.
+    // The bot page, like a GPT or Discord bot's settings: the bot itself on top (its WOKA in a circle, its name and
+    // description edited in place, its on/off switch, a Show on map button), then Mind, Personality, Behavior, Skills
+    // and Companion, one open at a time, then who made it and Delete. Changes save on their own.
     import { onMount, onDestroy } from "svelte";
     import { get } from "svelte/store";
     import LL from "../../../../i18n/i18n-svelte";
@@ -18,17 +18,15 @@
     import { botApiService } from "../services/BotApiService";
     import { setBotEnabled } from "../services/botEnabled";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../stores/BotWokaCatalogStore";
-    import { botModel } from "../behaviorModel";
     import BotTexturePicker from "./BotTexturePicker.svelte";
     import PageSwitch from "./page/PageSwitch.svelte";
     import PageGroup from "./page/PageGroup.svelte";
-    import IdentityGroup from "./page/IdentityGroup.svelte";
     import BehaviorGroup from "./page/BehaviorGroup.svelte";
     import MindGroup from "./page/MindGroup.svelte";
     import SayGroup from "./page/SayGroup.svelte";
     import ToolsGroup from "./page/ToolsGroup.svelte";
     import BotFooter from "./page/BotFooter.svelte";
-    import { IconCurrentLocation, IconPaw, IconUser } from "@wa-icons";
+    import { IconCurrentLocation, IconPaw, IconPencil } from "@wa-icons";
 
     export let bot: BotData | null = null;
     export let onSave: () => void;
@@ -337,17 +335,19 @@
     }
 
     $: page = $LL.mapEditor.edit.bots.page;
-    $: model = botModel(currentBot);
-    /** The WOKA it wears, by its collection and name in the catalog */
-    $: bodyBrief = (() => {
-        const id = currentBot?.characterTexture;
-        for (const collection of $botWokaCatalogStore?.["woka"]?.collections ?? []) {
-            const texture = collection.textures?.find((t) => t.id === id);
-            if (texture) return texture.name ? `${collection.name} · ${texture.name}` : collection.name;
-        }
-        return page.body.brief();
-    })();
-    $: subtitle = `${currentBot?.enabled === false ? page.off() : page.on()} · ${page.headerMoves[model.moves]()}`;
+    /** The description grows with what it holds, so it reads as text rather than a box. */
+    function autoHeight(node: HTMLTextAreaElement) {
+        const fit = () => {
+            node.style.height = "auto";
+            node.style.height = `${node.scrollHeight}px`;
+        };
+        fit();
+        node.addEventListener("input", fit);
+        return {
+            update: fit,
+            destroy: () => node.removeEventListener("input", fit),
+        };
+    }
 </script>
 
 <svelte:window on:keydown={handleTextureKeydown} />
@@ -372,23 +372,33 @@
                         direction={0}
                     />
                 {/if}
+                <span class="bp-woka-pen" aria-hidden="true"><IconPencil font-size="11" /></span>
             </button>
             <div class="bp-hd-tx">
-                <div class="bp-name" data-testid="bot-title">{currentBot.name || "Bot"}</div>
-                <div class="bp-sub">{subtitle}</div>
+                <label class="bp-name-wrap">
+                    <input
+                        class="bp-name"
+                        type="text"
+                        value={currentBot.name ?? ""}
+                        maxlength="64"
+                        placeholder="Bot"
+                        aria-label={page.about.name()}
+                        data-testid="bot-name"
+                        on:input={(e) => rename(e.currentTarget.value)}
+                    />
+                    <span class="bp-pen" aria-hidden="true"><IconPencil font-size="14" /></span>
+                </label>
+                <textarea
+                    class="bp-desc"
+                    rows="1"
+                    value={currentBot.description ?? ""}
+                    placeholder={page.about.descriptionPlaceholder()}
+                    aria-label={page.about.description()}
+                    data-testid="bot-description"
+                    use:autoHeight
+                    on:input={(e) => currentBot && apply({ ...currentBot, description: e.currentTarget.value }, true)}
+                />
             </div>
-            {#if onLocate}
-                <button
-                    type="button"
-                    class="bp-circle"
-                    aria-label={page.locate()}
-                    title={page.locate()}
-                    data-testid="bot-locate"
-                    on:click={onLocate}
-                >
-                    <IconCurrentLocation font-size="18" />
-                </button>
-            {/if}
             <PageSwitch
                 checked={currentBot.enabled !== false}
                 label={page.switchOn()}
@@ -397,34 +407,19 @@
                 onChange={switchOnOff}
             />
         </div>
+        {#if onLocate}
+            <div class="bp-actions">
+                <button type="button" class="bp-pill" data-testid="bot-locate" on:click={onLocate}>
+                    <IconCurrentLocation font-size="16" />
+                    {page.locate()}
+                </button>
+            </div>
+        {/if}
         {#if switchError}
             <p class="bp-error" role="alert">{switchError}</p>
         {/if}
 
         <div class="bp-groups">
-            <IdentityGroup
-                bot={currentBot}
-                open={openGroup === "identity"}
-                onToggle={toggleGroup}
-                onChange={apply}
-                onRename={rename}
-            />
-            <PageGroup
-                id="body"
-                icon={IconUser}
-                title={page.body.title()}
-                brief={bodyBrief}
-                link
-                onToggle={() => (editingTexture = true)}
-            />
-            <PageGroup
-                id="companion"
-                icon={IconPaw}
-                title={page.companion.title()}
-                brief={page.companion.none()}
-                link
-                onToggle={() => {}}
-            />
             <MindGroup
                 bot={currentBot}
                 open={openGroup === "mind"}
@@ -445,6 +440,15 @@
                 onToggle={toggleGroup}
                 onChange={(next) => apply(next)}
                 wide={!$mobileLayoutStore}
+            />
+            <!-- An extra, after the bot's own parts: the pet that walks with it -->
+            <PageGroup
+                id="companion"
+                icon={IconPaw}
+                title={page.companion.title()}
+                brief={page.companion.none()}
+                link
+                onToggle={() => {}}
             />
         </div>
         <BotFooter bot={currentBot} {onDelete} />
@@ -492,8 +496,8 @@
     }
     .bp-hd {
         display: flex;
-        align-items: center;
-        gap: 8px;
+        align-items: flex-start;
+        gap: 10px;
     }
     /* The WOKA in a circle, as in the people list and the join screens: tap it to change how the bot looks */
     .bp-woka {
@@ -505,8 +509,8 @@
         margin: 0;
         padding: 0;
         border: 0;
+        position: relative;
         border-radius: 50%;
-        overflow: hidden;
         background: radial-gradient(
             circle at 50% 42%,
             rgba(134, 41, 252, 0.35),
@@ -534,14 +538,92 @@
         text-overflow: ellipsis;
         white-space: nowrap;
     }
+    /* The name is the title, and typing on it renames the bot: no box until it has focus */
+    .bp-name-wrap {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin: 0 0 1px -6px;
+        padding: 1px 6px;
+        border-radius: 8px;
+        cursor: text;
+    }
+    .bp-name-wrap:focus-within {
+        background: rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.6);
+    }
     .bp-name {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        font: inherit;
         font-size: 18px;
         font-weight: 650;
         letter-spacing: -0.01em;
         line-height: 1.25;
+        color: #fff;
+        outline: none;
+        text-overflow: ellipsis;
+    }
+    .bp-pen {
+        flex: none;
+        color: rgba(255, 255, 255, 0.5);
+    }
+    .bp-name-wrap:focus-within .bp-pen {
+        display: none;
+    }
+    /* What the bot is for, under its name, edited in place */
+    .bp-desc {
+        display: block;
+        width: 100%;
+        min-height: 0;
+        margin: -4px 0 0;
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        font: inherit;
+        font-size: 13.5px;
+        line-height: 1.45;
+        color: rgba(244, 242, 250, 0.82);
+        resize: none;
+        overflow: hidden;
+        outline: none;
+    }
+    .bp-desc::placeholder {
+        color: rgba(244, 242, 250, 0.42);
+    }
+    @media (hover: hover) {
+        .bp-desc:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+    }
+    .bp-desc:focus {
+        background: rgba(0, 0, 0, 0.25);
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.6);
+    }
+    /* The little pencil on the picture says it can be changed */
+    .bp-woka-pen {
+        position: absolute;
+        right: -1px;
+        bottom: -1px;
+        display: grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #2a2540;
+        box-shadow: 0 0 0 2px #1b1828;
+        color: #fff;
+    }
+    .bp-actions {
+        display: flex;
+        gap: 8px;
+        padding: 0 2px;
     }
     .bp-sub {
         font-size: 12.5px;

@@ -601,7 +601,7 @@ const mapEditor: BaseTranslation = {
                     wander: "wanders",
                     route: "walks a route",
                 },
-                locate: "Show it on the map",
+                locate: "Show on map",
                 switchOn: "Turn this bot on or off",
                 changeLooks: "Change how it looks",
                 moves: {
@@ -651,8 +651,8 @@ const mapEditor: BaseTranslation = {
                 mind: {
                     title: "Mind",
                     none: "No AI provider yet",
-                    seesPictures: "sees pictures",
-                    hint: 'The ones that say "sees pictures" can look at pictures people send in chat.',
+                    seesPictures: "Vision",
+                    hint: "Vision: the model can look at pictures people send in chat.",
                 },
                 say: {
                     title: "Personality",
