@@ -264,7 +264,24 @@
                 await botApiService.updateBot(currentBot.id, {
                     characterTextureId: textureId,
                 });
-                await respawnBot(currentBot.id, "texture");
+
+                // Despawn and respawn bot to apply texture change
+                // Texture is set during spawn, so we need to respawn for it to take effect
+                const despawnResult = await botApiService.despawnBot(currentBot.id);
+                if (despawnResult.despawned) {
+                    // Wait a brief moment before respawning
+                    await new Promise<void>((resolve) => {
+                        setTimeout(() => {
+                            resolve();
+                        }, 100);
+                    });
+                    const spawnResult = await botApiService.spawnBot(currentBot.id);
+                    if (!spawnResult.spawned) {
+                        console.warn("[BotDetailView] Failed to respawn bot after texture change:", spawnResult.reason);
+                    }
+                } else {
+                    console.warn("[BotDetailView] Failed to despawn bot for texture change:", despawnResult.reason);
+                }
             } catch (e) {
                 console.error("[BotDetailView] Failed to save texture change:", e);
             }
@@ -274,26 +291,11 @@
         onSave();
     }
 
-    /** Looks are set when the bot connects, so a new WOKA or companion only shows after a respawn. */
-    async function respawnBot(botId: string, what: "texture" | "companion") {
-        const despawnResult = await botApiService.despawnBot(botId);
-        if (despawnResult.despawned) {
-            // Wait a brief moment before respawning
-            await new Promise<void>((resolve) => {
-                setTimeout(() => {
-                    resolve();
-                }, 100);
-            });
-            const spawnResult = await botApiService.spawnBot(botId);
-            if (!spawnResult.spawned) {
-                console.warn(`[BotDetailView] Failed to respawn bot after ${what} change:`, spawnResult.reason);
-            }
-        } else {
-            console.warn(`[BotDetailView] Failed to despawn bot for ${what} change:`, despawnResult.reason);
-        }
-    }
-
-    /** The companion that walks with the bot: picked (or cleared) on the page, saved right away, then respawned. */
+    /**
+     * The companion that walks with the bot: picked (or cleared) on the page and saved right away. A companion
+     * joins the bot when it connects, and the bot server respawns a running bot itself when the companion
+     * changes, so nothing more is needed here.
+     */
     async function handleCompanionSelect(companionTextureId: string | null) {
         if (!currentBot) return;
         editingCompanion = false;
@@ -305,7 +307,6 @@
         if (currentBot.id && botApiService.isInitialized()) {
             try {
                 await botApiService.updateBot(currentBot.id, { companionTextureId });
-                await respawnBot(currentBot.id, "companion");
             } catch (e) {
                 console.error("[BotDetailView] Failed to save companion change:", e);
             }
