@@ -657,6 +657,15 @@ class LocalUserStore {
         return parseInt(value);
     }
 
+    // Microphone noise filter: "standard" (browser), "strong" (on-device model) or "voiceOnly" (browser voice isolation)
+    setNoiseFilter(value: string) {
+        localStorage.setItem("noiseFilter", value);
+    }
+
+    getNoiseFilter(): string | null {
+        return localStorage.getItem("noiseFilter");
+    }
+
     // Background transformation settings
     setBackgroundMode(value: string) {
         localStorage.setItem("backgroundMode", value);
@@ -681,14 +690,6 @@ class LocalUserStore {
 
     getBackgroundImage(): string | null {
         return localStorage.getItem("backgroundImage");
-    }
-
-    setBackgroundVideo(value: string) {
-        localStorage.setItem("backgroundVideo", value);
-    }
-
-    getBackgroundVideo(): string | null {
-        return localStorage.getItem("backgroundVideo");
     }
 
     getRequestedStatus(): RequestedStatus | null {
