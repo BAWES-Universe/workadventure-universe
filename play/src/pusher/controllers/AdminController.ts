@@ -4,6 +4,7 @@ import type { RoomsList } from "@workadventure/messages";
 import { z } from "zod";
 import Debug from "debug";
 import { apiClientRepository } from "../services/ApiClientRepository";
+import { socketManager } from "../services/SocketManager";
 import { adminToken } from "../middlewares/AdminToken";
 import { validatePostQuery } from "../services/QueryValidator";
 import { BaseHttpController } from "./BaseHttpController";
@@ -19,6 +20,7 @@ export class AdminController extends BaseHttpController {
         this.receiveGlobalMessagePrompt();
         this.receiveRoomEditionPrompt();
         this.getRoomsList();
+        this.getPresence();
         this.dispatchGlobalEvent();
         this.dispatchExternalModuleEvent();
     }
@@ -199,6 +201,32 @@ export class AdminController extends BaseHttpController {
      *               additionalProperties:
      *                 type: integer
      */
+    /**
+     * @openapi
+     * /presence:
+     *   get:
+     *     description: Who is connected to this pusher right now and in which rooms, for Orbit's "Live now". Signed-in
+     *       players are listed with their status and Woka; guests and bots are only counted per room. Orbit filters it
+     *       by what each viewer may see. The request must be authenticated with the "authorization" header.
+     *     tags:
+     *      - Admin endpoint
+     *     parameters:
+     *      - name: "authorization"
+     *        in: "header"
+     *        required: true
+     *        type: "string"
+     *        description: The token to be allowed to access this API (in ADMIN_API_TOKEN environment variable)
+     *     responses:
+     *       200:
+     *         description: The live directory (generatedAt, users, rooms)
+     */
+    getPresence(): void {
+        this.app.get("/presence", [adminToken], (req: Request, res: Response) => {
+            res.setHeader("Cache-Control", "no-store");
+            res.json(socketManager.friendsPresence.snapshot());
+        });
+    }
+
     getRoomsList(): void {
         this.app.get("/rooms", [adminToken], async (req: Request, res: Response) => {
             debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);

@@ -6,7 +6,14 @@ import { FRIEND_PLACES_MAX_URIS } from "./FriendsService";
 
 type FriendsSocketData = Pick<
     SocketData,
-    "userUuid" | "isLogged" | "roomId" | "roomName" | "availabilityStatus" | "disconnecting"
+    | "userUuid"
+    | "isLogged"
+    | "roomId"
+    | "roomName"
+    | "availabilityStatus"
+    | "disconnecting"
+    | "tags"
+    | "characterTextures"
 >;
 
 export interface FriendsSocket {
@@ -38,6 +45,45 @@ export interface PresenceSession {
     roomName: string;
     availabilityStatus: AvailabilityStatus;
     joinedAt: number;
+    /** The Woka's layer images, as the player wears it in this tab. */
+    woka: string[];
+}
+
+/** The live directory as Orbit reads it: who is where, and how many guests and bots are with them. */
+export interface PresenceSnapshot {
+    generatedAt: number;
+    users: {
+        uuid: string;
+        status: LiveStatus;
+        woka: string[];
+        sessions: { playUri: string; since: number }[];
+    }[];
+    /** Per room, the players who aren't signed in. */
+    rooms: Record<string, { guests: number; bots: number }>;
+}
+
+export type LiveStatus = "online" | "busy" | "away";
+
+const AWAY_STATUSES = new Set([AvailabilityStatus.BACK_IN_A_MOMENT, AvailabilityStatus.AWAY]);
+const BUSY_STATUSES = new Set([
+    AvailabilityStatus.BUSY,
+    AvailabilityStatus.DO_NOT_DISTURB,
+    AvailabilityStatus.LIVEKIT,
+    AvailabilityStatus.JITSI,
+    AvailabilityStatus.BBB,
+    AvailabilityStatus.SPEAKER,
+    AvailabilityStatus.LISTENER,
+]);
+
+/** The three dots Orbit shows: in a meeting or call reads as busy. */
+export function liveStatus(status: AvailabilityStatus): LiveStatus {
+    if (AWAY_STATUSES.has(status)) return "away";
+    if (BUSY_STATUSES.has(status)) return "busy";
+    return "online";
+}
+
+export function isBotSocket(data: Pick<SocketData, "tags" | "userUuid">): boolean {
+    return data.tags.includes("bot") || data.userUuid.startsWith("bot-");
 }
 
 const ROOM_NAME_MAX_LENGTH = 80;
@@ -132,6 +178,8 @@ export class FriendsPresence<S extends FriendsSocket> {
     // socket => the userUuids it watches
     private readonly watching = new Map<S, Set<string>>();
     private readonly pendingPushes = new Map<string, ReturnType<typeof setTimeout>>();
+    // socket => where a guest or a bot is: counted per room, never named
+    private readonly visitors = new Map<S, { playUri: string; bot: boolean }>();
     private readonly places = new Map<string, { place: FriendPlace | null; expiresAt: number }>();
     private readonly placesInFlight = new Map<string, Promise<void>>();
 
@@ -149,10 +197,14 @@ export class FriendsPresence<S extends FriendsSocket> {
         this.placesTimeoutMs = deps.placesTimeoutMs ?? DEFAULT_PLACES_TIMEOUT_MS;
     }
 
-    /** A socket joined its room. Only signed-in players are tracked. */
+    /** A socket joined its room. Signed-in players are tracked by name; guests and bots only counted. */
     track(socket: S): void {
         const data = socket.getUserData();
-        if (!data.isLogged || !data.userUuid || data.disconnecting) {
+        if (data.disconnecting) {
+            return;
+        }
+        if (!data.isLogged || !data.userUuid) {
+            if (data.roomId) this.visitors.set(socket, { playUri: data.roomId, bot: isBotSocket(data) });
             return;
         }
         let userSessions = this.sessions.get(data.userUuid);
@@ -165,6 +217,7 @@ export class FriendsPresence<S extends FriendsSocket> {
             roomName: cleanRoomName(data.roomName),
             availabilityStatus: data.availabilityStatus,
             joinedAt: this.now(),
+            woka: data.characterTextures.map((texture) => texture.url).filter(Boolean),
         });
         this.schedulePush(data.userUuid);
     }
@@ -172,6 +225,7 @@ export class FriendsPresence<S extends FriendsSocket> {
     /** A socket is closing: it is no longer a session, nor a watcher. */
     untrack(socket: S): void {
         this.unwatchAll(socket);
+        this.visitors.delete(socket);
         const userUuid = socket.getUserData().userUuid;
         const userSessions = this.sessions.get(userUuid);
         if (!userSessions?.delete(socket)) {
@@ -244,6 +298,28 @@ export class FriendsPresence<S extends FriendsSocket> {
     }
 
     /** The open, signed-in tabs of a user. */
+    /** Everyone connected right now. Orbit decides who may see whom. */
+    snapshot(): PresenceSnapshot {
+        const users: PresenceSnapshot["users"] = [];
+        for (const [uuid, userSessions] of this.sessions) {
+            const sessions = [...userSessions.values()].sort((a, b) => b.joinedAt - a.joinedAt);
+            if (sessions.length === 0) continue;
+            users.push({
+                uuid,
+                status: liveStatus(mostAvailableStatus(sessions.map((session) => session.availabilityStatus))),
+                woka: sessions[0].woka,
+                sessions: sessions.map((session) => ({ playUri: session.playUri, since: session.joinedAt })),
+            });
+        }
+        const rooms: PresenceSnapshot["rooms"] = {};
+        for (const visitor of this.visitors.values()) {
+            const room = (rooms[visitor.playUri] ??= { guests: 0, bots: 0 });
+            if (visitor.bot) room.bots++;
+            else room.guests++;
+        }
+        return { generatedAt: this.now(), users, rooms };
+    }
+
     socketsOf(userUuid: string): S[] {
         return Array.from(this.sessions.get(userUuid)?.keys() ?? []).filter(
             (socket) => !socket.getUserData().disconnecting
