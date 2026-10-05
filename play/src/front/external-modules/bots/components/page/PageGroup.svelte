@@ -10,29 +10,37 @@
     export let brief: string;
     export let open = false;
     export let onToggle: (id: string) => void;
+    /** Only the settings, without the group's own row: for a group shown inside another one. */
+    export let bare = false;
+    /** The row opens a screen of its own (a picker) rather than settings underneath. */
+    export let link = false;
 </script>
 
-<section class="bp-group" class:open data-testid="bot-page-group-{id}">
-    <button
-        type="button"
-        class="bp-head"
-        aria-expanded={open}
-        aria-controls="bot-page-body-{id}"
-        on:click={() => onToggle(id)}
-    >
-        <span class="bp-ico"><svelte:component this={icon} font-size="20" /></span>
-        <span class="bp-tx">
-            <span class="bp-t">{title}</span>
-            <span class="bp-m">{brief}</span>
-        </span>
-        <span class="bp-chev"><IconChevronDown font-size="18" /></span>
-    </button>
-    {#if open}
-        <div class="bp-body" id="bot-page-body-{id}">
-            <slot />
-        </div>
-    {/if}
-</section>
+{#if bare}
+    <slot />
+{:else}
+    <section class="bp-group" class:open data-testid="bot-page-group-{id}">
+        <button
+            type="button"
+            class="bp-head"
+            aria-expanded={link ? undefined : open}
+            aria-controls={link ? undefined : `bot-page-body-${id}`}
+            on:click={() => onToggle(id)}
+        >
+            <span class="bp-ico"><svelte:component this={icon} font-size="20" /></span>
+            <span class="bp-tx">
+                <span class="bp-t">{title}</span>
+                <span class="bp-m">{brief}</span>
+            </span>
+            <span class="bp-chev"><IconChevronDown font-size="18" /></span>
+        </button>
+        {#if open && !link}
+            <div class="bp-body" id="bot-page-body-{id}">
+                <slot />
+            </div>
+        {/if}
+    </section>
+{/if}
 
 <style>
     .bp-group {

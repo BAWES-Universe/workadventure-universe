@@ -1,9 +1,9 @@
 <script lang="ts">
-    // Chat instructions: what the bot is told before every chat.
+    // Personality: who the bot is when it talks, what it is told before every chat.
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotData } from "../../types";
     import PageGroup from "./PageGroup.svelte";
-    import { IconMessage } from "@wa-icons";
+    import { IconMoodSmile } from "@wa-icons";
 
     export let bot: BotData;
     export let open: boolean;
@@ -20,7 +20,7 @@
     }
 </script>
 
-<PageGroup id="say" icon={IconMessage} title={page.say.title()} {brief} {open} {onToggle}>
+<PageGroup id="say" icon={IconMoodSmile} title={page.say.title()} {brief} {open} {onToggle}>
     <textarea
         class="bp-text"
         rows="8"

@@ -655,16 +655,35 @@ const mapEditor: BaseTranslation = {
                     hint: 'The ones that say "sees pictures" can look at pictures people send in chat.',
                 },
                 say: {
-                    title: "Chat instructions",
+                    title: "Personality",
                     none: "None yet",
                 },
                 tools: {
-                    title: "Tools",
+                    title: "Skills",
                     none: "None yet",
                     count: "{count:number} tool{{s}}",
                     waits: "waits {patience:string}",
                     patience: "Patience",
                     patienceHint: "How long it waits for a tool to answer",
+                },
+                identity: {
+                    title: "Identity",
+                    none: "Add what it's for",
+                },
+                body: {
+                    title: "Body",
+                    brief: "Its WOKA",
+                },
+                companion: {
+                    title: "Companion",
+                    none: "None yet",
+                },
+                behavior: {
+                    title: "Behavior",
+                    goesToPeople: "goes to people",
+                    waitsForPeople: "waits for people",
+                    getsAround: "Gets around",
+                    withPeople: "With people",
                 },
                 about: {
                     title: "About",

@@ -645,7 +645,7 @@
     {:else}
         <!-- The list's own heading carries Add, so it sits where the list starts rather than after it -->
         <div class="mcp-head">
-            <span class="mcp-label">{servers.length === 1 ? "1 tool server" : `${servers.length} tool servers`}</span>
+            <span class="mcp-label">{servers.length === 1 ? "Uses 1 app" : `Uses ${servers.length} apps`}</span>
             <PageButton testId="bot-add-tool" on:click={openAddModal}><IconPlus font-size="16" />Add</PageButton>
         </div>
         {#each servers as server (server.id)}

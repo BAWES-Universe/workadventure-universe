@@ -17,6 +17,8 @@
     export let open: boolean;
     export let onToggle: (id: string) => void;
     export let onChange: (bot: BotData) => void;
+    /** Shown inside Behavior, without its own row */
+    export let bare = false;
     export let onEditRoute: () => void;
 
     const MOVES: BotMoves[] = ["stay", "wander", "route"];
@@ -47,7 +49,7 @@
     }
 </script>
 
-<PageGroup id="moves" {icon} title={page.moves.title()} {brief} {open} {onToggle}>
+<PageGroup id="moves" {icon} title={page.moves.title()} {brief} {open} {onToggle} {bare}>
     <PageSegment
         label={page.moves.title()}
         options={[

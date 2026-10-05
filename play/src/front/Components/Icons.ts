@@ -154,3 +154,5 @@ export { default as IconSparkles } from "~icons/tabler/sparkles";
 export { default as IconTool } from "~icons/tabler/tool";
 export { default as IconCurrentLocation } from "~icons/tabler/current-location";
 export { default as IconCircleDashed } from "~icons/tabler/circle-dashed";
+export { default as IconId } from "~icons/tabler/id";
+export { default as IconPaw } from "~icons/tabler/paw";
