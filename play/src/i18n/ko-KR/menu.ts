@@ -63,7 +63,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         calmMap: "차분한 맵 (애니메이션 없음)",
         pictureInPicture: "화면 속 화면",
         mapCredits: "맵 크레딧",
-        contact: "문의",
         report: "문제 신고",
         back: "뒤로",
         close: "닫기",
@@ -127,17 +126,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         errorUpload: "파일 업로드 오류입니다. 파일을 확인하고 다시 시도하세요. 문제가 지속되면 관리자에게 문의하세요.",
         dragAndDrop: "파일을 드래그 앤 드롭하거나 여기를 클릭하여 업로드하세요 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "시작하기",
-            description:
-                "Universe를 사용하면 다른 사람들과 자발적으로 소통할 수 있는 온라인 공간을 만들 수 있습니다. 모든 것은 자신만의 공간을 만드는 것에서 시작됩니다. 저희 팀이 제작한 다양한 사전 제작 지도 중에서 선택하세요.",
-        },
-        createMap: {
-            title: "지도 만들기",
-            description: "문서의 단계를 따라 자신만의 사용자 정의 지도를 만들 수도 있습니다.",
-        },
-    },
     about: {
         mapInfo: "지도 정보",
         mapLink: "이 지도의 링크",
@@ -175,7 +163,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "공유",
         credit: "크레딧",
         globalMessages: "전역 메시지",
-        contact: "연락처",
         report: "문제 신고",
         chat: "채팅",
         help: "도움말 및 튜토리얼",

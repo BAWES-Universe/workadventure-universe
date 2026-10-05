@@ -24,7 +24,6 @@ export const MAX_USERNAME_LENGTH = env.MAX_USERNAME_LENGTH;
 export const MAX_PER_GROUP = env.MAX_PER_GROUP;
 export const MAX_DISPLAYED_VIDEOS = env.MAX_DISPLAYED_VIDEOS;
 export const NODE_ENV = env.NODE_ENV;
-export const CONTACT_URL = env.CONTACT_URL;
 export const POSTHOG_API_KEY = env.POSTHOG_API_KEY;
 export const POSTHOG_URL = env.POSTHOG_URL;
 export const DISABLE_ANONYMOUS = env.DISABLE_ANONYMOUS;

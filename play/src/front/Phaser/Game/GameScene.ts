@@ -96,7 +96,6 @@ import {
     userIsJitsiDominantSpeakerStore,
 } from "../../Stores/GameStore";
 import {
-    contactPageStore,
     inviteUserActivated,
     mapEditorActivated,
     mapManagerActivated,
@@ -840,7 +839,6 @@ export class GameScene extends DirtyScene {
         keepLogoInMemory(this._room.errorSceneLogo);
         urlManager.pushRoomIdToUrl(this._room);
         analyticsClient.enteredRoom(this._room.id, this._room.group);
-        contactPageStore.set(this._room.contactPage);
 
         if (touchScreenManager.supportTouchScreen) {
             this.pinchManager = new PinchManager(this);

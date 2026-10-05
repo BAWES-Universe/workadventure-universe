@@ -62,7 +62,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         calmMap: "Rustige kaart (geen animaties)",
         pictureInPicture: "Beeld in beeld",
         mapCredits: "Kaartcredits",
-        contact: "Contact",
         report: "Een probleem melden",
         back: "Terug",
         close: "Sluiten",
@@ -117,17 +116,6 @@ const menu: DeepPartial<Translation["menu"]> = {
             "Fout bij het uploaden van bestand. Controleer je bestand en probeer het opnieuw. Als het probleem aanhoudt, neem dan contact op met de beheerder.",
         dragAndDrop: "Sleep hier je bestand of klik hier om je bestand te uploaden 🎧",
     },
-    contact: {
-        gettingStarted: {
-            title: "Aan de slag",
-            description:
-                "Universe stelt je in staat om een online ruimte te creëren om spontaan met anderen te communiceren. En het begint allemaal met het creëren van je eigen ruimte. Kies uit een grote selectie van prefab-kaarten door ons team.",
-        },
-        createMap: {
-            title: "Maak je kaart",
-            description: "Je kunt ook je eigen aangepaste kaart maken door de stappen van de documentatie te volgen.",
-        },
-    },
     about: {
         mapInfo: "Informatie over de kaart",
         mapLink: "link naar deze kaart",
@@ -152,7 +140,6 @@ const menu: DeepPartial<Translation["menu"]> = {
         invite: "Uitnodigen",
         credit: "Credits",
         globalMessages: "Wereldwijde berichten",
-        contact: "Contact",
         report: "Problemen melden",
     },
 };
