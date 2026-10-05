@@ -71,6 +71,21 @@ const camera: BaseTranslation = {
         title: "Background Effects",
         close: "Close",
         blurAmount: "Blur Amount",
+        devicesTab: "Devices",
+        backgroundTab: "Background",
+        blurSection: "Blur",
+        imagesSection: "Images",
+        noEffect: "None",
+        blurLight: "Light",
+        blurMedium: "Medium",
+        blurStrong: "Strong",
+        onlyYou: "Only you see this",
+        startingBlur: "Starting blur…",
+        startingImage: "Starting background…",
+        cameraOff: "Your camera is off. Pick an effect now and it's ready when you turn the camera on.",
+        unsupportedTitle: "Effects can't run on this device",
+        unsupportedBody:
+            "This phone or browser is missing the graphics support they need. Your camera works normally without one.",
     },
 };
 

@@ -9,6 +9,14 @@
     }>();
 
     export let value: InputTagOption[] | undefined;
+    // Passed on one by one, never as a spread: a spread hands every prop down again on each change, which, with
+    // bind:value coming back up, sends the select's value round and round until the page stops responding.
+    export let label: string | undefined = undefined;
+    export let options: InputTagOption[] = [];
+    export let placeholder: string | undefined = undefined;
+    export let optional = false;
+    export let handleChange: () => void = () => {};
+    export let testId: string | undefined = undefined;
 
     function _handleChange() {
         dispatch("change", value);
@@ -43,7 +51,17 @@
 
 <div class="flex flex-col w-full">
     <div>
-        <InputTags bind:value queryOptions={searchRoomTags} on:change={_handleChange} {...$$props}>
+        <InputTags
+            bind:value
+            queryOptions={searchRoomTags}
+            on:change={_handleChange}
+            {label}
+            {options}
+            {placeholder}
+            {optional}
+            {handleChange}
+            {testId}
+        >
             <span slot="info"> <slot name="info" /> </span>
         </InputTags>
     </div>

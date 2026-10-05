@@ -182,9 +182,8 @@ test.describe("Map editor interacting with object @oidc @nomobile", () => {
     await EntityEditor.moveAndClick(page, 16, 600);
     await page.keyboard.press("Delete");
 
-    // Check if the PDF files from entity iframe are accessible
-    const uploadFileE2 = request.post(iframeSrcE);
-    expect((await uploadFileE2).ok()).toBeFalsy();
+    // The deletion travels through the pusher and the back to map-storage; the file is gone a moment later.
+    await expect.poll(async () => (await request.post(iframeSrcE)).ok()).toBeFalsy();
 
 
     await page.context().close();

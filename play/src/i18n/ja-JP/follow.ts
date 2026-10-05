@@ -12,18 +12,45 @@ const follow: DeepPartial<Translation["follow"]> = {
         },
     },
     interactMenu: {
-        title: {
-            interact: "対応",
-            follow: "{leader} をフォローしますか？",
-        },
-        stop: {
-            leader: "先導をやめますか？",
-            follower: "{leader} のフォローをやめますか？",
-        },
         yes: "はい",
         no: "いいえ",
     },
     actionName: "位置を特定",
+    ask: {
+        one: "{name} にフォローを頼みます",
+        many: "{count} 人にフォローを頼みます",
+    },
+    request: {
+        titleOne: "{name} にフォローを頼みました",
+        titleMany: "{count} 人にフォローを頼みました",
+        waiting: "返事を待っています",
+        anyone: "「はい」と答えた人からすぐにフォローを始めます",
+        cancel: "リクエストを取り消す",
+        state: {
+            waiting: "待機中…",
+            following: "フォロー中",
+            declined: "断りました",
+        },
+    },
+    question: {
+        title: "{leader} がフォローを頼んでいます",
+        desc: "止めるまで、あなたの Woka が {leader} の後ろを歩きます",
+        notNow: "今はしない",
+        follow: "フォローする",
+    },
+    stop: "やめる",
+    notes: {
+        saidNo: "{name} が断りました",
+        noAnswer: "{name} から返事がありませんでした",
+        nobodySaidYes: "誰も「はい」と答えませんでした",
+        cancelled: "{leader} がリクエストを取り消しました",
+        stoppedLeading: "{leader} が先導をやめました",
+        timedOut: "フォローのリクエストが期限切れになりました",
+    },
+    menu: {
+        cancel: "リクエストを取り消す",
+        stopLeading: "先導をやめる",
+    },
 };
 
 export default follow;

@@ -19,6 +19,7 @@
     import { screenSharingAvailableStore } from "../../Stores/ScreenSharingStore";
     import { isInRemoteConversation } from "../../Stores/StreamableCollectionStore";
     import { mobileLayoutStore } from "../../Stores/MobileLayoutStore";
+    import { chatSheetLayoutStore } from "../../Chat/ChatSheetStore";
     import MediaSettingsList from "./MediaSettingsList.svelte";
     import CameraMenuItem from "./MenuIcons/CameraMenuItem.svelte";
     import MicrophoneMenuItem from "./MenuIcons/MicrophoneMenuItem.svelte";
@@ -43,6 +44,9 @@
     const showUserListButton = gameScene.room.isChatOnlineListEnabled;
 
     $: isSmallScreen = actionBarWidth < 640;
+    // On a phone held upright the chat rises from the bottom, so its button can sit under the right thumb, below
+    // Express; the menu takes the bottom left corner. (While the chat is open the bar is hidden.)
+    $: swapped = $chatSheetLayoutStore;
 
     let firstVisibleItemIndex = 0;
 
@@ -62,16 +66,20 @@
 {#if !$hideActionBarStoreBecauseOfChatBar}
     <ResponsiveActionBar bind:rightDiv bind:actionBarWidth>
         <div slot="left" class="justify-start flex-none">
-            <div class="flex relative transition-all duration-150 z-[2]" data-testid="chat-action">
-                {#if !$chatVisibilityStore}
-                    <ChatMenuItem chatEnabledInAdmin={showChatButton} last={isSmallScreen ? true : undefined} />
-                    {#if !isSmallScreen && showUserListButton}
-                        <UserListMenuItem state={showUserListButton ? "normal" : "disabled"} />
+            {#if swapped}
+                <ProfileMenu />
+            {:else}
+                <div class="flex relative transition-all duration-150 z-[2]" data-testid="chat-action">
+                    {#if !$chatVisibilityStore}
+                        <ChatMenuItem chatEnabledInAdmin={showChatButton} last={isSmallScreen ? true : undefined} />
+                        {#if !isSmallScreen && showUserListButton}
+                            <UserListMenuItem state={showUserListButton ? "normal" : "disabled"} />
+                        {/if}
+                    {:else}
+                        <CloseChatMenuItem />
                     {/if}
-                {:else}
-                    <CloseChatMenuItem />
-                {/if}
-            </div>
+                </div>
+            {/if}
         </div>
 
         <div
@@ -172,7 +180,13 @@
             </div>
 
             <div class="flex justify-end gap-1 md:gap-2 xl:gap-4">
-                <ProfileMenu />
+                {#if swapped}
+                    <div class="flex relative transition-all duration-150 z-[2]" data-testid="chat-action">
+                        <ChatMenuItem chatEnabledInAdmin={showChatButton} last={true} />
+                    </div>
+                {:else}
+                    <ProfileMenu />
+                {/if}
             </div>
         </div>
     </ResponsiveActionBar>

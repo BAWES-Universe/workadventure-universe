@@ -7,18 +7,16 @@
     } from "../../../Stores/MenuStore";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
-    import {
-        modalIframeStore,
-        modalVisibilityStore,
-        showModalGlobalComminucationVisibilityStore,
-    } from "../../../Stores/ModalStore";
-    import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
+    import { modalIframeStore, modalVisibilityStore } from "../../../Stores/ModalStore";
+    import { broadcastPanelOpenStore, toggleBroadcastPanel } from "../../../Stores/BroadcastStore";
+    import { mapEditorModeStore, mapExplorationModeStore } from "../../../Stores/MapEditorStore";
+    import { lookAroundNoteSeenStore } from "../../../Stores/LookAroundStore";
+    import { enterExploreTheRoom } from "../../../Phaser/Game/MapEditor/ExploreTheRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { isTodoListVisibleStore } from "../../../Stores/TodoListStore";
     import { isCalendarVisibleStore } from "../../../Stores/CalendarStore";
     import { chatVisibilityStore } from "../../../Stores/ChatStore";
     import ActionBarButton from "../ActionBarButton.svelte";
-    import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { botEditorAvailableStore, openBotEditorFromMenu } from "../../../external-modules/bots/index";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
     import { IconMapEditor, IconRobot, IconSpeakerPhone, IconZoomOutArea } from "@wa-icons";
@@ -41,20 +39,20 @@
     function resetModalVisibility() {
         modalVisibilityStore.set(false);
         modalIframeStore.set(null);
-        showModalGlobalComminucationVisibilityStore.set(false);
     }
 
-    function toggleGlobalMessage() {
-        if ($showModalGlobalComminucationVisibilityStore) {
-            showModalGlobalComminucationVisibilityStore.set(false);
+    // Broadcast: reach everyone at once (a message, a voice note, going live). The card opens over the map; the
+    // game and the bar stay usable, so only the menu and the windows it would hide under close.
+    function toggleBroadcast() {
+        if ($broadcastPanelOpenStore) {
+            broadcastPanelOpenStore.set(false);
             return;
         }
-
         closeMapMenu();
         resetChatVisibility();
         resetModalVisibility();
         mapEditorModeStore.switchMode(false);
-        showModalGlobalComminucationVisibilityStore.set(true);
+        toggleBroadcastPanel();
     }
 
     function toggleMapEditorMode() {
@@ -67,9 +65,12 @@
         closeMapMenu();
     }
 
-    function toggleMapExplorerMode() {
-        toggleMapEditorMode();
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.ExploreTheRoom);
+    function openLookAround() {
+        isTodoListVisibleStore.set(false);
+        isCalendarVisibleStore.set(false);
+        closeMapMenu();
+        lookAroundNoteSeenStore.set(true);
+        enterExploreTheRoom();
     }
 
     function closeMapMenu() {
@@ -92,12 +93,21 @@
     </ActionBarButton>
 {/if}
 {#if $mapManagerActivated}
-    <ActionBarButton on:click={toggleMapExplorerMode} label={$LL.mapEditor.sideBar.exploreTheRoom()}>
+    <ActionBarButton
+        on:click={openLookAround}
+        label={$LL.mapEditor.lookAround.title()}
+        state={$mapExplorationModeStore ? "active" : "normal"}
+    >
         <IconZoomOutArea font-size="20" />
     </ActionBarButton>
 {/if}
 {#if $globalMessageVisibleStore}
-    <ActionBarButton on:click={toggleGlobalMessage} label={$LL.actionbar.globalMessage()}>
+    <ActionBarButton
+        on:click={toggleBroadcast}
+        label={$LL.broadcast.menu()}
+        state={$broadcastPanelOpenStore ? "open" : "normal"}
+        dataTestId="broadcast-menu"
+    >
         <IconSpeakerPhone font-size="20" />
     </ActionBarButton>
 {/if}

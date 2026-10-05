@@ -1,5 +1,6 @@
 import fs from "fs";
 import type { BrowserContext, Page } from "@playwright/test";
+import { expect } from "@playwright/test";
 import MatrixApi from "./matrixApi";
 
 const DEFAULT_PASSPHRASE = "defaultPassphrase";
@@ -109,6 +110,43 @@ class ChatUtils {
     return page.getByTestId("closeChatButton").isVisible({
       timeout: 20_000,
     });
+  }
+
+  /**
+   * Starts an action on a message the way the device offers it: the hover bar (and its "More" menu) with a mouse,
+   * the press-and-hold menu on a screen without hover.
+   */
+  public async messageAction(
+    page: Page,
+    messageText: string,
+    action: "reply" | "react" | "edit" | "delete"
+  ) {
+    const message = page.getByText(messageText);
+    const touchScreen = await page.evaluate(() => window.matchMedia("(hover: none)").matches);
+    if (touchScreen) {
+      // The same event a long press or a right-click sends. Headless desktop Firefox reports no hover, and its
+      // synthetic right-click doesn't reliably reach the menu, so the event is sent straight to the message.
+      await message.dispatchEvent("contextmenu");
+      const menu = page.getByTestId("messageActionMenu");
+      await expect(menu).toBeVisible();
+      const item = {
+        reply: "menuReplyButton",
+        react: "moreReactionsButton",
+        edit: "menuEditButton",
+        delete: "menuDeleteButton",
+      }[action];
+      await menu.getByTestId(item).click();
+      return;
+    }
+    await message.hover();
+    if (action === "reply") {
+      await page.getByTestId("replyToMessageButton").click();
+    } else if (action === "react") {
+      await page.getByTestId("openEmojiPickerButton").click();
+    } else {
+      await page.getByTestId("messageMoreButton").click();
+      await page.getByTestId(action === "edit" ? "editMessageButton" : "removeMessageButton").click();
+    }
   }
 }
 

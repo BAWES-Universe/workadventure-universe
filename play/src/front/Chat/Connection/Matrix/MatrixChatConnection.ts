@@ -1,5 +1,5 @@
 import type { Readable, Unsubscriber, Writable } from "svelte/store";
-import { derived, get, writable } from "svelte/store";
+import { derived, get, readable, writable } from "svelte/store";
 import type {
     EmittedEvents,
     ICreateRoomOpts,
@@ -36,6 +36,7 @@ import { canAcceptVerificationRequest } from "matrix-js-sdk/lib/crypto-api";
 import { asError } from "catch-unknown";
 import type {
     ChatConnectionInterface,
+    ChatPresence,
     ChatRoom,
     ChatRoomMembershipManagement,
     ChatUser,
@@ -46,12 +47,14 @@ import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import LL from "../../../../i18n/i18n-svelte";
 import type { RequestedStatus } from "../../../Rules/StatusRules/statusRules";
 import { MATRIX_ADMIN_USER, MATRIX_DOMAIN } from "../../../Enum/EnvironmentVariable";
+import { currentPlayerWokaStore } from "../../../Stores/CurrentPlayerWokaStore";
 import { MatrixRateLimiter } from "../../Services/MatrixRateLimiter";
 import { MatrixChatRoom } from "./MatrixChatRoom";
 import type { MatrixSecurity } from "./MatrixSecurity";
 import { matrixSecurity as defaultMatrixSecurity } from "./MatrixSecurity";
 import { MatrixRoomFolder } from "./MatrixRoomFolder";
-import { chatUserFactory, mapMatrixPresenceToAvailabilityStatus } from "./MatrixChatUser";
+import { chatUserFactory, mapMatrixPresenceToAvailabilityStatus, toChatPresence } from "./MatrixChatUser";
+import { saveWokaAvatar } from "./MatrixWokaAvatar";
 
 const CLIENT_NOT_INITIALIZED_ERROR_MSG = "MatrixClient not yet initialized";
 export const defaultWoka =
@@ -61,6 +64,8 @@ export const defaultColor = "#626262";
 export class MatrixChatConnection implements ChatConnectionInterface {
     private readonly roomList: MapStore<string, MatrixChatRoom>;
     private client: MatrixClient | undefined;
+    private wokaAvatarUnsubscriber: Unsubscriber | undefined;
+    private wokaAvatarSaving: Promise<void> = Promise.resolve();
     private handleRoom: (room: Room) => void;
     private handleDeleteRoom: (roomId: string) => void;
     private handleMyMembership: (room: Room, membership: string, prevMembership: string | undefined) => void;
@@ -88,6 +93,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     >();
     folders: Readable<MatrixRoomFolder[]>;
     directRoomsUsers: Readable<ChatUser[]>;
+    private readonly _ignoredUsers = writable<string[]>([]);
+    readonly ignoredUsers: Readable<string[]> = { subscribe: this._ignoredUsers.subscribe };
     clientPromise: Promise<MatrixClient>;
     shouldRetrySendingEvents: Readable<boolean>;
 
@@ -259,6 +266,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
                 case SyncState.Prepared:
                     this.connectionStatus.set("ONLINE");
                     this.isClientReady = true;
+                    this._ignoredUsers.set(this.client.getIgnoredUsers());
+                    this.startSavingWokaAsAvatar();
                     break;
                 case SyncState.Error:
                     this.connectionStatus.set("ON_ERROR");
@@ -395,6 +404,9 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     }
 
     private onAccountDataEvent(event: MatrixEvent) {
+        if (event.getType() === EventType.IgnoredUserList) {
+            this._ignoredUsers.set(this.client?.getIgnoredUsers() ?? []);
+        }
         if (event.getType() === "m.push_rules") {
             const content = event.getContent();
 
@@ -962,6 +974,31 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         return undefined;
     }
 
+    userPresence(userChatId: string): Readable<ChatPresence> {
+        return readable<ChatPresence>(toChatPresence(this.client?.getUser(userChatId)?.presence), (set) => {
+            const client = this.client;
+            if (!client) return;
+            set(toChatPresence(client.getUser(userChatId)?.presence));
+            const onPresence = (_event: MatrixEvent | undefined, user: User) => {
+                if (user.userId === userChatId) set(toChatPresence(user.presence));
+            };
+            client.on(UserEvent.Presence, onPresence);
+            return () => {
+                client.off(UserEvent.Presence, onPresence);
+            };
+        });
+    }
+
+    async setUserIgnored(userChatId: string, ignored: boolean): Promise<void> {
+        if (!this.client) throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
+        const current = this.client.getIgnoredUsers();
+        const next = ignored
+            ? Array.from(new Set([...current, userChatId]))
+            : current.filter((userId) => userId !== userChatId);
+        await this.client.setIgnoredUsers(next);
+        this._ignoredUsers.set(next);
+    }
+
     async searchChatUsers(searchText: string, limit = 20) {
         try {
             if (!this.client) {
@@ -1165,7 +1202,22 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         }
     };
 
+    /** Keeps the chat profile picture in step with the woka, so other chat apps and offline lists show it too. */
+    private startSavingWokaAsAvatar(): void {
+        if (this.wokaAvatarUnsubscriber) return;
+        this.wokaAvatarUnsubscriber = currentPlayerWokaStore.subscribe((woka) => {
+            const client = this.client;
+            if (!client || !woka || woka === defaultWoka) return;
+            // One save at a time, so a quick woka change can't race the previous upload.
+            this.wokaAvatarSaving = this.wokaAvatarSaving
+                .then(() => saveWokaAvatar(client, woka))
+                .catch((error) => console.warn("Could not save the woka as the chat picture", error));
+        });
+    }
+
     clearListener() {
+        this.wokaAvatarUnsubscriber?.();
+        this.wokaAvatarUnsubscriber = undefined;
         this.roomList.forEach((room) => {
             this.roomList.delete(room.id);
         });

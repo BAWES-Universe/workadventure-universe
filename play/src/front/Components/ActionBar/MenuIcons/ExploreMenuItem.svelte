@@ -34,6 +34,7 @@
         tooltipTitle={label}
         desc={$LL.actionbar.explore.desc()}
         disabledHelp={$roomListVisibilityStore}
+        state={$roomListVisibilityStore ? "open" : "normal"}
         dataTestId="explore-button"
     >
         <IconPlanet font-size="20" class="text-white" />

@@ -59,6 +59,10 @@ const foldersOpened = "foldersOpened";
 const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
+const lookAroundHintSeenKey = "lookAroundHintSeen";
+const lookAroundNoteSeenKey = "lookAroundNoteSeen";
+const editHintSeenKey = "editHintSeen";
+const recentEditObjectsKey = "recentEditObjects";
 const bubbleSound = "bubbleSound";
 const knownMediaDevices = "knownMediaDevices";
 
@@ -454,6 +458,47 @@ class LocalUserStore {
         return deviceId;
     }
 
+    /** The "Drag to look around" hint has been seen: it goes after the first real drag. */
+    setLookAroundHintSeen(value: boolean): void {
+        localStorage.setItem(lookAroundHintSeenKey, value.toString());
+    }
+
+    getLookAroundHintSeen(): boolean {
+        return localStorage.getItem(lookAroundHintSeenKey) === "true";
+    }
+
+    /** The one-time note by the map button has been seen (Look around was opened once). */
+    setLookAroundNoteSeen(value: boolean): void {
+        localStorage.setItem(lookAroundNoteSeenKey, value.toString());
+    }
+
+    getLookAroundNoteSeen(): boolean {
+        return localStorage.getItem(lookAroundNoteSeenKey) === "true";
+    }
+
+    /** The "Pick a tool on the right" hint of the room editor has been seen (a tool was picked once). */
+    setEditHintSeen(value: boolean): void {
+        localStorage.setItem(editHintSeenKey, value.toString());
+    }
+
+    getEditHintSeen(): boolean {
+        return localStorage.getItem(editHintSeenKey) === "true";
+    }
+
+    /** The objects placed most recently in the room editor, newest first, by prefab id. */
+    setRecentEditObjects(ids: string[]): void {
+        localStorage.setItem(recentEditObjectsKey, JSON.stringify(ids));
+    }
+
+    getRecentEditObjects(): string[] {
+        try {
+            const parsed: unknown = JSON.parse(localStorage.getItem(recentEditObjectsKey) ?? "[]");
+            return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+        } catch {
+            return [];
+        }
+    }
+
     setCameraPrivacySettings(option: boolean) {
         localStorage.setItem(cameraPrivacySettings, option.toString());
     }
@@ -657,6 +702,15 @@ class LocalUserStore {
         return parseInt(value);
     }
 
+    // Microphone noise filter: "standard" (browser), "strong" (on-device model) or "voiceOnly" (browser voice isolation)
+    setNoiseFilter(value: string) {
+        localStorage.setItem("noiseFilter", value);
+    }
+
+    getNoiseFilter(): string | null {
+        return localStorage.getItem("noiseFilter");
+    }
+
     // Background transformation settings
     setBackgroundMode(value: string) {
         localStorage.setItem("backgroundMode", value);
@@ -681,14 +735,6 @@ class LocalUserStore {
 
     getBackgroundImage(): string | null {
         return localStorage.getItem("backgroundImage");
-    }
-
-    setBackgroundVideo(value: string) {
-        localStorage.setItem("backgroundVideo", value);
-    }
-
-    getBackgroundVideo(): string | null {
-        return localStorage.getItem("backgroundVideo");
     }
 
     getRequestedStatus(): RequestedStatus | null {

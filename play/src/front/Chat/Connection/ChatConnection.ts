@@ -6,6 +6,8 @@ import type { RoomConnection } from "../../Connection/RoomConnection";
 import type { PictureStore } from "../../Stores/PictureStore";
 
 export type memberTypingInformation = { id: string; name: string | null; pictureStore: PictureStore };
+export type ChatPresence = "online" | "away" | "offline";
+
 export type ChatUser = {
     chatId: string;
     uuid?: string;
@@ -147,6 +149,10 @@ export interface ChatMessage {
     isModified: Readable<boolean>;
     addReaction: (reaction: string) => Promise<void>;
     canDelete: Readable<boolean>;
+    /** Whether reactions on this message reach the other people in the chat. */
+    canReact: Readable<boolean>;
+    /** Whether a reply to this message is sent as a reply (with its quote) to the other people in the chat. */
+    canReply: Readable<boolean>;
 }
 
 export interface ChatMessageReaction {
@@ -241,6 +247,11 @@ export interface ChatConnectionInterface {
     getRoomByID(roomId: string): ChatRoom;
     retrySendingEvents: () => Promise<void>;
     shouldRetrySendingEvents: Readable<boolean>;
+    /** Whether someone is online on chat, from any app (the game, Element...). */
+    userPresence(userChatId: string): Readable<ChatPresence>;
+    /** People you blocked in chat: their messages are hidden on every device. */
+    ignoredUsers: Readable<string[]>;
+    setUserIgnored(userChatId: string, ignored: boolean): Promise<void>;
 }
 
 export type Connection = Pick<RoomConnection, "queryChatMembers" | "emitPlayerChatID" | "emitBanPlayerMessage">;

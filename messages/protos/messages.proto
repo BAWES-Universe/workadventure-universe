@@ -225,6 +225,12 @@ message UpdateMegaphoneSettingMessage {
   optional string title = 2;
   optional string scope = 3;
   repeated string rights = 4;
+  // The reaches people may go live at from this room ("ROOM", "WORLD"). Absent: the single legacy "scope" applies.
+  optional MegaphoneScopes scopes = 5;
+}
+
+message MegaphoneScopes {
+  repeated string scopes = 1;
 }
 
 message EditMapCommandMessage {
@@ -435,6 +441,20 @@ message PlayGlobalMessage {
   string type = 1;
   string content = 2;
   bool broadcastToWorld = 3;
+  // Who sent it and how far it goes. Absent on messages from older clients: the room, or the world when broadcastToWorld.
+  optional BroadcastMeta broadcast = 4;
+}
+
+// A broadcast (written notice, voice note) carries who sent it and the reach it was sent to, so the people who
+// receive it see "Khalid · To everyone in BAWES HQ".
+message BroadcastMeta {
+  optional string senderName = 1;
+  // "room", "world" or "universe".
+  string reach = 2;
+  // The name of what the reach covers: the room's, the world's or the universe's name.
+  optional string reachLabel = 3;
+  // A line of text sent with a voice note.
+  optional string caption = 4;
 }
 
 /************ Queries and answers ****************/
@@ -871,8 +891,21 @@ message RoomJoinedMessage {
 }
 
 message MegaphoneSettings{
+  // True when this user may go live on at least one channel of this room.
   bool enabled = 1;
+  // The first channel this user may go live on (kept for older clients).
   optional string url = 2;
+  // Every broadcast channel this room listens to, and whether this user may go live on each.
+  repeated MegaphoneChannel channels = 3;
+}
+
+message MegaphoneChannel {
+  // "ROOM", "WORLD" or "UNIVERSE".
+  string scope = 1;
+  // The space joined for that channel.
+  string url = 2;
+  // Whether this user may go live on it.
+  bool canStream = 3;
 }
 
 message WebRtcStartMessage {
@@ -891,6 +924,7 @@ message TeleportMessageMessage{
 message SendUserMessage{
   string type = 1;
   string message = 2;
+  optional BroadcastMeta broadcast = 3;
 }
 
 message WorldFullWarningMessage{
@@ -964,6 +998,14 @@ message MuteVideoForEverybodyPublicMessage {
 message KickOffUserPrivateMessage {
 }
 
+// A moderator lowers someone's raised hand (only admins, checked by the pusher).
+message LowerHandPrivateMessage {
+}
+
+// A moderator lowers every raised hand in the space (only admins, checked by the pusher).
+message LowerAllHandsPublicMessage {
+}
+
 message PublicEventFrontToPusher {
   string spaceName = 1;
   SpaceEvent spaceEvent = 2;
@@ -982,6 +1024,8 @@ message SpaceEvent {
     MuteAudioForEverybodyPublicMessage muteAudioForEverybody = 3;
     MuteVideoForEverybodyPublicMessage muteVideoForEverybody = 4;
     SpaceStreamMessage spaceStreamMessage = 5;
+    LowerAllHandsPublicMessage lowerAllHands = 6;
+    SpaceMessageReaction spaceMessageReaction = 7;
   }
 }
 
@@ -1004,6 +1048,7 @@ message PrivateSpaceEvent {
     RemoveSpaceUserMessage removeSpaceUserMessage = 18;
     BlockUserMessage blockUserMessage = 20;
     UnblockUserMessage unblockUserMessage = 21;
+    LowerHandPrivateMessage lowerHand = 22;
   }
 }
 
@@ -1043,6 +1088,33 @@ message SpaceMessage {
   repeated string galleryUrls = 7;  // Additional file/image URLs for gallery messages
   optional string fileName = 8;     // Original uploaded filename (not URL-derived)
   repeated string fileNames = 9;    // Original filenames for ALL files (gallery) in order
+  optional string id = 10;          // Chosen by the sender, the same for everyone, so reactions and replies can point at it
+  optional SpaceMessageQuote replyTo = 11; // The message this one replies to
+}
+
+/**
+ * What a reply quotes, so people who never received the original still see what it was.
+ * Receivers that have the original (same id) show their own copy instead.
+ */
+message SpaceMessageQuote {
+  string id = 1;
+  optional string senderUserId = 2; // spaceUserId of the original's sender
+  optional string name = 3;
+  string message = 4;               // Shortened by the sender
+  optional string url = 5;
+  repeated string galleryUrls = 6;
+  optional string fileName = 7;
+  repeated string fileNames = 8;
+}
+
+/**
+ * Adds or removes the sender's reaction on a nearby chat message, found by the id its sender chose.
+ */
+message SpaceMessageReaction {
+  string messageId = 1;
+  string reaction = 2;
+  bool add = 3;                     // false removes it
+  optional string name = 4;         // Filled in by the server from the sender
 }
 
 message SpaceIsTyping {
@@ -1349,6 +1421,7 @@ message AdminRoomMessage {
   string message = 1;
   string roomId = 2;
   string type = 3;
+  optional BroadcastMeta broadcast = 4;
 }
 
 // A message sent by an administrator to absolutely everybody
@@ -1458,6 +1531,8 @@ message SpaceUser{
   string uuid = 16; // used
   google.protobuf.StringValue chatID = 17; // used
   bool showVoiceIndicator = 18;
+  // When the user raised their hand, in ms since the epoch, stamped by the pusher; 0 (or unset) when it is down.
+  optional double handRaisedAt = 19;
 }
 
 /*message PartialSpaceUser{

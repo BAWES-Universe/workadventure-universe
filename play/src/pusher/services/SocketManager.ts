@@ -5,6 +5,7 @@ import type {
     AdminMessage,
     AdminPusherToBackMessage,
     AdminRoomMessage,
+    BroadcastMeta,
     AnswerMessage,
     BanMessage,
     BanPlayerMessage,
@@ -1001,6 +1002,10 @@ export class SocketManager implements ZoneEventListener {
         //TODO check right of user in admin
     }
 
+    /**
+     * A written notice or a voice note from an admin, sent to everyone in this room, in every room of the world, or
+     * in every room of the universe. Who sent it and the reach travel with it, so receivers see them.
+     */
     public async emitPlayGlobalMessage(client: Socket, playGlobalMessageEvent: PlayGlobalMessage): Promise<void> {
         const socketData = client.getUserData();
         if (!socketData.tags.includes("admin")) {
@@ -1008,14 +1013,35 @@ export class SocketManager implements ZoneEventListener {
         }
 
         const clientRoomUrl = socketData.roomId;
+        // Only the three known reaches route; anything else falls back the way an old client would.
+        const requested = playGlobalMessageEvent.broadcast?.reach;
+        const reach =
+            requested === "room" || requested === "world" || requested === "universe"
+                ? requested
+                : playGlobalMessageEvent.broadcastToWorld
+                ? "world"
+                : "room";
         let tabUrlRooms: string[];
 
-        if (playGlobalMessageEvent.broadcastToWorld) {
+        if (reach === "universe") {
+            const universe = await adminService.getRoomsFromSameUniverse(clientRoomUrl, socketData.userUuid, "en");
+            tabUrlRooms = universe.worlds.flatMap((world) => world.rooms.map((room) => room.roomUrl));
+            if (!tabUrlRooms.includes(clientRoomUrl)) {
+                tabUrlRooms.push(clientRoomUrl);
+            }
+        } else if (reach === "world") {
             const shortDescriptions = await adminService.getUrlRoomsFromSameWorld(clientRoomUrl, "en", [], true);
             tabUrlRooms = shortDescriptions.map((shortDescription) => shortDescription.roomUrl);
         } else {
             tabUrlRooms = [clientRoomUrl];
         }
+
+        const broadcast: BroadcastMeta = {
+            senderName: playGlobalMessageEvent.broadcast?.senderName ?? socketData.name,
+            reach,
+            reachLabel: playGlobalMessageEvent.broadcast?.reachLabel,
+            caption: playGlobalMessageEvent.broadcast?.caption,
+        };
 
         for (const roomUrl of tabUrlRooms) {
             //eslint-disable-next-line no-await-in-loop
@@ -1024,6 +1050,7 @@ export class SocketManager implements ZoneEventListener {
                 message: playGlobalMessageEvent.content,
                 type: playGlobalMessageEvent.type,
                 roomId: roomUrl,
+                broadcast,
             };
             apiRoom.sendAdminMessageToRoom(roomMessage, () => {
                 return;

@@ -33,11 +33,25 @@ class AreaEditor {
     }
   }
 
+  // The area panel shows the area's rows, or one setting's page over them: this goes back to the rows.
+  private async showAreaRows(page: Page) {
+    await expect(page.getByTestId("area-rename").or(page.getByTestId("area-property-page"))).toBeVisible();
+    const propertyPage = page.getByTestId("area-property-page");
+    if (await propertyPage.isVisible()) {
+      await page.getByTestId("edit-panel-back").click();
+      await expect(propertyPage).toBeHidden();
+    }
+  }
+
+  // Adding a setting opens its page; the next add goes back to the rows first.
   async addProperty(page: Page, property: string) {
-    page.locator('.map-editor');
-    page.locator('.map-editor .sidebar');
-    page.locator('.map-editor .sidebar .item-picker-container');
-    page.locator('select#speakerZoneSelector');
+    await this.showAreaRows(page);
+    // Web apps (Google Docs, Klaxoon…) are chips behind the "Add an app" row.
+    if (property.startsWith("openWebsite") && property !== "openWebsite") {
+      if (!(await page.getByTestId(property).isVisible())) {
+        await page.getByTestId("area-add-app").click();
+      }
+    }
     await page.getByTestId(property).click();
   }
 
@@ -61,25 +75,27 @@ class AreaEditor {
     }
   }
 
+  // The name is the panel's title: tapping it turns it into a field.
   async setAreaName(page: Page, name: string) {
-    await page.getByPlaceholder("MyArea").click();
-    await page.getByPlaceholder("MyArea").fill(name);
-    await page.getByPlaceholder("MyArea").press("Enter");
+    await this.showAreaRows(page);
+    await page.getByTestId("area-rename").click();
+    const input = page.locator("#map-editor-right input#objectName");
+    await input.fill(name);
+    await input.press("Enter");
+    await expect(page.getByTestId("area-rename")).toContainText(name);
   }
 
   async setAreaDescription(page: Page, Description: string) {
-    await page.getByText("Add description field").click();
-    await page.getByPlaceholder("My area is a...").click();
-    await page.getByPlaceholder("My area is a...").fill(Description);
-    await page.getByPlaceholder("My area is a...").press("Enter");
+    await this.showAreaRows(page);
+    const input = page.locator("#map-editor-right input#objectDescription");
+    await input.fill(Description);
+    await input.press("Enter");
+    await input.blur();
   }
 
   async setAreaSearcheable(page: Page, value: boolean) {
-    await page.locator('label').filter({ hasText: 'Searchable in the exploration' }).locator('div').click();
-
-    /*    await page
-      .locator(".map-editor .sidebar input#searchable")
-      .setChecked(value);*/
+    await this.showAreaRows(page);
+    await page.locator("#map-editor-right input#searchable").setChecked(value);
   }
 
   async setExitProperty(page: Page, mapName: string, startAreaName: string) {
