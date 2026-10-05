@@ -4,6 +4,10 @@ import Jwt from "jsonwebtoken";
  * Checks a play session token (the "authToken" the front keeps in local
  * storage, signed by play with SECRET_KEY). Sent as a raw Authorization
  * header, like the play API expects it.
+ *
+ * Only signed-in players pass: play gives guests a session token too, but
+ * only a sign-in through OpenID puts an access token in it (the same test
+ * play uses for "isLogged").
  */
 export function isValidPlayAuthToken(
   token: string | undefined,
@@ -17,7 +21,9 @@ export function isValidPlayAuthToken(
     return (
       typeof payload === "object" &&
       payload !== null &&
-      typeof payload.identifier === "string"
+      typeof payload.identifier === "string" &&
+      typeof payload.accessToken === "string" &&
+      payload.accessToken !== ""
     );
   } catch (e) {
     return false;

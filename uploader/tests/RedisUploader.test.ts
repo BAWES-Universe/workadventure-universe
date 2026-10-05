@@ -173,13 +173,17 @@ describe("Redis Uploader tests", () => {
         const noToken = await postAudio(AUTH_UPLOADER_URL, "message.mp3", MP3_CONTENTS);
         expect(noToken.status).toBe(401)
 
-        const wrongKey = Jwt.sign({identifier: "user@example.com"}, "another-key");
+        const wrongKey = Jwt.sign({identifier: "user@example.com", accessToken: "oidc-access-token"}, "another-key");
         const invalidToken = await postAudio(AUTH_UPLOADER_URL, "message.mp3", MP3_CONTENTS, {Authorization: wrongKey});
         expect(invalidToken.status).toBe(401)
+
+        const guestToken = Jwt.sign({identifier: "3f1c2b8e-guest-uuid"}, AUTH_SECRET_KEY, {expiresIn: "30d"});
+        const guest = await postAudio(AUTH_UPLOADER_URL, "message.mp3", MP3_CONTENTS, {Authorization: guestToken});
+        expect(guest.status).toBe(401)
     })
 
     it("should accept audio message with a play token when SECRET_KEY is set", async ()=> {
-        const token = Jwt.sign({identifier: "user@example.com"}, AUTH_SECRET_KEY, {expiresIn: "30d"});
+        const token = Jwt.sign({identifier: "user@example.com", accessToken: "oidc-access-token"}, AUTH_SECRET_KEY, {expiresIn: "30d"});
         const uploadResponse = await postAudio(AUTH_UPLOADER_URL, "message.mp3", MP3_CONTENTS, {Authorization: token});
 
         expect(uploadResponse.status).toBe(200)
