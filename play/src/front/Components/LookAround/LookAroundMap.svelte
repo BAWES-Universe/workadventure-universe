@@ -149,7 +149,7 @@
     {#if box.visible}
         <div
             class="you-box"
-            style="left:{box.x}px;top:{box.y}px;width:{box.width}px;height:{box.height}px"
+            style="transform:translate({box.x}px,{box.y}px);width:{box.width}px;height:{box.height}px"
             data-testid="look-around-you-box"
         >
             <span class="you-box-label u-surface">{$LL.mapEditor.lookAround.youAreHere()}</span>
@@ -194,13 +194,15 @@
 </div>
 
 <style>
-    /* The box glows lavender and dims the rest of the map a little, so what you normally see stands out. */
+    /* The box glows lavender over the map; nothing outside it is dimmed, so the whole room stays readable while you
+       look around. It is moved with a transform and has no transitions, so it keeps up with the camera on a phone. */
     .you-box {
         position: absolute;
+        left: 0;
+        top: 0;
         border-radius: 16px;
-        box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.95), 0 0 0 6px rgba(167, 139, 250, 0.22),
-            0 0 0 4000px rgba(10, 8, 20, 0.34);
-        transition: width 120ms ease, height 120ms ease;
+        box-shadow: 0 0 0 2px rgba(196, 181, 253, 0.95), 0 0 0 6px rgba(167, 139, 250, 0.22);
+        will-change: transform, width, height;
     }
     .you-box-label {
         position: absolute;

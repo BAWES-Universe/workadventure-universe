@@ -60,7 +60,6 @@ const cameraContainerHeightKey = "cameraContainerHeight";
 const chatSideBarWidthKey = "chatSideBarWidth";
 const mapEditorSideBarWidthKey = "mapEditorSideBarWidthKey";
 const lookAroundHintSeenKey = "lookAroundHintSeen";
-const lookAroundNoteSeenKey = "lookAroundNoteSeen";
 const bubbleSound = "bubbleSound";
 const knownMediaDevices = "knownMediaDevices";
 
@@ -463,15 +462,6 @@ class LocalUserStore {
 
     getLookAroundHintSeen(): boolean {
         return localStorage.getItem(lookAroundHintSeenKey) === "true";
-    }
-
-    /** The one-time note by the map button has been seen (Look around was opened once). */
-    setLookAroundNoteSeen(value: boolean): void {
-        localStorage.setItem(lookAroundNoteSeenKey, value.toString());
-    }
-
-    getLookAroundNoteSeen(): boolean {
-        return localStorage.getItem(lookAroundNoteSeenKey) === "true";
     }
 
     setCameraPrivacySettings(option: boolean) {
