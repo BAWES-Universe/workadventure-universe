@@ -457,6 +457,8 @@ export class MapEditorModeManager {
         pointer: Phaser.Input.Pointer,
         gameObjects: Phaser.GameObjects.GameObject[]
     ) => {
+        // A second finger during a drag (a pinch) joins that drag: it neither restarts the distance nor takes over.
+        if (this.dragPanActive) return;
         // Every press starts a fresh distance, so a tool asking after the release learns about this press only.
         this.dragPanDistance = 0;
         if (!pointer.leftButtonDown() && !pointer.wasTouch) return;
@@ -476,7 +478,15 @@ export class MapEditorModeManager {
         if (this.dragPanDistance < MapEditorModeManager.DRAG_PAN_THRESHOLD) return;
         this.scene.getCameraManager().dragCamera(dx, dy);
     };
-    private readonly dragPanUpHandler = () => {
+    private readonly dragPanUpHandler = (pointer?: unknown) => {
+        // Only the finger that drags ends the drag; lifting a second finger leaves it going. GAME_OUT passes no pointer.
+        if (
+            pointer instanceof Phaser.Input.Pointer &&
+            this.dragPanPointerId !== undefined &&
+            pointer.id !== this.dragPanPointerId
+        ) {
+            return;
+        }
         this.dragPanActive = false;
         this.dragPanPointerId = undefined;
     };
