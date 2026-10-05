@@ -63,6 +63,8 @@ export type SocketData = {
     chatID?: string;
     // Set while the server checks a chat ID the player just sent proof for (see SocketManager.handleUpdateChatId).
     chatIdVerification?: Promise<void>;
+    // What every space of the room is named under: the world, with the universe in front for Orbit rooms
+    // (see worldSpaceNamespace).
     world: string;
     currentChatRoomArea: string[];
     roomName: string;
