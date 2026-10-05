@@ -47,8 +47,9 @@
 {/if}
 
 <!-- A phone's bar keeps only the chat, the microphone and camera, Orbit and the menu: sharing the screen and picture in
-     picture are here, beside Follow and Lock. -->
-{#if inProfileMenu && $mobileLayoutStore && $screenSharingAvailableStore}
+     picture are here, beside Follow and Lock. Held sideways, these items sit in the bar instead of the menu, and so do
+     these two. -->
+{#if $mobileLayoutStore && $screenSharingAvailableStore}
     <ScreenSharingMenuItem />
     {#if $isInRemoteConversation}
         <PictureInPictureMenuItem />
