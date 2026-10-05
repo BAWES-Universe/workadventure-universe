@@ -221,9 +221,9 @@
 
     function deleteArea() {
         if (!preview) return;
-        // The tool shows the "removed · Undo" toast itself, once the area really goes (a personal area with objects asks first).
-        tool()?.handleDeleteAreaFrontCommandExecution(preview.getId());
-        tool()?.deselectArea?.();
+        // The tool shows the "removed · Undo" toast itself, once the area really goes (a personal area with objects
+        // asks first, and the page stays open until the answer: a cancelled removal keeps the area on screen).
+        tool()?.handleDeleteAreaFrontCommandExecution(preview.getId(), undefined, () => tool()?.deselectArea?.());
     }
 </script>
 
