@@ -17,7 +17,7 @@ import { decryptApiKey } from './encryption';
 import { AIProviderRegistry } from './AIProviderRegistry';
 import type { MapDataService } from '../server/MapDataService';
 import * as Sentry from '@sentry/node';
-import { MCPConnector } from '../mcp/MCPConnector';
+import { MCPConnector, toolTimeoutMs } from '../mcp/MCPConnector';
 import { appendStreamedChunk } from './EmotionParser';
 import { jsonrepair } from 'jsonrepair';
 import { resolveVisionSupport } from './providers/visionModels';
@@ -2574,7 +2574,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     mcpServerConfig.authConfig,
                                     mcpServerConfig.headers,
                                     playerUuid,
-                                    abortSignal
+                                    abortSignal,
+                                    toolTimeoutMs(botClient?.getFullConfig()?.toolTimeoutSeconds)
                                 );
                                 // Process MCP resource blobs (base64 binary data) by uploading to CDN
                                 // and returning CDN URLs so the AI can use send_image/send_audio/etc.
