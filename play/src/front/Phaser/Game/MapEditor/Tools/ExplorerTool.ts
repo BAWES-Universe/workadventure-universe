@@ -12,12 +12,8 @@ import {
     mapExplorationModeStore,
     mapExplorationObjectSelectedStore,
 } from "../../../../Stores/MapEditorStore";
-import {
-    lookAroundDraggedStore,
-    lookAroundNormalZoomStore,
-    lookAroundPlacesOpenStore,
-} from "../../../../Stores/LookAroundStore";
-import { EXPLORE_ZOOM_OUT_END, leaveExploreTheRoom } from "../ExploreTheRoom";
+import { lookAroundDraggedStore, lookAroundNormalZoomStore } from "../../../../Stores/LookAroundStore";
+import { clearLookAroundStores, EXPLORE_ZOOM_OUT_END, leaveExploreTheRoom } from "../ExploreTheRoom";
 import { gameManager } from "../../GameManager";
 import type { GameScene } from "../../GameScene";
 import { Entity } from "../../../ECS/Entity";
@@ -238,11 +234,7 @@ export class ExplorerTool implements MapEditorTool {
         if (this.enableUserInputsStoreSubscribe) this.enableUserInputsStoreSubscribe();
 
         // Disable store of map exploration mode
-        mapExplorationObjectSelectedStore.set(undefined);
-        mapExplorationModeStore.set(false);
-        mapExplorationAreasStore.set(undefined);
-        lookAroundPlacesOpenStore.set(false);
-        lookAroundNormalZoomStore.set(undefined);
+        clearLookAroundStores();
     }
     public activate(): void {
         // Put analytics for exploration mode
