@@ -203,9 +203,8 @@
     function saveDescription() {
         const description = preview?.getProperties().find((p) => p.type === "areaDescriptionProperties");
         if (!description || description.type !== "areaDescriptionProperties") return;
-        description.description = areaDescription;
-        description.searchable = areaSearchable;
-        preview?.updateProperty(description);
+        // A copy, not the live property: updateProperty snapshots the old state for undo before it applies the change.
+        preview?.updateProperty({ ...description, description: areaDescription, searchable: areaSearchable });
     }
 
     function deleteArea() {
