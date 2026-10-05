@@ -1179,10 +1179,16 @@ export class SocketManager {
     }
 
     handleFollowRequestMessage(room: GameRoom, user: User, message: FollowRequestMessage) {
+        // Everyone else in the bubble is asked at once. Remember who, so that cancelling (or the time running out)
+        // reaches the same people and a late answer is ignored.
+        user.startFollowRequest(user.group?.getUsers().filter((currentUser) => currentUser !== user) ?? []);
         room.sendToOthersInGroupIncludingUser(user, {
             message: {
                 $case: "followRequestMessage",
-                followRequestMessage: message,
+                followRequestMessage: {
+                    ...message,
+                    leader: user.id,
+                },
             },
         });
     }
@@ -1192,6 +1198,21 @@ export class SocketManager {
         if (!leader) {
             const message = `Could not follow user "{message.getLeader()}" in room "{room.roomUrl}".`;
             console.info(message, "Maybe the user just left.");
+            return;
+        }
+
+        // A "yes" after the request was cancelled or timed out starts nothing. The sender's screen may already show
+        // them following: tell them the request is over.
+        if (!leader.takeFollowRequestAnswer(user)) {
+            user.socket.write({
+                message: {
+                    $case: "followAbortMessage",
+                    followAbortMessage: {
+                        leader: leader.id,
+                        follower: 0,
+                    },
+                },
+            });
             return;
         }
 
@@ -1205,11 +1226,15 @@ export class SocketManager {
     }
 
     handleFollowAbortMessage(room: GameRoom, user: User, message: FollowAbortMessage) {
-        const leader = room.getUserById(message.leader);
         if (user.id === message.leader) {
-            leader?.stopLeading();
+            // The leader cancels the request or stops leading: the question leaves the screens of those who have not
+            // answered yet, and the followers stop following.
+            user.cancelFollowRequest();
+            user.stopLeading();
         } else {
-            // Forward message
+            // A follower stops following, or someone asked says no: the leader is told.
+            const leader = room.getUserById(message.leader);
+            leader?.takeFollowRequestAnswer(user);
             leader?.delFollower(user);
         }
     }

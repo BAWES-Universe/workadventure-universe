@@ -281,6 +281,7 @@ export class GameRoom implements BrothersFinder {
         }
 
         // If a user leaves the group, it cannot lead or follow anymore.
+        user.cancelFollowRequest();
         if (user.hasFollowers()) {
             user.stopLeading();
         }

@@ -103,7 +103,7 @@ import {
 } from "../../Stores/MenuStore";
 import type { WasCameraUpdatedEvent } from "../../Api/Events/WasCameraUpdatedEvent";
 import { audioManagerFileStore, bubbleSoundStore } from "../../Stores/AudioManagerStore";
-import { currentPlayerGroupLockStateStore } from "../../Stores/CurrentPlayerGroupStore";
+import { bubbleMatesStore, currentPlayerGroupLockStateStore } from "../../Stores/CurrentPlayerGroupStore";
 import { errorScreenStore } from "../../Stores/ErrorScreenStore";
 import {
     availabilityStatusStore,
@@ -1176,6 +1176,7 @@ export class GameScene extends DirtyScene {
         iframeListener.cleanup();
         uiWebsiteManager.closeAll();
         followUsersStore.stopFollowing();
+        bubbleMatesStore.set([]);
 
         audioManagerFileStore.unloadAudio();
         // Area-leave handlers do not run when the scene closes: forget the areas the chat top row names.
@@ -1445,6 +1446,7 @@ export class GameScene extends DirtyScene {
         }
         group.destroy();
         this.groups.delete(groupId);
+        this.refreshBubbleMates();
     }
 
     doUpdateGroupUsers(groupId: number, userIds: number[]): void {
@@ -1454,6 +1456,28 @@ export class GameScene extends DirtyScene {
             return;
         }
         group.updateUsers(userIds);
+        this.refreshBubbleMates();
+    }
+
+    /**
+     * Keeps the list of the others in the current player's bubble up to date (who "Ask to follow" asks).
+     */
+    private refreshBubbleMates(): void {
+        const userId = this.connection?.getUserId();
+        let mates: number[] = [];
+        if (userId !== undefined) {
+            for (const group of this.groups.values()) {
+                const userIds = group.getUserIds();
+                if (userIds.includes(userId)) {
+                    mates = userIds.filter((id) => id !== userId);
+                    break;
+                }
+            }
+        }
+        const current = get(bubbleMatesStore);
+        if (current.length !== mates.length || current.some((id, index) => id !== mates[index])) {
+            bubbleMatesStore.set(mates);
+        }
     }
 
     doUpdatePlayerDetails(update: PlayerDetailsUpdate): void {
@@ -3992,6 +4016,7 @@ ${escapedMessage}
         );
 
         this.groups.set(groupPositionMessage.groupId, conversationBubble);
+        this.refreshBubbleMates();
     }
 
     //todo: put this into an 'orchestrator' scene (EntryScene?)
