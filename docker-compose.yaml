@@ -319,6 +319,8 @@ services:
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-}
       UPLOADER_URL: http://uploader.workadventure.localhost
+      # Verifies the play session token sent with audio message uploads
+      SECRET_KEY: "$SECRET_KEY"
       #AWS
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"

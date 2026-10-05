@@ -155,6 +155,7 @@
     <input
         class="hidden"
         type="file"
+        accept="audio/*,.mp3,.wav,.ogg,.oga,.opus,.m4a,.aac,.webm,.flac"
         id="input-send-audio"
         bind:this={fileInput}
         on:change={(e) => {
