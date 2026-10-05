@@ -167,7 +167,12 @@ import { SpaceScriptingBridgeService } from "../../Space/Utils/SpaceScriptingBri
 import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from "../../Utils/Debuggers";
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
-import { megaphoneCanBeUsedStore, megaphoneChannelsStore, megaphoneSpacesStore } from "../../Stores/MegaphoneStore";
+import {
+    liveBroadcastStore,
+    megaphoneCanBeUsedStore,
+    megaphoneChannelsStore,
+    megaphoneSpacesStore,
+} from "../../Stores/MegaphoneStore";
 import { endLiveBroadcast } from "../../Components/Broadcast/live";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
@@ -455,6 +460,10 @@ export class GameScene extends DirtyScene {
     private readonly pendingBroadcastJoins = new Set<string>();
     /** Set once the scene is closing: a join that lands after that must not touch the destroyed registry. */
     private broadcastSceneClosing = false;
+    /** Failed joins per scope and space name, so a broadcast space that could not be joined is tried again, a few times. */
+    private readonly broadcastJoinFailures = new Map<string, number>();
+    /** One pending retry per scope and space name: a new failure replaces the timer instead of adding a second. */
+    private readonly broadcastJoinRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     /**
      * Joins one space per broadcast channel of this room (this room, this world, everywhere in the universe) and
@@ -502,6 +511,7 @@ export class GameScene extends DirtyScene {
                         });
                         return;
                     }
+                    this.broadcastJoinFailures.delete(`${scope} ${spaceName}`);
                     // The tiles of whoever goes live here get the live ring, and sit first in the strip.
                     space.setMetadata(
                         new Map<string, unknown>([
@@ -529,6 +539,7 @@ export class GameScene extends DirtyScene {
                 .catch((e) => {
                     console.error(e);
                     Sentry.captureException(e);
+                    this.retryBroadcastJoinLater(scope, spaceName, broadcastService);
                 })
                 .finally(() => {
                     this.pendingBroadcastJoins.delete(scope);
@@ -539,6 +550,44 @@ export class GameScene extends DirtyScene {
                 });
         }
     }
+
+    /**
+     * A join that failed (the network dropped, the pusher timed out) is tried again after a while, as long as the
+     * scene is open and the channel is still wanted: the channels only re-sync when they change, so without this a
+     * passing failure would keep the player out of that broadcast for good. Three tries, each waiting twice as long.
+     * The tries are counted per space name, so a scope that moves to another space starts its count afresh.
+     */
+    private retryBroadcastJoinLater(scope: string, spaceName: string, broadcastService: BroadcastService): void {
+        if (this.broadcastSceneClosing || this.abortController.signal.aborted) {
+            return;
+        }
+        const failureKey = `${scope} ${spaceName}`;
+        const failures = (this.broadcastJoinFailures.get(failureKey) ?? 0) + 1;
+        this.broadcastJoinFailures.set(failureKey, failures);
+        // A channel change during a failed join asks again at once; if that fails too, the earlier timer goes.
+        const pending = this.broadcastJoinRetryTimers.get(failureKey);
+        if (pending !== undefined) {
+            clearTimeout(pending);
+            this.broadcastJoinRetryTimers.delete(failureKey);
+        }
+        if (failures > GameScene.BROADCAST_JOIN_RETRIES) {
+            return;
+        }
+        const timer = setTimeout(() => {
+            this.broadcastJoinRetryTimers.delete(failureKey);
+            if (
+                this.broadcastSceneClosing ||
+                get(availabilityStatusStore) === AvailabilityStatus.DO_NOT_DISTURB ||
+                !this.latestBroadcastChannels.some((c) => c.scope === scope && slugify(c.url) === spaceName)
+            ) {
+                return;
+            }
+            this.syncBroadcastSpaces(this.latestBroadcastChannels, broadcastService);
+        }, GameScene.BROADCAST_JOIN_RETRY_MS * 2 ** (failures - 1));
+        this.broadcastJoinRetryTimers.set(failureKey, timer);
+    }
+    private static readonly BROADCAST_JOIN_RETRIES = 3;
+    private static readonly BROADCAST_JOIN_RETRY_MS = 5_000;
 
     public get broadcastService(): BroadcastService {
         if (this._broadcastService === undefined) {
@@ -1275,6 +1324,11 @@ export class GameScene extends DirtyScene {
         this.broadcastSceneClosing = true;
         this.pendingBroadcastJoins.clear();
         this.latestBroadcastChannels = [];
+        for (const timer of this.broadcastJoinRetryTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.broadcastJoinRetryTimers.clear();
+        this.broadcastJoinFailures.clear();
         // A person card belongs to this map: close it before the map and its players go (a reconnect, a map change).
         wokaMenuStore.clear();
         // make sure we restart own medias
@@ -2522,6 +2576,19 @@ export class GameScene extends DirtyScene {
                 this._broadcastService
             ) {
                 this.syncBroadcastSpaces(get(megaphoneChannelsStore), this._broadcastService);
+            }
+            // Entering Do not disturb: leave the broadcast spaces already joined, so no broadcast reaches this
+            // player. A live broadcast this player is running keeps its own space.
+            if (
+                availabilityStatus === AvailabilityStatus.DO_NOT_DISTURB &&
+                previousAvailabilityStatus !== AvailabilityStatus.DO_NOT_DISTURB &&
+                this._broadcastService
+            ) {
+                const live = get(liveBroadcastStore);
+                this.syncBroadcastSpaces(
+                    get(megaphoneChannelsStore).filter((channel) => channel.scope === live?.scope),
+                    this._broadcastService
+                );
             }
             previousAvailabilityStatus = availabilityStatus;
         });

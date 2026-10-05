@@ -59,7 +59,7 @@ export class WAMSettingsUtils {
         if (universeSlug) {
             channels.push({
                 scope: "UNIVERSE",
-                url: WAMSettingsUtils.toSpaceName(`${universeSlug}/megaphone-universe`),
+                url: WAMSettingsUtils.getUniverseMegaphoneSpaceName(universeSlug),
                 canStream: tags.includes("admin"),
             });
         }
@@ -97,6 +97,14 @@ export class WAMSettingsUtils {
             return true;
         }
         return rights.some((right) => tags.includes(right));
+    }
+
+    /**
+     * The one space every room of a universe listens to for universe-wide broadcasts. The pusher recognises this
+     * name to share the space across worlds (every other space stays private to its world).
+     */
+    static getUniverseMegaphoneSpaceName(universeSlug: string): string {
+        return WAMSettingsUtils.toSpaceName(`${universeSlug}/megaphone-universe`);
     }
 
     /** The universe of an Orbit room, whose group is "universe/world". A plain host (no Orbit) has none. */

@@ -56,6 +56,11 @@
     let fileInput: HTMLInputElement;
 
     let opening = false;
+    /**
+     * Bumped when a file is chosen or a recording starts, so whichever came last wins: a microphone granted after a
+     * file was picked is let go, and a file decoded after "Record again" is dropped instead of covering a live take.
+     */
+    let chosen = 0;
 
     /** @param keepReview "Record again": the review (and its recording) stays on screen until the microphone is granted. */
     async function startRecording(keepReview = false) {
@@ -63,6 +68,7 @@
         opening = true;
         error = undefined;
         if (!keepReview) state = "starting";
+        const mine = ++chosen;
         let started: VoiceRecorder;
         try {
             started = await startVoiceRecorder();
@@ -75,8 +81,8 @@
             // eslint-disable-next-line require-atomic-updates
             opening = false;
         }
-        // The card closed while the browser was asking for the microphone: let it go again.
-        if (destroyed) {
+        // The card closed, or a file was chosen, while the browser was asking for the microphone: let it go again.
+        if (destroyed || mine !== chosen) {
             started.stop().catch(() => {});
             return;
         }
@@ -91,13 +97,34 @@
         }, 100);
     }
 
-    async function stopRecording() {
+    /** @param restart With no take to fall back on, open the microphone again when this one can't be saved. */
+    async function stopRecording(restart = true) {
         if (!recorder) return;
         const current = recorder;
         recorder = undefined;
         if (ticker) clearInterval(ticker);
         ticker = undefined;
-        const { blob, samples, sampleRate } = await current.stop();
+        const mine = chosen;
+        let stopped: Awaited<ReturnType<VoiceRecorder["stop"]>>;
+        try {
+            stopped = await current.stop();
+        } catch (e) {
+            console.warn("Broadcast: the voice note could not be saved", e);
+            if (destroyed) return;
+            // The take is lost: the one reviewed before stays, else the card goes back to the start.
+            state = audio ? "review" : "starting";
+            // A file picked while the take was being saved decides what shows next.
+            if (mine !== chosen) return;
+            if (!audio && restart) startRecording().catch((err) => console.error(err));
+            error = $LL.broadcast.voice.recordingFailed();
+            return;
+        }
+        // A file picked while the take was being saved wins over it.
+        if (mine !== chosen) {
+            if (!destroyed && state === "recording") state = audio ? "review" : "starting";
+            return;
+        }
+        const { blob, samples, sampleRate } = stopped;
         setAudio(blob, "voice-note.wav", waveShape(samples), samples.length / sampleRate);
     }
 
@@ -134,12 +161,20 @@
             return;
         }
         error = undefined;
-        if (recorder) await stopRecording();
+        const mine = ++chosen;
+        if (recorder) await stopRecording(false);
         try {
             const { levels, duration } = await describeAudioFile(file);
+            // Another file was picked while this one decoded: the later pick wins.
+            if (mine !== chosen) return;
             setAudio(file, file.name, levels, duration);
         } catch (e) {
             console.warn("Broadcast: the file could not be decoded", e);
+            if (mine !== chosen) return;
+            // The file was picked while the microphone was being opened, and that recorder was let go: ask again.
+            if (state === "starting" && !recorder && !opening && !destroyed) {
+                startRecording().catch((err) => console.error(err));
+            }
             error = $LL.broadcast.voice.wrongFile();
         }
     }
@@ -197,7 +232,7 @@
         <button
             type="button"
             class="u-cta-coral rounded-full grid place-items-center w-[88px] h-[88px] mt-1"
-            on:click={() => stopRecording()}
+            on:click={() => stopRecording().catch((e) => console.error(e))}
             disabled={state !== "recording"}
             aria-label={$LL.broadcast.voice.recording()}
             data-testid="broadcast-voice-stop"

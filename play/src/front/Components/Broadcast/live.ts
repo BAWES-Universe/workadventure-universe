@@ -35,7 +35,9 @@ export function endLiveBroadcast(): void {
     const live = get(liveBroadcastStore);
     if (live) {
         analyticsClient.stopMegaphone();
-        get(megaphoneSpacesStore).get(live.scope)?.stopStreaming();
+        // The space that went live, even when it has already left the joined list (a kick forgets it first).
+        const space = get(currentLiveStreamingSpaceStore) ?? get(megaphoneSpacesStore).get(live.scope);
+        space?.stopStreaming();
     }
     liveBroadcastStore.set(undefined);
     currentLiveStreamingSpaceStore.set(undefined);

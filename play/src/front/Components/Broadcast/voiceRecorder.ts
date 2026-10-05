@@ -16,7 +16,19 @@ export interface VoiceRecorder {
 
 export async function startVoiceRecorder(): Promise<VoiceRecorder> {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    const context = new AudioContext();
+    let context: AudioContext | undefined;
+    try {
+        context = new AudioContext();
+        return await wire(stream, context);
+    } catch (e) {
+        // The microphone is open by now: let it go, or the browser keeps its light on.
+        stream.getTracks().forEach((track) => track.stop());
+        await context?.close().catch(() => {});
+        throw e;
+    }
+}
+
+async function wire(stream: MediaStream, context: AudioContext): Promise<VoiceRecorder> {
     const source = context.createMediaStreamSource(stream);
     // A ScriptProcessor runs everywhere, and keeps every sample; a silent gain feeds it to the output it needs.
     const processor = context.createScriptProcessor(4096, 1, 1);

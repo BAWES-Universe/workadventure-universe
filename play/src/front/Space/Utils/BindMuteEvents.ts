@@ -9,6 +9,7 @@ import { currentLiveStreamingSpaceStore, forgetMegaphoneSpace } from "../../Stor
 import { chatZoneLiveStore } from "../../Stores/ChatStore";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { popupStore } from "../../Stores/PopupStore";
+import { endLiveBroadcast } from "../../Components/Broadcast/live";
 import MuteDialogPopup from "../../Components/PopUp/MuteDialogPopup.svelte";
 
 function displayMuteDialog(event: PrivateEvents["muteAudio"] | PrivateEvents["muteVideo"], space: SpaceInterface) {
@@ -96,15 +97,22 @@ export function bindMuteEventsToSpace(space: SpaceInterface): void {
     // eslint-disable-next-line rxjs/no-ignored-subscription,svelte/no-ignored-unsubscribe
     space.observePrivateEvent("kickOffUser").subscribe((event) => {
         isSpeakerStore.set(false);
-        currentLiveStreamingSpaceStore.set(undefined);
+        // Live on this very space: end the broadcast first, while the space is still known, so streaming stops.
+        // Only this space's live state is touched: a kick from one channel leaves a broadcast on another alone.
+        if (get(currentLiveStreamingSpaceStore)?.getName() === space.getName()) {
+            endLiveBroadcast();
+            currentLiveStreamingSpaceStore.set(undefined);
+        }
         forgetMegaphoneSpace(space.getName());
 
-        const scene = gameManager.getCurrentGameScene();
-        const spaceRegistry = scene.spaceRegistry;
-        spaceRegistry.leaveSpace(space).catch((e) => {
-            console.error("Error while leaving space", e);
-            Sentry.captureException(e);
-        });
+        // Through the broadcast service, so its own list of joined spaces stays in step for destroy().
+        gameManager
+            .getCurrentGameScene()
+            .broadcastService.leaveSpace(space.getName())
+            .catch((e) => {
+                console.error("Error while leaving space", e);
+                Sentry.captureException(e);
+            });
         chatZoneLiveStore.set(false);
     });
 

@@ -3,6 +3,7 @@ import { FilterType } from "@workadventure/messages";
 import { AREA_SPACE_PREFIX, isAreaSpaceName } from "@workadventure/shared-utils/src/Space/areaSpaceName";
 import type { SocketData } from "../models/Websocket/SocketData";
 import { isMegaphoneChannelSpace } from "../models/MegaphoneRights";
+import { toGlobalSpaceName } from "./SpaceNames";
 
 /**
  * Which spaces a player may join, and how.
@@ -40,13 +41,14 @@ export function toWorldSpaceName(world: string, localSpaceName: string): string 
  * Meeting rooms and speaker zones also get the player's room (as a SHA-256 of its URL), so whatever name a browser
  * sends, it can only reach the meeting rooms and speaker zones of the room it is in. The room part has a fixed
  * length and no other space starts with AREA_SPACE_PREFIX, so two different rooms or areas never share a name.
+ * Every other space is named as toGlobalSpaceName says, so the universe broadcast channel reaches every world.
  */
 export function toServerSpaceName(socketData: Pick<SocketData, "world" | "roomId">, localSpaceName: string): string {
     if (isAreaSpaceName(localSpaceName)) {
         const roomKey = createHash("sha256").update(socketData.roomId).digest("hex");
         return toWorldSpaceName(socketData.world, `${AREA_SPACE_PREFIX}${roomKey}.${localSpaceName}`);
     }
-    return toWorldSpaceName(socketData.world, localSpaceName);
+    return toGlobalSpaceName(socketData, localSpaceName);
 }
 
 /** Bubble spaces are named `${roomId}#${groupId}#${time}` by the back. No other space the front makes has a "#". */
