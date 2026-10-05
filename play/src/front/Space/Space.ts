@@ -652,9 +652,10 @@ export class Space implements SpaceInterface {
         const audienceHand = this._audienceHands.get(newData.spaceUserId);
         if (audienceHand) {
             merge(audienceHand, applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>);
-            this._audienceHands.delete(newData.spaceUserId);
-            // Invited on stage: from now on a user of the space, with a video.
+            // Invited on stage: from now on a user of the space, with a video. Joined before leaving the audience, so
+            // whoever invited them sees the join while their hand is still listed.
             this.addUser(audienceHand);
+            this._audienceHands.delete(newData.spaceUserId);
             return;
         }
 
