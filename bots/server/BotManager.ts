@@ -1124,6 +1124,10 @@ export class BotManager {
                 console.log(`[BotManager] Spawned ${newBotsSpawned} new bots for room ${roomId}`);
             }
             console.log(`[BotManager] Room ${roomId} has ${targetRoom.botIds.size} bots total`);
+            // A room without bots isn't kept, so room ids that have no bots (or don't exist) don't pile up
+            if (targetRoom.botIds.size === 0) {
+                this.roomsWithBots.delete(roomId);
+            }
         } catch (error) {
             console.error(`[BotManager] Error ensuring bots for room ${roomId}:`, error);
             throw error;
