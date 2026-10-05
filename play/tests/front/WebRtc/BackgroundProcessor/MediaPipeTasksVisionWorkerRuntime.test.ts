@@ -303,6 +303,38 @@ describe("MediaPipeTasksVisionWorkerRuntime", () => {
         expect(mediaPipeMocks.createFromOptions).toHaveBeenCalledTimes(2);
     });
 
+    it("keeps the current model when a switch fails and retries it after a cooldown", async () => {
+        let nowMs = 1_000;
+        vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+        send({ type: "initialize", config: { mode: "blur" } });
+        await waitForPosted(1);
+        const generalSegmenter = await mediaPipeMocks.createFromOptions.mock.results[0].value;
+        mediaPipeMocks.createFromOptions.mockImplementationOnce(() => Promise.reject(new Error("offline")));
+
+        send({ type: "process-frame", frameId: 1, frame: createBitmap(16, 9), timestampMs: 10 });
+        await waitForPosted(2);
+        await vi.waitFor(() =>
+            expect(console.warn).toHaveBeenCalledWith(
+                expect.stringContaining("Could not load the landscape model"),
+                expect.any(Error)
+            )
+        );
+
+        send({ type: "process-frame", frameId: 2, frame: createBitmap(16, 9), timestampMs: 20 });
+        await waitForPosted(3);
+        expect(mediaPipeMocks.createFromOptions).toHaveBeenCalledTimes(2);
+        expect(generalSegmenter.segmentForVideo).toHaveBeenCalledTimes(2);
+
+        nowMs += 10_000;
+        send({ type: "process-frame", frameId: 3, frame: createBitmap(16, 9), timestampMs: 30 });
+        await waitForPosted(4);
+        expect(mediaPipeMocks.createFromOptions).toHaveBeenCalledTimes(3);
+        expect(mediaPipeMocks.createFromOptions.mock.calls[2][1]).toMatchObject({
+            baseOptions: { modelAssetPath: "/assets/landscape.tflite" },
+        });
+        await vi.waitFor(() => expect(generalSegmenter.close).toHaveBeenCalledOnce());
+    });
+
     it("posts pipeline stats once a 15 s window of rendering has elapsed", async () => {
         let nowMs = 0;
         vi.spyOn(performance, "now").mockImplementation(() => nowMs);
