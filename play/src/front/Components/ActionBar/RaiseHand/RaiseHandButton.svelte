@@ -9,6 +9,7 @@
         raiseHand,
     } from "../../../Space/RaiseHand/RaiseHandStore";
     import { keepHandOfferStore } from "../../../Space/RaiseHand/AutoLowerHand";
+    import { speakingFromAudienceStore, speakInvitationStore } from "../../../Space/RaiseHand/PodiumStore";
 
     const positionStore = myHandPositionStore(localUserStore.getLocalUser()?.uuid ?? "");
     $: handUp = $positionStore !== undefined;
@@ -37,7 +38,40 @@
      the hand is up it turns gold with the place in line. -->
 <div class="hand-slot" class:shown={$canRaiseHandStore} aria-hidden={!$canRaiseHandStore}>
     <div class="hand-wrap" class:pointer-events-auto={$canRaiseHandStore}>
-        {#if $keepHandOfferStore}
+        {#if $speakInvitationStore}
+            <!-- A speaker invites us on stage: nothing goes live until we say so. -->
+            <div class="keep-callout invite-callout" role="alertdialog" data-testid="speak-invitation">
+                <p class="keep-text">{$LL.say.raiseHand.invitesYou({ name: $speakInvitationStore.fromName })}</p>
+                <p class="callout-hint">{$LL.say.raiseHand.invitesYouHint()}</p>
+                <div class="callout-actions">
+                    <button
+                        type="button"
+                        class="u-cta m-0 h-9 flex-1 justify-center rounded-full px-4 text-sm font-bold"
+                        data-testid="speak-invitation-accept"
+                        on:click={() => $speakInvitationStore?.accept()}>{$LL.say.raiseHand.startSpeaking()}</button
+                    >
+                    <button
+                        type="button"
+                        class="callout-secondary"
+                        data-testid="speak-invitation-decline"
+                        on:click={() => $speakInvitationStore?.decline()}>{$LL.say.raiseHand.notNow()}</button
+                    >
+                </div>
+            </div>
+        {:else if $speakingFromAudienceStore}
+            <!-- Live from the audience: stays until we stop or the speaker moves us back. -->
+            <div class="keep-callout live-callout" role="status" data-testid="speaking-from-audience">
+                <p class="keep-text live-text">
+                    <span class="live-dot" aria-hidden="true" />{$LL.say.raiseHand.speakingNow()}
+                </p>
+                <button
+                    type="button"
+                    class="callout-secondary w-full"
+                    data-testid="stop-speaking"
+                    on:click={() => $speakingFromAudienceStore?.stop()}>{$LL.say.raiseHand.stopSpeaking()}</button
+                >
+            </div>
+        {:else if $keepHandOfferStore}
             <!-- After you talk with your hand up: it goes down when the bar runs out, unless you keep it. -->
             <div class="keep-callout" role="status" data-testid="keep-hand-raised">
                 <p class="keep-text">{$LL.say.raiseHand.spoke()}</p>
@@ -220,6 +254,58 @@
         color: #fff;
         animation: callout-in 220ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
     }
+    .invite-callout {
+        box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.45), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+    }
+    .live-callout {
+        box-shadow: inset 0 0 0 1.5px rgba(134, 41, 252, 0.85), 0 0 22px -6px rgba(134, 41, 252, 0.7);
+    }
+    .callout-hint {
+        margin: -4px 0 0;
+        color: rgba(255, 255, 255, 0.65);
+        font-size: 0.8125rem;
+        line-height: 1.35;
+    }
+    .callout-actions {
+        display: flex;
+        gap: 8px;
+    }
+    .callout-secondary {
+        height: 36px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 9999px;
+        background: rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+        color: #fff;
+        font-size: 0.875rem;
+        font-weight: 700;
+        cursor: pointer;
+    }
+    @media (hover: hover) {
+        .callout-secondary:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
+    }
+    .live-text {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .live-dot {
+        flex: none;
+        width: 8px;
+        height: 8px;
+        border-radius: 9999px;
+        background: #8629fc;
+        box-shadow: 0 0 0 3px rgba(134, 41, 252, 0.3);
+        animation: live-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes live-pulse {
+        50% {
+            box-shadow: 0 0 0 6px rgba(134, 41, 252, 0);
+        }
+    }
     .keep-text {
         margin: 0;
         font-size: 0.875rem;
@@ -269,6 +355,9 @@
         }
         .keep-bar {
             display: none;
+        }
+        .live-dot {
+            animation: none;
         }
     }
 </style>

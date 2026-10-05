@@ -6,6 +6,7 @@
     import { userIsAdminStore } from "../../Stores/GameStore";
     import { lowerHand, raisedHandsStore, type RaisedHand } from "../../Space/RaiseHand/RaiseHandStore";
     import type { SpaceUserExtended } from "../../Space/SpaceInterface";
+    import { canInviteToSpeakStore, pendingInvitesStore } from "../../Space/RaiseHand/PodiumStore";
     import RaisedHandWoka from "./RaisedHandWoka.svelte";
 
     /** In the phone's chat sheet header: "✋ 2", and the list opens downwards, from the right. */
@@ -36,6 +37,10 @@
         }
         // The pusher only lets admins do it.
         hand.user.emitPrivateEvent({ $case: "lowerHand", lowerHand: {} });
+    }
+
+    function inviteToSpeak(hand: RaisedHand) {
+        pendingInvitesStore.update((invites) => new Set(invites).add(hand.uuid));
     }
 
     function lowerAll() {
@@ -76,6 +81,7 @@
         {#if open}
             <div
                 class="raised-list"
+                class:wide={$canInviteToSpeakStore}
                 class:upwards
                 class:compact
                 role="dialog"
@@ -90,6 +96,20 @@
                             <span class="raised-woka"><RaisedHandWoka picture={hand.user.pictureStore} /></span>
                             <span class="raised-name">{hand.uuid === myUuid ? $LL.say.raiseHand.you() : hand.name}</span
                             >
+                            {#if $canInviteToSpeakStore && hand.uuid !== myUuid}
+                                {#if $pendingInvitesStore.has(hand.uuid)}
+                                    <span class="raised-invited" data-testid="raised-hand-invited"
+                                        >{$LL.say.raiseHand.invited()}</span
+                                    >
+                                {:else}
+                                    <button
+                                        type="button"
+                                        class="u-cta raised-invite"
+                                        data-testid="raised-hand-invite"
+                                        on:click={() => inviteToSpeak(hand)}>{$LL.say.raiseHand.inviteToSpeak()}</button
+                                    >
+                                {/if}
+                            {/if}
                             {#if hand.uuid === myUuid || $userIsAdminStore}
                                 <button
                                     type="button"
@@ -179,6 +199,25 @@
     .raised-list.compact {
         left: auto;
         right: 0;
+    }
+    .raised-list.wide {
+        width: 340px;
+    }
+    .raised-invite {
+        flex: none;
+        height: 32px;
+        margin: 0;
+        padding: 0 12px;
+        border-radius: 9999px;
+        font-size: 13px;
+        font-weight: 700;
+    }
+    .raised-invited {
+        flex: none;
+        padding: 0 6px;
+        color: #c4b5fd;
+        font-size: 13px;
+        font-weight: 700;
     }
     .raised-list.upwards {
         top: auto;
