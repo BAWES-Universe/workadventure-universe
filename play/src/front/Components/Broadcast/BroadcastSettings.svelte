@@ -6,19 +6,8 @@
     import { executeUpdateWAMSettings } from "../../Phaser/Game/MapEditor/Commands/Facades";
     import { broadcastReachInfoStore } from "../../Stores/BroadcastStore";
     import { menuInputFocusStore } from "../../Stores/MenuInputFocusStore";
-    import { adminDashboardActivatedStore } from "../../Stores/MenuStore";
-    import { canOpenOrbit, openAdminModalFromMenu } from "../../external-modules/admin-api";
     import { reachDetail, reachTitle } from "./reach";
-    import {
-        IconCheck,
-        IconChevronRight,
-        IconDoor,
-        IconRocket,
-        IconPlus,
-        IconShield,
-        IconWorld,
-        IconX,
-    } from "@wa-icons";
+    import { IconCheck, IconDoor, IconRocket, IconPlus, IconShield, IconWorld, IconX } from "@wa-icons";
 
     const dispatch = createEventDispatcher<{ saved: void }>();
 
@@ -33,6 +22,10 @@
             ? "admins"
             : "tags";
     let tags: string[] = who === "tags" ? [...existingRights] : [];
+    /** The tags Orbit knows for this room, picked from a list. Outside Orbit there is no list, so tags are typed. */
+    let availableTags: string[] = [];
+    // A tag saved earlier that Orbit no longer lists stays pickable, so it can still be taken off.
+    $: pickableTags = [...availableTags, ...tags.filter((tag) => !availableTags.includes(tag))];
     let newTag = "";
     let addingTag = false;
     let tagInput: HTMLInputElement | undefined;
@@ -48,7 +41,11 @@
 
     // Rooms outside Orbit have no world and no universe to reach.
     const roomGroup = gameManager.currentStartedRoom?.group ?? null;
-    $: orbitAvailable = $adminDashboardActivatedStore && canOpenOrbit();
+
+    function toggleTag(tag: string) {
+        tags = tags.includes(tag) ? tags.filter((candidate) => candidate !== tag) : [...tags, tag];
+        if (tags.length > 0) error = undefined;
+    }
 
     async function showTagInput() {
         addingTag = true;
@@ -101,7 +98,16 @@
         }
     }
 
-    onMount(() => menuInputFocusStore.set(true));
+    onMount(() => {
+        menuInputFocusStore.set(true);
+        gameManager
+            .getCurrentGameScene()
+            .connection?.queryTags("")
+            .then((found) => {
+                availableTags = found;
+            })
+            .catch((e) => console.warn("Broadcast: the tags could not be loaded", e));
+    });
     onDestroy(() => menuInputFocusStore.set(false));
 </script>
 
@@ -116,7 +122,9 @@
             aria-checked={who === value}
             on:click={() => {
                 who = value === "admins" ? "admins" : value === "everyone" ? "everyone" : "tags";
-                if (who === "tags" && tags.length === 0) showTagInput().catch((e) => console.error(e));
+                if (who === "tags" && tags.length === 0 && availableTags.length === 0) {
+                    showTagInput().catch((e) => console.error(e));
+                }
             }}
             data-testid="broadcast-settings-who-{value}"
         >
@@ -125,7 +133,25 @@
         </button>
     {/each}
 </div>
-{#if who === "tags"}
+{#if who === "tags" && pickableTags.length > 0}
+    <div class="flex flex-col gap-1 ps-4" role="group" aria-label={$LL.broadcast.config.tags()}>
+        {#each pickableTags as tag (tag)}
+            <button
+                type="button"
+                class="u-menu-row"
+                class:u-selected={tags.includes(tag)}
+                role="checkbox"
+                aria-checked={tags.includes(tag)}
+                on:click={() => toggleTag(tag)}
+                data-testid="broadcast-settings-tag-{tag}"
+            >
+                <IconShield font-size="16" class="flex-none text-white/60" aria-hidden="true" />
+                <span class="u-menu-label">{tag}</span>
+                {#if tags.includes(tag)}<IconCheck font-size="16" aria-hidden="true" />{/if}
+            </button>
+        {/each}
+    </div>
+{:else if who === "tags"}
     <div class="flex flex-wrap items-center gap-2 px-1">
         {#each tags as tag (tag)}
             <span class="u-chip">
@@ -202,38 +228,18 @@
                 data-testid="broadcast-settings-reach-WORLD"
             />
         </div>
-        <!-- Universe-wide reach is set in Orbit: the row opens it when Orbit is reachable, else it only says so. -->
-        {#if orbitAvailable}
-            <button
-                type="button"
-                class="u-menu-row"
-                on:click={() => openAdminModalFromMenu()}
-                data-testid="broadcast-settings-reach-UNIVERSE"
-            >
-                <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
-                <span class="u-menu-label !whitespace-normal leading-tight">
-                    <span class="block">{reachTitle($LL, "UNIVERSE")}</span>
-                    <span class="block text-xs text-white/60">
-                        {[reachDetail($LL, "UNIVERSE", $broadcastReachInfoStore), $LL.broadcast.config.setInOrbit()]
-                            .filter((part) => part)
-                            .join(" · ")}
-                    </span>
+        <!-- Universe-wide reach has no switch here: admins may always use it, and Orbit has no page for it yet. -->
+        <div class="u-menu-row cursor-default hover:bg-transparent" data-testid="broadcast-settings-reach-UNIVERSE">
+            <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
+            <span class="u-menu-label !whitespace-normal leading-tight">
+                <span class="block">{reachTitle($LL, "UNIVERSE")}</span>
+                <span class="block text-xs text-white/60">
+                    {[reachDetail($LL, "UNIVERSE", $broadcastReachInfoStore), $LL.broadcast.config.adminsOnly()]
+                        .filter((part) => part)
+                        .join(" · ")}
                 </span>
-                <IconChevronRight font-size="16" class="u-menu-go rtl:-scale-x-100" aria-hidden="true" />
-            </button>
-        {:else}
-            <div class="u-menu-row cursor-default hover:bg-transparent" data-testid="broadcast-settings-reach-UNIVERSE">
-                <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
-                <span class="u-menu-label !whitespace-normal leading-tight">
-                    <span class="block">{reachTitle($LL, "UNIVERSE")}</span>
-                    <span class="block text-xs text-white/60">
-                        {[reachDetail($LL, "UNIVERSE", $broadcastReachInfoStore), $LL.broadcast.config.setInOrbit()]
-                            .filter((part) => part)
-                            .join(" · ")}
-                    </span>
-                </span>
-            </div>
-        {/if}
+            </span>
+        </div>
     {/if}
 </div>
 <p class="m-0 flex items-center gap-2 text-xs text-white/60">

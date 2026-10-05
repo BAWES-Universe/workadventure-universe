@@ -99,7 +99,6 @@ const broadcast: BaseTranslation = {
         removeTag: "Remove {tag:string}",
         tagPlaceholder: "Tag name",
         reach: "How far they can reach",
-        setInOrbit: "set in Orbit",
         rolesLater: "Roles from Orbit will plug in here later.",
         save: "Save",
         saved: "Saved",
