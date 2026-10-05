@@ -3,6 +3,7 @@ import { Subject } from "rxjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { FriendsListAnswer, FriendsUpdateMessage } from "@workadventure/messages";
+import { ConnectionClosedError } from "../../Connection/ConnectionClosedError";
 import type { FriendsConnection } from "./FriendsStore";
 import { createFriendsStore, FRIENDS_RETRY_DELAYS_MS, relationshipsOf } from "./FriendsStore";
 
@@ -99,6 +100,35 @@ describe("friendsStore", () => {
         expect(get(store)).toEqual({ status: "signedOut" });
         await vi.advanceTimersByTimeAsync(FRIENDS_RETRY_DELAYS_MS[0] * 2);
         expect(queryFriendsList).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry on a connection that closed", async () => {
+        const store = createFriendsStore();
+        const { connection, queryFriendsList } = fakeConnection([new ConnectionClosedError("Socket closed")]);
+        store.attach(connection, true);
+        await vi.runOnlyPendingTimersAsync();
+        await vi.advanceTimersByTimeAsync(FRIENDS_RETRY_DELAYS_MS[0] * 2);
+        expect(queryFriendsList).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops on a closing connection, keeps the list, and leaves a newer connection alone", async () => {
+        const store = createFriendsStore();
+        const first = fakeConnection([list(["Sara"]), new Error("down")]);
+        store.attach(first.connection, true);
+        await vi.runOnlyPendingTimersAsync();
+        first.updates.next({ update: { $case: "listChanged", listChanged: {} } });
+        await vi.advanceTimersByTimeAsync(300);
+        store.detach(first.connection);
+        await vi.advanceTimersByTimeAsync(FRIENDS_RETRY_DELAYS_MS[0] * 2);
+        expect(first.queryFriendsList).toHaveBeenCalledTimes(2);
+        expect(get(store).status).toBe("failed");
+        expect(get(store)).toMatchObject({ list: list(["Sara"]) });
+
+        const second = fakeConnection([list(["Tariq"])]);
+        store.attach(second.connection, true);
+        store.detach(first.connection);
+        await vi.runOnlyPendingTimersAsync();
+        expect(get(store)).toEqual({ status: "ready", list: list(["Tariq"]) });
     });
 
     it("ignores the answer of a previous connection", async () => {
