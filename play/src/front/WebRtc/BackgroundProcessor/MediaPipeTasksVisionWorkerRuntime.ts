@@ -18,6 +18,7 @@ import type { BackgroundConfig } from "./createBackgroundTransformer";
 
 const MAX_CONSECUTIVE_RECOVERY_ATTEMPTS = 2;
 const STATS_WINDOW_MS = 15_000;
+const MODEL_SWITCH_RETRY_MS = 10_000;
 const SUCCESSFUL_FRAMES_BEFORE_RECOVERY_RESET = 30;
 
 /** What the two transports hand to the renderer. */
@@ -58,6 +59,7 @@ export class MediaPipeTasksVisionWorkerRuntime {
     // The model follows the camera aspect ratio, which is only known once the first frame arrives.
     private model: SegmenterModel = "general";
     private modelSwitch: Promise<void> | null = null;
+    private modelSwitchRetryAt = 0;
     private compositor: TasksVisionCompositor | null = null;
     private backgroundImage: ImageBitmap | null = null;
     private backgroundImageUrl: string | null = null;
@@ -170,31 +172,33 @@ export class MediaPipeTasksVisionWorkerRuntime {
 
     /**
      * Builds the segmenter for the camera's aspect ratio next to the running one and swaps it in when ready,
-     * so no frame is skipped. A failed switch keeps the current segmenter.
+     * so no frame is skipped. this.model only changes with the swap: a failed switch keeps the current segmenter
+     * and is tried again by a later frame once MODEL_SWITCH_RETRY_MS has passed.
      */
     private switchModel(model: SegmenterModel): void {
-        if (this.modelSwitch) {
+        if (this.modelSwitch || performance.now() < this.modelSwitchRetryAt) {
             return;
         }
         const previous = this.imageSegmenter;
         this.modelSwitch = this.createSegmenter(model)
             .then((next) => {
                 if (this.imageSegmenter !== previous || !previous) {
-                    // Disposed or rebuilt meanwhile: the rebuild already used this.model.
+                    // Disposed or rebuilt meanwhile with this.model: a later frame switches again if still needed.
                     next.close();
                     return;
                 }
                 this.imageSegmenter = next;
+                this.model = model;
                 previous.close();
                 console.info(`[MediaPipe Tasks Vision Worker] Switched to the ${model} segmentation model`);
             })
             .catch((error: unknown) => {
                 console.warn(`[MediaPipe Tasks Vision Worker] Could not load the ${model} model:`, error);
+                this.modelSwitchRetryAt = performance.now() + MODEL_SWITCH_RETRY_MS;
             })
             .finally(() => {
                 this.modelSwitch = null;
             });
-        this.model = model;
     }
 
     /** Downloads the image the config needs, or returns undefined when the current one already fits. */
