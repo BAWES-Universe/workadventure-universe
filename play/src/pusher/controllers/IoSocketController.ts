@@ -28,6 +28,7 @@ import { chatIdVerifier } from "../services/ChatIdVerifier";
 import { validateWebsocketQuery } from "../services/QueryValidator";
 import type { SocketData, SpaceName } from "../models/Websocket/SocketData";
 import { emitInBatch } from "../services/IoSocketHelpers";
+import { worldSpaceNamespace } from "../services/SpaceNamespace";
 import { ClientAbortError } from "../models/ClientAbortError";
 
 const debug = Debug("pusher:requests");
@@ -509,7 +510,8 @@ export class IoSocketController {
                             // A person starts with the chat ID Orbit has on file (only ever saved once checked); the
                             // browser then sends proof of its Matrix login (updateChatIdMessage).
                             chatID: botChatID ?? (userData.status === "ok" ? userData.chatID || undefined : undefined),
-                            world: userData.world,
+                            // Every space of the room is named under this, so same-named worlds of two universes stay apart.
+                            world: worldSpaceNamespace(roomId, userData.world),
                             currentChatRoomArea: [],
                             roomName,
                             microphoneState,
