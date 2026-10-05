@@ -25,10 +25,10 @@ import type { AdminMessageInterface } from "../models/Websocket/Admin/AdminMessa
 import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages";
 import { adminService } from "../services/AdminService";
 import { chatIdVerifier } from "../services/ChatIdVerifier";
+import { worldSpaceNamespace } from "../services/SpaceNamespace";
 import { validateWebsocketQuery } from "../services/QueryValidator";
 import type { SocketData, SpaceName } from "../models/Websocket/SocketData";
 import { emitInBatch } from "../services/IoSocketHelpers";
-import { worldSpaceNamespace } from "../services/SpaceNamespace";
 import { ClientAbortError } from "../models/ClientAbortError";
 
 const debug = Debug("pusher:requests");
