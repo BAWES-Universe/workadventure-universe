@@ -64,7 +64,7 @@ describe("MatrixChatMessage decrypted after it is shown", () => {
         await Promise.resolve();
 
         expect(message.type).toBe("image");
-        expect(holdMatrixMedia).toHaveBeenCalledWith(expect.anything(), "mxc://matrix.test/photo");
+        expect(holdMatrixMedia).toHaveBeenCalledWith(expect.anything(), "mxc://matrix.test/photo", undefined);
         expect(get(message.content).url).toBe("blob:https://play.test/image");
         unsubscribe();
     });

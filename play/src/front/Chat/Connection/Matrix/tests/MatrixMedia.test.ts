@@ -255,3 +255,72 @@ describe("matrixAvatarStore", () => {
         expect(get(matrixAvatarStore(fakeClient(), undefined, 24))).toBeUndefined();
     });
 });
+
+describe("holdMatrixMedia with an encrypted file", () => {
+    const fetchMock = vi.fn();
+
+    beforeEach(() => vi.stubGlobal("fetch", fetchMock));
+    afterEach(() => {
+        fetchMock.mockReset();
+        vi.unstubAllGlobals();
+    });
+
+    function toBase64(bytes: ArrayBuffer | Uint8Array): string {
+        return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/=+$/, "");
+    }
+
+    /** Encrypts like Element does for an attachment in an encrypted chat. */
+    async function encryptLikeElement(text: string, mxcUrl: string) {
+        const key = await crypto.subtle.generateKey({ name: "AES-CTR", length: 256 }, true, ["encrypt", "decrypt"]);
+        const iv = new Uint8Array(16);
+        crypto.getRandomValues(iv.subarray(0, 8));
+        const ciphertext = await crypto.subtle.encrypt(
+            { name: "AES-CTR", counter: iv, length: 64 },
+            key,
+            new TextEncoder().encode(text)
+        );
+        const jwk = await crypto.subtle.exportKey("jwk", key);
+        const sha256 = toBase64(await crypto.subtle.digest("SHA-256", ciphertext));
+        return {
+            ciphertext,
+            file: { url: mxcUrl, key: { ...jwk, k: jwk.k ?? "" }, iv: toBase64(iv), hashes: { sha256 }, v: "v2" },
+        };
+    }
+
+    it("downloads and decrypts it", async () => {
+        const { ciphertext, file } = await encryptLikeElement("hello photo", "mxc://matrix.test/encrypted");
+        fetchMock.mockResolvedValue(new Response(ciphertext, { status: 200 }));
+        let shown: Blob | undefined;
+        URL.createObjectURL = vi.fn((blob: Blob) => {
+            shown = blob;
+            return "blob:https://play.test/decrypted";
+        });
+
+        const hold = holdMatrixMedia(fakeClient(), file, "image/png");
+
+        expect(await hold.url).toBe("blob:https://play.test/decrypted");
+        expect(fetchMock).toHaveBeenCalledWith(
+            "https://matrix.test/_matrix/client/v1/media/download/matrix.test/encrypted",
+            { headers: { Authorization: "Bearer token" } }
+        );
+        expect(shown?.type).toBe("image/png");
+        // jsdom's Blob has no text(): read it with a FileReader.
+        const text = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+            reader.readAsText(shown as Blob);
+        });
+        expect(text).toBe("hello photo");
+        hold.release();
+    });
+
+    it("doesn't show a file that doesn't match its hash", async () => {
+        const { file } = await encryptLikeElement("hello", "mxc://matrix.test/tampered");
+        fetchMock.mockResolvedValue(new Response(new TextEncoder().encode("not the same"), { status: 200 }));
+        const createObjectURL = vi.fn(() => "blob:https://play.test/tampered");
+        URL.createObjectURL = createObjectURL;
+
+        expect(await resolveMatrixMediaUrl(fakeClient(), file)).toBeUndefined();
+        expect(createObjectURL).not.toHaveBeenCalled();
+    });
+});
