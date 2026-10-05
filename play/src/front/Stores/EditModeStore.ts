@@ -35,6 +35,12 @@ export function unregisterEditTool(id: string): void {
 }
 
 /**
+ * Set by an entry that opens edit mode straight into one tool (the menu's "Bot editor"): on a phone the panel then
+ * comes out at once instead of waiting for a tap on the rail. EditMode reads it when it mounts and clears it.
+ */
+export const editOpenWithPanelStore = writable(false);
+
+/**
  * A back circle for an added tool's panel title, while the tool shows one of its own pages (the bots module's bot
  * page goes back to its list). Undefined shows the title with its subtitle, as on the tool's first page.
  */

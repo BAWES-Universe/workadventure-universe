@@ -26,12 +26,13 @@
 
     function openBotEditorMenu() {
         closeMapMenu();
-        // Activate the map editor mode first (same as the Map editor button) —
-        // the bot editor is a tool inside that mode's sidebar. The module then
-        // waits for the sidebar to mount and opens the bot editor.
+        isTodoListVisibleStore.set(false);
+        isCalendarVisibleStore.set(false);
         if (!$mapEditorModeStore) {
-            toggleMapEditorMode();
+            analyticsClient.toggleMapEditor(true);
         }
+        // The bot editor is a tool inside edit mode. The module switches the mode on itself, so that on a phone the
+        // panel comes out at once with the bot list, then waits for the sidebar to mount and opens the editor.
         openBotEditorFromMenu();
     }
 

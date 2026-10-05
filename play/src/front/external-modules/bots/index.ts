@@ -4,7 +4,7 @@ import type { ExtensionModule, ExtensionModuleOptions } from "../../ExternalModu
 import { localUserStore } from "../../Connection/LocalUserStore";
 import { mapEditorActivated, userIsConnected } from "../../Stores/MenuStore";
 import { mapEditorModeStore, mapEditorVisibilityStore, mapEditorSelectedToolStore } from "../../Stores/MapEditorStore";
-import { registerEditTool } from "../../Stores/EditModeStore";
+import { editOpenWithPanelStore, registerEditTool } from "../../Stores/EditModeStore";
 import LL from "../../../i18n/i18n-svelte";
 import { EditorToolName } from "../../Phaser/Game/MapEditor/MapEditorModeManager";
 import { gameManager } from "../../Phaser/Game/GameManager";
@@ -50,6 +50,9 @@ export function openBotEditorFromMenu(): void {
     // wait for the sidebar to be in the DOM before opening — the module's own
     // retry pattern, since the sidebar renders asynchronously.
     if (!get(mapEditorModeStore)) {
+        // Opening straight into Bots: on a phone the panel comes out at once with the bot list. Edit mode otherwise
+        // opens on the whole map there, which left the rail lit on Bots with nothing to see until a second tap.
+        editOpenWithPanelStore.set(true);
         mapEditorModeStore.switchMode(true);
     }
 
