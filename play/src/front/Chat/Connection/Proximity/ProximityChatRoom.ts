@@ -5,7 +5,7 @@ import type { Readable, Writable, Unsubscriber } from "svelte/store";
 import { derived, get, writable, readable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import type { Subscription } from "rxjs";
-import type { CharacterTextureMessage } from "@workadventure/messages";
+import type { CharacterTextureMessage, SpaceMessageQuote, SpaceMessageReaction } from "@workadventure/messages";
 import { AvailabilityStatus, FilterType } from "@workadventure/messages";
 import { ChatMessageTypes } from "@workadventure/shared-utils";
 import { asError } from "catch-unknown";
@@ -25,7 +25,12 @@ import type { SpaceInterface, SpaceUserExtended } from "../../../Space/SpaceInte
 import type { SpaceRegistryInterface } from "../../../Space/SpaceRegistry/SpaceRegistryInterface";
 import { chatVisibilityStore } from "../../../Stores/ChatStore";
 import { openChat } from "../../openChat";
-import { isAChatRoomIsVisible, navChat, shouldRestoreChatStateStore } from "../../Stores/ChatStore";
+import {
+    isAChatRoomIsVisible,
+    navChat,
+    selectedChatMessageToReply,
+    shouldRestoreChatStateStore,
+} from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { mapExtendedSpaceUserToChatUser } from "../../UserProvider/ChatUserMapper";
 import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -56,6 +61,13 @@ import {
     takeProximityHistory,
 } from "../../Stores/ProximitySessionStore";
 import type { ProximitySession, ProximitySessionMarker } from "./ProximitySessions";
+import {
+    applyReaction,
+    buildQuote,
+    isUsableReaction,
+    isUsableSharedId,
+    quoteContent,
+} from "./ProximityMessageRelations";
 import {
     DEFAULT_CONTINUATION,
     ROOM_MESSAGES_SESSION_ID,
@@ -89,12 +101,28 @@ export interface ProximityChatParticipant {
  */
 export type ProximitySpaceKind = "none" | "bubble" | "meeting" | "stream";
 
+export interface ProximityChatMessageOptions {
+    session?: ProximitySessionMarker;
+    notSent?: boolean;
+    /** The message this one replies to. */
+    quotedMessage?: ChatMessage;
+    /** Set on the copy of a message shown inside a reply's quote. */
+    isQuotedMessage?: boolean;
+    /**
+     * Sends a reaction on this message to the others and applies it here. Only messages whose id is the same for
+     * everyone (sent by this game) get one; without it the message takes no reactions.
+     */
+    react?: (message: ProximityChatMessage, key: string) => void;
+}
+
 export class ProximityChatMessage implements ChatMessage {
-    isQuotedMessage = undefined;
-    quotedMessage = undefined;
+    isQuotedMessage: boolean | undefined;
+    quotedMessage: ChatMessage | undefined;
     isDeleted = writable(false);
     isModified = writable(false);
     canDelete = writable(false);
+    canReact = writable(false);
+    canReply = writable(false);
     reactions: MapStore<string, ChatMessageReaction> = new MapStore();
     /**
      * Set on the local markers written when this tab joins or leaves a group, so the timeline can draw
@@ -118,10 +146,16 @@ export class ProximityChatMessage implements ChatMessage {
         public date: Date,
         public isMyMessage: boolean,
         public type: ChatMessageType,
-        options: { session?: ProximitySessionMarker; notSent?: boolean } = {}
+        private readonly options: ProximityChatMessageOptions = {}
     ) {
         this.session = options.session;
         this.notSent = options.notSent;
+        this.quotedMessage = options.quotedMessage;
+        this.isQuotedMessage = options.isQuotedMessage;
+        const isConversation = !options.session && !options.notSent && !options.isQuotedMessage;
+        const hasContent = type !== "incoming" && type !== "outcoming";
+        this.canReact.set(isConversation && hasContent && options.react !== undefined);
+        this.canReply.set(isConversation && hasContent);
     }
 
     remove(): void {
@@ -132,7 +166,7 @@ export class ProximityChatMessage implements ChatMessage {
         return Promise.resolve();
     }
     addReaction(reaction: string): Promise<void> {
-        console.info("Function not implemented.", reaction);
+        this.options.react?.(this, reaction);
         return Promise.resolve();
     }
 }
@@ -155,6 +189,7 @@ export class ProximityChatRoom implements ChatRoom {
     private _spacePromise: Promise<SpaceInterface | undefined> = Promise.resolve(undefined);
     private spaceMessageSubscription: Subscription | undefined;
     private spaceIsTypingSubscription: Subscription | undefined;
+    private spaceMessageReactionSubscription: Subscription | undefined;
     // Expiry timers of the typing entries, by spaceUserId of the sender
     private typingExpiryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private spaceStreamMessageSubscription: Subscription | undefined;
@@ -401,14 +436,18 @@ export class ProximityChatRoom implements ChatRoom {
             chatUser = mapExtendedSpaceUserToChatUser(spaceUser);
         }
 
-        // Create message
+        // A reply quotes the message picked in this chat, then the composer stops replying to it.
+        const quotedMessage = broadcast ? this.takeMessageToReplyTo() : undefined;
+
+        // Create message. Its id goes to the others too, so reactions and replies can point at it.
         const newMessage = new ProximityChatMessage(
             uuidv4(),
             chatUser,
             writable(newChatMessageContent),
             new Date(),
             true,
-            messageType
+            messageType,
+            { quotedMessage, react: broadcast ? this.reactToMessage : undefined }
         );
 
         // Add message to the list
@@ -430,6 +469,8 @@ export class ProximityChatRoom implements ChatRoom {
                     galleryUrls: galleryUrls ?? [],
                     fileName: fileName,
                     fileNames: fileNames ?? [],
+                    id: newMessage.id,
+                    replyTo: quotedMessage ? buildQuote(quotedMessage, get(quotedMessage.content)) : undefined,
                 },
             });
         }
@@ -559,7 +600,9 @@ export class ProximityChatRoom implements ChatRoom {
         mimeType?: string | null,
         galleryUrls?: string[] | null,
         fileName?: string | null,
-        fileNames?: string[] | null
+        fileNames?: string[] | null,
+        sharedId?: string | null,
+        replyTo?: SpaceMessageQuote | null
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
@@ -621,14 +664,20 @@ export class ProximityChatRoom implements ChatRoom {
             chatUser.username = name;
         }
 
-        // Create message
+        // The sender's id is shared by everyone who got the message, so reactions find it. Bots and older games
+        // send none: the message then gets a local id and takes no reactions.
+        const isShared = isUsableSharedId(sharedId) && !this.messages.has(sharedId);
         const newMessage = new ProximityChatMessage(
-            uuidv4(),
+            isShared ? sharedId : uuidv4(),
             chatUser,
             writable(newChatMessageContent),
             new Date(),
             false,
-            messageType
+            messageType,
+            {
+                quotedMessage: replyTo ? this.resolveQuote(replyTo) : undefined,
+                react: isShared ? this.reactToMessage : undefined,
+            }
         );
 
         // Add message to the list
@@ -647,6 +696,71 @@ export class ProximityChatRoom implements ChatRoom {
                 console.error("Error while sending message to WorkAdventure scripting API", e);
             }
         }
+    }
+
+    /**
+     * The message the composer is replying to, when it is one of this chat's, and stops replying to it. A reply picked
+     * in another chat stays for that chat.
+     */
+    private takeMessageToReplyTo(): ChatMessage | undefined {
+        const selected = get(selectedChatMessageToReply);
+        if (!selected || this.messages.get(selected.id) !== selected) return undefined;
+        selectedChatMessageToReply.set(null);
+        return selected;
+    }
+
+    /** The message a received reply quotes: our own copy when we have it, else what the reply says it was. */
+    private resolveQuote(quote: SpaceMessageQuote): ChatMessage {
+        const original = isUsableSharedId(quote.id) ? this.messages.get(quote.id) : undefined;
+        if (original && !(original instanceof ProximityChatMessage && original.session)) return original;
+
+        const isMine = quote.senderUserId !== undefined && quote.senderUserId === this._spaceUserId;
+        const spaceUser = quote.senderUserId ? this.users?.get(quote.senderUserId) : undefined;
+        const sender: AnyKindOfUser = spaceUser
+            ? mapExtendedSpaceUserToChatUser(spaceUser)
+            : { ...this.unknownUser, username: quote.name || this.unknownUser.username };
+        const content = quoteContent(quote);
+        const type: ChatMessageType =
+            content.urls !== undefined
+                ? "gallery"
+                : content.url
+                ? this.inferTypeFromUrl(content.url) ?? "file"
+                : "proximity";
+        return new ProximityChatMessage(quote.id, sender, writable(content), new Date(), isMine, type, {
+            isQuotedMessage: true,
+        });
+    }
+
+    /** Toggles this tab's reaction on a nearby message, here and for the others. */
+    private readonly reactToMessage = (message: ProximityChatMessage, key: string): void => {
+        if (!isUsableReaction(key) || this.messages.get(message.id) !== message) return;
+        const add = !message.reactions.get(key)?.users.has(this._spaceUserId);
+        const spaceUser = this.users?.get(this._spaceUserId);
+        const me = spaceUser ? mapExtendedSpaceUserToChatUser(spaceUser) : this.unknownUser;
+        if (
+            !applyReaction(message.reactions, key, this._spaceUserId, me, add, true, (k) =>
+                this.reactToMessage(message, k)
+            )
+        ) {
+            return;
+        }
+        this._space?.emitPublicMessage({
+            $case: "spaceMessageReaction",
+            spaceMessageReaction: { messageId: message.id, reaction: key, add },
+        });
+    };
+
+    private applyRemoteReaction(senderUserId: string, event: SpaceMessageReaction): void {
+        if (!isUsableReaction(event.reaction)) return;
+        const message = this.messages.get(event.messageId);
+        if (!(message instanceof ProximityChatMessage) || !get(message.canReact)) return;
+        const spaceUser = this.users?.get(senderUserId);
+        const user: AnyKindOfUser = spaceUser
+            ? mapExtendedSpaceUserToChatUser(spaceUser)
+            : { ...this.unknownUser, username: event.name || this.unknownUser.username };
+        applyReaction(message.reactions, event.reaction, senderUserId, user, event.add, false, (k) =>
+            this.reactToMessage(message, k)
+        );
     }
 
     sendFiles(files: FileList): Promise<void> {
@@ -1075,7 +1189,9 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.mimeType,
                 event.spaceMessage.galleryUrls,
                 event.spaceMessage.fileName,
-                event.spaceMessage.fileNames
+                event.spaceMessage.fileNames,
+                event.spaceMessage.id,
+                event.spaceMessage.replyTo
             );
             // if the proximity chat is not open, open it to see the message
             openChat("bubble");
@@ -1093,6 +1209,16 @@ export class ProximityChatRoom implements ChatRoom {
                 this.removeTypingUserbyID(event.sender);
             }
         });
+
+        this.spaceMessageReactionSubscription?.unsubscribe();
+        this.spaceMessageReactionSubscription = this._space
+            .observePublicEvent("spaceMessageReaction")
+            .subscribe((event) => {
+                if (isBlackListed(event.sender) || event.sender === this._spaceUserId) {
+                    return;
+                }
+                this.applyRemoteReaction(event.sender, event.spaceMessageReaction);
+            });
 
         // Subscribe to streaming bot responses — tokens arrive incrementally
         this.spaceStreamMessageSubscription = this._space
@@ -1270,6 +1396,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this._currentSessionId = undefined;
                 this.spaceMessageSubscription?.unsubscribe();
                 this.spaceIsTypingSubscription?.unsubscribe();
+                this.spaceMessageReactionSubscription?.unsubscribe();
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
                 if (this._space) {
@@ -1490,6 +1617,7 @@ export class ProximityChatRoom implements ChatRoom {
 
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
 
@@ -1558,6 +1686,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.stopListeningToStreamInBubbleStreamUnsubscriber.unsubscribe();
         this.spaceMessageSubscription?.unsubscribe();
         this.spaceIsTypingSubscription?.unsubscribe();
+        this.spaceMessageReactionSubscription?.unsubscribe();
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.clearTypingMembers();

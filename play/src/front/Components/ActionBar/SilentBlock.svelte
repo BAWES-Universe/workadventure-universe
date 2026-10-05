@@ -1,25 +1,43 @@
 <script lang="ts">
     import { fly } from "svelte/transition";
     import { LL } from "../../../i18n/i18n-svelte";
+    import { IconMute } from "@wa-icons";
 
-    let showMobileInformation: boolean = false;
+    /** Where the bar is: "above" it on phones (bar at the bottom), "below" it elsewhere (bar at the top). */
+    export let placement: "above" | "below";
 </script>
 
-<!-- Use "showMobileInformation" to restrict the visibility for the mobile experience -->
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
+<!-- The same dark surface as the other panels, so the text reads on any floor, with an amber tile so it is noticed.
+     The explanation shows everywhere: nothing to tap.
+     "above": phones, where the bar is at the bottom. Placed against the whole bar, centred and never wider than the
+     screen, above the device tab.
+     "below": everywhere else, where the bar is at the top. Under the microphone and camera, as before. -->
 <div
-    class="absolute -top-[50px] max-sm:w-full @sm/actions:!top-20 left-0 z-0 text-white border border-solid border-danger flex flex-col items-center justify-between bg-no-repeat bg-center bg-danger-1000/70 backdrop-blur rounded-lg text-center transition-all"
+    class="silent-block {placement === 'above'
+        ? 'bottom-full left-0 right-[72px] mx-auto mb-10 max-w-[22rem]'
+        : 'top-20 start-0 w-max max-w-[min(22rem,calc(100vw-1rem))]'} flex absolute z-0 u-surface rounded-2xl text-white text-start transition-all pointer-events-auto items-start gap-3 px-3 py-2.5"
+    role="status"
+    aria-live="polite"
     transition:fly={{ y: 30, duration: 400 }}
-    on:click={() => (showMobileInformation = !showMobileInformation)}
-    class:!-top-[200px]={showMobileInformation}
 >
-    <div class="py-2 px-1">
-        <div class="m-0 text-center text-base bold">
-            {$LL.camera.my.silentZone()} 🤐
-        </div>
-        <div class="text-danger-200 text-xs max-sm:hidden" class:!block={showMobileInformation}>
-            {$LL.camera.my.silentZoneDesc()}
-        </div>
+    <span class="silent-tile shrink-0 grid place-items-center h-8 w-8 rounded-lg" aria-hidden="true">
+        <IconMute font-size="18" />
+    </span>
+    <div class="min-w-0">
+        <div class="m-0 text-sm font-semibold leading-5">{$LL.camera.my.silentZone()}</div>
+        <div class="text-xs leading-4 text-white/80">{$LL.camera.my.silentZoneDesc()}</div>
     </div>
 </div>
+
+<style>
+    .silent-tile {
+        color: #e9c74c;
+        background: rgba(233, 199, 76, 0.16);
+        box-shadow: inset 0 0 0 1px rgba(233, 199, 76, 0.25);
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .silent-block {
+            transition: none;
+        }
+    }
+</style>

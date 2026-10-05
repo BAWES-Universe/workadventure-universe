@@ -20,12 +20,19 @@ export enum SizeAlteringSquareEvent {
 export class SizeAlteringSquare extends Phaser.GameObjects.Rectangle {
     private selected: boolean;
 
+    /** Fingers need a bigger handle than a mouse: on a touch screen the handles are big white dots with a violet ring. */
+    private static readonly SIZE = window.matchMedia?.("(pointer: coarse)").matches ? 22 : 7;
+
     constructor(scene: Phaser.Scene, pos: { x: number; y: number }, private cursor: string) {
-        super(scene, pos.x, pos.y, 7, 7, 0xffffff);
+        super(scene, pos.x, pos.y, SizeAlteringSquare.SIZE, SizeAlteringSquare.SIZE, 0xffffff);
 
         this.selected = false;
 
-        this.setStrokeStyle(1, 0x000000);
+        if (SizeAlteringSquare.SIZE > 7) {
+            this.setStrokeStyle(3, 0x8b5cf6);
+        } else {
+            this.setStrokeStyle(1, 0x000000);
+        }
         this.setInteractive({ cursor });
         this.scene.input.setDraggable(this);
 

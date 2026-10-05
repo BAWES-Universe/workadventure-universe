@@ -25,7 +25,7 @@ function makeSocket(): Socket {
         spaces: new Set<string>(),
         joinSpacesPromise: new Map<string, Promise<void>>(),
         grantedBubbleSpaces: new Set<string>(),
-        megaphoneSpaceName: null,
+        megaphoneChannels: new Map<string, boolean>(),
     };
     return { getUserData: () => data } as unknown as Socket;
 }

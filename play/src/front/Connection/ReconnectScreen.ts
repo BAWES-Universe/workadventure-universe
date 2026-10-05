@@ -12,6 +12,35 @@ export const RESUME_NETWORK_WAIT_MS = 3_000;
 /** How long the reconnecting screen stays as it is before saying the device is offline (when it is). */
 export const OFFLINE_NOTICE_AFTER_MS = 15_000;
 
+// The room's logo as a copy in memory, by its address. The reconnecting screen comes up when the network is what is
+// missing, so a logo it had to download would only appear once the network is back, just before the game is.
+const logosInMemory = new Map<string, string>();
+// Pictures held so the browser keeps them decoded, when a copy could not be made (no CORS on the logo's server).
+const heldLogos: HTMLImageElement[] = [];
+
+/** Downloads the room's logo once, while the network is up, so the reconnecting screen can show it at once later. */
+export function keepLogoInMemory(logo: string | undefined): void {
+    if (!logo || logosInMemory.has(logo) || logo.startsWith("data:") || logo.startsWith("blob:")) return;
+    logosInMemory.set(logo, logo);
+    fetch(logo)
+        .then((response) => {
+            if (!response.ok) throw new Error(`Logo answered ${response.status}`);
+            return response.blob();
+        })
+        .then((blob) => logosInMemory.set(logo, URL.createObjectURL(blob)))
+        .catch(() => {
+            const image = new Image();
+            image.src = logo;
+            image.decode().catch(() => undefined);
+            heldLogos.push(image);
+        });
+}
+
+/** The address to show the logo from: the copy in memory when there is one. */
+export function logoFromMemory(logo: string | undefined): string | undefined {
+    return logo ? logosInMemory.get(logo) ?? logo : logo;
+}
+
 /**
  * Shows the calm "Reconnecting" screen right away, instead of an error: nothing failed, the game is getting back in.
  * A screen already up (a real error, a ban) is kept.
@@ -24,7 +53,7 @@ export function showReconnectingScreen(logo: string | undefined): void {
             code: RECONNECTING_CODE,
             title: get(LL).warning.reconnectingTitle(),
             details: get(LL).warning.reconnectingDetails(),
-            image: logo,
+            image: logoFromMemory(logo),
         })
     );
 }

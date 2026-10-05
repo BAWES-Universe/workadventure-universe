@@ -101,7 +101,7 @@ import { chatZoneLiveStore } from "../Stores/ChatStore";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
 import { followRoleStore, followUsersStore } from "../Stores/FollowStore";
 import { isSpeakerStore, requestedMicrophoneState, requestedCameraState } from "../Stores/MediaStore";
-import { currentLiveStreamingSpaceStore } from "../Stores/MegaphoneStore";
+import { currentLiveStreamingSpaceStore, forgetMegaphoneSpace } from "../Stores/MegaphoneStore";
 import {
     inviteUserActivated,
     mapEditorActivated,
@@ -467,6 +467,7 @@ export class RoomConnection implements RoomConnection {
 
                                         isSpeakerStore.set(false);
                                         currentLiveStreamingSpaceStore.set(undefined);
+                                        forgetMegaphoneSpace(subMessage.kickOffMessage.spaceName);
                                         const scene = gameManager.getCurrentGameScene();
                                         scene.broadcastService
                                             .leaveSpace(subMessage.kickOffMessage.spaceName)
@@ -890,6 +891,16 @@ export class RoomConnection implements RoomConnection {
         return this.socket?.readyState === WebSocket.OPEN;
     }
 
+    /** Leaves the room on purpose, as a dropped connection would (see BackgroundLeave): the game comes back in later. */
+    public leaveInBackground(): void {
+        if (this._closed) return;
+        console.info("Left in the background, away and alone for a while. Closing connection.");
+        this.noteConnectionLost({ cause: "background_leave" });
+        this.pingWatchdog.stop();
+        this.socket.close();
+        this.cleanupConnection(false);
+    }
+
     public closeConnection(): void {
         this.pingWatchdog.stop();
         this.socket?.close();
@@ -1004,6 +1015,7 @@ export class RoomConnection implements RoomConnection {
                     type: message.type,
                     content: message.content,
                     broadcastToWorld: message.broadcastToWorld,
+                    broadcast: message.broadcast,
                 },
             },
         });
@@ -1725,14 +1737,19 @@ export class RoomConnection implements RoomConnection {
         }
     }
 
-    public emitUpdateChatId(email: string, chatId: string) {
-        if (chatId && email) {
+    /**
+     * Hands the player's Matrix access token to the server, which asks the Matrix server whose token it is and uses
+     * that answer as the player's chat ID. The chat ID is never taken from the browser.
+     */
+    public emitUpdateChatId(matrixAccessToken: string) {
+        if (matrixAccessToken) {
             this.send({
                 message: {
                     $case: "updateChatIdMessage",
                     updateChatIdMessage: {
-                        email,
-                        chatId,
+                        email: "",
+                        chatId: "",
+                        matrixAccessToken,
                     },
                 },
             });
@@ -1771,10 +1788,14 @@ export class RoomConnection implements RoomConnection {
 
     /** Reports a dropped connection once (a ping timeout also closes the socket), and starts the downtime clock. */
     private connectionLostNoted = false;
-    private noteConnectionLost(details: { cause: "no_ping" | "socket_closed"; closeCode?: number }): void {
+    private noteConnectionLost(details: {
+        cause: "no_ping" | "socket_closed" | "background_leave";
+        closeCode?: number;
+    }): void {
         if (this.connectionLostNoted) return;
         this.connectionLostNoted = true;
-        RoomConnection.connectionLostAt = Date.now();
+        // Leaving in the background is not downtime: the person is gone until they come back.
+        RoomConnection.connectionLostAt = details.cause === "background_leave" ? undefined : Date.now();
         analyticsClient.connectionLost({ ...details, hiddenMs: this.pingWatchdog.hiddenForMs });
     }
 

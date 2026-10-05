@@ -59,16 +59,18 @@ export type SocketData = {
     // The proximity bubbles the back has asked this user to join, by the name the back gives them (without the world
     // prefix). Only these bubble spaces may be joined.
     grantedBubbleSpaces: Set<SpaceName>;
+    // Only ever a checked ID: the one Orbit has on file, one the Matrix server confirmed, or a bot's own account.
     chatID?: string;
+    // Set while the server checks a chat ID the player just sent proof for (see SocketManager.handleUpdateChatId).
+    chatIdVerification?: Promise<void>;
     world: string;
     currentChatRoomArea: string[];
     roomName: string;
     microphoneState: boolean;
     cameraState: boolean;
-    // The room's megaphone space (as the front names it; null when the room has none, undefined until the room is
-    // joined) and whether this user may go live in it
-    megaphoneSpaceName: string | null | undefined;
-    canUseMegaphone: boolean;
+    // The broadcast channels of the room, by the space name the front joins them with, and whether this user may go
+    // live on each (undefined until the room is joined)
+    megaphoneChannels: Map<string, boolean> | undefined;
     // The abort controllers for each queries received
     queryAbortControllers: Map<number, AbortController>;
     keepAliveInterval: NodeJS.Timeout | undefined;

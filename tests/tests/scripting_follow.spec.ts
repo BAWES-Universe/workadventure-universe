@@ -70,7 +70,8 @@ test.describe('Scripting follow functions', () => {
             });
         });
 
-        await page2.getByRole('button', { name: 'Stop following' }).click();
+        // The follower's pill: "Following Alice" and Stop.
+        await page2.getByTestId('follow-stop').click();
 
         await waitForUnfollowPromise;
 

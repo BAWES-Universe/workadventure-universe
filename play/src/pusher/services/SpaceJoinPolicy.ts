@@ -1,5 +1,6 @@
 import { FilterType } from "@workadventure/messages";
 import type { SocketData } from "../models/Websocket/SocketData";
+import { isMegaphoneChannelSpace } from "../models/MegaphoneRights";
 
 /**
  * Which spaces a player may join, and how.
@@ -8,7 +9,8 @@ import type { SocketData } from "../models/Websocket/SocketData";
  * by name. Phase 1 covers the spaces whose rightful members the pusher already knows:
  * - proximity bubbles (names containing "#", made by the back's Group): only the members the back asked to join;
  * - the world space ("allWorldUser"): everyone in the world, as a plain user list without audio or video;
- * - the room's megaphone space: everyone, but only as a live streaming space (going live is checked in Space).
+ * - broadcast channel spaces (room, world, universe): everyone, but only as live streaming spaces (going live is
+ *   checked in Space).
  * Every other space (meeting areas, speaker zones, map script spaces) is unchanged.
  */
 
@@ -45,7 +47,7 @@ export interface SpaceJoinRequest {
  */
 export function checkSpaceJoin(
     request: SpaceJoinRequest,
-    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneSpaceName">
+    socketData: Pick<SocketData, "grantedBubbleSpaces" | "megaphoneChannels">
 ): void {
     const { localSpaceName, filterType, propertiesToSync } = request;
 
@@ -70,11 +72,7 @@ export function checkSpaceJoin(
         return;
     }
 
-    if (
-        socketData.megaphoneSpaceName &&
-        localSpaceName === socketData.megaphoneSpaceName &&
-        filterType !== FilterType.LIVE_STREAMING_USERS
-    ) {
-        throw new SpaceJoinRefusedError(localSpaceName, "the megaphone space is a live streaming space");
+    if (isMegaphoneChannelSpace(localSpaceName, socketData) && filterType !== FilterType.LIVE_STREAMING_USERS) {
+        throw new SpaceJoinRefusedError(localSpaceName, "a broadcast channel is a live streaming space");
     }
 }

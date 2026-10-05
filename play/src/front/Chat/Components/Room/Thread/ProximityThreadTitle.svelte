@@ -42,11 +42,7 @@
         : $LL.chat.nearby.title();
 </script>
 
-<div
-    class="flex min-w-0 max-w-full items-center justify-center gap-2.5"
-    data-testid="threadNow"
-    data-state={state.kind}
->
+<div class="flex min-w-0 max-w-full items-center justify-start gap-2.5" data-testid="threadNow" data-state={state.kind}>
     <div class="relative flex shrink-0 items-center" aria-hidden="true">
         {#if stackedPeople.length > 0}
             {#each stackedPeople as person, index (person.id)}

@@ -9,11 +9,15 @@ import {
 
 const BUBBLE = "http://play.example.com/@/team/world/room#12#1700000000000";
 const OTHER_BUBBLE = "http://play.example.com/@/team/world/room#13#1700000000001";
-const MEGAPHONE = "playexamplecom-megaphone-news";
+const MEGAPHONE = "playexamplecom--team-world-room-megaphone-room";
+const OTHER_ROOM_MEGAPHONE = "playexamplecom--team-world-other-megaphone-room";
 const MEDIA = ["cameraState", "microphoneState", "screenSharingState"];
 
-function socketData(granted: string[] = [], megaphoneSpaceName: string | null | undefined = MEGAPHONE) {
-    return { grantedBubbleSpaces: new Set(granted), megaphoneSpaceName };
+function socketData(
+    granted: string[] = [],
+    megaphoneChannels: Map<string, boolean> | undefined = new Map([[MEGAPHONE, true]])
+) {
+    return { grantedBubbleSpaces: new Set(granted), megaphoneChannels };
 }
 
 function join(localSpaceName: string, filterType = FilterType.ALL_USERS, propertiesToSync: string[] = []) {
@@ -80,21 +84,23 @@ describe("checkSpaceJoin", () => {
         });
     });
 
-    describe("megaphone space", () => {
-        it("lets anyone join it as a live streaming space", () => {
+    describe("broadcast channel spaces", () => {
+        it("lets anyone join one as a live streaming space", () => {
             expect(() =>
                 checkSpaceJoin(join(MEGAPHONE, FilterType.LIVE_STREAMING_USERS, MEDIA), socketData())
             ).not.toThrow();
         });
 
-        it("refuses it as a space listing all users", () => {
+        it("refuses one as a space listing all users", () => {
             expect(() => checkSpaceJoin(join(MEGAPHONE, FilterType.ALL_USERS, MEDIA), socketData())).toThrow(
                 SpaceJoinRefusedError
             );
         });
 
-        it("does not restrict that name in a room without a megaphone", () => {
-            expect(() => checkSpaceJoin(join(MEGAPHONE, FilterType.ALL_USERS), socketData([], null))).not.toThrow();
+        it("refuses another room's channel as a space listing all users too", () => {
+            expect(() => checkSpaceJoin(join(OTHER_ROOM_MEGAPHONE, FilterType.ALL_USERS, MEDIA), socketData())).toThrow(
+                SpaceJoinRefusedError
+            );
         });
     });
 

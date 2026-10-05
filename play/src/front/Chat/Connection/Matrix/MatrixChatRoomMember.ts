@@ -1,10 +1,11 @@
-import type { MatrixEvent, RoomMember } from "matrix-js-sdk";
+import type { MatrixClient, MatrixEvent, RoomMember } from "matrix-js-sdk";
 import { RoomMemberEvent } from "matrix-js-sdk";
 import type { Writable } from "svelte/store";
-import { get, readable, writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import type { ChatRoomMember, ChatRoomMembership, memberTypingInformation } from "../ChatConnection";
 import { ChatPermissionLevel } from "../ChatConnection";
 import type { PictureStore } from "../../../Stores/PictureStore";
+import { matrixAvatarStore } from "./MatrixMedia";
 
 export class MatrixChatRoomMember implements ChatRoomMember {
     private handleRoomMemberMembership = this.onRoomMemberMembership.bind(this);
@@ -19,12 +20,12 @@ export class MatrixChatRoomMember implements ChatRoomMember {
         writable(null);
     private pictureStore: PictureStore;
 
-    constructor(private roomMember: RoomMember, baseUrl: string) {
+    constructor(private roomMember: RoomMember, client: MatrixClient) {
         this.id = roomMember.userId;
         this.name = writable(this.roomMember.name);
         this.membership = writable(this.roomMember.membership);
         this.permissionLevel = writable(MatrixChatRoomMember.getPermissionLevel(this.roomMember.powerLevelNorm));
-        this.pictureStore = readable(this.roomMember.getAvatarUrl(baseUrl, 24, 24, "scale", false, false) ?? undefined);
+        this.pictureStore = matrixAvatarStore(client, this.roomMember.getMxcAvatarUrl(), 24);
         this.startHandlingChatRoomMemberEvents();
     }
 

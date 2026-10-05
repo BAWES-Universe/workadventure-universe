@@ -48,6 +48,21 @@ abstract class BaseBehavior {
 - Uses `facePosition()` which only sends updates when direction actually changes
 - Real-time facing updates as players move
 
+## Behavior Model
+
+A bot is set up with two answers instead of a type (`behaviors/behaviorModel.ts`):
+
+| Field | Values | Meaning |
+|---|---|---|
+| `behaviorConfig.moves` | `stay`, `wander`, `route` | Stays on its spot, wanders inside its circle, or walks its stops |
+| `behaviorConfig.goesToPeople` | `true`, `false` | Walks over to people it notices and starts a conversation |
+
+Bots saved before these fields only carry `behaviorType`, which maps to one answer pair: `idle` = stay, `patrol` = route, `social` = wander + goes to people. The new fields win when they are set, so nothing has to be migrated. `behaviorType` stays as the label Orbit shows.
+
+Bots that go to people all run `SocialBehavior`, which can stay, wander or walk a route. Bots that don't keep the class they always used (`IdleBehavior`, `PatrolBehavior`), so they behave exactly as before. `buildBehaviorConfig` fills in every default and is used both at spawn and on live edits from the editor.
+
+**Leash.** A bot's spot, circle or route is its leash (`behaviors/leash.ts`). Whenever the bot finds itself off it, after a chat or a summon, it walks back to the nearest place on it: its spot, the nearest point inside its circle, or the nearest stop of its route. A route bot that goes to people leaves its route by at most how far it notices people (`conversationRadius`).
+
 ## Behavior Types
 
 ### 1. IdleBehavior

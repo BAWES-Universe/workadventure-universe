@@ -6,13 +6,14 @@ import { merge } from "lodash";
 import { applyFieldMask } from "protobuf-fieldmask";
 import type { Socket } from "../services/SocketManager";
 import { isMatrixAreaSpaceName } from "../services/MatrixAreaMembership";
-import type { BackSpaceConnection, SocketData } from "./Websocket/SocketData";
+import type { BackSpaceConnection } from "./Websocket/SocketData";
 import type { EventProcessor } from "./EventProcessor";
 import type { SpaceToBackForwarderInterface } from "./SpaceToBackForwarder";
 import { SpaceToBackForwarder } from "./SpaceToBackForwarder";
 import type { SpaceToFrontDispatcherInterface } from "./SpaceToFrontDispatcher";
 import { SpaceToFrontDispatcher } from "./SpaceToFrontDispatcher";
 import { Query } from "./SpaceQuery";
+import { canGoLiveIn } from "./MegaphoneRights";
 import type { SpaceConnectionInterface } from "./SpaceConnection";
 
 export type SpaceUserExtended = {
@@ -36,6 +37,8 @@ export const CLIENT_UPDATABLE_SPACE_USER_FIELDS: ReadonlySet<string> = new Set<k
     "cameraState",
     "screenSharingState",
     "megaphoneState",
+    // Raise hand: a player raises and lowers their own hand. The pusher stamps the time itself (see below).
+    "handRaisedAt",
 ]);
 
 /**
@@ -366,7 +369,7 @@ export class Space implements SpaceForSpaceConnectionInterface {
                 CLIENT_UPDATABLE_SPACE_USER_FIELDS.has(field) &&
                 (field !== "megaphoneState" ||
                     !updateSpaceUserMessage.user?.megaphoneState ||
-                    this.canGoLive(client.getUserData()))
+                    canGoLiveIn(this.localName, client.getUserData()))
         );
         if (changedFields.length !== updateSpaceUserMessage.updateMask.length) {
             const message = `[Space.applyAndGetUpdatedFieldsForUserFromUpdateSpaceUserMessage] User ${
@@ -381,6 +384,17 @@ export class Space implements SpaceForSpaceConnectionInterface {
             return null;
         }
 
+        if (changedFields.includes("handRaisedAt")) {
+            // The server's clock orders the raised hands, not each browser's. A hand already up keeps its place.
+            const raised = (updateSpaceUserMessage.user.handRaisedAt ?? 0) > 0;
+            const alreadyRaisedAt = spaceUser.handRaisedAt ?? 0;
+            let handRaisedAt = 0;
+            if (raised) {
+                handRaisedAt = alreadyRaisedAt > 0 ? alreadyRaisedAt : Date.now();
+            }
+            updateSpaceUserMessage.user.handRaisedAt = handRaisedAt;
+        }
+
         const updateValues = applyFieldMask(updateSpaceUserMessage.user, changedFields) as Partial<SpaceUser>;
 
         merge(spaceUser, updateValues);
@@ -390,18 +404,6 @@ export class Space implements SpaceForSpaceConnectionInterface {
             // Only the allowed fields travel on, stamped with the sender's own id.
             partialSpaceUser: { ...updateValues, spaceUserId: spaceUser.spaceUserId },
         };
-    }
-
-    /**
-     * Going live in the room's megaphone space needs the megaphone right, which the back sends with roomJoinedMessage
-     * (and the pusher refreshes when the megaphone settings change). Other live spaces, such as speaker zones and map
-     * script spaces, are open to anyone in them. Nobody goes live before the room is joined.
-     */
-    private canGoLive(socketData: Pick<SocketData, "megaphoneSpaceName" | "canUseMegaphone">): boolean {
-        if (socketData.megaphoneSpaceName === undefined) {
-            return false;
-        }
-        return this.localName !== socketData.megaphoneSpaceName || socketData.canUseMegaphone;
     }
 
     getPropertiesToSync(): string[] {

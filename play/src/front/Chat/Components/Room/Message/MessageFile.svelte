@@ -50,17 +50,23 @@
         }
     }
 
-    $: info = getFileTypeInfo($content.url);
+    // Matrix files load from a blob: URL, so the type and name come from the file name when there is one.
+    $: info = getFileTypeInfo($content.filename ?? $content.url);
     $: displayName = $content.filename ?? getFilenameFromUrl($content.url);
-    $: hasCaption = $content.body && $content.body.trim();
+    $: hasCaption = $content.body && $content.body.trim() && $content.body !== $content.filename;
 </script>
 
-<a
+<!-- A link only once the file is ready: until its blob: URL is fetched there is nothing to open. -->
+<svelte:element
+    this={$content.url ? "a" : "div"}
     href={$content.url}
-    target="_blank"
-    rel="noopener noreferrer"
-    download
-    class="flex items-center gap-3 p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors group"
+    target={$content.url ? "_blank" : undefined}
+    rel={$content.url ? "noopener noreferrer" : undefined}
+    download={$content.url ? displayName : undefined}
+    aria-busy={$content.url ? undefined : "true"}
+    class="flex items-center gap-3 p-2 rounded-lg bg-white/5 transition-colors group {$content.url
+        ? 'hover:bg-white/10'
+        : 'opacity-60'}"
 >
     <!-- File type icon badge -->
     <div
@@ -72,7 +78,9 @@
     <!-- Filename + open link -->
     <div class="flex-1 min-w-0">
         <div class="text-sm text-white/90 truncate">{displayName}</div>
-        <div class="text-[10px] text-white/40">{$LL.chat.file.clickToOpen()}</div>
+        <div class="text-[10px] text-white/40">
+            {$content.url ? $LL.chat.file.clickToOpen() : $LL.chat.loader()}
+        </div>
     </div>
     <!-- Download/open icon -->
     <div class="flex-shrink-0 opacity-40 group-hover:opacity-80 transition-opacity">
@@ -92,7 +100,7 @@
             <path d="M12 15l0 -12" />
         </svg>
     </div>
-</a>
+</svelte:element>
 
 <!-- Caption/text below file card -->
 {#if hasCaption}

@@ -6,6 +6,7 @@
     import ActionBarButton from "../ActionBarButton.svelte";
     import { availabilityStatusStore, requestedMicrophoneState, silentStore } from "../../../Stores/MediaStore";
     import { openedMenuStore } from "../../../Stores/MenuStore";
+    import { isBroadcastingMediaStore } from "../../../Stores/StreamableCollectionStore";
 
     import MicOnIcon from "../../Icons/MicOnIcon.svelte";
     import MicOffIcon from "../../Icons/MicOffIcon.svelte";
@@ -42,6 +43,7 @@
     classList="group/btn-mic peer/mic"
     disabledHelp={$openedMenuStore !== undefined}
     state={$microphoneButtonStateStore}
+    live={$isBroadcastingMediaStore}
     dataTestId="microphone-button"
 >
     {#if $requestedMicrophoneState && !$silentStore}

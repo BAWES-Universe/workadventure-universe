@@ -14,6 +14,17 @@ const say: DeepPartial<Translation["say"]> = {
     },
     placeholder: "اكتب رسالتك هنا...",
     button: "إنشاء فقاعة",
+    raiseHand: {
+        raise: "ارفع يدك",
+        lower: "أنزل يدك",
+        next: "دورك التالي",
+        inLine: "رقم {position} في الدور",
+        spoke: "تحدثت، لذا ستُنزل يدك",
+        keepRaised: "أبقِها مرفوعة",
+        loweredByModerator: "أنزل أحد المشرفين يدك",
+        lowerSomeone: "أنزل اليد",
+        lowerAll: "أنزل كل الأيدي",
+    },
     express: {
         button: "عبّر عن نفسك",
         close: "إغلاق",

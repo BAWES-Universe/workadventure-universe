@@ -14,6 +14,17 @@ const say: DeepPartial<Translation["say"]> = {
     },
     placeholder: "Tapez votre message ici...",
     button: "Créer une bulle",
+    raiseHand: {
+        raise: "Lever la main",
+        lower: "Baisser la main",
+        next: "à vous ensuite",
+        inLine: "numéro {position} dans la file",
+        spoke: "Vous avez parlé, votre main va se baisser",
+        keepRaised: "Garder la main levée",
+        loweredByModerator: "Un modérateur a baissé votre main",
+        lowerSomeone: "Baisser la main",
+        lowerAll: "Baisser toutes les mains",
+    },
     express: {
         button: "Exprimez-vous",
         close: "Fermer",

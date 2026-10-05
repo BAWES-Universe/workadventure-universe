@@ -26,7 +26,7 @@
     import AreaChatRows from "./AreaRow/AreaChatRows.svelte";
     import OneList from "./OneList/OneList.svelte";
     import type { OneListEntry } from "./OneList/OneListStore";
-    import { resolveChatLayout } from "./ChatLayout";
+    import { CHAT_LAYOUT_LIMIT, resolveChatLayout } from "./ChatLayout";
     import {
         IconChevronRight,
         IconCloudLock,
@@ -38,6 +38,8 @@
     } from "@wa-icons";
 
     export let sideBarWidth: number = INITIAL_SIDEBAR_WIDTH;
+    // Side by side with a thread, the Chats / People tabs sit over the list column only: the column starts below them.
+    export let listTopInset = 0;
 
     const gameScene = gameManager.getCurrentGameScene();
     const proximityChatRoom = gameScene.proximityChatRoom;
@@ -48,7 +50,6 @@
     const hasPeopleTab = gameScene.room.isChatOnlineListEnabled || gameScene.room.isChatDisconnectedListEnabled;
 
     const chatConnectionStatus = chat.connectionStatus;
-    const CHAT_LAYOUT_LIMIT = INITIAL_SIDEBAR_WIDTH * 2;
 
     async function initChatConnectionEncryption() {
         try {
@@ -117,7 +118,7 @@
     {#if layout.showList}
         <div
             class="w-full flex flex-col border border-solid border-y-0 border-l-0 border-white/10 relative overflow-y-auto overflow-x-none"
-            style={displayTwoColumnLayout ? `width:335px ;flex : 0 0 auto` : ``}
+            style={displayTwoColumnLayout ? `width:335px ;flex : 0 0 auto; margin-top: ${listTopInset}px` : ``}
         >
             {#if $findGroupOpenStore && $chatConnectionStatus === "ONLINE"}
                 <FindGroup />
@@ -126,11 +127,9 @@
                     <RefreshChat />
                 {/if}
                 <ChatHeader />
-                <div
-                    class="relative pt-1 {$isEncryptionRequiredAndNotSet === true && $isGuest === false
-                        ? ' h-[calc(100%-2rem)]'
-                        : 'h-full'}"
-                >
+                <!-- Fills the panel above the invite footer, and grows past it with a long list: the footer then follows
+                     the last row instead of sitting over the rows that overflow (often on a phone's chat sheet). -->
+                <div class="relative pt-1 grow shrink-0">
                     {#if $chatConnectionStatus === "CONNECTING" && $userIsConnected}
                         <ChatLoader label={$LL.chat.connecting()} />
                     {/if}
@@ -163,7 +162,7 @@
                     </div>
                     {#if !liveCardVisible && !hasProximityHistory}
                         <!-- Nothing yet: say how it starts, and offer the People tab. -->
-                        <section class="u-glass-warm mx-2 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
+                        <section class="u-glass-warm mx-4 mb-2 rounded-2xl px-4 pt-4 pb-3" data-testid="nearbyHint">
                             <div class="flex items-start gap-3">
                                 <div class="flex h-11 w-11 shrink-0 items-end justify-center" aria-hidden="true">
                                     <WokaFromUserId userId={-1} customWidth="40px" placeholderSrc="" />

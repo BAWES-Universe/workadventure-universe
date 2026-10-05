@@ -212,6 +212,11 @@ export class GameManager {
     /**
      * follow up to leaveGame()
      */
+    /** Whether a room was left for a step like the name screen, so that step can lead back into it. */
+    public get canResumeGame(): boolean {
+        return this.currentGameSceneName !== null;
+    }
+
     tryResumingGame(fallbackSceneName: string) {
         if (this.currentGameSceneName) {
             this.scenePlugin.start(this.currentGameSceneName);

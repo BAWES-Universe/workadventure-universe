@@ -4,8 +4,18 @@
     import { videoStreamElementsStore } from "../../Stores/PeerStore";
 
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
+    import { barInViewStore } from "../../Stores/BarInViewStore";
+    import { modalFullScreenStore, modalIframeStore, modalVisibilityStore } from "../../Stores/ModalStore";
 
     const logger = debug("responsive-action-bar");
+
+    // On desktops a side window (Orbit) opens under the bar: the bar, and the menus that open from
+    // it, stay above the window. Maximised, the window takes the whole screen, bar included.
+    $: aboveSideWindow =
+        $barInViewStore &&
+        $modalVisibilityStore &&
+        ($modalIframeStore?.position === "right" || $modalIframeStore?.position === "left") &&
+        !$modalFullScreenStore;
 
     let centerPlusRightDiv: HTMLDivElement;
     export let rightDiv: HTMLDivElement;
@@ -77,13 +87,16 @@
 </script>
 
 <div
-    class="@container/actions w-full z-[301] transition-all pointer-events-none bp-menu {$videoStreamElementsStore.length >
-        0 && $highlightFullScreen
+    class="@container/actions w-full {aboveSideWindow
+        ? 'z-[2001]'
+        : 'z-[301]'} transition-all pointer-events-none bp-menu {$videoStreamElementsStore.length > 0 &&
+    $highlightFullScreen
         ? 'hidden'
         : ''}"
 >
     <div class="gap-1 @md/actions:gap-2 @xl/actions:gap-4 p-1 @md/actions:p-2 @xl/actions:p-4 screen-blocker">
-        <div class="w-full flex justify-between items-center" bind:offsetWidth={actionBarWidth}>
+        <!-- relative: what the overlay slot holds is placed against the whole bar, not one of its parts. -->
+        <div class="relative w-full flex justify-between items-center" bind:offsetWidth={actionBarWidth}>
             <!-- Left bar -->
             <div class="flex-1 flex">
                 <div class="flex-none" bind:offsetWidth={leftDivWidth}>
@@ -116,6 +129,7 @@
                     </div>
                 </div>
             </div>
+            <slot name="overlay" />
         </div>
     </div>
 </div>

@@ -2,8 +2,6 @@ import type { BatchToPusherRoomMessage, PusherToBackRoomMessage } from "@workadv
 import Debug from "debug";
 import type { ClientDuplexStream } from "@grpc/grpc-js";
 import * as Sentry from "@sentry/node";
-import type { WAMFileFormat } from "@workadventure/map-editor";
-import { WAMSettingsUtils } from "@workadventure/map-editor";
 import { GRPC_MAX_MESSAGE_SIZE } from "../enums/EnvironmentVariable";
 import { apiClientRepository } from "../services/ApiClientRepository";
 import type { Socket } from "../services/SocketManager";
@@ -11,7 +9,6 @@ import { socketManager } from "../services/SocketManager";
 import { PositionDispatcher } from "./PositionDispatcher";
 import type { ViewportInterface } from "./Websocket/ViewportMessage";
 import type { ZoneEventListener } from "./Zone";
-import { setMegaphoneSettings } from "./MegaphoneRights";
 
 const debug = Debug("room");
 
@@ -23,7 +20,6 @@ export class PusherRoom {
     private isClosing = false;
     private listeners: Set<Socket> = new Set<Socket>();
 
-    private _wamSettings: WAMFileFormat["settings"] = {};
     private backConnectionClosedAbortController: AbortController = new AbortController();
 
     constructor(public readonly roomUrl: string, private socketListener: ZoneEventListener) {
@@ -154,36 +150,6 @@ export class PusherRoom {
                                         editMapCommandMessage: message.message.editMapCommandMessage,
                                     },
                                 });
-                                // In case the message is updating the megaphone settings, we need to send an additional
-                                // message to update the display of the megaphone button. The Megaphone button is displayed
-                                // based on roles so we need to do this in the pusher.
-                                if (
-                                    message.message.editMapCommandMessage.editMapMessage?.message?.$case ===
-                                        "updateWAMSettingsMessage" &&
-                                    message.message.editMapCommandMessage.editMapMessage.message
-                                        .updateWAMSettingsMessage.message?.$case === "updateMegaphoneSettingMessage"
-                                ) {
-                                    if (!this._wamSettings) {
-                                        this._wamSettings = {};
-                                    }
-                                    this._wamSettings.megaphone =
-                                        message.message.editMapCommandMessage.editMapMessage.message.updateWAMSettingsMessage.message.updateMegaphoneSettingMessage;
-                                    const megaphoneSettingsMessage = {
-                                        enabled: WAMSettingsUtils.canUseMegaphone(this._wamSettings, userData.tags),
-                                        url: WAMSettingsUtils.getMegaphoneUrl(
-                                            this._wamSettings,
-                                            new URL(this.roomUrl).host,
-                                            this.roomUrl
-                                        ),
-                                    };
-                                    setMegaphoneSettings(userData, megaphoneSettingsMessage);
-                                    userData.emitInBatch({
-                                        message: {
-                                            $case: "megaphoneSettingsMessage",
-                                            megaphoneSettingsMessage,
-                                        },
-                                    });
-                                }
                             }
                             break;
                         }

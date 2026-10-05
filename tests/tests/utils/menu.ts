@@ -17,12 +17,19 @@ class Menu {
 
     async openMapExplorer(page: Page) {
         await page.keyboard.press('e');
-        await expect(page.getByRole('button', { name: 'Explore the room' })).toBeHidden();
+        await expect(page.locator('section.side-bar-container')).toBeVisible();
+    }
+
+    // "Look around the map": what a guest gets from the map editor key, with no editing toolbar.
+    async openLookAround(page: Page) {
+        await page.keyboard.press('e');
+        await expect(page.getByTestId('look-around')).toBeVisible();
+        await expect(page.locator('section.side-bar-container')).toBeHidden();
     }
 
     async openMenu(page: Page) {
         await page.getByTestId('action-user').click({timeout: 30_000});
-        await expect(page.getByTestId('profile-menu')).toHaveClass(/backdrop-blur/);
+        await expect(page.getByTestId('profile-menu')).toBeVisible();
     }
 
     async openMenuIfMobile(page: Page) {
@@ -45,7 +52,7 @@ class Menu {
     async openMapMenu(page: Page) {
         // await page.pause();
         await page.getByTestId('map-menu').click();
-        await expect(page.getByTestId('map-sub-menu')).toHaveClass(/backdrop-blur/);
+        await expect(page.getByTestId('map-sub-menu')).toBeVisible();
     }
 
     async closeMenu(page: Page) {
@@ -65,29 +72,52 @@ class Menu {
     async closeMapEditor(page: Page) {
         //await page.locator('.map-editor .configure-my-room .close-window').click();
         await page.getByTestId('closeMapEditorButton').click();
-        await expect(page.locator('#map-editor-container .configure-my-room .close-window')).toBeHidden();
+        await expect(page.getByTestId('edit-pill')).toBeHidden();
     }
 
+    /** Opens the Broadcast card from the Tools menu. */
     async toggleMegaphoneButton(page: Page) {
         await this.openMapMenu(page);
-        await page.getByRole('button', { name: 'Send global message' }).click();
-        //await page.getByTestId('global-message').click({timeout: 30_000});
+        await page.getByTestId('broadcast-menu').click();
+        await expect(page.getByTestId('broadcast-panel')).toBeVisible();
     }
 
+    /** The Broadcast card offers "Go live" to this player. */
     async isThereMegaphoneButton(page: Page) {
-        await this.openMapMenu(page);
-        await page.getByRole('button', { name: 'Send global message' }).click();
-        await expect(page.getByRole('button', { name: 'Start live message' })).toBeEnabled();
-        await page.locator(".close-btn").first().click();
-        //await this.closeMapMenu(page);
+        await this.toggleMegaphoneButton(page);
+        await expect(page.getByTestId('broadcast-kind-live')).toBeEnabled();
+        await page.getByTestId('broadcast-close').click();
+        await expect(page.getByTestId('broadcast-panel')).toBeHidden();
     }
 
+    /** The Broadcast card shows "Go live" greyed out: this player may not go live here. */
     async isNotThereMegaphoneButton(page: Page) {
-        await this.openMapMenu(page);
-        await page.getByRole('button', { name: 'Send global message' }).click();
-        await expect(page.getByRole('button', { name: 'Start live message' })).toBeDisabled();
-        await page.locator(".close-btn").first().click();
-        //await this.closeMapMenu(page);
+        await this.toggleMegaphoneButton(page);
+        await expect(page.getByTestId('broadcast-kind-live')).toBeDisabled();
+        await page.getByTestId('broadcast-close').click();
+        await expect(page.getByTestId('broadcast-panel')).toBeHidden();
+    }
+
+    /**
+     * Goes live from the Broadcast card (it must be open): picks "Go live", the world's reach when the card asks,
+     * and presses Go live. The card closes and the Live pill shows.
+     */
+    async startLiveBroadcast(page: Page) {
+        await page.getByTestId('broadcast-kind-live').click();
+        const worldReach = page.getByTestId('broadcast-reach-WORLD');
+        if (await worldReach.isVisible()) {
+            await worldReach.click();
+            await page.getByTestId('broadcast-next').click();
+        }
+        await expect(page.getByTestId('broadcast-go-live')).toBeEnabled({ timeout: 10_000 });
+        await page.getByTestId('broadcast-go-live').click();
+        await expect(page.getByTestId('broadcast-live-pill')).toBeVisible();
+    }
+
+    /** Ends the live broadcast from the Live pill. */
+    async stopLiveBroadcast(page: Page) {
+        await page.getByTestId('broadcast-end-live').click();
+        await expect(page.getByTestId('broadcast-live-pill')).toBeHidden();
     }
 
     async clickOnStatus(page:Page, status: string){
@@ -101,8 +131,7 @@ class Menu {
         // If the camera is already on, do nothing
         const cameraButton = page.getByTestId('camera-button');
         await expect(cameraButton).toBeVisible();
-        const cameraButtonClass = await cameraButton.getAttribute("class");
-        if (!cameraButtonClass.includes("bg-danger")) return;
+        if (await cameraButton.getAttribute("data-state") !== "forbidden") return;
 
         await page.getByTestId('camera-button').click();
         await this.expectButtonState(page, "camera-button", "normal");
@@ -111,8 +140,7 @@ class Menu {
         // If the camera is already off, do nothing
         const cameraButton = page.getByTestId('camera-button');
         await expect(cameraButton).toBeVisible();
-        const cameraButtonClass = await cameraButton.getAttribute("class");
-        if (cameraButtonClass.includes("bg-danger")) return;
+        if (await cameraButton.getAttribute("data-state") === "forbidden") return;
 
         await page.getByTestId('camera-button').click();
         await this.expectButtonState(page, "camera-button", "forbidden");
@@ -121,22 +149,19 @@ class Menu {
         // If the microphone is already on, do nothing
         const microphoneButton = page.getByTestId('microphone-button');
         await expect(microphoneButton).toBeVisible();
-        const microphoneButtonClass = await microphoneButton.getAttribute("class");
-        if (!microphoneButtonClass.includes("bg-danger")) return;
-
+        if (await microphoneButton.getAttribute("data-state") !== "forbidden") return;
 
         await page.getByTestId('microphone-button').click();
-        await expect(page.getByTestId('microphone-button').locator('.bg-danger')).toBeVisible();
+        await this.expectButtonState(page, "microphone-button", "normal");
     }
     async turnOffMicrophone(page:Page){
         // If the microphone is already off, do nothing
         const microphoneButton = page.getByTestId('microphone-button');
         await expect(microphoneButton).toBeVisible();
-        const microphoneButtonClass = await microphoneButton.getAttribute("class");
-        if (microphoneButtonClass.includes("bg-danger")) return;
+        if (await microphoneButton.getAttribute("data-state") === "forbidden") return;
 
         await page.getByTestId('microphone-button').click();
-        await expect(page.getByTestId('microphone-button').locator('.bg-danger')).toBeHidden();
+        await this.expectButtonState(page, "microphone-button", "forbidden");
     }
 
     async expectCameraOn(page: Page) {
@@ -163,22 +188,15 @@ class Menu {
         await this.expectButtonState(page, 'microphone-button', 'disabled');
     }
 
+    // The action bar buttons carry their state in data-state (the look is a colour on a layer inside them).
     async expectButtonState(page: Page, buttonTestId: string, state: "normal" | "active" | "forbidden" | "disabled") {
         const button = page.getByTestId(buttonTestId);
         switch (state) {
             case "normal":
-                await expect(button).not.toHaveClass(/bg-danger/);
-                await expect(button).not.toHaveClass(/opacity-50/);
-                await expect(button).not.toHaveClass(/bg-secondary/);
-                break;
             case "active":
-                await expect(button).toHaveClass(/bg-secondary/);
-                break;
             case "forbidden":
-                await expect(button).toHaveClass(/bg-danger/);
-                break;
             case "disabled":
-                await expect(button).toHaveClass(/opacity-50/);
+                await expect(button).toHaveAttribute("data-state", state);
                 break;
             default: {
                 const _exhaustiveCheck: never = state;
@@ -190,6 +208,18 @@ class Menu {
         await expect(page.getByText(status).first()).toBeVisible();
     }
 
+    // The "Turn on notifications?" card shows the first time you go Busy without having answered the browser.
+    // Where the test browser already granted notifications it never shows, so this only acts when it is there.
+    async dismissNotificationAsk(page: Page) {
+        const notNow = page.getByRole('button', { name: 'Not now' });
+        try {
+            // Give the card a moment to appear: it opens right after the status changes.
+            await notNow.waitFor({ state: 'visible', timeout: 3000 });
+        } catch {
+            return;
+        }
+        await notNow.click();
+    }
     async closeNotificationPopUp(page:Page){
         if(await page.getByRole('button',{name:'Continue without notification'}).isHidden())return;
         await page.getByRole('button',{name:'Continue without notification'}).click();
