@@ -630,8 +630,6 @@ const mapEditor: BaseTranslation = {
         hintPinch: "Pinch to zoom in and out",
         hintScroll: "Scroll to zoom · Esc to go back",
         you: "You",
-        noteTitle: "Look around the map",
-        noteBody: "See the whole room and all its places.",
         places: "Places",
         placesSubtitle: "Tap one to fly there",
         searchPlaces: "Places and objects",
