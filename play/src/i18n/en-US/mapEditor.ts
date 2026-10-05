@@ -465,7 +465,6 @@ const mapEditor: BaseTranslation = {
             areas: "Areas",
             bots: "Bots",
             delete: "Delete",
-            lookAround: "Look around",
         },
         hint: {
             phone: "Pick a tool on the right. Drag to move around, pinch to zoom.",
