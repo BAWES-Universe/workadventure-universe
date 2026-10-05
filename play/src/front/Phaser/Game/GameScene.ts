@@ -163,7 +163,12 @@ import { SpaceScriptingBridgeService } from "../../Space/Utils/SpaceScriptingBri
 import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from "../../Utils/Debuggers";
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
-import { megaphoneCanBeUsedStore, megaphoneChannelsStore, megaphoneSpacesStore } from "../../Stores/MegaphoneStore";
+import {
+    currentLiveStreamingSpaceStore,
+    megaphoneCanBeUsedStore,
+    megaphoneChannelsStore,
+    megaphoneSpacesStore,
+} from "../../Stores/MegaphoneStore";
 import { endLiveBroadcast } from "../../Components/Broadcast/live";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
@@ -2497,6 +2502,19 @@ export class GameScene extends DirtyScene {
                 this._broadcastService
             ) {
                 this.syncBroadcastSpaces(get(megaphoneChannelsStore), this._broadcastService);
+            }
+            // Entering Do not disturb: leave the broadcast spaces already joined, so no broadcast reaches this
+            // player. A live broadcast this player is running keeps its own space.
+            if (
+                availabilityStatus === AvailabilityStatus.DO_NOT_DISTURB &&
+                previousAvailabilityStatus !== AvailabilityStatus.DO_NOT_DISTURB &&
+                this._broadcastService
+            ) {
+                const liveSpaceName = get(currentLiveStreamingSpaceStore)?.getName();
+                this.syncBroadcastSpaces(
+                    get(megaphoneChannelsStore).filter((channel) => slugify(channel.url) === liveSpaceName),
+                    this._broadcastService
+                );
             }
             previousAvailabilityStatus = availabilityStatus;
         });
