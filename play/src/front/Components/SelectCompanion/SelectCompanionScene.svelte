@@ -90,7 +90,10 @@
         if (event.target instanceof HTMLInputElement) return;
         const index = choices.findIndex((choice) => choice?.id === selected?.id);
         let next = index;
-        if (event.key === "ArrowLeft") next = Math.max(index - 1, 0);
+        // Your companion is in another collection: the arrows start on this collection's first companion,
+        // rather than landing on None
+        if (index === -1 && event.key.startsWith("Arrow")) next = Math.min(1, choices.length - 1);
+        else if (event.key === "ArrowLeft") next = Math.max(index - 1, 0);
         else if (event.key === "ArrowRight") next = Math.min(index + 1, choices.length - 1);
         else if (event.key === "ArrowUp") next = Math.max(index - columns(), 0);
         else if (event.key === "ArrowDown") next = Math.min(index + columns(), choices.length - 1);
