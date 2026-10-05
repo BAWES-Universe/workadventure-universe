@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { SheetSizes } from "../BottomSheet";
 import { clampHeight, getSnapHeights, nearestSnap, nextSnap } from "../BottomSheet";
-import { CHAT_SHEET_SIZES, CHAT_SHEET_TOP_GAP } from "../../../Chat/ChatSheetSizes";
+import {
+    CHAT_SHEET_FIT_MARGIN,
+    CHAT_SHEET_SIZES,
+    CHAT_SHEET_TOP_GAP,
+    chatSheetFitHeight,
+    chatSheetRestingHeight,
+} from "../../../Chat/ChatSheetSizes";
 
 const sizes: SheetSizes = { peek: () => 64, topGap: 96 };
 
@@ -40,5 +46,21 @@ describe("BottomSheet", () => {
         expect(getSnapHeights(560, CHAT_SHEET_SIZES).peek).toBeLessThanOrEqual(280);
         // Other sheets keep half the screen.
         expect(getSnapHeights(844, sizes).half).toBe(422);
+    });
+
+    it("keeps the chat sheet where it was dragged to, between its lowest height and full", () => {
+        expect(chatSheetRestingHeight("half", 844)).toBe(506);
+        expect(chatSheetRestingHeight(0.42, 844)).toBe(354);
+        expect(chatSheetRestingHeight(0.05, 844)).toBe(287);
+        expect(chatSheetRestingHeight(1, 844)).toBe(844 - CHAT_SHEET_TOP_GAP);
+    });
+
+    it("grows a chat opened by a bubble just enough to show the latest message, never shrinking it", () => {
+        // The message fits: the sheet stays as it is.
+        expect(chatSheetFitHeight(287, 150, 60, 844)).toBe(287);
+        // A tall message: the sheet grows by what is missing.
+        expect(chatSheetFitHeight(287, 150, 200, 844)).toBe(287 + 200 + CHAT_SHEET_FIT_MARGIN - 150);
+        // Never past full.
+        expect(chatSheetFitHeight(287, 150, 2000, 844)).toBe(844 - CHAT_SHEET_TOP_GAP);
     });
 });

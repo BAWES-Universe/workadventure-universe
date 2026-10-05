@@ -1,7 +1,7 @@
 import { derived, writable } from "svelte/store";
 import { mobileLayoutStore } from "../Stores/MobileLayoutStore";
 import { windowSize } from "../Stores/CoWebsiteStore";
-import type { SheetSnap } from "../Components/Sheet/BottomSheet";
+import type { ChatSheetRest } from "./ChatSheetSizes";
 
 /**
  * On a phone held upright the chat is a sheet that rises from the bottom of the screen, with the videos above it.
@@ -12,8 +12,11 @@ export const chatSheetLayoutStore = derived(
     ([$mobileLayout, $windowSize]) => $mobileLayout && $windowSize.height > $windowSize.width
 );
 
-/** The height the sheet rests on. Kept while the chat is closed, so it opens where it was left. */
-export const chatSheetSnapStore = writable<SheetSnap>("half");
+/**
+ * Where the sheet rests: a snap, or the share of the screen a person dragged it to. Kept while the chat is closed, so
+ * it opens where it was left.
+ */
+export const chatSheetSnapStore = writable<ChatSheetRest>("half");
 
 /** The sheet's height on screen right now (it follows a drag), 0 while there is no sheet. The videos fit above it. */
 export const chatSheetHeightStore = writable(0);

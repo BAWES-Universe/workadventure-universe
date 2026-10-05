@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onDestroy, tick } from "svelte";
     import { fly } from "svelte/transition";
     import { chatVisibilityStore, INITIAL_SIDEBAR_WIDTH, INITIAL_SIDEBAR_WIDTH_MOBILE } from "../Stores/ChatStore";
     import { gameManager } from "../Phaser/Game/GameManager";
@@ -12,7 +13,12 @@
     import Chat from "./Components/Chat.svelte";
     import { selectedRoomStore } from "./Stores/SelectRoomStore";
     import { chatSheetHeightStore, chatSheetLayoutStore, chatSheetSnapStore } from "./ChatSheetStore";
-    import { CHAT_SHEET_CLOSE_DISTANCE, CHAT_SHEET_SIZES } from "./ChatSheetSizes";
+    import {
+        CHAT_SHEET_CLOSE_DISTANCE,
+        CHAT_SHEET_SIZES,
+        chatSheetFitHeight,
+        chatSheetRestingHeight,
+    } from "./ChatSheetSizes";
     import { getLastChatOpenSource } from "./openChat";
     import { IconX } from "@wa-icons";
 
@@ -155,26 +161,93 @@
     // Height while the handle is dragged; undefined while the sheet rests on a snap.
     let sheetDragHeight: number | undefined;
 
-    // A message arriving in a bubble opens the chat by itself: it opens low, over as little of the map and the
-    // videos as it can. Opened on purpose, it opens at "half" (60% of the screen) or the taller height it was left at,
-    // so what is inside can be read without dragging it up first.
-    // Before the height below, so a chat opened by a bubble starts at peek without a pass at its old height.
+    // A message arriving in a bubble opens the chat by itself: it opens just tall enough to show that latest message
+    // above the field to type in, over as little of the map and the videos as it can. Opened on purpose, it opens
+    // where it was left: 60% of the screen at first, then the height the person last dragged it to.
+    // Height while it shows the latest message of a bubble, until the person moves it; undefined otherwise.
+    let bubbleHeight: number | undefined;
+    // Before the height below, so a chat opened by a bubble starts low without a pass at its old height.
     let wasVisible = false;
     $: onVisibilityChange($chatVisibilityStore);
     function onVisibilityChange(visible: boolean) {
         if (visible && !wasVisible) {
             // Reset on opening, not on closing: the sheet slides away at the height it was let go at.
             sheetDragHeight = undefined;
-            if (getLastChatOpenSource() === "bubble") chatSheetSnapStore.set("peek");
-            else if ($chatSheetSnapStore === "peek") chatSheetSnapStore.set("half");
+            if (getLastChatOpenSource() === "bubble") {
+                bubbleHeight = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES).peek;
+                watchLatestMessage();
+            } else {
+                bubbleHeight = undefined;
+                // "Show everyone" lowers it to make room for the videos; opened again on purpose, it is readable.
+                if ($chatSheetSnapStore === "peek") chatSheetSnapStore.set("half");
+            }
         }
+        if (!visible) stopWatchingLatestMessage();
         wasVisible = visible;
     }
 
     $: sheetSnapHeights = getSnapHeights($windowSize.height, CHAT_SHEET_SIZES);
-    $: sheetHeight = sheetDragHeight ?? sheetSnapHeights[$chatSheetSnapStore];
+    $: sheetHeight = sheetDragHeight ?? bubbleHeight ?? chatSheetRestingHeight($chatSheetSnapStore, $windowSize.height);
     // The videos above the sheet follow its height, drag included.
     $: chatSheetHeightStore.set(sheet && $chatVisibilityStore ? sheetHeight : 0);
+
+    // Any other move of the sheet ("show everyone" lowering it) ends the bubble's own height.
+    const unsubscribeRest = chatSheetSnapStore.subscribe(() => leaveBubbleHeight());
+    onDestroy(() => {
+        unsubscribeRest();
+        stopWatchingLatestMessage();
+    });
+
+    function leaveBubbleHeight() {
+        bubbleHeight = undefined;
+        stopWatchingLatestMessage();
+    }
+
+    // While the sheet keeps the bubble's height, it grows to show each latest message whole (messages load after it
+    // opens, and a long one may follow), never shrinking under the reader.
+    let latestMessageObserver: MutationObserver | undefined;
+    let fitFrame: number | undefined;
+
+    function watchLatestMessage() {
+        stopWatchingLatestMessage();
+        latestMessageObserver = new MutationObserver(scheduleFit);
+        tick()
+            .then(() => {
+                if (!container || bubbleHeight === undefined) return;
+                latestMessageObserver?.observe(container, { childList: true, subtree: true, characterData: true });
+                scheduleFit();
+            })
+            .catch((e) => console.error(e));
+    }
+
+    function stopWatchingLatestMessage() {
+        latestMessageObserver?.disconnect();
+        latestMessageObserver = undefined;
+        if (fitFrame !== undefined) cancelAnimationFrame(fitFrame);
+        fitFrame = undefined;
+    }
+
+    function scheduleFit() {
+        if (fitFrame !== undefined) return;
+        fitFrame = requestAnimationFrame(() => {
+            fitFrame = undefined;
+            fitLatestMessage();
+        });
+    }
+
+    function fitLatestMessage() {
+        if (bubbleHeight === undefined || !container) return;
+        const messages = container.querySelectorAll<HTMLElement>("li[data-event-id]");
+        const latest = messages[messages.length - 1];
+        const list = latest?.closest("ul")?.parentElement;
+        if (!latest || !list) return;
+        bubbleHeight = chatSheetFitHeight(
+            bubbleHeight,
+            list.clientHeight,
+            latest.getBoundingClientRect().height,
+            $windowSize.height
+        );
+    }
 
     function onSheetDrag(height: number) {
         // It follows the finger below its lowest height too, so letting go there closes it.
@@ -187,12 +260,16 @@
             closeChat();
             return;
         }
+        // It stays where it is let go (between its lowest height and "full"), and opens there next time.
+        const kept = clampHeight(height, $windowSize.height, CHAT_SHEET_SIZES);
         sheetDragHeight = undefined;
-        chatSheetSnapStore.set(nearestSnap(height, $windowSize.height, CHAT_SHEET_SIZES));
+        leaveBubbleHeight();
+        chatSheetSnapStore.set(kept / $windowSize.height);
     }
 
     function onSheetTap() {
-        chatSheetSnapStore.set(nextSnap($chatSheetSnapStore));
+        leaveBubbleHeight();
+        chatSheetSnapStore.set(nextSnap(nearestSnap(sheetHeight, $windowSize.height, CHAT_SHEET_SIZES)));
     }
 </script>
 
