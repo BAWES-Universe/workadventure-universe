@@ -325,9 +325,13 @@
         active.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     }
 
-    $: if (tabsElement && !resizeObserver && typeof ResizeObserver !== "undefined") {
-        resizeObserver = new ResizeObserver(() => placePill());
-        resizeObserver.observe(tabsElement);
+    // The tabs leave the page while a row's page is open and come back as a new element: watch whichever is there.
+    let observedTabs: HTMLElement | undefined;
+    $: if ((tabsElement ?? undefined) !== observedTabs && typeof ResizeObserver !== "undefined") {
+        resizeObserver ??= new ResizeObserver(() => placePill());
+        if (observedTabs) resizeObserver.unobserve(observedTabs);
+        if (tabsElement) resizeObserver.observe(tabsElement);
+        observedTabs = tabsElement ?? undefined;
     }
     /** Re-measures once the tabs have been drawn for this page and this list of pages. */
     function schedulePill(_page: string, _count: number) {

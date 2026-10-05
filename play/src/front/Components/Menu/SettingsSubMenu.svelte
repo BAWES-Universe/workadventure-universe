@@ -289,23 +289,16 @@
                     onToggle={() => toggleChoice("bubble-sound")}
                     onSelect={selectBubbleSound}
                 >
-                    <span
+                    <button
                         slot="extra"
+                        type="button"
                         class="u-set-play"
-                        role="button"
-                        tabindex="0"
                         aria-label={$LL.menu.settings.playJoinSound()}
                         title={$LL.menu.settings.playJoinSound()}
-                        on:click|stopPropagation={playBubbleSound}
-                        on:keydown|stopPropagation={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                playBubbleSound();
-                            }
-                        }}
+                        on:click={playBubbleSound}
                     >
                         <IconPlayFilled font-size="14" />
-                    </span>
+                    </button>
                 </SettingChoice>
                 <SettingSwitch
                     id="decreaseAudioPlayerVolumeWhileTalking-toggle"

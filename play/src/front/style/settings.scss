@@ -378,6 +378,21 @@
     color: rgba(255, 255, 255, 0.6);
     font-size: 0.875rem;
 }
+/* The row keeps a gap where its own control sits, just before the chevron (16px, after a 12px gap). */
+.u-set-choice-line {
+    position: relative;
+}
+.u-set-extra-gap {
+    flex: none;
+    width: 32px;
+}
+.u-set-extra {
+    position: absolute;
+    top: 50%;
+    right: 28px;
+    display: flex;
+    transform: translateY(-50%);
+}
 .u-set-chevron {
     flex: none;
     color: rgba(255, 255, 255, 0.55);
@@ -484,6 +499,8 @@
     place-items: center;
     width: 32px;
     height: 32px;
+    padding: 0;
+    border: 0;
     border-radius: 9999px;
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
