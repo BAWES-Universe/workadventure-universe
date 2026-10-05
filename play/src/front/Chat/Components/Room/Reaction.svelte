@@ -1,9 +1,12 @@
 <script lang="ts">
+    import { createEventDispatcher } from "svelte";
     import type { ChatMessageReaction } from "../../Connection/ChatConnection";
     import LL from "../../../../i18n/i18n-svelte";
     import { LONG_PRESS_MS } from "./MessageActions/messageGestures";
 
     export let reaction: ChatMessageReaction;
+
+    const dispatch = createEventDispatcher<{ showWho: { text: string; chip: HTMLElement } }>();
 
     const { reacted, key, users } = reaction;
 
@@ -13,10 +16,10 @@
         .join(", ");
     $: whoReacted = $LL.chat.messageActions.reactedBy({ emoji: key, names });
 
-    // Holding a chip on a phone shows who reacted; a mouse gets the same text as a tooltip.
-    let showWho = false;
+    // Holding a chip on a phone shows who reacted (the reactions bar draws it, outside its scrolling row); a mouse
+    // gets the same text as a tooltip.
+    let chip: HTMLButtonElement;
     let holdTimer: ReturnType<typeof setTimeout> | undefined;
-    let hideTimer: ReturnType<typeof setTimeout> | undefined;
     let held = false;
 
     function onPointerDown(event: PointerEvent) {
@@ -25,9 +28,7 @@
         clearTimeout(holdTimer);
         holdTimer = setTimeout(() => {
             held = true;
-            showWho = true;
-            clearTimeout(hideTimer);
-            hideTimer = setTimeout(() => (showWho = false), 2500);
+            dispatch("showWho", { text: whoReacted, chip });
         }, LONG_PRESS_MS);
     }
 
@@ -45,28 +46,24 @@
 </script>
 
 {#if $users.size > 0}
-    <div class="relative">
-        <button
-            on:click|stopPropagation={onClick}
-            on:pointerdown|stopPropagation={onPointerDown}
-            on:pointerup={cancelHold}
-            on:pointercancel={cancelHold}
-            on:pointerleave={cancelHold}
-            on:contextmenu|preventDefault|stopPropagation
-            class="reaction"
-            class:reacted={$reacted}
-            title={whoReacted}
-            aria-label={whoReacted}
-            aria-pressed={$reacted}
-            data-testid={`${key}_reactionButton`}
-        >
-            <span class="emoji">{key}</span>
-            <span class="count">{$users.size}</span>
-        </button>
-        {#if showWho}
-            <span class="who" role="status">{whoReacted}</span>
-        {/if}
-    </div>
+    <button
+        bind:this={chip}
+        on:click|stopPropagation={onClick}
+        on:pointerdown|stopPropagation={onPointerDown}
+        on:pointerup={cancelHold}
+        on:pointercancel={cancelHold}
+        on:pointerleave={cancelHold}
+        on:contextmenu|preventDefault|stopPropagation
+        class="reaction"
+        class:reacted={$reacted}
+        title={whoReacted}
+        aria-label={whoReacted}
+        aria-pressed={$reacted}
+        data-testid={`${key}_reactionButton`}
+    >
+        <span class="emoji">{key}</span>
+        <span class="count">{$users.size}</span>
+    </button>
 {/if}
 
 <style lang="scss">
@@ -119,21 +116,6 @@
 
     .reaction.reacted .count {
         font-weight: 700;
-    }
-
-    .who {
-        position: absolute;
-        bottom: calc(100% + 6px);
-        left: 0;
-        z-index: 10;
-        width: max-content;
-        max-width: 220px;
-        padding: 6px 10px;
-        border-radius: 8px;
-        font-size: 12px;
-        color: #fff;
-        background: #000;
-        white-space: normal;
     }
 
     @media (prefers-reduced-motion: reduce) {

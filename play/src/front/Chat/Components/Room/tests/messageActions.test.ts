@@ -20,6 +20,18 @@ describe("message actions", () => {
         expect(areAllPhotos(getSaveableFiles("gallery", gallery))).toBe(true);
     });
 
+    it("saves a file listed twice once, and keeps every other name with its own file", () => {
+        const gallery = content({
+            url: "https://cdn.example/a1b2.png",
+            urls: ["https://cdn.example/a1b2.png", "https://cdn.example/c3d4.jpg"],
+            fileNames: ["IMG_2511.png", "IMG_2511 copy.png", "IMG_2512.jpg"],
+        });
+        expect(getSaveableFiles("gallery", gallery)).toEqual([
+            { url: "https://cdn.example/a1b2.png", name: "IMG_2511.png" },
+            { url: "https://cdn.example/c3d4.jpg", name: "IMG_2512.jpg" },
+        ]);
+    });
+
     it("uses a Matrix file's body as its name, since its URL has no extension", () => {
         const matrixImage = content({
             body: "Holiday photo.png",

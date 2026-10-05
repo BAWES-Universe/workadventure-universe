@@ -167,6 +167,59 @@ describe("Nearby chat reactions and replies", () => {
         expect(get(last().canReply)).toBe(true);
     });
 
+    it("shows a message sent twice once, but still shows someone else's message that reuses its id", () => {
+        const sara = { sender: "room_3", spaceMessage: { message: "hi", name: "Sara", id: SARA_MESSAGE_ID } };
+        fake.emit("spaceMessage", sara);
+        fake.emit("spaceMessage", sara);
+        expect(conversation()).toHaveLength(1);
+
+        fake.emit("spaceMessage", {
+            sender: "room_4",
+            spaceMessage: { message: "fake", name: "Omar", id: SARA_MESSAGE_ID },
+        });
+        expect(conversation()).toHaveLength(2);
+        expect(conversation()[0].id).toBe(SARA_MESSAGE_ID);
+        expect(get(conversation()[0].content).body).toBe("hi");
+        expect(last().id).not.toBe(SARA_MESSAGE_ID);
+        expect(get(last().canReact)).toBe(false);
+    });
+
+    it("stops taking reactions on messages carried to the next map, but keeps their reactions and replies", async () => {
+        fake.emit("spaceMessage", {
+            sender: "room_3",
+            spaceMessage: { message: "hi", name: "Sara", id: SARA_MESSAGE_ID },
+        });
+        await last().addReaction("👍");
+        room.stashHistoryForNextScene();
+
+        const nextMap = new ProximityChatRoom(
+            "room_1",
+            { joinSpace: vi.fn(), leaveSpace: vi.fn() } as unknown as SpaceRegistryInterface,
+            { newChatMessageWritingStatusStream: new Subject() },
+            { getPlayers: () => new Map() } as unknown as RemotePlayersRepository,
+            { playBubbleInSound: vi.fn(), playBubbleOutSound: vi.fn() },
+            () => undefined
+        );
+        try {
+            const carried = Array.from(get(nextMap.messages)).find((message) => message.id === SARA_MESSAGE_ID);
+            expect(carried).toBeDefined();
+            expect(get(carried!.canReact)).toBe(false);
+            expect(get(carried!.canReply)).toBe(true);
+            expect(carried!.reactions.get("👍")).toBeDefined();
+
+            const sentBefore = sentEvents("spaceMessageReaction").length;
+            await carried!.addReaction("🎉");
+            expect(sentEvents("spaceMessageReaction")).toHaveLength(sentBefore);
+            expect(carried!.reactions.get("🎉")).toBeUndefined();
+            // Tapping the reaction already on it doesn't take it back either.
+            carried!.reactions.get("👍")!.react();
+            expect(sentEvents("spaceMessageReaction")).toHaveLength(sentBefore);
+            expect(carried!.reactions.get("👍")).toBeDefined();
+        } finally {
+            nextMap.destroy();
+        }
+    });
+
     it("takes no reactions on a message that came without a usable id (bots, older games)", () => {
         fake.emit("spaceMessage", { sender: "room_3", spaceMessage: { message: "beep", name: "Bot" } });
         expect(get(last().canReact)).toBe(false);
