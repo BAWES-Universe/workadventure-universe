@@ -147,6 +147,8 @@ export { default as IconDoor } from "~icons/tabler/door";
 export { default as IconPlanet } from "~icons/tabler/planet";
 export { default as IconLayoutNavbar } from "~icons/tabler/layout-navbar";
 export { default as IconZoomOutArea } from "~icons/tabler/zoom-out-area";
+export { default as IconHandMove } from "~icons/tabler/hand-move";
+export { default as IconMouse } from "~icons/tabler/mouse";
 export { default as IconAdjustmentsHorizontal } from "~icons/tabler/adjustments-horizontal";
 export { default as IconKeyboard } from "~icons/tabler/keyboard";
 export { default as IconEyeOff } from "~icons/tabler/eye-off";

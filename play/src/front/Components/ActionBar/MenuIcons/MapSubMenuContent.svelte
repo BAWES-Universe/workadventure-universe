@@ -12,13 +12,14 @@
         modalVisibilityStore,
         showModalGlobalComminucationVisibilityStore,
     } from "../../../Stores/ModalStore";
-    import { mapEditorModeStore } from "../../../Stores/MapEditorStore";
+    import { mapEditorModeStore, mapExplorationModeStore } from "../../../Stores/MapEditorStore";
+    import { lookAroundNoteSeenStore } from "../../../Stores/LookAroundStore";
+    import { enterExploreTheRoom } from "../../../Phaser/Game/MapEditor/ExploreTheRoom";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { isTodoListVisibleStore } from "../../../Stores/TodoListStore";
     import { isCalendarVisibleStore } from "../../../Stores/CalendarStore";
     import { chatVisibilityStore } from "../../../Stores/ChatStore";
     import ActionBarButton from "../ActionBarButton.svelte";
-    import { EditorToolName } from "../../../Phaser/Game/MapEditor/MapEditorModeManager";
     import { botEditorAvailableStore, openBotEditorFromMenu } from "../../../external-modules/bots/index";
     import AdditionalMenuItems from "./AdditionalMenuItems.svelte";
     import { IconMapEditor, IconRobot, IconSpeakerPhone, IconZoomOutArea } from "@wa-icons";
@@ -67,9 +68,12 @@
         closeMapMenu();
     }
 
-    function toggleMapExplorerMode() {
-        toggleMapEditorMode();
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(EditorToolName.ExploreTheRoom);
+    function openLookAround() {
+        isTodoListVisibleStore.set(false);
+        isCalendarVisibleStore.set(false);
+        closeMapMenu();
+        lookAroundNoteSeenStore.set(true);
+        enterExploreTheRoom();
     }
 
     function closeMapMenu() {
@@ -92,7 +96,11 @@
     </ActionBarButton>
 {/if}
 {#if $mapManagerActivated}
-    <ActionBarButton on:click={toggleMapExplorerMode} label={$LL.mapEditor.sideBar.exploreTheRoom()}>
+    <ActionBarButton
+        on:click={openLookAround}
+        label={$LL.mapEditor.lookAround.title()}
+        state={$mapExplorationModeStore ? "active" : "normal"}
+    >
         <IconZoomOutArea font-size="20" />
     </ActionBarButton>
 {/if}

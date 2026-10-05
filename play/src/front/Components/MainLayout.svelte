@@ -27,9 +27,8 @@
     import { popupStore } from "../Stores/PopupStore";
     import {
         mapEditorAskToClaimPersonalAreaStore,
-        mapEditorSelectedToolStore,
-        mapEditorVisibilityStore,
-        mapExplorationObjectSelectedStore,
+        mapEditorToolbarInUseStore,
+        mapExplorationModeStore,
     } from "../Stores/MapEditorStore";
     import { warningMessageStore } from "../Stores/ErrorStore";
     import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
@@ -42,11 +41,10 @@
         hideActionBarStoreBecauseOfChatBar,
     } from "../Chat/ChatSidebarWidthStore";
     import { chatSheetLayoutStore } from "../Chat/ChatSheetStore";
-    import { EditorToolName } from "../Phaser/Game/MapEditor/MapEditorModeManager";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
-    import { mapEditorSideBarWidthStore } from "./MapEditor/MapEditorSideBarWidthStore";
     import ActionBar from "./ActionBar/ActionBar.svelte";
+    import EditMode from "./MapEditor/EditMode/EditMode.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
     import HelpNotificationSettingsPopup from "./HelpSettings/HelpNotificationSettingPopup.svelte";
     import Menu from "./Menu/Menu.svelte";
@@ -64,7 +62,7 @@
     import Modal from "./Modal/Modal.svelte";
     import HelpPopUpBlocked from "./HelpSettings/HelpPopUpBlocked.svelte";
     import Notification from "./UI/Notification.svelte";
-    import ObjectDetails from "./Modal/ObjectDetails.svelte";
+    import LookAround from "./LookAround/LookAround.svelte";
     import MapList from "./Exploration/MapList.svelte";
     import WarningToast from "./WarningContainer/WarningToast.svelte";
     import ClaimPersonalAreaDialogBox from "./MapEditor/ClaimPersonalAreaDialogBox.svelte";
@@ -124,11 +122,8 @@
     // On a phone held upright the chat is a sheet over the bottom of the screen: it takes no width either.
     $: marginLeft =
         $chatVisibilityStore && !desktop && !$chatSheetLayoutStore ? $chatSidebarWidthStore + $chatFloatInsetStore : 0;
-    // The map editor sits beside the game, and the bar stops where it starts: its menus would open under the editor.
-    $: marginRight =
-        $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor
-            ? $mapEditorSideBarWidthStore
-            : 0;
+    // The room editor floats over the map on the right, like a window: nothing moves for it.
+    const marginRight = 0;
     // A maximised window takes the whole screen, over the chat too: the last thing you asked to see.
     $: windowMaximised = $modalVisibilityStore && $modalFullScreenStore;
     // Otherwise the chat and the window take turns where they overlap: the one opened or clicked last is in front.
@@ -242,10 +237,22 @@
                  a window opened over it covers it, and it stays in its place behind. When the chat leaves no room
                  for the bar (a phone), the column goes with the bar: beside the chat is only a peek at the map, and
                  everything comes back when the chat closes. -->
-            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar)}
+            <!-- "Look around the map": the pill, hint, box and places, drawn over the game under the zoom column. -->
+            {#if $mapExplorationModeStore}
+                <LookAround />
+            {/if}
+
+            <!-- "Editing a room" floats over the game under the bar, so the bar's menus open over it, and over the zoom
+                 column. "Look around the map" runs on the same engine but shows none of its toolbar. -->
+            {#if $mapEditorToolbarInUseStore}
+                <EditMode />
+            {/if}
+
+            {#if !($chatVisibilityStore && $hideActionBarStoreBecauseOfChatBar) && !($mapEditorToolbarInUseStore && !desktop)}
                 <!-- Held inside the game's area: a room website opened beside or above the game covers the column as
-                     it grows, instead of the column floating over the website. -->
-                <div class="absolute inset-0 overflow-hidden pointer-events-none">
+                     it grows, instead of the column floating over the website. Above "Look around the map", so its
+                     Places panel never covers the column. -->
+                <div class="absolute inset-0 overflow-hidden pointer-events-none z-[22]">
                     <div
                         class="absolute bottom-2 right-1 md:right-2 xl:right-4 flex flex-col items-end gap-2 pointer-events-none"
                     >
@@ -262,10 +269,6 @@
 
             {#if $mapEditorAskToClaimPersonalAreaStore}
                 <ClaimPersonalAreaDialogBox />
-            {/if}
-
-            {#if $mapExplorationObjectSelectedStore}
-                <ObjectDetails />
             {/if}
 
             {#if $roomListVisibilityStore}

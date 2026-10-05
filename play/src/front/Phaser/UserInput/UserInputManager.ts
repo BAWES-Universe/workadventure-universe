@@ -84,6 +84,7 @@ export class UserInputManager {
 
     public userInputHandler: UserInputHandlerInterface;
     private enableUserInputsStoreUnsubscribe: Unsubscriber;
+    private mapEditorModeStoreUnsubscribe: Unsubscriber;
     private readonly disableControlsReasons: Set<DisableControlsReason> = new Set();
 
     constructor(scene: Phaser.Scene, userInputHandler: UserInputHandlerInterface) {
@@ -97,6 +98,13 @@ export class UserInputManager {
         if (touchScreenManager.supportTouchScreen) {
             this.initVirtualJoystick();
         }
+
+        // Editing the room has no joystick: the finger places, selects and drags the map instead.
+        this.mapEditorModeStoreUnsubscribe = mapEditorModeStore.subscribe((editing) => {
+            if (editing) {
+                this.joystick?.hide(0);
+            }
+        });
 
         this.enableUserInputsStoreUnsubscribe = enableUserInputsStore.subscribe((enable) => {
             if (enable) {
@@ -351,6 +359,7 @@ export class UserInputManager {
 
     destroy(): void {
         this.enableUserInputsStoreUnsubscribe();
+        this.mapEditorModeStoreUnsubscribe();
         this.joystick?.destroy();
         this.joystick = undefined;
     }
