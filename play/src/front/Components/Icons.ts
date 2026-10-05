@@ -149,8 +149,6 @@ export { default as IconLayoutNavbar } from "~icons/tabler/layout-navbar";
 export { default as IconZoomOutArea } from "~icons/tabler/zoom-out-area";
 export { default as IconAdjustmentsHorizontal } from "~icons/tabler/adjustments-horizontal";
 export { default as IconKeyboard } from "~icons/tabler/keyboard";
-export { default as IconFlag } from "~icons/tabler/flag";
-export { default as IconBan } from "~icons/tabler/ban";
 export { default as IconEyeOff } from "~icons/tabler/eye-off";
 export { default as IconHandStop } from "~icons/tabler/hand-stop";
 export { default as IconMoodPlus } from "~icons/tabler/mood-plus";
