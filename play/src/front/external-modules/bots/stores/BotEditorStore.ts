@@ -346,15 +346,6 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
     botPreviewsStore.update((bots) => {
         const bot = bots.get(botId);
         if (bot) {
-            // Check if position changed significantly (more than 10 pixels)
-            const oldCenter = bot.behaviorConfig?.assignedSpace?.center;
-            const dx = oldCenter ? x - oldCenter.x : 0;
-            const dy = oldCenter ? y - oldCenter.y : 0;
-            const movedSignificantly = Math.sqrt(dx * dx + dy * dy) > 10;
-
-            // Clear patrol waypoints if bot was moved significantly
-            const shouldClearWaypoints = movedSignificantly && bot.behaviorConfig?.behaviorType === "patrol";
-
             const updatedBot: BotData = {
                 ...bot,
                 behaviorConfig: {
@@ -363,8 +354,7 @@ export function updateBotPosition(botId: string, x: number, y: number): void {
                         ...bot.behaviorConfig.assignedSpace,
                         center: { x, y },
                     },
-                    // Clear waypoints if bot moved
-                    ...(shouldClearWaypoints ? { patrolWaypoints: [] } : {}),
+                    // The route stays where it is: stops are map positions, not offsets from the bot
                 },
             };
             const newMap = new Map(bots);
