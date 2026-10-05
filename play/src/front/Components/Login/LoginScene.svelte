@@ -27,12 +27,9 @@
 
     const sceneBg = gameManager.currentStartedRoom.backgroundSceneImage ?? bgMap;
 
-    // The name over the WOKA preview sits as far above the head as it does in the game: 7 game pixels between
-    // the letters and the hair, and the preview draws the WOKA about twice game size.
     const isDesktop = window.matchMedia("(min-width: 768px)").matches;
     const wokaSize = isDesktop ? 72 : 64;
     const spotSize = isDesktop ? 128 : 112;
-    const nameTagTop = isDesktop ? -3 : -5;
 
     async function submit() {
         startValidating = true;
@@ -89,11 +86,10 @@
                 style="width: {isDesktop ? 170 : 150}px;"
             />
 
-            <!-- Live preview of your name over your WOKA -->
+            <!-- Your WOKA -->
             <div class="grid justify-items-center mt-1 mb-1.5" aria-hidden="true">
                 <div class="u-join-spot name-spot" style="width: {spotSize}px; height: {spotSize}px;">
                     <span class="name-woka"><MyWoka size={wokaSize} /></span>
-                    <span class="u-join-nametag" style="top: {nameTagTop}px;">{name.trim() || " "}</span>
                 </div>
             </div>
 

@@ -7,6 +7,8 @@
     import { SelectCompanionSceneName } from "../../Phaser/Login/SelectCompanionScene";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { localUserStore } from "../../Connection/LocalUserStore";
+    import { companionCollectionsStore } from "../../Stores/SelectCompanionStore";
     import MyWoka from "../Join/MyWoka.svelte";
     import SheetSprite from "../Join/SheetSprite.svelte";
     import { getWokaTextureUrl } from "../Woka/WokaData";
@@ -14,11 +16,14 @@
 
     export let game: Game;
 
-    const selectCompanionScene = game.scene.getScene(SelectCompanionSceneName) as SelectCompanionScene;
-    const collections = selectCompanionScene.collections;
+    // The scene may not exist yet when the screen opens from the menu: look it up when a button needs it
+    function companionScene(): SelectCompanionScene {
+        return game.scene.getScene(SelectCompanionSceneName) as SelectCompanionScene;
+    }
     // Opened from the game's menu: the round close leads back into the room with the companion unchanged
     const canGoBack = gameManager.canResumeGame;
-    const playerName = gameManager.getPlayerName() ?? "";
+
+    $: collections = $companionCollectionsStore ?? [];
 
     function findCompanion(id: string | null): { collectionIndex: number; texture: CompanionTexture } | undefined {
         if (!id) return undefined;
@@ -29,10 +34,17 @@
         return undefined;
     }
 
-    // Opens on the companion you have (or None); it is no longer cleared when the screen opens
-    const current = findCompanion(selectCompanionScene.currentCompanionId);
-    let collectionIndex = current?.collectionIndex ?? 0;
-    let selected: CompanionTexture | null = current?.texture ?? null;
+    let collectionIndex = 0;
+    let selected: CompanionTexture | null = null;
+    let initialised = false;
+
+    // Opens on the companion you have (or None) once the catalog is in; it is no longer cleared when the screen opens
+    $: if (!initialised && $companionCollectionsStore) {
+        initialised = true;
+        const current = findCompanion(localUserStore.getCompanionTextureId());
+        collectionIndex = current?.collectionIndex ?? 0;
+        selected = current?.texture ?? null;
+    }
     let saving = false;
 
     // The walkers and tiles are drawn at whole multiples of 32px so the pixels stay crisp
@@ -54,14 +66,18 @@
         saving = true;
         if (selected) {
             analyticsClient.selectCompanion();
-            selectCompanionScene.selectCompanion(selected.id).catch((e) => console.error(e));
+            companionScene()
+                .selectCompanion(selected.id)
+                .catch((e) => console.error(e));
         } else {
-            selectCompanionScene.noCompagnion().catch((e) => console.error(e));
+            companionScene()
+                .noCompagnion()
+                .catch((e) => console.error(e));
         }
     }
 
     function back() {
-        selectCompanionScene.closeScene();
+        companionScene().closeScene();
     }
 
     function columns(): number {
@@ -153,20 +169,12 @@
                                 walking
                             />
                         {/if}
-                        <span class="relative block">
-                            <MyWoka size={walkerSize} direction={2} />
-                            {#if playerName}
-                                <span
-                                    class="u-join-nametag top-[-8px]"
-                                    style="font-size: {walkerSize > 100 ? 16 : 13}px">{playerName}</span
-                                >
-                            {/if}
-                        </span>
+                        <MyWoka size={walkerSize} direction={2} />
                     </div>
                 </div>
                 <div class="hidden md:flex items-center gap-2.5">
                     <span class="companion-badge">
-                        {#if selected}<IconPaw font-size="18" />{:else}<IconBan font-size="18" />{/if}
+                        {#if selected}<IconPaw font-size="22" />{:else}<IconBan font-size="22" />{/if}
                     </span>
                     <div class="grid gap-px min-w-0">
                         <b class="text-[17px] text-white truncate">{selected?.name ?? $LL.companion.select.none()}</b>
@@ -269,15 +277,13 @@
     .companion-backdrop {
         background: radial-gradient(ellipse at 50% 0%, rgba(134, 41, 252, 0.18), transparent 60%), #000;
     }
+    /* A plain white icon, as in the menu: no box, so it does not read as a button */
     .companion-badge {
         display: grid;
         place-items: center;
         flex: none;
-        width: 2.25rem;
-        height: 2.25rem;
-        border-radius: 12px;
+        width: 1.5rem;
         color: #fff;
-        background: linear-gradient(135deg, #8629fc, #4156f6);
     }
     .companion-name {
         position: absolute;

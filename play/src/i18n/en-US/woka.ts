@@ -13,6 +13,7 @@ const woka: BaseTranslation = {
         back: "Back",
         part: "Part {current:number} of {total:number}",
         nextPart: "next part",
+        swipeHint: "swipe the tiles for the next part",
         parts: {
             body: "Body",
             eyes: "Eyes",
@@ -37,6 +38,9 @@ const woka: BaseTranslation = {
         loadError: "The WOKAs didn't load.",
         retry: "Retry",
         close: "Back to your room",
+        more: "More",
+        saveError: "Your WOKA couldn't be saved. Try again.",
+        swipeHint: "swipe the tiles for the next collection",
     },
     menu: {
         businessCard: "Business Card",

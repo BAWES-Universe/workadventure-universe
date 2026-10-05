@@ -1458,6 +1458,13 @@ button[data-testid="actionBarLogin"]:hover {
     -webkit-appearance: none;
     text-overflow: ellipsis;
 }
+/* The field shows focus on its own border, so the input's ring from the forms plugin stays off */
+.u-join-field select:focus,
+.u-join-field input:focus {
+    border: 0;
+    outline: none;
+    box-shadow: none;
+}
 .u-join-field select option {
     color: #fff;
     background: rgb(var(--u-ink));
@@ -1684,21 +1691,6 @@ button[data-testid="actionBarLogin"]:hover {
     .u-join-legal a:hover {
         color: #fff;
     }
-}
-/* The name over a WOKA preview, as in the approved mock: bold condensed white with a thin black outline */
-.u-join-nametag {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 2;
-    white-space: nowrap;
-    font-family: "Roboto Condensed", Arial, "Liberation Sans", Helvetica, sans-serif;
-    font-size: 14px;
-    font-weight: 700;
-    line-height: normal;
-    color: #fff;
-    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
-    pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
     .u-join-room-floor {

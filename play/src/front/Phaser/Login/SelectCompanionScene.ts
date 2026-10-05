@@ -2,7 +2,7 @@ import type { CompanionTextureCollection } from "@workadventure/messages";
 import { Loader } from "../Components/Loader";
 import { gameManager } from "../Game/GameManager";
 import { localUserStore } from "../../Connection/LocalUserStore";
-import { selectCompanionSceneVisibleStore } from "../../Stores/SelectCompanionStore";
+import { companionCollectionsStore, selectCompanionSceneVisibleStore } from "../../Stores/SelectCompanionStore";
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
 import { companionListMetakey, CompanionTexturesLoadingManager } from "../Companion/CompanionTexturesLoadingManager";
 import { connectionManager } from "../../Connection/ConnectionManager";
@@ -16,8 +16,6 @@ export const SelectCompanionSceneName = "SelectCompanionScene";
  * (the little room, the tiles) is SelectCompanionScene.svelte.
  */
 export class SelectCompanionScene extends ResizableScene {
-    /** The room's companion catalog, by collection, once loaded */
-    public collections: CompanionTextureCollection[] = [];
     private loader: Loader;
     protected superLoad: SuperLoaderPlugin;
 
@@ -31,11 +29,12 @@ export class SelectCompanionScene extends ResizableScene {
 
     preload() {
         this.cache.json.remove(companionListMetakey());
+        companionCollectionsStore.set(undefined);
 
         const companionLoadingManager = new CompanionTexturesLoadingManager(this.superLoad, this.load);
 
         companionLoadingManager.loadTextures((collections: CompanionTextureCollection[]) => {
-            this.collections = collections.filter((collection) => collection.textures.length > 0);
+            companionCollectionsStore.set(collections.filter((collection) => collection.textures.length > 0));
             selectCompanionSceneVisibleStore.set(true);
         });
         this.loader.addLoader();
@@ -45,11 +44,6 @@ export class SelectCompanionScene extends ResizableScene {
         if (gameManager.currentStartedRoom.backgroundColor != undefined) {
             this.cameras.main.setBackgroundColor(gameManager.currentStartedRoom.backgroundColor);
         }
-    }
-
-    /** The companion you have now, so the screen opens on it (it used to be cleared on open). */
-    public get currentCompanionId(): string | null {
-        return localUserStore.getCompanionTextureId();
     }
 
     public async selectCompanion(companionId: string): Promise<void> {
