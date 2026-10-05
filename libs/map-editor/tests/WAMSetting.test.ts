@@ -69,7 +69,7 @@ describe("Megaphone channels", async () => {
 
     it("lets everyone go live on the room's channels when no tag is set, but only admins on the universe's", () => {
         const channels = WAMSettingsUtils.getMegaphoneChannels(
-            { megaphone: { enabled: true, scopes: ["WORLD"], rights: [] } },
+            { megaphone: { enabled: true, scopes: ["WORLD", "UNIVERSE"], rights: [] } },
             "bawes/hq",
             roomUrl,
             []
@@ -79,7 +79,7 @@ describe("Megaphone channels", async () => {
             ["UNIVERSE", false],
         ]);
         const admin = WAMSettingsUtils.getMegaphoneChannels(
-            { megaphone: { enabled: true, scopes: ["WORLD"], rights: ["staff"] } },
+            { megaphone: { enabled: true, scopes: ["WORLD", "UNIVERSE"], rights: ["staff"] } },
             "bawes/hq",
             roomUrl,
             ["admin"]
@@ -87,6 +87,19 @@ describe("Megaphone channels", async () => {
         expect(admin.map((channel) => [channel.scope, channel.canStream])).toEqual([
             ["WORLD", false],
             ["UNIVERSE", true],
+        ]);
+    });
+
+    it("keeps the universe channel for listening while its switch is off, so no one may go live on it", () => {
+        const admin = WAMSettingsUtils.getMegaphoneChannels(
+            { megaphone: { enabled: true, scopes: ["WORLD"], rights: [] } },
+            "bawes/hq",
+            roomUrl,
+            ["admin"]
+        );
+        expect(admin.map((channel) => [channel.scope, channel.canStream])).toEqual([
+            ["WORLD", true],
+            ["UNIVERSE", false],
         ]);
     });
 

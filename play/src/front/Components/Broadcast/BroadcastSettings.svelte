@@ -35,6 +35,7 @@
     );
     let roomOn = existingScopes.includes("ROOM");
     let worldOn = existingScopes.includes("WORLD");
+    let universeOn = existingScopes.includes("UNIVERSE");
 
     let saving = false;
     let error: string | undefined;
@@ -71,9 +72,11 @@
             error = $LL.broadcast.config.noTag();
             return;
         }
-        const scopes = [roomOn ? "ROOM" : undefined, worldOn ? "WORLD" : undefined].filter(
-            (scope): scope is string => scope !== undefined
-        );
+        const scopes = [
+            roomOn ? "ROOM" : undefined,
+            worldOn ? "WORLD" : undefined,
+            universeOn && roomGroup !== null ? "UNIVERSE" : undefined,
+        ].filter((scope): scope is string => scope !== undefined);
         const rights = who === "admins" ? ["admin"] : who === "everyone" ? [] : tags;
         saving = true;
         error = undefined;
@@ -228,8 +231,8 @@
                 data-testid="broadcast-settings-reach-WORLD"
             />
         </div>
-        <!-- Universe-wide reach has no switch here: admins may always use it, and Orbit has no page for it yet. -->
-        <div class="u-menu-row cursor-default hover:bg-transparent" data-testid="broadcast-settings-reach-UNIVERSE">
+        <!-- Universe-wide reach is a switch like the others; whoever the room lets go live, this one is admins only. -->
+        <div class="u-menu-row cursor-default hover:bg-transparent">
             <span class="u-menu-tile" aria-hidden="true"><IconRocket /></span>
             <span class="u-menu-label !whitespace-normal leading-tight">
                 <span class="block">{reachTitle($LL, "UNIVERSE")}</span>
@@ -239,6 +242,15 @@
                         .join(" · ")}
                 </span>
             </span>
+            <button
+                type="button"
+                class="u-switch"
+                role="switch"
+                aria-checked={universeOn}
+                aria-label={reachTitle($LL, "UNIVERSE")}
+                on:click={() => (universeOn = !universeOn)}
+                data-testid="broadcast-settings-reach-UNIVERSE"
+            />
         </div>
     {/if}
 </div>
