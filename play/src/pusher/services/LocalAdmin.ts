@@ -46,6 +46,7 @@ import {
 } from "../enums/EnvironmentVariable";
 import type { AdminBannedData, FetchMemberDataByUuidResponse } from "./AdminApi";
 import type { AdminInterface } from "./AdminInterface";
+import type { BanAppealResult, BanDetailsData } from "./BanDetails";
 import { localWokaService } from "./LocalWokaService";
 import { MetaTagsDefaultValue } from "./MetaTagsBuilder";
 import { localCompanionService } from "./LocalCompanionSevice";
@@ -460,6 +461,15 @@ class LocalAdmin implements AdminInterface {
 
     getIceServers(userId: number, userIdentifier: string, roomUrl: string): Promise<IceServer[]> {
         return Promise.resolve(iceServersService.generateIceServers(userId.toString()));
+    }
+
+    getBanDetails(userIdentifier: string, playUri: string): Promise<BanDetailsData> {
+        // Without an admin, nobody is banned.
+        return Promise.resolve({ banned: false });
+    }
+
+    sendBanAppeal(userIdentifier: string, playUri: string, text: string): Promise<BanAppealResult> {
+        return Promise.resolve("not_banned");
     }
 }
 

@@ -16,11 +16,13 @@
     import { draggingFile } from "../Stores/FileUploadStore";
     import ChatSidebar from "../Chat/ChatSidebar.svelte";
     import { gameManager } from "../Phaser/Game/GameManager";
+    import { isBanScreen } from "../Connection/BanApi";
     import LoginScene from "./Login/LoginScene.svelte";
     import MainLayout from "./MainLayout.svelte";
     import SelectCompanionScene from "./SelectCompanion/SelectCompanionScene.svelte";
     import ErrorDialog from "./UI/ErrorDialog.svelte";
     import ErrorScreen from "./UI/ErrorScreen.svelte";
+    import BanScreen from "./UI/BanScreen.svelte";
     import RefreshPrompt from "./RefreshPrompt.svelte";
     import LoaderScene from "./Loader/LoaderScene.svelte";
     import EnableCameraScene from "./EnableCamera/EnableCameraScene.svelte";
@@ -63,7 +65,12 @@
 {/if}
 {#if $errorScreenStore !== undefined}
     <div class="bg-contrast">
-        <ErrorScreen />
+        <!-- A ban gets its own screen: what the admin said, an appeal, and a way out to the rest of Universe. -->
+        {#if isBanScreen($errorScreenStore)}
+            <BanScreen />
+        {:else}
+            <ErrorScreen />
+        {/if}
     </div>
 {:else if $errorStore.length > 0}
     <div class="bg-contrast">
