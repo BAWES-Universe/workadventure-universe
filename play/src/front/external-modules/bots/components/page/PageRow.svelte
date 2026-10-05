@@ -1,17 +1,17 @@
 <script lang="ts">
-    // A row inside a group: an optional tile, a title with one line under it, and a trailing control.
+    // A row inside a group: an optional icon, a title with one line under it, and a trailing control.
     import type { ComponentType } from "svelte";
 
     export let title: string;
     export let hint: string | undefined = undefined;
     export let icon: ComponentType | undefined = undefined;
-    /** The row shows a value that is in use (its tile gets the brand gradient). */
+    /** The row shows a value that is in use (the row gets a light fill). */
     export let on = false;
 </script>
 
 <div class="bp-row" class:on>
     {#if icon}
-        <span class="bp-tile"><svelte:component this={icon} font-size="18" /></span>
+        <span class="bp-ico"><svelte:component this={icon} font-size="20" /></span>
     {/if}
     <div class="bp-tx">
         <div class="bp-t">{title}</div>
@@ -31,18 +31,16 @@
     .bp-row.on {
         background: rgba(255, 255, 255, 0.08);
     }
-    .bp-tile {
+    /* Plain white icon, like the menu: no tile behind it. */
+    .bp-ico {
         display: grid;
         place-items: center;
         flex: none;
         width: 32px;
         height: 32px;
-        border-radius: 8px;
-        background: rgba(167, 139, 250, 0.14);
-        color: #c4b5fd;
+        color: rgba(255, 255, 255, 0.85);
     }
-    .on .bp-tile {
-        background: linear-gradient(135deg, #8629fc, #4156f6);
+    .on .bp-ico {
         color: #fff;
     }
     .bp-tx {

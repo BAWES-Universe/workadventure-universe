@@ -474,8 +474,6 @@
         flex: none;
         width: 44px;
         height: 44px;
-        border-radius: 12px;
-        background: rgba(167, 139, 250, 0.14);
         overflow: hidden;
     }
     .bp-hd-tx {

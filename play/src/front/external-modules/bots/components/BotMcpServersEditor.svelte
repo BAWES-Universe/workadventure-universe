@@ -622,7 +622,6 @@
 <div class="mcp">
     {#if isLoading}
         <div class="mcp-row mcp-loading" aria-busy="true">
-            <span class="mcp-tile" />
             <div class="mcp-tx"><span class="mcp-bar" /><span class="mcp-bar short" /></div>
         </div>
     {:else if loadError}
@@ -634,7 +633,7 @@
         </div>
     {:else if servers.length === 0}
         <div class="mcp-row">
-            <span class="mcp-tile"><IconTool font-size="18" /></span>
+            <span class="mcp-ico"><IconTool font-size="20" /></span>
             <div class="mcp-tx">
                 <div class="mcp-t">No tools yet</div>
                 <div class="mcp-m">Tools let it look things up or make things</div>
@@ -645,8 +644,8 @@
         {#each servers as server (server.id)}
             <div class="mcp-server">
                 <div class="mcp-row">
-                    <span class="mcp-tile">
-                        <IconTool font-size="18" />
+                    <span class="mcp-ico">
+                        <IconTool font-size="20" />
                         <i
                             class="mcp-dot {getStatusDot(server)}"
                             title={server.lastTestResult?.success
@@ -1063,16 +1062,15 @@
     .mcp-server .mcp-row {
         background: rgba(255, 255, 255, 0.08);
     }
-    .mcp-tile {
+    /* Plain white icon, like the menu: no tile behind it. */
+    .mcp-ico {
         position: relative;
         display: grid;
         place-items: center;
         flex: none;
         width: 32px;
         height: 32px;
-        border-radius: 8px;
-        background: rgba(167, 139, 250, 0.14);
-        color: #c4b5fd;
+        color: rgba(255, 255, 255, 0.85);
     }
     .mcp-dot {
         position: absolute;

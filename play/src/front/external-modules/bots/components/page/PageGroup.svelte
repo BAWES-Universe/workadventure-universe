@@ -1,5 +1,5 @@
 <script lang="ts">
-    // One group of the bot page: a tile, its title and one line saying what it is set to. Tapping it opens the
+    // One group of the bot page: an icon, its title and one line saying what it is set to. Tapping it opens the
     // group's settings underneath; the page keeps one group open at a time.
     import type { ComponentType } from "svelte";
     import { IconChevronDown } from "@wa-icons";
@@ -20,7 +20,7 @@
         aria-controls="bot-page-body-{id}"
         on:click={() => onToggle(id)}
     >
-        <span class="bp-tile"><svelte:component this={icon} font-size="18" /></span>
+        <span class="bp-ico"><svelte:component this={icon} font-size="20" /></span>
         <span class="bp-tx">
             <span class="bp-t">{title}</span>
             <span class="bp-m">{brief}</span>
@@ -66,18 +66,16 @@
         outline: 2px solid #a78bfa;
         outline-offset: -2px;
     }
-    .bp-tile {
+    /* Plain white icon, like the menu: no tile behind it. */
+    .bp-ico {
         display: grid;
         place-items: center;
         flex: none;
-        width: 34px;
-        height: 34px;
-        border-radius: 8px;
-        background: rgba(167, 139, 250, 0.14);
-        color: #c4b5fd;
+        width: 32px;
+        height: 32px;
+        color: rgba(255, 255, 255, 0.85);
     }
-    .open .bp-tile {
-        background: linear-gradient(135deg, #8629fc, #4156f6);
+    .open .bp-ico {
         color: #fff;
     }
     .bp-tx {
