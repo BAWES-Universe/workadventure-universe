@@ -30,6 +30,14 @@ import type {
     ModifyCustomEntityMessage,
     MoveToPositionMessage as MoveToPositionMessageProto,
     LocatePositionMessage as LocatePositionMessageProto,
+    FriendActionAnswer,
+    FriendsListAnswer,
+    FriendSearchResult,
+    FriendSettings,
+    FriendSettingsUpdate,
+    RingAnswer,
+    RingReplyAnswer,
+    FriendsUpdateMessage,
     PlayerDetailsUpdatedMessage as PlayerDetailsUpdatedMessageTsProto,
     PositionMessage as PositionMessageTsProto,
     PositionMessage_Direction,
@@ -227,6 +235,9 @@ export class RoomConnection implements RoomConnection {
     public readonly moveToPositionMessageStream = this._moveToPositionMessageStream.asObservable();
     private readonly _locatePositionMessageStream = new Subject<LocatePositionMessageProto>();
     public readonly locatePositionMessageStream = this._locatePositionMessageStream.asObservable();
+
+    private readonly _friendsUpdateMessageStream = new Subject<FriendsUpdateMessage>();
+    public readonly friendsUpdateMessageStream = this._friendsUpdateMessageStream.asObservable();
     private readonly _initSpaceUsersMessageStream = new Subject<InitSpaceUsersMessage>();
     public readonly initSpaceUsersMessageStream = this._initSpaceUsersMessageStream.asObservable();
     private readonly _addSpaceUserMessageStream = new Subject<AddSpaceUserMessage>();
@@ -686,6 +697,10 @@ export class RoomConnection implements RoomConnection {
                     }
                     case "locatePositionMessage": {
                         this._locatePositionMessageStream.next(message.locatePositionMessage);
+                        break;
+                    }
+                    case "friendsUpdateMessage": {
+                        this._friendsUpdateMessageStream.next(message.friendsUpdateMessage);
                         break;
                     }
                     case "answerMessage": {
@@ -1638,6 +1653,74 @@ export class RoomConnection implements RoomConnection {
             throw new Error("Unexpected answer");
         }
         return answer.roomsFromSameUniverseAnswer;
+    }
+
+    public async queryFriendsList(): Promise<FriendsListAnswer> {
+        const answer = await this.query({
+            $case: "friendsListQuery",
+            friendsListQuery: {},
+        });
+        if (answer.$case !== "friendsListAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendsListAnswer;
+    }
+
+    /** Refused actions resolve with an `error` code (not_accepting_requests, no_shared_world...), they don't throw. */
+    public async queryFriendAction(targetUuid: string, action: string): Promise<FriendActionAnswer> {
+        const answer = await this.query({
+            $case: "friendActionQuery",
+            friendActionQuery: { targetUuid, action },
+        });
+        if (answer.$case !== "friendActionAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendActionAnswer;
+    }
+
+    public async queryFriendSearch(searchText: string): Promise<FriendSearchResult[]> {
+        const answer = await this.query({
+            $case: "friendSearchQuery",
+            friendSearchQuery: { searchText },
+        });
+        if (answer.$case !== "friendSearchAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendSearchAnswer.results;
+    }
+
+    /** Reads the friends settings, or saves the fields `update` sets and returns them all. */
+    public async queryFriendSettings(update?: FriendSettingsUpdate): Promise<FriendSettings | undefined> {
+        const answer = await this.query({
+            $case: "friendSettingsQuery",
+            friendSettingsQuery: { update },
+        });
+        if (answer.$case !== "friendSettingsAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.friendSettingsAnswer.settings;
+    }
+
+    public async queryRing(targetUuid: string): Promise<RingAnswer> {
+        const answer = await this.query({
+            $case: "ringQuery",
+            ringQuery: { targetUuid },
+        });
+        if (answer.$case !== "ringAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringAnswer;
+    }
+
+    public async queryRingReply(ringId: string, action: "stop" | "accept" | "decline"): Promise<RingReplyAnswer> {
+        const answer = await this.query({
+            $case: "ringReplyQuery",
+            ringReplyQuery: { ringId, action },
+        });
+        if (answer.$case !== "ringReplyAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.ringReplyAnswer;
     }
 
     public async queryEmbeddableWebsite(url: string): Promise<EmbeddableWebsiteAnswer> {

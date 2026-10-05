@@ -16,6 +16,12 @@ import type {
     ErrorMessage,
     ErrorScreenMessage,
     FilterType,
+    FriendActionQuery,
+    FriendSearchQuery,
+    FriendSettingsQuery,
+    FriendsUpdateMessage,
+    RingQuery,
+    RingReplyQuery,
     GetMemberAnswer,
     GetMemberQuery,
     JoinRoomMessage,
@@ -77,6 +83,17 @@ import { matrixProvider } from "./MatrixProvider";
 import { MatrixAreaMembership } from "./MatrixAreaMembership";
 import { checkSpaceJoin } from "./SpaceJoinPolicy";
 import { BubbleSpaceGrants } from "./BubbleSpaceGrants";
+import { FriendsPresence } from "./FriendsPresence";
+import { FriendsRings } from "./FriendsRings";
+import type { OrbitFriendSettings } from "./FriendsService";
+import {
+    FRIEND_SEARCH_MAX_LENGTH,
+    FRIEND_SEARCH_MIN_LENGTH,
+    FriendsError,
+    friendsService,
+    isFriendAction,
+    PerSocketRateLimiter,
+} from "./FriendsService";
 
 const debug = Debug("socket");
 
@@ -102,6 +119,20 @@ export class SocketManager implements ZoneEventListener {
     });
     // The leaves in progress, per socket and space, so that two leaves of the same space do not both unregister
     private readonly leavingSpaces = new WeakMap<Socket, Map<string, Promise<void>>>();
+    public readonly friendsPresence = new FriendsPresence<Socket>({
+        send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
+        lookupPlaces: (playUris) => friendsService.getPlaces(playUris),
+    });
+    public readonly friendsRings = new FriendsRings<Socket>({
+        send: (socket, friendsUpdateMessage) => this.sendFriendsUpdate(socket, friendsUpdateMessage),
+        socketsOf: (userUuid) => this.friendsPresence.socketsOf(userUuid),
+        statusOf: (userUuid) => this.friendsPresence.statusOf(userUuid),
+        getRelationship: (userUuid, targetUuid) => friendsService.getRelationship(userUuid, targetUuid),
+        lookupPlace: (playUri) => this.friendsPresence.placeOf(playUri),
+    });
+    private readonly friendActionLimiter = new PerSocketRateLimiter<Socket>(20, 60_000);
+    private readonly friendSearchLimiter = new PerSocketRateLimiter<Socket>(10, 60_000);
+    private readonly ringLimiter = new PerSocketRateLimiter<Socket>(10, 60_000);
 
     constructor(private _spaceConnection = new SpaceConnection()) {
         clientEventsEmitter.registerToClientJoin((clientUUid: string, roomId: string) => {
@@ -361,6 +392,8 @@ export class SocketManager implements ZoneEventListener {
 
             const pusherRoom = await this.getOrCreateRoom(socketData.roomId);
             pusherRoom.join(client);
+            this.friendsPresence.track(client);
+            this.friendsRings.joined(client);
         } catch (e) {
             Sentry.captureException(e);
             console.error(`An error occurred on "join_room" event`, e);
@@ -531,6 +564,19 @@ export class SocketManager implements ZoneEventListener {
             console.error("Error while leaving room", e);
         }
         try {
+            this.friendsPresence.untrack(client);
+        } catch (e) {
+            Sentry.captureException(e);
+            console.error("Error while removing the friends presence", e);
+        }
+        try {
+            // After untrack: a ring ends once its friend has no tab left.
+            this.friendsRings.closed(client);
+        } catch (e) {
+            Sentry.captureException(e);
+            console.error("Error while ending the rings of a socket", e);
+        }
+        try {
             // Must run before leaveSpaces: it reads which Matrix area spaces this socket is in.
             this.leaveChatRoomArea(client).catch((error) => {
                 console.error("Error while leaving chat room area", error);
@@ -641,6 +687,7 @@ export class SocketManager implements ZoneEventListener {
         };
 
         this.forwardMessageToBack(client, pusherToBackMessage);
+        this.friendsPresence.setStatus(client, playerDetailsMessage.availabilityStatus);
 
         const spacePromises = Array.from(socketData.spaces).map(async (spaceName: string) => {
             const space = this.spaces.get(spaceName);
@@ -1324,6 +1371,206 @@ export class SocketManager implements ZoneEventListener {
         } catch (e) {
             Sentry.captureException(e);
             console.warn("SocketManager => handleRoomsFromSameUniverseQuery => error while sending the answer", e);
+        }
+    }
+
+    async handleFriendsListQuery(client: Socket): Promise<AnswerMessage["answer"]> {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        try {
+            const list = await friendsService.getFriends(client.getUserData().userUuid);
+            const watches = list.friends.map((friend) => ({ uuid: friend.uuid, shareLocation: friend.shareLocation }));
+            this.friendsPresence.watch(client, watches);
+            const presences = await this.friendsPresence.presencesOf(watches);
+            return {
+                $case: "friendsListAnswer",
+                friendsListAnswer: {
+                    friends: list.friends.map((friend) => ({
+                        uuid: friend.uuid,
+                        name: friend.name ?? "",
+                        chatId: friend.chatId ?? "",
+                        presence: presences.get(friend.uuid),
+                        lastSeenAt: friend.lastSeenAt ?? "",
+                    })),
+                    incoming: list.incoming.map((request) => ({
+                        uuid: request.uuid,
+                        name: request.name ?? "",
+                        sharedWorld: request.sharedWorld ?? "",
+                        at: request.requestedAt,
+                    })),
+                    outgoing: list.outgoing.map((request) => ({
+                        uuid: request.uuid,
+                        name: request.name ?? "",
+                        sharedWorld: "",
+                        at: request.sentAt,
+                    })),
+                    blocked: list.blocked.map((person) => ({ uuid: person.uuid, name: person.name ?? "" })),
+                },
+            };
+        } catch (e) {
+            return this.friendsErrorAnswer("handleFriendsListQuery", e);
+        }
+    }
+
+    async handleFriendActionQuery(client: Socket, query: FriendActionQuery): Promise<AnswerMessage["answer"]> {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        if (!this.friendActionLimiter.take(client)) {
+            return { $case: "error", error: { message: "rate_limited" } };
+        }
+        const { action, targetUuid } = query;
+        if (!isFriendAction(action)) {
+            return { $case: "friendActionAnswer", friendActionAnswer: { relationship: "", error: "unknown_action" } };
+        }
+        const userUuid = client.getUserData().userUuid;
+        try {
+            const relationship = await friendsService.act(userUuid, targetUuid, action);
+            if (action === "remove" || action === "block") {
+                this.friendsPresence.unlink(userUuid, targetUuid);
+            }
+            if (targetUuid !== userUuid) {
+                const toTell = [
+                    ...this.friendsPresence.socketsOf(targetUuid),
+                    ...this.friendsPresence.socketsOf(userUuid).filter((socket) => socket !== client),
+                ];
+                for (const socket of toTell) {
+                    this.sendFriendsUpdate(socket, { update: { $case: "listChanged", listChanged: {} } });
+                }
+            }
+            return { $case: "friendActionAnswer", friendActionAnswer: { relationship, error: "" } };
+        } catch (e) {
+            if (e instanceof FriendsError && e.status !== undefined) {
+                return { $case: "friendActionAnswer", friendActionAnswer: { relationship: "", error: e.code } };
+            }
+            return this.friendsErrorAnswer("handleFriendActionQuery", e);
+        }
+    }
+
+    async handleFriendSearchQuery(client: Socket, query: FriendSearchQuery): Promise<AnswerMessage["answer"]> {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        const searchText = query.searchText.trim();
+        if (searchText.length < FRIEND_SEARCH_MIN_LENGTH || searchText.length > FRIEND_SEARCH_MAX_LENGTH) {
+            return { $case: "error", error: { message: "query_length" } };
+        }
+        if (!this.friendSearchLimiter.take(client)) {
+            return { $case: "error", error: { message: "rate_limited" } };
+        }
+        try {
+            const { results } = await friendsService.search(client.getUserData().userUuid, searchText);
+            return {
+                $case: "friendSearchAnswer",
+                friendSearchAnswer: {
+                    results: results.map((result) => ({
+                        uuid: result.uuid,
+                        name: result.name ?? "",
+                        universes: result.universes,
+                        relationship: result.relationship,
+                    })),
+                },
+            };
+        } catch (e) {
+            return this.friendsErrorAnswer("handleFriendSearchQuery", e);
+        }
+    }
+
+    async handleFriendSettingsQuery(client: Socket, query: FriendSettingsQuery): Promise<AnswerMessage["answer"]> {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        const userUuid = client.getUserData().userUuid;
+        try {
+            let settings: OrbitFriendSettings;
+            if (query.update) {
+                const { ringFrom, friendRequestsFrom, findableByName, friendsSeeLocation } = query.update;
+                // Fields left undefined are not in the JSON body, so Orbit keeps them as they are.
+                settings = await friendsService.updateSettings(userUuid, {
+                    ringFrom,
+                    friendRequestsFrom,
+                    findableByName,
+                    friendsSeeLocation,
+                });
+                if (friendsSeeLocation !== undefined) {
+                    this.friendsPresence.setShareLocation(userUuid, settings.friendsSeeLocation);
+                }
+            } else {
+                settings = await friendsService.getSettings(userUuid);
+            }
+            return { $case: "friendSettingsAnswer", friendSettingsAnswer: { settings } };
+        } catch (e) {
+            return this.friendsErrorAnswer("handleFriendSettingsQuery", e);
+        }
+    }
+
+    async handleRingQuery(client: Socket, query: RingQuery): Promise<AnswerMessage["answer"]> {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        if (!this.ringLimiter.take(client)) {
+            return { $case: "error", error: { message: "rate_limited" } };
+        }
+        try {
+            const ringAnswer = await this.friendsRings.ring(client, query.targetUuid);
+            return { $case: "ringAnswer", ringAnswer };
+        } catch (e) {
+            return this.friendsErrorAnswer("handleRingQuery", e);
+        }
+    }
+
+    handleRingReplyQuery(client: Socket, query: RingReplyQuery): AnswerMessage["answer"] {
+        const refused = this.refuseFriendsQuery(client);
+        if (refused) {
+            return refused;
+        }
+        return {
+            $case: "ringReplyAnswer",
+            ringReplyAnswer: this.friendsRings.reply(client, query.ringId, query.action),
+        };
+    }
+
+    /** Friends need an admin and a signed-in player: answers why not, or undefined when the query can go on. */
+    private refuseFriendsQuery(client: Socket): AnswerMessage["answer"] | undefined {
+        if (!friendsService.isEnabled()) {
+            return { $case: "error", error: { message: "friends_unavailable" } };
+        }
+        if (!client.getUserData().isLogged) {
+            return { $case: "error", error: { message: "sign_in_required" } };
+        }
+        return undefined;
+    }
+
+    private friendsErrorAnswer(handler: string, e: unknown): AnswerMessage["answer"] {
+        if (e instanceof FriendsError) {
+            return { $case: "error", error: { message: e.code } };
+        }
+        console.warn(`SocketManager => ${handler} => error while calling the admin`, e);
+        Sentry.captureException(e);
+        // Not "friends_unavailable": that one tells the player's game this server has no friends at all.
+        return { $case: "error", error: { message: "friends_error" } };
+    }
+
+    private sendFriendsUpdate(client: Socket, friendsUpdateMessage: FriendsUpdateMessage): void {
+        if (client.getUserData().disconnecting) {
+            return;
+        }
+        try {
+            client.send(
+                ServerToClientMessage.encode({
+                    message: { $case: "friendsUpdateMessage", friendsUpdateMessage },
+                }).finish(),
+                true
+            );
+        } catch (e) {
+            Sentry.captureException(e);
+            console.warn("SocketManager => sendFriendsUpdate => error while sending", e);
         }
     }
 

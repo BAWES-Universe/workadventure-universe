@@ -41,6 +41,7 @@
     import { chatSheetLayoutStore } from "../Chat/ChatSheetStore";
     import { streamableCollectionStore } from "../Stores/StreamableCollectionStore";
     import { inputFormFocusStore } from "../Stores/UserInputStore";
+    import RingOverlay from "../Chat/Components/UserList/RingOverlay.svelte";
     import ActionBar from "./ActionBar/ActionBar.svelte";
     import EditMode from "./MapEditor/EditMode/EditMode.svelte";
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
@@ -272,6 +273,8 @@
             {#if $warningMessageStore.length > 0}
                 <WarningToast />
             {/if}
+
+            <RingOverlay />
 
             <ExternalComponents zone="popup" />
             {#if $requestVisitCardsStore || $wokaMenuStore || $actionsMenuStore}
