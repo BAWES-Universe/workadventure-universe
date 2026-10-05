@@ -319,16 +319,15 @@ export class FriendsPresence<S extends FriendsSocket> {
         if (!watchersBefore || watchersBefore.size === 0) {
             return;
         }
-        const needsPlaces = Array.from(watchersBefore.values()).some((watch) => watch.shareLocation);
-        const places = needsPlaces
-            ? await this.resolvePlaces(this.sessionsOf(userUuid).map((session) => session.playUri))
-            : new Map<string, FriendPlace | null>();
+        let places = await this.placesFor(userUuid, watchersBefore, new Map());
 
-        // Sessions and watchers may have changed while the names were looked up: use the latest.
+        // Sessions and watchers may have changed while the names were looked up: use the latest,
+        // and look up the names a new session or a newly added watcher who sees places still needs.
         const userWatchers = this.watchers.get(userUuid);
         if (!userWatchers) {
             return;
         }
+        places = await this.placesFor(userUuid, userWatchers, places);
         const sessions = this.sessionsOf(userUuid);
         const visible = computePresence(sessions, true, places);
         const hidden = computePresence(sessions, false, places);
@@ -347,6 +346,24 @@ export class FriendsPresence<S extends FriendsSocket> {
                 console.warn("FriendsPresence => error while sending a presence", e);
             }
         }
+    }
+
+    /** Adds the room names still missing from known, when one of these watchers sees places. */
+    private async placesFor(
+        userUuid: string,
+        userWatchers: Map<S, { shareLocation: boolean }>,
+        known: Map<string, FriendPlace | null>
+    ): Promise<Map<string, FriendPlace | null>> {
+        if (!Array.from(userWatchers.values()).some((watch) => watch.shareLocation)) {
+            return known;
+        }
+        const missing = this.sessionsOf(userUuid)
+            .map((session) => session.playUri)
+            .filter((uri) => !known.has(uri));
+        if (missing.length === 0) {
+            return known;
+        }
+        return new Map([...known, ...(await this.resolvePlaces(missing))]);
     }
 
     /** Room names by play URI, from the cache or Orbit; never waits longer than placesTimeoutMs. */
